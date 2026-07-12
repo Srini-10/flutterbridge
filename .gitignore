@@ -1,0 +1,84 @@
+# ── Dependencies ──
+node_modules/
+.pnpm-store/
+
+# ── Build outputs ──
+dist/
+.next/
+build/
+*.tsbuildinfo
+.tsbuild/
+
+# NOTE: no bare `out/` rule. The M0 spike artifacts under spikes/**/out/ are the evidence behind
+# committed reports, not build output, and ignoring them would silently delete that record.
+
+# ── Caches ──
+.turbo/
+.cache/
+.eslintcache
+.parcel-cache/
+.vitest/
+
+# ── Coverage ──
+coverage/
+*.lcov
+
+# ── Logs ──
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+# ── Environment / secrets (never commit) ──
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.keystore
+.netrc
+
+# ── Compiler working state (Spec §7.2) ──
+.bridge/
+
+# ── M0-T5 golden harness: repeatability scratch copies (baselines themselves ARE committed) ──
+spikes/m0-golden/baselines/.pass1/
+
+# ── Temporary file used by tools/verify-depcruise-negative.mjs ──
+packages/uir/src/__depcruise_violation__.ts
+
+# ── Dart / Flutter ──
+.dart_tool/
+.packages
+.flutter-plugins
+.flutter-plugins-dependencies
+*.freezed.dart.bak
+
+# ── IDE / editor ──
+.idea/
+.vscode/
+!.vscode/extensions.json
+*.iml
+*.swp
+*.swo
+*~
+
+# ── OS ──
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+desktop.ini
+
+# NOTE: generated *source* is intentionally committed and must never be ignored:
+#   packages/uir/src/generated/                                  (UIR model, TypeScript)
+#   dart/bridge_uir/lib/generated/                               (UIR model, Dart)
+#   packages/adapters/widgets-material/src/generated/            (widget catalog, TypeScript)
+#   dart/bridge_analyzer/lib/src/session/adapters/widget/generated/  (widget catalog, Dart)
+# These are produced by tools/schema-codegen and tools/catalog-codegen, and `just codegen-check`
+# fails CI if they drift from their source of truth. They are build *inputs* for every consumer.

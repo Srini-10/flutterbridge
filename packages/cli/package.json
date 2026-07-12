@@ -1,0 +1,42 @@
+{
+  "name": "@bridge/cli",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The `bridge` command surface. Contains no compilation logic (INV-17).",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "bin",
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -b tsconfig.json && tsup",
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc -b tsconfig.json && tsc -p tsconfig.test.json",
+    "api-check": "api-extractor run --local"
+  },
+  "dependencies": {
+    "@bridge/uir": "workspace:*",
+    "@bridge/core": "workspace:*",
+    "@bridge/compiler": "workspace:*",
+    "@bridge/verification": "workspace:*"
+  },
+  "devDependencies": {
+    "@microsoft/api-extractor": "catalog:",
+    "@types/node": "catalog:",
+    "tsup": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:",
+    "@bridge/widgets-material": "workspace:*"
+  },
+  "bin": {
+    "bridge": "./bin/bridge.mjs"
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "name": "@bridge/schema-codegen",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Generates the UIR models for both language domains from one schema. Neither TypeScript nor Dart hand-writes a UIR type (Spec §2.5).",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "schema-codegen": "./dist/cli.js"
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -b tsconfig.json && tsup",
+    "test": "vitest run",
+    "typecheck": "tsc -b tsconfig.json && tsc -p tsconfig.test.json"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "tsup": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

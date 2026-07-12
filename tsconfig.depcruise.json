@@ -1,0 +1,29 @@
+{
+  "_comment": [
+    "Resolution-only tsconfig for dependency-cruiser. It maps @bridge/* to package SOURCES so the",
+    "Spec §1.2 layering rules are enforced on source imports, with or without a prior build.",
+    "It compiles nothing. It lives at the repo root on purpose: dependency-cruiser resolves this",
+    "config's paths against the CWD, so root placement removes any file-relative vs CWD-relative",
+    "ambiguity. Build tsconfigs must stay free of `paths`."
+  ],
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "noEmit": true,
+    "skipLibCheck": true,
+    "baseUrl": ".",
+    "paths": {
+      "@bridge/uir": ["packages/uir/src/index.ts"],
+      "@bridge/plugin-sdk": ["packages/plugin-sdk/src/index.ts"],
+      "@bridge/core": ["packages/core/src/index.ts"],
+      "@bridge/compiler": ["packages/compiler/src/index.ts"],
+      "@bridge/verification": ["packages/verification/src/index.ts"],
+      "@bridge/cli": ["packages/cli/src/index.ts"],
+      "@bridge/gen-react": ["packages/generators/react/src/index.ts"],
+      "@bridge/widgets-material": ["packages/adapters/widgets-material/src/index.ts"],
+      "@bridge/runtime-react": ["packages/runtimes/react/src/index.ts"]
+    }
+  },
+  "include": ["packages/**/*.ts"]
+}

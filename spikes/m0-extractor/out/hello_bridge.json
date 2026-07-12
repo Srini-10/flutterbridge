@@ -1,0 +1,1054 @@
+{
+  "spike": "M0-T3",
+  "note": "Ad-hoc JSON. NOT the UIR schema. Feeds the M1 schema via the fidelity memo.",
+  "project": "hello_bridge",
+  "files": [
+    "hello_bridge/lib/constants.dart",
+    "hello_bridge/lib/data/items_repository.dart",
+    "hello_bridge/lib/main.dart",
+    "hello_bridge/lib/models/item.dart",
+    "hello_bridge/lib/screens/home_screen.dart",
+    "hello_bridge/lib/screens/login_screen.dart",
+    "hello_bridge/lib/state/favorites_store.dart"
+  ],
+  "components": [
+    {
+      "name": "BridgeApp",
+      "kind": "stateful",
+      "file": "hello_bridge/lib/main.dart",
+      "line": 9,
+      "params": [],
+      "stateClass": "_BridgeAppState",
+      "signals": [
+        {
+          "name": "_isDark",
+          "type": "bool",
+          "isFinal": false,
+          "isLate": false,
+          "isStatic": false,
+          "initial": "false"
+        }
+      ],
+      "effects": [],
+      "actions": [
+        {
+          "name": "_toggleTheme",
+          "isAsync": false,
+          "setStateCalls": 1,
+          "writes": [
+            "_isDark"
+          ],
+          "awaits": [],
+          "guards": []
+        }
+      ],
+      "render": {
+        "kind": "block",
+        "branches": [
+          {
+            "when": "default",
+            "node": {
+              "kind": "widget",
+              "type": "MaterialApp",
+              "const": false,
+              "line": 33,
+              "props": {
+                "title": {
+                  "bind": "const",
+                  "value": "'Hello Bridge'",
+                  "type": "String"
+                },
+                "debugShowCheckedModeBanner": {
+                  "bind": "const",
+                  "value": "false",
+                  "type": "bool"
+                },
+                "theme": {
+                  "bind": "value",
+                  "source": "ThemeData(brightness: Brightness.light, primaryColor: const Color(0xFF3F51B5), scaffoldBackgroundColor: const Color(0xFFF6F6FA), useMaterial3: true)",
+                  "type": "ThemeData",
+                  "const": false
+                },
+                "darkTheme": {
+                  "bind": "value",
+                  "source": "ThemeData(brightness: Brightness.dark, primaryColor: const Color(0xFF9FA8DA), scaffoldBackgroundColor: const Color(0xFF121212), useMaterial3: true)",
+                  "type": "ThemeData",
+                  "const": false
+                },
+                "themeMode": {
+                  "bind": "expr",
+                  "source": "_isDark ? ThemeMode.dark : ThemeMode.light",
+                  "type": "ThemeMode"
+                }
+              },
+              "slots": {
+                "home": {
+                  "kind": "widget",
+                  "type": "LoginScreen",
+                  "const": false,
+                  "line": 49,
+                  "props": {
+                    "isDark": {
+                      "bind": "ref",
+                      "source": "_isDark",
+                      "type": "bool"
+                    },
+                    "onToggleTheme": {
+                      "bind": "ref",
+                      "source": "_toggleTheme",
+                      "type": "void Function()"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "HomeScreen",
+      "kind": "stateful",
+      "file": "hello_bridge/lib/screens/home_screen.dart",
+      "line": 7,
+      "params": [
+        {
+          "name": "isDark",
+          "type": "bool"
+        },
+        {
+          "name": "onToggleTheme",
+          "type": "VoidCallback"
+        }
+      ],
+      "stateClass": "_HomeScreenState",
+      "signals": [
+        {
+          "name": "_favorites",
+          "type": "FavoritesStore",
+          "isFinal": true,
+          "isLate": false,
+          "isStatic": false,
+          "initial": "FavoritesStore()"
+        },
+        {
+          "name": "_itemsFuture",
+          "type": "Future<List<Item>>",
+          "isFinal": false,
+          "isLate": true,
+          "isStatic": false
+        }
+      ],
+      "effects": [
+        {
+          "timing": "mount",
+          "from": "initState",
+          "statements": [
+            "super.initState();",
+            "_itemsFuture = _repository.fetchItems();",
+            "_favorites.addListener(_onFavoritesChanged);"
+          ]
+        },
+        {
+          "timing": "unmount",
+          "from": "dispose",
+          "statements": [
+            "_favorites.removeListener(_onFavoritesChanged);",
+            "_favorites.dispose();",
+            "super.dispose();"
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "name": "_onFavoritesChanged",
+          "isAsync": false,
+          "setStateCalls": 1,
+          "writes": [],
+          "awaits": [],
+          "guards": []
+        }
+      ],
+      "render": {
+        "kind": "block",
+        "branches": [
+          {
+            "when": "default",
+            "node": {
+              "kind": "widget",
+              "type": "Scaffold",
+              "const": false,
+              "line": 55,
+              "slots": {
+                "appBar": {
+                  "kind": "widget",
+                  "type": "AppBar",
+                  "const": false,
+                  "line": 56,
+                  "slots": {
+                    "title": {
+                      "kind": "widget",
+                      "type": "Text",
+                      "const": false,
+                      "line": 57,
+                      "props": {
+                        "$positional": [
+                          {
+                            "bind": "interp",
+                            "source": "'Items (${_favorites.favoriteCount} starred)'",
+                            "parts": [
+                              "_favorites.favoriteCount"
+                            ]
+                          }
+                        ]
+                      }
+                    },
+                    "actions": {
+                      "kind": "list",
+                      "items": [
+                        {
+                          "kind": "widget",
+                          "type": "IconButton",
+                          "const": false,
+                          "line": 59,
+                          "props": {
+                            "onPressed": {
+                              "bind": "ref",
+                              "source": "widget.onToggleTheme",
+                              "type": "void Function()"
+                            }
+                          },
+                          "slots": {
+                            "icon": {
+                              "kind": "widget",
+                              "type": "Icon",
+                              "const": false,
+                              "line": 60,
+                              "props": {
+                                "$positional": [
+                                  {
+                                    "bind": "expr",
+                                    "source": "widget.isDark ? Icons.light_mode : Icons.dark_mode",
+                                    "type": "IconData"
+                                  }
+                                ]
+                              }
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                },
+                "body": {
+                  "kind": "widget",
+                  "type": "FutureBuilder<List<Item>>",
+                  "const": false,
+                  "line": 65,
+                  "props": {
+                    "future": {
+                      "bind": "ref",
+                      "source": "_itemsFuture",
+                      "type": "Future<List<Item>>"
+                    }
+                  },
+                  "slots": {
+                    "builder": {
+                      "kind": "closure",
+                      "params": [
+                        {
+                          "name": "context",
+                          "type": "BuildContext"
+                        },
+                        {
+                          "name": "snapshot",
+                          "type": "AsyncSnapshot<List<Item>>"
+                        }
+                      ],
+                      "body": {
+                        "kind": "block",
+                        "branches": [
+                          {
+                            "when": "snapshot.connectionState == ConnectionState.waiting",
+                            "node": {
+                              "kind": "widget",
+                              "type": "Center",
+                              "const": true,
+                              "line": 69,
+                              "slots": {
+                                "child": {
+                                  "kind": "widget",
+                                  "type": "CircularProgressIndicator",
+                                  "const": true,
+                                  "line": 69
+                                }
+                              }
+                            }
+                          },
+                          {
+                            "when": "snapshot.hasError",
+                            "node": {
+                              "kind": "widget",
+                              "type": "Center",
+                              "const": false,
+                              "line": 73,
+                              "slots": {
+                                "child": {
+                                  "kind": "widget",
+                                  "type": "Text",
+                                  "const": false,
+                                  "line": 74,
+                                  "props": {
+                                    "$positional": [
+                                      {
+                                        "bind": "interp",
+                                        "source": "'Could not load items: ${snapshot.error}'",
+                                        "parts": [
+                                          "snapshot.error"
+                                        ]
+                                      }
+                                    ]
+                                  }
+                                }
+                              }
+                            }
+                          },
+                          {
+                            "let": "final List<Item> items = snapshot.data ?? <Item>[]"
+                          },
+                          {
+                            "when": "default",
+                            "node": {
+                              "kind": "widget",
+                              "type": "ListView",
+                              "ctor": "builder",
+                              "const": false,
+                              "line": 80,
+                              "props": {
+                                "itemCount": {
+                                  "bind": "ref",
+                                  "source": "items.length",
+                                  "type": "int"
+                                }
+                              },
+                              "slots": {
+                                "itemBuilder": {
+                                  "kind": "closure",
+                                  "params": [
+                                    {
+                                      "name": "context",
+                                      "type": "BuildContext"
+                                    },
+                                    {
+                                      "name": "index",
+                                      "type": "int"
+                                    }
+                                  ],
+                                  "body": {
+                                    "kind": "block",
+                                    "branches": [
+                                      {
+                                        "let": "final Item item = items[index]"
+                                      },
+                                      {
+                                        "let": "final bool isFavorite = _favorites.isFavorite(item.id)"
+                                      },
+                                      {
+                                        "when": "default",
+                                        "node": {
+                                          "kind": "widget",
+                                          "type": "Card",
+                                          "const": false,
+                                          "line": 86,
+                                          "props": {
+                                            "margin": {
+                                              "bind": "value",
+                                              "source": "const EdgeInsets.symmetric(horizontal: 12, vertical: 6)",
+                                              "type": "EdgeInsets",
+                                              "const": true
+                                            }
+                                          },
+                                          "slots": {
+                                            "child": {
+                                              "kind": "widget",
+                                              "type": "ListTile",
+                                              "const": false,
+                                              "line": 88,
+                                              "slots": {
+                                                "title": {
+                                                  "kind": "widget",
+                                                  "type": "Text",
+                                                  "const": false,
+                                                  "line": 89,
+                                                  "props": {
+                                                    "$positional": [
+                                                      {
+                                                        "bind": "ref",
+                                                        "source": "item.title",
+                                                        "type": "String"
+                                                      }
+                                                    ]
+                                                  }
+                                                },
+                                                "subtitle": {
+                                                  "kind": "widget",
+                                                  "type": "Text",
+                                                  "const": false,
+                                                  "line": 90,
+                                                  "props": {
+                                                    "$positional": [
+                                                      {
+                                                        "bind": "ref",
+                                                        "source": "item.body",
+                                                        "type": "String"
+                                                      }
+                                                    ]
+                                                  }
+                                                },
+                                                "trailing": {
+                                                  "kind": "widget",
+                                                  "type": "IconButton",
+                                                  "const": false,
+                                                  "line": 91,
+                                                  "slots": {
+                                                    "icon": {
+                                                      "kind": "widget",
+                                                      "type": "Icon",
+                                                      "const": false,
+                                                      "line": 92,
+                                                      "props": {
+                                                        "$positional": [
+                                                          {
+                                                            "bind": "expr",
+                                                            "source": "isFavorite ? Icons.star : Icons.star_border",
+                                                            "type": "IconData"
+                                                          }
+                                                        ]
+                                                      }
+                                                    },
+                                                    "onPressed": {
+                                                      "kind": "closure",
+                                                      "params": [],
+                                                      "body": {
+                                                        "kind": "block",
+                                                        "branches": [
+                                                          {
+                                                            "stmt": "_favorites.toggle(item.id);"
+                                                          }
+                                                        ]
+                                                      }
+                                                    }
+                                                  }
+                                                }
+                                              }
+                                            }
+                                          }
+                                        }
+                                      }
+                                    ]
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "LoginScreen",
+      "kind": "stateful",
+      "file": "hello_bridge/lib/screens/login_screen.dart",
+      "line": 5,
+      "params": [
+        {
+          "name": "isDark",
+          "type": "bool"
+        },
+        {
+          "name": "onToggleTheme",
+          "type": "VoidCallback"
+        }
+      ],
+      "stateClass": "_LoginScreenState",
+      "signals": [
+        {
+          "name": "_email",
+          "type": "String",
+          "isFinal": false,
+          "isLate": false,
+          "isStatic": false,
+          "initial": "''"
+        },
+        {
+          "name": "_password",
+          "type": "String",
+          "isFinal": false,
+          "isLate": false,
+          "isStatic": false,
+          "initial": "''"
+        },
+        {
+          "name": "_error",
+          "type": "String",
+          "isFinal": false,
+          "isLate": false,
+          "isStatic": false,
+          "initial": "''"
+        },
+        {
+          "name": "_isSubmitting",
+          "type": "bool",
+          "isFinal": false,
+          "isLate": false,
+          "isStatic": false,
+          "initial": "false"
+        }
+      ],
+      "effects": [],
+      "actions": [
+        {
+          "name": "_submit",
+          "isAsync": true,
+          "setStateCalls": 3,
+          "writes": [
+            "_error",
+            "_isSubmitting"
+          ],
+          "awaits": [
+            "Future<void>.delayed(const Duration(milliseconds: 400))",
+            "Navigator.push<void>(context, MaterialPageRoute<void>(builder: (BuildContext context) => HomeScreen(isDark: widget.isDark, onToggleTheme: widget.onToggleTheme)))"
+          ],
+          "guards": [
+            "!mounted"
+          ]
+        }
+      ],
+      "render": {
+        "kind": "block",
+        "branches": [
+          {
+            "when": "default",
+            "node": {
+              "kind": "widget",
+              "type": "Scaffold",
+              "const": false,
+              "line": 68,
+              "slots": {
+                "appBar": {
+                  "kind": "widget",
+                  "type": "AppBar",
+                  "const": false,
+                  "line": 69,
+                  "slots": {
+                    "title": {
+                      "kind": "widget",
+                      "type": "Text",
+                      "const": true,
+                      "line": 70,
+                      "props": {
+                        "$positional": [
+                          {
+                            "bind": "const",
+                            "value": "'Sign in'",
+                            "type": "String"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                "body": {
+                  "kind": "widget",
+                  "type": "Center",
+                  "const": false,
+                  "line": 72,
+                  "slots": {
+                    "child": {
+                      "kind": "widget",
+                      "type": "Padding",
+                      "const": false,
+                      "line": 73,
+                      "props": {
+                        "padding": {
+                          "bind": "value",
+                          "source": "const EdgeInsets.all(24)",
+                          "type": "EdgeInsets",
+                          "const": true
+                        }
+                      },
+                      "slots": {
+                        "child": {
+                          "kind": "widget",
+                          "type": "Column",
+                          "const": false,
+                          "line": 75,
+                          "props": {
+                            "mainAxisAlignment": {
+                              "bind": "ref",
+                              "source": "MainAxisAlignment.center",
+                              "type": "MainAxisAlignment"
+                            },
+                            "crossAxisAlignment": {
+                              "bind": "ref",
+                              "source": "CrossAxisAlignment.stretch",
+                              "type": "CrossAxisAlignment"
+                            }
+                          },
+                          "slots": {
+                            "children": {
+                              "kind": "list",
+                              "items": [
+                                {
+                                  "kind": "widget",
+                                  "type": "Text",
+                                  "const": true,
+                                  "line": 79,
+                                  "props": {
+                                    "$positional": [
+                                      {
+                                        "bind": "const",
+                                        "value": "'Hello Bridge'",
+                                        "type": "String"
+                                      }
+                                    ],
+                                    "style": {
+                                      "bind": "value",
+                                      "source": "TextStyle(fontSize: 28, fontWeight: FontWeight.bold)",
+                                      "type": "TextStyle",
+                                      "const": true
+                                    }
+                                  }
+                                },
+                                {
+                                  "kind": "widget",
+                                  "type": "SizedBox",
+                                  "const": true,
+                                  "line": 83,
+                                  "props": {
+                                    "height": {
+                                      "bind": "const",
+                                      "value": "24",
+                                      "type": "double"
+                                    }
+                                  }
+                                },
+                                {
+                                  "kind": "widget",
+                                  "type": "TextField",
+                                  "const": false,
+                                  "line": 84,
+                                  "props": {
+                                    "decoration": {
+                                      "bind": "value",
+                                      "source": "const InputDecoration(labelText: 'Email')",
+                                      "type": "InputDecoration",
+                                      "const": true
+                                    }
+                                  },
+                                  "slots": {
+                                    "onChanged": {
+                                      "kind": "closure",
+                                      "params": [
+                                        {
+                                          "name": "value",
+                                          "type": "String"
+                                        }
+                                      ],
+                                      "body": {
+                                        "kind": "block",
+                                        "branches": [
+                                          {
+                                            "stmt": "setState(() {_email = value;});"
+                                          }
+                                        ]
+                                      }
+                                    }
+                                  }
+                                },
+                                {
+                                  "kind": "widget",
+                                  "type": "SizedBox",
+                                  "const": true,
+                                  "line": 92,
+                                  "props": {
+                                    "height": {
+                                      "bind": "const",
+                                      "value": "12",
+                                      "type": "double"
+                                    }
+                                  }
+                                },
+                                {
+                                  "kind": "widget",
+                                  "type": "TextField",
+                                  "const": false,
+                                  "line": 93,
+                                  "props": {
+                                    "obscureText": {
+                                      "bind": "const",
+                                      "value": "true",
+                                      "type": "bool"
+                                    },
+                                    "decoration": {
+                                      "bind": "value",
+                                      "source": "const InputDecoration(labelText: 'Password')",
+                                      "type": "InputDecoration",
+                                      "const": true
+                                    }
+                                  },
+                                  "slots": {
+                                    "onChanged": {
+                                      "kind": "closure",
+                                      "params": [
+                                        {
+                                          "name": "value",
+                                          "type": "String"
+                                        }
+                                      ],
+                                      "body": {
+                                        "kind": "block",
+                                        "branches": [
+                                          {
+                                            "stmt": "setState(() {_password = value;});"
+                                          }
+                                        ]
+                                      }
+                                    }
+                                  }
+                                },
+                                {
+                                  "kind": "widget",
+                                  "type": "SizedBox",
+                                  "const": true,
+                                  "line": 102,
+                                  "props": {
+                                    "height": {
+                                      "bind": "const",
+                                      "value": "16",
+                                      "type": "double"
+                                    }
+                                  }
+                                },
+                                {
+                                  "kind": "collection-if",
+                                  "test": "_error.isNotEmpty",
+                                  "then": {
+                                    "kind": "widget",
+                                    "type": "Padding",
+                                    "const": false,
+                                    "line": 106,
+                                    "props": {
+                                      "padding": {
+                                        "bind": "value",
+                                        "source": "const EdgeInsets.only(bottom: 12)",
+                                        "type": "EdgeInsets",
+                                        "const": true
+                                      }
+                                    },
+                                    "slots": {
+                                      "child": {
+                                        "kind": "widget",
+                                        "type": "Text",
+                                        "const": false,
+                                        "line": 108,
+                                        "props": {
+                                          "$positional": [
+                                            {
+                                              "bind": "ref",
+                                              "source": "_error",
+                                              "type": "String"
+                                            }
+                                          ],
+                                          "style": {
+                                            "bind": "value",
+                                            "source": "const TextStyle(color: Color(0xFFB3261E))",
+                                            "type": "TextStyle",
+                                            "const": true
+                                          }
+                                        }
+                                      }
+                                    }
+                                  }
+                                },
+                                {
+                                  "kind": "widget",
+                                  "type": "SizedBox",
+                                  "const": false,
+                                  "line": 113,
+                                  "props": {
+                                    "height": {
+                                      "bind": "const",
+                                      "value": "48",
+                                      "type": "double"
+                                    }
+                                  },
+                                  "slots": {
+                                    "child": {
+                                      "kind": "widget",
+                                      "type": "ElevatedButton",
+                                      "const": false,
+                                      "line": 115,
+                                      "props": {
+                                        "onPressed": {
+                                          "bind": "expr",
+                                          "source": "_isSubmitting ? null : _submit",
+                                          "type": "Future<void> Function()?"
+                                        }
+                                      },
+                                      "slots": {
+                                        "child": {
+                                          "kind": "cond",
+                                          "test": "_isSubmitting",
+                                          "then": {
+                                            "kind": "widget",
+                                            "type": "SizedBox",
+                                            "const": true,
+                                            "line": 118,
+                                            "props": {
+                                              "width": {
+                                                "bind": "const",
+                                                "value": "20",
+                                                "type": "double"
+                                              },
+                                              "height": {
+                                                "bind": "const",
+                                                "value": "20",
+                                                "type": "double"
+                                              }
+                                            },
+                                            "slots": {
+                                              "child": {
+                                                "kind": "widget",
+                                                "type": "CircularProgressIndicator",
+                                                "const": true,
+                                                "line": 121,
+                                                "props": {
+                                                  "strokeWidth": {
+                                                    "bind": "const",
+                                                    "value": "2",
+                                                    "type": "double"
+                                                  }
+                                                }
+                                              }
+                                            }
+                                          },
+                                          "else": {
+                                            "kind": "widget",
+                                            "type": "Text",
+                                            "const": true,
+                                            "line": 123,
+                                            "props": {
+                                              "$positional": [
+                                                {
+                                                  "bind": "const",
+                                                  "value": "'Sign in'",
+                                                  "type": "String"
+                                                }
+                                              ]
+                                            }
+                                          }
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              ]
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "stores": [
+    {
+      "name": "FavoritesStore",
+      "origin": "changeNotifier",
+      "file": "hello_bridge/lib/state/favorites_store.dart",
+      "line": 3,
+      "signals": [
+        {
+          "name": "_favoriteIds",
+          "type": "Set<int>",
+          "isFinal": true,
+          "isLate": false,
+          "isStatic": false,
+          "initial": "<int>{}"
+        }
+      ],
+      "members": [
+        {
+          "name": "favoriteCount",
+          "isGetter": true,
+          "notifies": false,
+          "role": "derived",
+          "writes": [],
+          "source": "int get favoriteCount => _favoriteIds.length;"
+        },
+        {
+          "name": "isFavorite",
+          "isGetter": false,
+          "notifies": false,
+          "role": "method",
+          "writes": [],
+          "source": "bool isFavorite(int id) => _favoriteIds.contains(id);"
+        },
+        {
+          "name": "toggle",
+          "isGetter": false,
+          "notifies": true,
+          "role": "action",
+          "writes": [],
+          "source": "void toggle(int id) {if (_favoriteIds.contains(id)) {_favoriteIds.remove(id);} else {_favoriteIds.add(id);} notifyListeners();}"
+        }
+      ]
+    }
+  ],
+  "classes": [
+    {
+      "name": "ItemsRepository",
+      "file": "hello_bridge/lib/data/items_repository.dart",
+      "fields": [],
+      "methods": [
+        {
+          "name": "fetchItems",
+          "isStatic": false,
+          "isAsync": true,
+          "returns": "Future<List<Item>>"
+        }
+      ]
+    },
+    {
+      "name": "Item",
+      "file": "hello_bridge/lib/models/item.dart",
+      "fields": [
+        {
+          "name": "id",
+          "type": "int",
+          "isFinal": true,
+          "isLate": false,
+          "isStatic": false
+        },
+        {
+          "name": "title",
+          "type": "String",
+          "isFinal": true,
+          "isLate": false,
+          "isStatic": false
+        },
+        {
+          "name": "body",
+          "type": "String",
+          "isFinal": true,
+          "isLate": false,
+          "isStatic": false
+        }
+      ],
+      "methods": [
+        {
+          "name": "fromJson",
+          "isStatic": true,
+          "isAsync": false,
+          "returns": "Item"
+        }
+      ]
+    }
+  ],
+  "navigation": [
+    {
+      "method": "push",
+      "file": "hello_bridge/lib/screens/login_screen.dart",
+      "line": 55,
+      "source": "Navigator.push<void>(context, MaterialPageRoute<void>(builder: (BuildContext context) => HomeScreen(isDark: widget.isDark, onToggleTheme: widget.onToggleTheme)))",
+      "route": "MaterialPageRoute",
+      "target": "HomeScreen",
+      "propsPassed": [
+        {
+          "name": "isDark",
+          "source": "widget.isDark",
+          "type": "bool"
+        },
+        {
+          "name": "onToggleTheme",
+          "source": "widget.onToggleTheme",
+          "type": "void Function()"
+        }
+      ]
+    }
+  ],
+  "endpoints": [
+    {
+      "method": "GET",
+      "uri": "Uri.parse('$apiBaseUrl/posts?_limit=12')",
+      "file": "hello_bridge/lib/data/items_repository.dart",
+      "line": 17,
+      "enclosing": "ItemsRepository"
+    }
+  ],
+  "coverage": {
+    "mvpWidgetsSeen": [
+      "AppBar",
+      "Card",
+      "Center",
+      "CircularProgressIndicator",
+      "Column",
+      "ElevatedButton",
+      "Icon",
+      "IconButton",
+      "ListTile",
+      "ListView",
+      "MaterialApp",
+      "Padding",
+      "Scaffold",
+      "SizedBox",
+      "Text",
+      "TextField"
+    ],
+    "mvpWidgetsNotExercisedByFixture": [
+      "Align",
+      "Container",
+      "Divider",
+      "Expanded",
+      "Flexible",
+      "GestureDetector",
+      "Image",
+      "InkWell",
+      "Positioned",
+      "Row",
+      "Spacer",
+      "Stack",
+      "TextButton"
+    ],
+    "structuralWidgetsSeen": [
+      "FutureBuilder"
+    ],
+    "otherWidgetsSeen": [
+      "LoginScreen"
+    ]
+  },
+  "opaque": [],
+  "stats": {
+    "files": 7,
+    "components": 3,
+    "stores": 1,
+    "widgetNodes": 38,
+    "treeNodes": 93,
+    "opaqueNodes": 0,
+    "opaqueRatio": 0.0
+  }
+}

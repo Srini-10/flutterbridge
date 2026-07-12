@@ -1,0 +1,24 @@
+{
+  "name": "@bridge/catalog-codegen",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Generates the framework widget catalogs for both language domains from one JSON source (ADR-18). Neither Dart nor TypeScript hand-writes framework metadata.",
+  "type": "module",
+  "bin": {
+    "catalog-codegen": "./dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -b tsconfig.json && tsup",
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc -b tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "tsup": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

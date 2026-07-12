@@ -1,0 +1,31 @@
+{
+  "name": "@bridge/uir",
+  "version": "0.0.0",
+  "private": true,
+  "description": "UIR schema, node types, NodeId/Anchor, canonical form, NDJSON IO, validators, migrations.",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -b tsconfig.json && tsup",
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc -b tsconfig.json && tsc -p tsconfig.test.json",
+    "api-check": "api-extractor run --local"
+  },
+  "devDependencies": {
+    "@microsoft/api-extractor": "catalog:",
+    "@types/node": "catalog:",
+    "tsup": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

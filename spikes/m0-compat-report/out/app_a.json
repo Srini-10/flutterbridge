@@ -1,0 +1,128 @@
+{
+  "spike": "M0-T6",
+  "app": "app_a",
+  "project": "hello_bridge",
+  "toolchain": {
+    "flutter": "3.41.5",
+    "dart": "3.11.3"
+  },
+  "summary": {
+    "dartFiles": 7,
+    "linesOfCode": 369,
+    "widgetInstantiations": 40,
+    "distinctWidgetTypes": 20,
+    "statelessWidgets": 0,
+    "statefulWidgets": 3,
+    "stateClasses": 3,
+    "storesOrControllers": 1,
+    "customPainters": 0,
+    "inheritedWidgets": 0,
+    "asyncMethods": 2,
+    "awaitExpressions": 3,
+    "setStateCalls": 7,
+    "namedRouteEntries": 0,
+    "hasOnGenerateRoute": false,
+    "networkCallSites": 1,
+    "userDefinedComponents": 3,
+    "unsupportedConstructs": 0,
+    "unknownConstructs": 0
+  },
+  "declarations": {
+    "stateless": [],
+    "stateful": [
+      "BridgeApp",
+      "HomeScreen",
+      "LoginScreen"
+    ],
+    "stores": [
+      "FavoritesStore"
+    ],
+    "painters": []
+  },
+  "widgets": {
+    "AppBar": 2,
+    "BridgeApp": 1,
+    "Card": 1,
+    "Center": 3,
+    "CircularProgressIndicator": 2,
+    "Column": 1,
+    "ElevatedButton": 1,
+    "FutureBuilder": 1,
+    "HomeScreen": 1,
+    "Icon": 2,
+    "IconButton": 2,
+    "ListTile": 1,
+    "ListView.builder": 1,
+    "LoginScreen": 1,
+    "MaterialApp": 1,
+    "Padding": 2,
+    "Scaffold": 2,
+    "SizedBox": 5,
+    "Text": 8,
+    "TextField": 2
+  },
+  "userComponents": [
+    "BridgeApp",
+    "HomeScreen",
+    "LoginScreen"
+  ],
+  "supported": [
+    "AppBar",
+    "Card",
+    "Center",
+    "CircularProgressIndicator",
+    "Column",
+    "ElevatedButton",
+    "FutureBuilder",
+    "Icon",
+    "IconButton",
+    "ListTile",
+    "ListView.builder",
+    "MaterialApp",
+    "Padding",
+    "Scaffold",
+    "SizedBox",
+    "Text",
+    "TextField"
+  ],
+  "partial": [],
+  "unsupported": [],
+  "unknown": [],
+  "navigation": {
+    "Navigator.push": [
+      "lib/screens/login_screen.dart:55"
+    ]
+  },
+  "network": {
+    "http.GET": [
+      "lib/data/items_repository.dart:17"
+    ]
+  },
+  "constructs": {
+    "callback passed across a route": [
+      "lib/screens/login_screen.dart:55"
+    ]
+  },
+  "riskyImports": {
+    "package:http/http.dart": [
+      "lib/data/items_repository.dart:3"
+    ]
+  },
+  "warnings": [
+    {
+      "code": "W01",
+      "title": "A callback is passed across a route boundary",
+      "why": "A route is a URL in the React target. A closure cannot be serialised to a URL, so the callee cannot receive it.",
+      "impact": "The receiving screen loses the callback entirely; any state it toggled through that callback stops working.",
+      "likelyCompilerBehavior": "Promote the captured state into a shared store and turn the callback into a store action. This is the open ISSUE-1 (M0-T3 memo §5); the decision is deferred to the architecture review, so today the compiler would have to flag it, not fix it.",
+      "owner": "normalization (open issue) / bridge_lints",
+      "where": [
+        "lib/screens/login_screen.dart:55"
+      ]
+    }
+  ],
+  "compatibility": {
+    "level": "High Compatibility",
+    "reasoning": "Every construct found is inside the frozen MVP subset, or is a recognised widget with a planned mapping. Nothing in this application requires a capability the web lacks. It is not free of conversion issues, however: 1 warning(s) (W01) describe constructs that convert imperfectly and need a decision or an override."
+  }
+}

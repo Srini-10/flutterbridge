@@ -1,0 +1,27 @@
+{
+  "name": "m0-golden",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "M0-T5 SPIKE. Golden harness: deterministic screenshots of the Flutter fixture and the hand-written React reference, plus a pixel diff. Observational only.",
+  "scripts": {
+    "capture:flutter": "tsx scripts/capture_flutter.ts",
+    "capture:react": "tsx scripts/capture_next.ts",
+    "diff": "tsx scripts/diff.ts",
+    "golden": "tsx scripts/run-all.ts"
+  },
+  "dependencies": {
+    "@playwright/test": "1.61.1",
+    "pixelmatch": "7.2.0",
+    "pngjs": "7.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "26.1.1",
+    "@types/pngjs": "6.0.5",
+    "tsx": "4.23.0",
+    "typescript": "5.9.3"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild"]
+  }
+}

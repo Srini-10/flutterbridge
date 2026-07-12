@@ -1,0 +1,181 @@
+{
+  "$comment": "THE single source of framework metadata for Flutter/Material (ADR-18). Generated into BOTH language domains — the analyzer's extraction adapter and the compiler's widget registry. Neither domain hand-writes any of this. A fact stated twice is a fact that will eventually be stated two different ways, and we have already paid for that twice: canonical numbers (100.0 vs 100) and this catalog (a flat slot set in Dart, a per-widget catalog in TypeScript).",
+
+  "catalog": "material",
+  "priority": 10,
+  "library": "package:flutter/",
+
+  "componentBases": [
+    "StatelessWidget",
+    "StatefulWidget",
+    "InheritedWidget",
+    "ConsumerWidget",
+    "ConsumerStatefulWidget",
+    "HookWidget",
+    "HookConsumerWidget",
+    "StatefulHookConsumerWidget"
+  ],
+
+  "stateBase": "State",
+
+  "stateHolders": [
+    "AnimationController",
+    "ChangeNotifier",
+    "ScrollController",
+    "TextEditingController",
+    "ValueNotifier"
+  ],
+
+  "storeBases": ["ChangeNotifier", "Notifier", "StateNotifier"],
+
+  "lifecycle": {
+    "initState": "mount",
+    "didUpdateWidget": "update",
+    "didChangeDependencies": "update",
+    "dispose": "unmount"
+  },
+
+  "stateBatchCalls": ["setState"],
+
+  "semantics": {
+    "labelProps": ["semanticLabel"],
+    "widgets": {
+      "Semantics": { "label": "label", "hint": "hint", "excluded": "excludeSemantics" },
+      "ExcludeSemantics": { "alwaysExcluded": true }
+    }
+  },
+
+  "theme": {
+    "types": ["ThemeData", "ColorScheme"],
+    "seedConstructor": "fromSeed",
+    "seedProp": "seedColor",
+    "brightnessProp": "brightness",
+    "nonRoleProps": ["brightness", "seedColor", "dynamicSchemeVariant"]
+  },
+
+  "widgets": [
+    { "name": "Text", "role": "text" },
+    { "name": "SelectableText", "role": "text" },
+
+    { "name": "FutureBuilder", "role": "async" },
+    { "name": "StreamBuilder", "role": "async" },
+
+    { "name": "Column", "childrenProp": "children" },
+    { "name": "Row", "childrenProp": "children" },
+    { "name": "Stack", "childrenProp": "children" },
+    { "name": "Wrap", "childrenProp": "children" },
+    { "name": "Flex", "childrenProp": "children" },
+    { "name": "ListView", "childrenProp": "children" },
+    { "name": "GridView", "childrenProp": "children" },
+    { "name": "ListBody", "childrenProp": "children" },
+    { "name": "ButtonBar", "childrenProp": "children" },
+    { "name": "OverflowBar", "childrenProp": "children" },
+    { "name": "TabBarView", "childrenProp": "children" },
+    { "name": "PageView", "childrenProp": "children" },
+    { "name": "Table", "childrenProp": "children" },
+
+    {
+      "$comment": "The reason this migration exists. `slivers` is an ordered child list under a name that is not `children` — and extraction, which hardcoded the literal string `children`, buried it in props as an opaque expression. CustomScrollView is the backbone of every scrolling Flutter screen.",
+      "name": "CustomScrollView",
+      "childrenProp": "slivers"
+    },
+    { "name": "SliverList", "childrenProp": "children" },
+    { "name": "MultiSliver", "childrenProp": "children" },
+
+    {
+      "$comment": "`actions` is an ordered child list. One buried in hello_bridge's own props.",
+      "name": "AppBar",
+      "slots": ["title", "leading", "flexibleSpace", "bottom"],
+      "childrenProp": "actions"
+    },
+    {
+      "name": "SliverAppBar",
+      "slots": ["title", "leading", "flexibleSpace", "bottom"],
+      "childrenProp": "actions"
+    },
+
+    {
+      "name": "Scaffold",
+      "slots": [
+        "appBar",
+        "body",
+        "bottomNavigationBar",
+        "bottomSheet",
+        "drawer",
+        "endDrawer",
+        "floatingActionButton"
+      ],
+      "childrenProp": "persistentFooterButtons"
+    },
+
+    { "name": "ListTile", "slots": ["leading", "title", "subtitle", "trailing"] },
+    { "name": "MaterialApp", "slots": ["home"] },
+    { "name": "CupertinoApp", "slots": ["home"] },
+    { "name": "WidgetsApp", "slots": ["home"] },
+    { "name": "Card", "slots": ["child"] },
+    { "name": "Dismissible", "slots": ["child", "background", "secondaryBackground"] },
+    {
+      "$comment": "`.extended` is a factory on the SAME class, so `icon` and `label` are parameters of FloatingActionButton itself. Extraction keys on the type, not the constructor — so the entry carries the union. A separate `FloatingActionButton.extended` entry was inert, and N8's verification is what found it.",
+      "name": "FloatingActionButton",
+      "slots": ["child", "icon", "label"]
+    },
+    { "name": "ElevatedButton", "slots": ["child"] },
+    { "name": "TextButton", "slots": ["child"] },
+    { "name": "OutlinedButton", "slots": ["child"] },
+    { "name": "IconButton", "slots": ["icon"] },
+
+    {
+      "$comment": "Wrappers whose identity IS their behaviour: no `transparentWithoutProps`, so they are never flattened. A `Center` with no props still centres. Guessing that a prop-less widget must be a pass-through is how a compiler silently deletes a layout.",
+      "name": "Center",
+      "slots": ["child"]
+    },
+    { "name": "Align", "slots": ["child"] },
+    { "name": "Padding", "slots": ["child"] },
+    { "name": "Expanded", "slots": ["child"] },
+    { "name": "Flexible", "slots": ["child"] },
+    { "name": "Positioned", "slots": ["child"] },
+    { "name": "SafeArea", "slots": ["child"] },
+    { "name": "AspectRatio", "slots": ["child"] },
+    { "name": "FittedBox", "slots": ["child"] },
+    { "name": "ClipRRect", "slots": ["child"] },
+    { "name": "Opacity", "slots": ["child"] },
+    { "name": "Transform", "slots": ["child"] },
+    { "name": "GestureDetector", "slots": ["child"] },
+    { "name": "InkWell", "slots": ["child"] },
+    { "name": "Semantics", "slots": ["child"] },
+    { "name": "SingleChildScrollView", "slots": ["child"] },
+    { "name": "Form", "slots": ["child"] },
+    { "name": "PopScope", "slots": ["child"] },
+    { "name": "ListenableBuilder", "slots": ["child"] },
+    { "name": "ColoredBox", "slots": ["child"] },
+    { "name": "MergeSemantics", "slots": ["child"] },
+
+    {
+      "$comment": "Wrappers that CAN be transparent — a pass-through carrying none of the props that make it significant.",
+      "name": "Container",
+      "slots": ["child"],
+      "transparentWithoutProps": [
+        "alignment",
+        "clipBehavior",
+        "color",
+        "constraints",
+        "decoration",
+        "foregroundDecoration",
+        "height",
+        "margin",
+        "padding",
+        "transform",
+        "transformAlignment",
+        "width"
+      ]
+    },
+    { "name": "SizedBox", "slots": ["child"], "transparentWithoutProps": ["width", "height"] },
+    { "name": "DecoratedBox", "slots": ["child"], "transparentWithoutProps": ["decoration"] },
+    {
+      "$comment": "A rendering hint with no layout or semantic effect. Every target repaints on its own terms, so it never survives to one — transparent with no conditions at all.",
+      "name": "RepaintBoundary",
+      "slots": ["child"],
+      "transparentWithoutProps": []
+    }
+  ]
+}

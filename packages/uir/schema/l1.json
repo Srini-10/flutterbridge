@@ -1,0 +1,1695 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://flutterbridge.dev/uir/l1.json",
+  "title": "UIR L1 — semantic",
+  "description": "Declarations, statements and expressions: the Dart the analyzer resolved. Generators that only need routes or components never load this layer.",
+  "x-uir-layer": "L1",
+  "$defs": {
+    "ParamDecl": {
+      "type": "object",
+      "description": "A parameter of a function, method, or widget constructor.",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "type"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Parameter name."
+        },
+        "type": {
+          "$ref": "shared.json#/$defs/TypeRef",
+          "description": "Resolved type."
+        },
+        "required": {
+          "type": "boolean",
+          "description": "Whether the parameter is required."
+        },
+        "named": {
+          "type": "boolean",
+          "description": "Whether the parameter is named rather than positional."
+        },
+        "defaultValue": {
+          "$ref": "l1.json#/$defs/Expr",
+          "description": "Default value, if any."
+        }
+      }
+    },
+    "SwitchCase": {
+      "type": "object",
+      "description": "One case of a switch statement.",
+      "additionalProperties": false,
+      "required": [
+        "body"
+      ],
+      "properties": {
+        "test": {
+          "$ref": "l1.json#/$defs/Expr",
+          "description": "The value matched. Absent for the default case."
+        },
+        "body": {
+          "type": "array",
+          "items": {
+            "$ref": "l1.json#/$defs/Stmt",
+            "description": "A statement in the case body."
+          },
+          "description": "Body, in order."
+        }
+      }
+    },
+    "CatchClause": {
+      "type": "object",
+      "description": "One catch clause of a try statement.",
+      "additionalProperties": false,
+      "required": [
+        "body"
+      ],
+      "properties": {
+        "exceptionType": {
+          "$ref": "shared.json#/$defs/TypeRef",
+          "description": "The type caught, if narrowed."
+        },
+        "exceptionName": {
+          "type": "string",
+          "description": "The bound exception variable."
+        },
+        "stackTraceName": {
+          "type": "string",
+          "description": "The bound stack-trace variable."
+        },
+        "body": {
+          "$ref": "#/$defs/Block",
+          "description": "The clause body."
+        }
+      }
+    },
+    "AssignmentOperator": {
+      "description": "How an assignment combines its target with its value (Spec v2.2 §A10).\n\nAn enum, not a free-form string: a generator that receives an operator it does not know must fail to compile rather than silently emit the wrong arithmetic. `Binary.operator` is a string because a binary operator is pure — the worst a wrong one does is compute the wrong number. A wrong assignment operator writes the wrong value to state.",
+      "enum": [
+        "assign",
+        "addAssign",
+        "subtractAssign",
+        "multiplyAssign",
+        "divideAssign",
+        "truncatingDivideAssign",
+        "moduloAssign",
+        "ifNullAssign",
+        "bitAndAssign",
+        "bitOrAssign",
+        "bitXorAssign",
+        "shiftLeftAssign",
+        "shiftRightAssign",
+        "unsignedShiftRightAssign",
+        "increment",
+        "decrement"
+      ],
+      "x-uir-enum-docs": {
+        "assign": "`=` — replace the target's value.",
+        "addAssign": "`+=`",
+        "subtractAssign": "`-=`",
+        "multiplyAssign": "`*=`",
+        "divideAssign": "`/=`",
+        "truncatingDivideAssign": "`~/=` — Dart's integer division. JavaScript has no operator for it, so a generator must emit `Math.trunc(a / b)`; conflating it with `/=` silently changes the result type.",
+        "moduloAssign": "`%=` — Dart's modulo is always non-negative for a positive divisor; JavaScript's `%` is not. A generator must not assume they agree.",
+        "ifNullAssign": "`??=` — assign only if the target is null.",
+        "bitAndAssign": "`&=`",
+        "bitOrAssign": "`|=`",
+        "bitXorAssign": "`^=`",
+        "shiftLeftAssign": "`<<=`",
+        "shiftRightAssign": "`>>=`",
+        "unsignedShiftRightAssign": "`>>>=`",
+        "increment": "`++` — `value` is absent.",
+        "decrement": "`--` — `value` is absent."
+      }
+    },
+    "Lit": {
+      "description": "A literal: a number, string, boolean, or null.",
+      "x-uir-kind": "logic.Lit",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "type"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "logic.Lit",
+              "description": "Discriminant."
+            },
+            "value": {
+              "x-uir-json": true,
+              "description": "The literal value."
+            },
+            "type": {
+              "$ref": "shared.json#/$defs/TypeRef",
+              "description": "Resolved type."
+            }
+          }
+        }
+      ]
+    },
+    "Ref": {
+      "description": "A reference to a declared name — a local, a parameter, a field, or a signal.",
+      "x-uir-kind": "logic.Ref",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "name",
+            "type"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "logic.Ref",
+              "description": "Discriminant."
+            },
+            "name": {
+              "type": "string",
+              "description": "The name referenced."
+            },
+            "target": {
+              "$ref": "shared.json#/$defs/NodeId",
+              "description": "The declaration referred to, when it is in the program."
+            },
+            "type": {
+              "$ref": "shared.json#/$defs/TypeRef",
+              "description": "Resolved type."
+            }
+          }
+        }
+      ]
+    },
+    "Call": {
+      "description": "A call to a function.",
+      "x-uir-kind": "logic.Call",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "callee",
+            "type"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "logic.Call",
+              "description": "Discriminant."
+            },
+            "callee": {
+              "$ref": "l1.json#/$defs/Expr",
+              "description": "The function called."
+            },
+            "args": {
+              "type": "array",
+              "items": {
+                "$ref": "l1.json#/$defs/Expr",
+                "description": "An argument, in source order."
+              },
+              "description": "Positional arguments, in order."
+            },
+            "namedArgs": {
+              "type": "object",
+              "additionalProperties": {
+                "$ref": "l1.json#/$defs/Expr",
+                "description": "A named argument."
+              },
+              "description": "Named arguments, keyed by parameter name."
+            },
+            "type": {
+              "$ref": "shared.json#/$defs/TypeRef",
+              "description": "Resolved return type."
+            }
+          }
+        }
+      ]
+    },
+    "MethodCall": {
+      "description": "A call to a method on a receiver.",
+      "x-uir-kind": "logic.MethodCall",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "receiver",
+            "method",
+            "type"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "logic.MethodCall",
+              "description": "Discriminant."
+            },
+            "receiver": {
+              "$ref": "l1.json#/$defs/Expr",
+              "description": "The receiver."
+            },
+            "method": {
+              "type": "string",
+              "description": "The method name."
+            },
+            "args": {
+              "type": "array",
+              "items": {
+                "$ref": "l1.json#/$defs/Expr",
+                "description": "An argument."
+              },
+              "description": "Positional arguments, in order."
+            },
+            "namedArgs": {
+              "type": "object",
+              "additionalProperties": {
+                "$ref": "l1.json#/$defs/Expr",
+                "description": "A named argument."
+              },
+              "description": "Named arguments."
+            },
+            "type": {
+              "$ref": "shared.json#/$defs/TypeRef",
+              "description": "Resolved return type."
+            }
+          }
+        }
+      ]
+    },
+    "PropertyAccess": {
+      "description": "Reading a property of a value.",
+      "x-uir-kind": "logic.PropertyAccess",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "receiver",
+            "property",
+            "type"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "logic.PropertyAccess",
+              "description": "Discriminant."
+            },
+            "receiver": {
+              "$ref": "l1.json#/$defs/Expr",
+              "description": "The receiver."
+            },
+            "property": {
+              "type": "string",
+              "description": "The property name."
+            },
+            "type": {
+              "$ref": "shared.json#/$defs/TypeRef",
+              "description": "Resolved type."
+            }
+          }
+        }
+      ]
+    },
+    "Binary": {
+      "description": "A binary operation, e.g. `a + b`.",
+      "x-uir-kind": "logic.Binary",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "operator",
+            "left",
+            "right",
+            "type"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "logic.Binary",
+              "description": "Discriminant."
+            },
+            "operator": {
+              "type": "string",
+              "description": "The operator, e.g. `+`."
+            },
+            "left": {
+              "$ref": "l1.json#/$defs/Expr",
+              "description": "Left operand."
+            },
+            "right": {
+              "$ref": "l1.json#/$defs/Expr",
+              "description": "Right operand."
+            },
+            "type": {
+              "$ref": "shared.json#/$defs/TypeRef",
+              "description": "Resolved type."
+            }
+          }
+        }
+      ]
+    },
+    "Unary": {
+      "description": "A unary operation, e.g. `!a`.",
+      "x-uir-kind": "logic.Unary",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "operator",
+            "operand",
+            "type"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "logic.Unary",
+              "description": "Discriminant."
+            },
+            "operator": {
+              "type": "string",
+              "description": "The operator, e.g. `!`."
+            },
+            "operand": {
+              "$ref": "l1.json#/$defs/Expr",
+              "description": "The operand."
+            },
+            "type": {
+              "$ref": "shared.json#/$defs/TypeRef",
+              "description": "Resolved type."
+            }
+          }
+        }
+      ]
+    },
+    "Assign": {
+      "description": "A write to a target: `a = b`, `a += b`, `a++`.\n\nAdded in v2.2 (§A10). Before it, the `Expr` union had no assignment at all, so every `setState` body — the one thing a Flutter→React compiler exists to translate — could only be carried as `OpaqueExpr`, i.e. a Dart source string no generator can compile. A census of the C1 corpus found 401 assignments across compass_app and wonderous, of which 210 were inside a `State` or `ChangeNotifier`; in our own fixture, *every* assignment was a state mutation.\n\nDistinct from `sig.Action.writes`, and not replaceable by it: `writes` is a data-flow summary (*which* signals change), while this is program semantics (*what they become*). Both are required.",
+      "x-uir-kind": "logic.Assign",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "target",
+            "operator",
+            "type"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "logic.Assign",
+              "description": "Discriminant."
+            },
+            "target": {
+              "$ref": "l1.json#/$defs/Expr",
+              "description": "The place written to — a `Ref`, a `PropertyAccess`, or an index. It is an lvalue, which is why this cannot be a `Binary`: `Binary.left` is a value, and a generator reading one as the other emits a comparison where a write was meant."
+            },
+            "operator": {
+              "$ref": "l1.json#/$defs/AssignmentOperator",
+              "description": "How the value combines with the target."
+            },
+            "value": {
+              "$ref": "l1.json#/$defs/Expr",
+              "description": "The value assigned. Absent for `increment` and `decrement`, which have no operand."
+            },
+            "isPostfix": {
+              "type": "boolean",
+              "description": "For `increment`/`decrement`: whether the operator followed its target (`i++`) rather than preceded it (`++i`). The two differ only when the expression's value is consumed — `list[i++]` — but they do differ, and dropping the distinction would silently generate the wrong index."
+            },
+            "type": {
+              "$ref": "shared.json#/$defs/TypeRef",
+              "description": "Resolved type of the expression — the value written. Required, because every other member of the `Expr` union requires it and a consumer may rely on that."
+            }
+          }
+        }
+      ]
+    },
+    "Conditional": {
+      "description": "A ternary conditional, e.g. `a ? b : c`.",
+      "x-uir-kind": "logic.Conditional",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "test",
+            "then",
+            "otherwise",
+            "type"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "logic.Conditional",
+              "description": "Discriminant."
+            },
+            "test": {
+              "$ref": "l1.json#/$defs/Expr",
+              "description": "The condition."
+            },
+            "then": {
+              "$ref": "l1.json#/$defs/Expr",
+              "description": "Value when true."
+            },
+            "otherwise": {
+              "$ref": "l1.json#/$defs/Expr",
+              "description": "Value when false."
+            },
+            "type": {
+              "$ref": "shared.json#/$defs/TypeRef",
+              "description": "Resolved type."
+            }
+          }
+        }
+      ]
+    },
+    "Lambda": {
+      "description": "An anonymous function.",
+      "x-uir-kind": "logic.Lambda",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "body",
+            "type"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "logic.Lambda",
+              "description": "Discriminant."
+            },
+            "params": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ParamDecl",
+                "description": "A parameter."
+              },
+              "description": "Parameters, in order."
+            },
+            "body": {
+              "type": "array",
+              "items": {
+                "$ref": "l1.json#/$defs/Stmt",
+                "description": "A statement."
+              },
+              "description": "Body, in order."
+            },
+            "isAsync": {
+              "type": "boolean",
+              "description": "Whether the lambda is async."
+            },
+            "type": {
+              "$ref": "shared.json#/$defs/TypeRef",
+              "description": "Resolved function type."
+            }
+          }
+        }
+      ]
+    },
+    "Await": {
+      "description": "An `await` expression.",
+      "x-uir-kind": "logic.Await",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "operand",
+            "type"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "logic.Await",
+              "description": "Discriminant."
+            },
+            "operand": {
+              "$ref": "l1.json#/$defs/Expr",
+              "description": "The awaited expression."
+            },
+            "type": {
+              "$ref": "shared.json#/$defs/TypeRef",
+              "description": "Resolved type."
+            }
+          }
+        }
+      ]
+    },
+    "ListLit": {
+      "description": "A list literal.",
+      "x-uir-kind": "logic.ListLit",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "type"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "logic.ListLit",
+              "description": "Discriminant."
+            },
+            "elements": {
+              "type": "array",
+              "items": {
+                "$ref": "l1.json#/$defs/Expr",
+                "description": "An element."
+              },
+              "description": "Elements, in order. Order is semantic."
+            },
+            "type": {
+              "$ref": "shared.json#/$defs/TypeRef",
+              "description": "Resolved type."
+            }
+          }
+        }
+      ]
+    },
+    "MapLit": {
+      "description": "A map literal.",
+      "x-uir-kind": "logic.MapLit",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "type"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "logic.MapLit",
+              "description": "Discriminant."
+            },
+            "keys": {
+              "type": "array",
+              "items": {
+                "$ref": "l1.json#/$defs/Expr",
+                "description": "A key."
+              },
+              "description": "Keys, in order, paired positionally with `values`."
+            },
+            "values": {
+              "type": "array",
+              "items": {
+                "$ref": "l1.json#/$defs/Expr",
+                "description": "A value."
+              },
+              "description": "Values, in order, paired positionally with `keys`."
+            },
+            "type": {
+              "$ref": "shared.json#/$defs/TypeRef",
+              "description": "Resolved type."
+            }
+          }
+        }
+      ]
+    },
+    "New": {
+      "description": "A constructor invocation.",
+      "x-uir-kind": "logic.New",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "typeName",
+            "type"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "logic.New",
+              "description": "Discriminant."
+            },
+            "typeName": {
+              "type": "string",
+              "description": "The class constructed."
+            },
+            "args": {
+              "type": "array",
+              "items": {
+                "$ref": "l1.json#/$defs/Expr",
+                "description": "An argument."
+              },
+              "description": "Positional arguments, in order."
+            },
+            "namedArgs": {
+              "type": "object",
+              "additionalProperties": {
+                "$ref": "l1.json#/$defs/Expr",
+                "description": "A named argument."
+              },
+              "description": "Named arguments."
+            },
+            "isConst": {
+              "type": "boolean",
+              "description": "Whether the construction is const — the input to const folding (pass N6)."
+            },
+            "type": {
+              "$ref": "shared.json#/$defs/TypeRef",
+              "description": "Resolved type."
+            },
+            "constructorName": {
+              "type": "string",
+              "description": "The named constructor, if any."
+            }
+          }
+        }
+      ]
+    },
+    "Cast": {
+      "description": "An `as` cast.",
+      "x-uir-kind": "logic.Cast",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "operand",
+            "type"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "logic.Cast",
+              "description": "Discriminant."
+            },
+            "operand": {
+              "$ref": "l1.json#/$defs/Expr",
+              "description": "The value cast."
+            },
+            "type": {
+              "$ref": "shared.json#/$defs/TypeRef",
+              "description": "The target type."
+            }
+          }
+        }
+      ]
+    },
+    "StringInterp": {
+      "description": "An interpolated string. Each interpolation is a reactive read.",
+      "x-uir-kind": "logic.StringInterp",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "type"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "logic.StringInterp",
+              "description": "Discriminant."
+            },
+            "parts": {
+              "type": "array",
+              "items": {
+                "$ref": "l1.json#/$defs/Expr",
+                "description": "A part: a literal fragment or an interpolated expression."
+              },
+              "description": "Parts, in order."
+            },
+            "type": {
+              "$ref": "shared.json#/$defs/TypeRef",
+              "description": "Resolved type."
+            }
+          }
+        }
+      ]
+    },
+    "NullCheck": {
+      "description": "A null-aware operation, e.g. `a ?? b` or `a?.b`.",
+      "x-uir-kind": "logic.NullCheck",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "operand",
+            "type"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "logic.NullCheck",
+              "description": "Discriminant."
+            },
+            "operand": {
+              "$ref": "l1.json#/$defs/Expr",
+              "description": "The operand."
+            },
+            "fallback": {
+              "$ref": "l1.json#/$defs/Expr",
+              "description": "The fallback, for `??`."
+            },
+            "type": {
+              "$ref": "shared.json#/$defs/TypeRef",
+              "description": "Resolved type."
+            }
+          }
+        }
+      ]
+    },
+    "OpaqueExpr": {
+      "description": "An expression the extractor cannot model.\n\nNever dropped, never guessed (INV-4): the raw source, its resolved type, and the reason are preserved so the override system and the AI gap analyzer both have something real to work with.",
+      "x-uir-kind": "logic.OpaqueExpr",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "dartSource",
+            "reason",
+            "type"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "logic.OpaqueExpr",
+              "description": "Discriminant."
+            },
+            "dartSource": {
+              "type": "string",
+              "description": "The original Dart source."
+            },
+            "reason": {
+              "type": "string",
+              "description": "Why it could not be modeled."
+            },
+            "type": {
+              "$ref": "shared.json#/$defs/TypeRef",
+              "description": "Resolved type, which the analyzer still knows."
+            }
+          }
+        }
+      ]
+    },
+    "Block": {
+      "description": "A brace-delimited block.",
+      "x-uir-kind": "logic.Block",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "logic.Block",
+              "description": "Discriminant."
+            },
+            "statements": {
+              "type": "array",
+              "items": {
+                "$ref": "l1.json#/$defs/Stmt",
+                "description": "A statement."
+              },
+              "description": "Statements, in order. Order is semantic."
+            }
+          }
+        }
+      ]
+    },
+    "If": {
+      "description": "An if statement.",
+      "x-uir-kind": "logic.If",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "test",
+            "then"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "logic.If",
+              "description": "Discriminant."
+            },
+            "test": {
+              "$ref": "l1.json#/$defs/Expr",
+              "description": "The condition."
+            },
+            "then": {
+              "$ref": "l1.json#/$defs/Stmt",
+              "description": "The then branch."
+            },
+            "otherwise": {
+              "$ref": "l1.json#/$defs/Stmt",
+              "description": "The else branch, if any."
+            }
+          }
+        }
+      ]
+    },
+    "For": {
+      "description": "A for or for-in loop.",
+      "x-uir-kind": "logic.For",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "body"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "logic.For",
+              "description": "Discriminant."
+            },
+            "init": {
+              "$ref": "l1.json#/$defs/Stmt",
+              "description": "Initializer, for a C-style loop."
+            },
+            "test": {
+              "$ref": "l1.json#/$defs/Expr",
+              "description": "Loop condition."
+            },
+            "update": {
+              "type": "array",
+              "items": {
+                "$ref": "l1.json#/$defs/Expr",
+                "description": "An update expression."
+              },
+              "description": "Update expressions, in order."
+            },
+            "iterable": {
+              "$ref": "l1.json#/$defs/Expr",
+              "description": "The iterable, for a for-in loop."
+            },
+            "loopVariable": {
+              "type": "string",
+              "description": "The loop variable, for a for-in loop."
+            },
+            "body": {
+              "$ref": "l1.json#/$defs/Stmt",
+              "description": "The loop body."
+            }
+          }
+        }
+      ]
+    },
+    "While": {
+      "description": "A while or do-while loop.",
+      "x-uir-kind": "logic.While",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "test",
+            "body"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "logic.While",
+              "description": "Discriminant."
+            },
+            "test": {
+              "$ref": "l1.json#/$defs/Expr",
+              "description": "The condition."
+            },
+            "body": {
+              "$ref": "l1.json#/$defs/Stmt",
+              "description": "The body."
+            },
+            "isDoWhile": {
+              "type": "boolean",
+              "description": "Whether the test runs after the body."
+            }
+          }
+        }
+      ]
+    },
+    "Switch": {
+      "description": "A switch statement.",
+      "x-uir-kind": "logic.Switch",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "subject"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "logic.Switch",
+              "description": "Discriminant."
+            },
+            "subject": {
+              "$ref": "l1.json#/$defs/Expr",
+              "description": "The value switched on."
+            },
+            "cases": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/SwitchCase",
+                "description": "A case."
+              },
+              "description": "Cases, in order."
+            }
+          }
+        }
+      ]
+    },
+    "Return": {
+      "description": "A return statement.",
+      "x-uir-kind": "logic.Return",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "logic.Return",
+              "description": "Discriminant."
+            },
+            "value": {
+              "$ref": "l1.json#/$defs/Expr",
+              "description": "The returned value, if any."
+            }
+          }
+        }
+      ]
+    },
+    "Throw": {
+      "description": "A throw statement.",
+      "x-uir-kind": "logic.Throw",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "value"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "logic.Throw",
+              "description": "Discriminant."
+            },
+            "value": {
+              "$ref": "l1.json#/$defs/Expr",
+              "description": "The thrown value."
+            }
+          }
+        }
+      ]
+    },
+    "TryCatch": {
+      "description": "A try statement.",
+      "x-uir-kind": "logic.TryCatch",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "body"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "logic.TryCatch",
+              "description": "Discriminant."
+            },
+            "body": {
+              "$ref": "#/$defs/Block",
+              "description": "The protected block."
+            },
+            "catches": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/CatchClause",
+                "description": "A catch clause."
+              },
+              "description": "Catch clauses, in order."
+            },
+            "finallyBlock": {
+              "$ref": "#/$defs/Block",
+              "description": "The finally block, if any."
+            }
+          }
+        }
+      ]
+    },
+    "VarDecl": {
+      "description": "A local variable declaration.",
+      "x-uir-kind": "logic.VarDecl",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "name",
+            "type"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "logic.VarDecl",
+              "description": "Discriminant."
+            },
+            "name": {
+              "type": "string",
+              "description": "The variable name."
+            },
+            "type": {
+              "$ref": "shared.json#/$defs/TypeRef",
+              "description": "Resolved type."
+            },
+            "initializer": {
+              "$ref": "l1.json#/$defs/Expr",
+              "description": "The initializer, if any."
+            },
+            "isFinal": {
+              "type": "boolean",
+              "description": "Whether the variable is final."
+            }
+          }
+        }
+      ]
+    },
+    "ExprStmt": {
+      "description": "An expression evaluated for its effect.",
+      "x-uir-kind": "logic.ExprStmt",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "expr"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "logic.ExprStmt",
+              "description": "Discriminant."
+            },
+            "expr": {
+              "$ref": "l1.json#/$defs/Expr",
+              "description": "The expression."
+            }
+          }
+        }
+      ]
+    },
+    "Break": {
+      "description": "A break statement.",
+      "x-uir-kind": "logic.Break",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "logic.Break",
+              "description": "Discriminant."
+            },
+            "label": {
+              "type": "string",
+              "description": "The target label, if any."
+            }
+          }
+        }
+      ]
+    },
+    "Continue": {
+      "description": "A continue statement.",
+      "x-uir-kind": "logic.Continue",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "logic.Continue",
+              "description": "Discriminant."
+            },
+            "label": {
+              "type": "string",
+              "description": "The target label, if any."
+            }
+          }
+        }
+      ]
+    },
+    "OpaqueStmt": {
+      "description": "A statement the extractor cannot model. Preserved rather than dropped (INV-4).",
+      "x-uir-kind": "logic.OpaqueStmt",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "dartSource",
+            "reason"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "logic.OpaqueStmt",
+              "description": "Discriminant."
+            },
+            "dartSource": {
+              "type": "string",
+              "description": "The original Dart source."
+            },
+            "reason": {
+              "type": "string",
+              "description": "Why it could not be modeled."
+            }
+          }
+        }
+      ]
+    },
+    "ClassDecl": {
+      "description": "A class declaration.",
+      "x-uir-kind": "logic.ClassDecl",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "name"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "logic.ClassDecl",
+              "description": "Discriminant."
+            },
+            "name": {
+              "type": "string",
+              "description": "Class name."
+            },
+            "superclass": {
+              "$ref": "shared.json#/$defs/TypeRef",
+              "description": "The superclass, if any."
+            },
+            "fields": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/FieldDecl",
+                "description": "A field."
+              },
+              "description": "Fields, in declaration order."
+            },
+            "methods": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/FunctionDecl",
+                "description": "A method."
+              },
+              "description": "Methods, in declaration order."
+            }
+          }
+        }
+      ]
+    },
+    "EnumDecl": {
+      "description": "An enum declaration.",
+      "x-uir-kind": "logic.EnumDecl",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "name"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "logic.EnumDecl",
+              "description": "Discriminant."
+            },
+            "name": {
+              "type": "string",
+              "description": "Enum name."
+            },
+            "values": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "description": "A value name."
+              },
+              "description": "Values, in declaration order."
+            }
+          }
+        }
+      ]
+    },
+    "TypeAliasDecl": {
+      "description": "A typedef.",
+      "x-uir-kind": "logic.TypeAliasDecl",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "name",
+            "aliased"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "logic.TypeAliasDecl",
+              "description": "Discriminant."
+            },
+            "name": {
+              "type": "string",
+              "description": "Alias name."
+            },
+            "aliased": {
+              "$ref": "shared.json#/$defs/TypeRef",
+              "description": "The aliased type."
+            }
+          }
+        }
+      ]
+    },
+    "FunctionDecl": {
+      "description": "A function or method declaration.",
+      "x-uir-kind": "logic.FunctionDecl",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "name",
+            "returnType"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "logic.FunctionDecl",
+              "description": "Discriminant."
+            },
+            "name": {
+              "type": "string",
+              "description": "Function name."
+            },
+            "params": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ParamDecl",
+                "description": "A parameter."
+              },
+              "description": "Parameters, in order."
+            },
+            "returnType": {
+              "$ref": "shared.json#/$defs/TypeRef",
+              "description": "Resolved return type."
+            },
+            "body": {
+              "type": "array",
+              "items": {
+                "$ref": "l1.json#/$defs/Stmt",
+                "description": "A statement."
+              },
+              "description": "Body, in order."
+            },
+            "isAsync": {
+              "type": "boolean",
+              "description": "Whether the function is async."
+            },
+            "isStatic": {
+              "type": "boolean",
+              "description": "Whether the function is static."
+            }
+          }
+        }
+      ]
+    },
+    "FieldDecl": {
+      "description": "A field declaration.",
+      "x-uir-kind": "logic.FieldDecl",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "name",
+            "type"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "logic.FieldDecl",
+              "description": "Discriminant."
+            },
+            "name": {
+              "type": "string",
+              "description": "Field name."
+            },
+            "type": {
+              "$ref": "shared.json#/$defs/TypeRef",
+              "description": "Resolved type."
+            },
+            "initializer": {
+              "$ref": "l1.json#/$defs/Expr",
+              "description": "The initializer, if any."
+            },
+            "isFinal": {
+              "type": "boolean",
+              "description": "Whether the field is final."
+            },
+            "isStatic": {
+              "type": "boolean",
+              "description": "Whether the field is static."
+            }
+          }
+        }
+      ]
+    },
+    "OpaqueDecl": {
+      "description": "A declaration the extractor cannot model — a mixin, an extension. Preserved rather than dropped (INV-4).\n\nAdded in v2.2 (§A11). The `Decl` union previously had no opaque variant, unlike `Expr` and `Stmt`, so an unmodellable declaration had nowhere to go and would have had to be silently discarded. compass_app declares 11 mixins; wonderous declares 5 extensions.",
+      "x-uir-kind": "logic.OpaqueDecl",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "dartSource",
+            "reason"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "logic.OpaqueDecl",
+              "description": "Discriminant."
+            },
+            "dartSource": {
+              "type": "string",
+              "description": "The original Dart source."
+            },
+            "reason": {
+              "type": "string",
+              "description": "Why it could not be modeled."
+            }
+          }
+        }
+      ]
+    },
+    "Expr": {
+      "description": "Any expression.",
+      "x-uir-union": true,
+      "oneOf": [
+        {
+          "$ref": "#/$defs/Lit"
+        },
+        {
+          "$ref": "#/$defs/Ref"
+        },
+        {
+          "$ref": "#/$defs/Call"
+        },
+        {
+          "$ref": "#/$defs/MethodCall"
+        },
+        {
+          "$ref": "#/$defs/PropertyAccess"
+        },
+        {
+          "$ref": "#/$defs/Binary"
+        },
+        {
+          "$ref": "#/$defs/Unary"
+        },
+        {
+          "$ref": "#/$defs/Assign"
+        },
+        {
+          "$ref": "#/$defs/Conditional"
+        },
+        {
+          "$ref": "#/$defs/Lambda"
+        },
+        {
+          "$ref": "#/$defs/Await"
+        },
+        {
+          "$ref": "#/$defs/ListLit"
+        },
+        {
+          "$ref": "#/$defs/MapLit"
+        },
+        {
+          "$ref": "#/$defs/New"
+        },
+        {
+          "$ref": "#/$defs/Cast"
+        },
+        {
+          "$ref": "#/$defs/StringInterp"
+        },
+        {
+          "$ref": "#/$defs/NullCheck"
+        },
+        {
+          "$ref": "#/$defs/OpaqueExpr"
+        }
+      ]
+    },
+    "Stmt": {
+      "description": "Any statement.",
+      "x-uir-union": true,
+      "oneOf": [
+        {
+          "$ref": "#/$defs/Block"
+        },
+        {
+          "$ref": "#/$defs/If"
+        },
+        {
+          "$ref": "#/$defs/For"
+        },
+        {
+          "$ref": "#/$defs/While"
+        },
+        {
+          "$ref": "#/$defs/Switch"
+        },
+        {
+          "$ref": "#/$defs/Return"
+        },
+        {
+          "$ref": "#/$defs/Throw"
+        },
+        {
+          "$ref": "#/$defs/TryCatch"
+        },
+        {
+          "$ref": "#/$defs/VarDecl"
+        },
+        {
+          "$ref": "#/$defs/ExprStmt"
+        },
+        {
+          "$ref": "#/$defs/Break"
+        },
+        {
+          "$ref": "#/$defs/Continue"
+        },
+        {
+          "$ref": "#/$defs/OpaqueStmt"
+        }
+      ]
+    },
+    "Decl": {
+      "description": "Any declaration.",
+      "x-uir-union": true,
+      "oneOf": [
+        {
+          "$ref": "#/$defs/ClassDecl"
+        },
+        {
+          "$ref": "#/$defs/EnumDecl"
+        },
+        {
+          "$ref": "#/$defs/TypeAliasDecl"
+        },
+        {
+          "$ref": "#/$defs/FunctionDecl"
+        },
+        {
+          "$ref": "#/$defs/FieldDecl"
+        },
+        {
+          "$ref": "#/$defs/OpaqueDecl"
+        }
+      ]
+    }
+  }
+}

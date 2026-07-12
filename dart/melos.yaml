@@ -1,0 +1,21 @@
+name: flutterbridge_dart
+
+# The Dart half of the monorepo (Spec v2.0 §1.1, §1.3). Deferred at M0-T1 because there were no Dart
+# packages to manage; due now that `bridge_analyzer` exists.
+packages:
+  - bridge_analyzer
+  # Generated from the UIR schema by tools/schema-codegen. Never hand-written.
+  - bridge_uir
+
+command:
+  bootstrap:
+    runPubGetInParallelPackages: false
+
+scripts:
+  analyze:
+    description: Static analysis across the Dart domain.
+    run: melos exec -- dart analyze --fatal-infos --fatal-warnings
+
+  test:
+    description: Tests across the Dart domain.
+    run: melos exec --dir-exists=test -- dart test --reporter=expanded

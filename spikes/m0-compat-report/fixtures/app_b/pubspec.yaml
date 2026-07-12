@@ -1,0 +1,18 @@
+name: shop_bridge
+description: "M0-T6 fixture: a deliberately harder Flutter app (navigation, state, async, forms, collections, layouts) that also uses constructs outside the frozen MVP."
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.11.3
+
+dependencies:
+  flutter:
+    sdk: flutter
+  http: ^1.2.0
+
+dev_dependencies:
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true

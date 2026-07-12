@@ -1,0 +1,23 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "declarationDir": "dist",
+    "emitDeclarationOnly": true,
+    "tsBuildInfoFile": ".tsbuild/tsconfig.tsbuildinfo",
+    "types": [
+      "node"
+    ]
+  },
+  "include": [
+    "src/**/*.ts"
+  ],
+  "references": [
+    {
+      "path": "../../packages/uir"
+    },
+    {
+      "path": "../../packages/plugin-sdk"
+    }
+  ]
+}

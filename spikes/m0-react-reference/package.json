@@ -1,0 +1,22 @@
+{
+  "name": "m0-react-reference",
+  "version": "0.0.0",
+  "private": true,
+  "description": "M0-T4 SPIKE. Hand-written React output for hello_bridge's login screen, against a hand-rolled 10-component kit. Deleted/superseded at M2.",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
+  },
+  "dependencies": {
+    "next": "15.5.20",
+    "react": "19.2.7",
+    "react-dom": "19.2.7"
+  },
+  "devDependencies": {
+    "@types/node": "26.1.1",
+    "@types/react": "19.2.17",
+    "@types/react-dom": "19.2.3",
+    "typescript": "5.9.3"
+  }
+}

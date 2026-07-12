@@ -1,0 +1,631 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://flutterbridge.dev/uir/l2.json",
+  "title": "UIR L2 — UI",
+  "description": "Component declarations and render trees. This is the layer every ui-realm generator consumes.",
+  "x-uir-layer": "L2",
+  "$defs": {
+    "SizeIntent": {
+      "description": "What a node wants to do with the space it is offered, along one axis (Spec v2.1 §A3).\n\nFlutter's `Center` passes *loose* constraints: the child may take up to the parent's size and decides for itself. CSS has no equivalent — a flex child shrink-wraps, full stop — so one CSS rule cannot serve both `Center(child: Column(stretch))` and `Center(child: Text)`. The `layout-boundedness` analysis records the child's own intent here, and the generator hands it to the runtime kit rather than guessing.",
+      "enum": [
+        "fill",
+        "shrink",
+        "fixed"
+      ],
+      "x-uir-enum-docs": {
+        "fill": "Take all the space offered, e.g. a Column with crossAxisAlignment: stretch.",
+        "shrink": "Take only as much space as the content needs.",
+        "fixed": "Take an explicitly given size."
+      }
+    },
+    "LayoutTier": {
+      "description": "Which implementation of Flutter's layout protocol a subtree needs (Spec §5, risk R2).",
+      "enum": [
+        "css",
+        "measured"
+      ],
+      "x-uir-enum-docs": {
+        "css": "Expressible in flexbox/grid. The default, and the cheapest: no measurement at runtime.",
+        "measured": "Requires runtime measurement (ResizeObserver), because CSS cannot express the constraint."
+      }
+    },
+    "LayoutIntent": {
+      "type": "object",
+      "description": "The layout information a ui-realm generator needs, computed by the `layout-boundedness` analysis.\n\nAdditive: it is an optional field on `UiElement` and changes no existing node semantics.",
+      "additionalProperties": false,
+      "required": [
+        "widthIntent",
+        "heightIntent",
+        "tier"
+      ],
+      "properties": {
+        "widthIntent": {
+          "$ref": "#/$defs/SizeIntent",
+          "description": "What the node does with offered width."
+        },
+        "heightIntent": {
+          "$ref": "#/$defs/SizeIntent",
+          "description": "What the node does with offered height."
+        },
+        "tier": {
+          "$ref": "#/$defs/LayoutTier",
+          "description": "Which layout implementation the subtree requires."
+        }
+      }
+    },
+    "SemanticsInfo": {
+      "type": "object",
+      "description": "Accessibility semantics, extracted from Flutter's Semantics tree.\n\nThe input to the semantics verifier (Spec §8), which compares this against the rendered ARIA tree — a check of *meaning*, not pixels.",
+      "additionalProperties": false,
+      "required": [],
+      "properties": {
+        "label": {
+          "type": "string",
+          "description": "The accessible label."
+        },
+        "hint": {
+          "type": "string",
+          "description": "The accessible hint."
+        },
+        "role": {
+          "type": "string",
+          "description": "The semantic role."
+        },
+        "excluded": {
+          "type": "boolean",
+          "description": "Whether the subtree is excluded from semantics."
+        }
+      }
+    },
+    "ConstBinding": {
+      "description": "A constant value. Nothing reactive reads it.",
+      "x-uir-kind": "bind.Const",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "value"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "bind.Const",
+              "description": "Discriminant."
+            },
+            "value": {
+              "x-uir-json": true,
+              "description": "The constant."
+            }
+          }
+        }
+      ]
+    },
+    "ParamBinding": {
+      "description": "A read of one of the component's own parameters.",
+      "x-uir-kind": "bind.Param",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "param"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "bind.Param",
+              "description": "Discriminant."
+            },
+            "param": {
+              "type": "string",
+              "description": "The parameter name."
+            }
+          }
+        }
+      ]
+    },
+    "SignalBinding": {
+      "description": "A read of a signal. This is an edge in the reactivity graph.",
+      "x-uir-kind": "bind.Signal",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "signal"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "bind.Signal",
+              "description": "Discriminant."
+            },
+            "signal": {
+              "$ref": "shared.json#/$defs/NodeId",
+              "description": "The signal read."
+            },
+            "path": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "description": "A path segment."
+              },
+              "description": "Path into the signal's value, e.g. `['items', 'length']`."
+            }
+          }
+        }
+      ]
+    },
+    "ExprBinding": {
+      "description": "An arbitrary expression, e.g. a ternary or an event handler lambda.",
+      "x-uir-kind": "bind.Expr",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "expr"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "bind.Expr",
+              "description": "Discriminant."
+            },
+            "expr": {
+              "$ref": "l1.json#/$defs/Expr",
+              "description": "The expression."
+            }
+          }
+        }
+      ]
+    },
+    "Binding": {
+      "description": "How a prop gets its value.",
+      "x-uir-union": true,
+      "oneOf": [
+        {
+          "$ref": "#/$defs/ConstBinding"
+        },
+        {
+          "$ref": "#/$defs/ParamBinding"
+        },
+        {
+          "$ref": "#/$defs/SignalBinding"
+        },
+        {
+          "$ref": "#/$defs/ExprBinding"
+        }
+      ]
+    },
+    "UiElement": {
+      "description": "A widget instantiation.",
+      "x-uir-kind": "ui.Element",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "component"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "ui.Element",
+              "description": "Discriminant."
+            },
+            "component": {
+              "$ref": "shared.json#/$defs/WidgetRef",
+              "description": "The widget."
+            },
+            "props": {
+              "type": "object",
+              "additionalProperties": {
+                "$ref": "l2.json#/$defs/Binding",
+                "description": "A prop value."
+              },
+              "description": "Props, keyed by parameter name. Serialized in sorted key order."
+            },
+            "children": {
+              "type": "array",
+              "items": {
+                "$ref": "l2.json#/$defs/UiNode",
+                "description": "A child."
+              },
+              "description": "Children, **in order**. Order is semantic: it is the order they appear on screen, and equality and serialization both preserve it."
+            },
+            "slots": {
+              "type": "object",
+              "additionalProperties": {
+                "$ref": "l2.json#/$defs/UiNode",
+                "description": "A slot child."
+              },
+              "description": "Named single-child slots, e.g. `appBar`, `body`."
+            },
+            "key": {
+              "$ref": "l2.json#/$defs/Binding",
+              "description": "The widget key, when one was given."
+            },
+            "layout": {
+              "$ref": "#/$defs/LayoutIntent",
+              "description": "Layout intent, from the `layout-boundedness` analysis."
+            },
+            "semantics": {
+              "$ref": "#/$defs/SemanticsInfo",
+              "description": "Accessibility semantics, when the widget carries them."
+            }
+          }
+        }
+      ]
+    },
+    "UiText": {
+      "description": "A text node.",
+      "x-uir-kind": "ui.Text",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "value"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "ui.Text",
+              "description": "Discriminant."
+            },
+            "value": {
+              "$ref": "l2.json#/$defs/Binding",
+              "description": "The text. A string interpolation makes this a reactive read."
+            },
+            "style": {
+              "type": "object",
+              "additionalProperties": {
+                "$ref": "l2.json#/$defs/Binding",
+                "description": "A style property."
+              },
+              "description": "Style properties, keyed by name."
+            }
+          }
+        }
+      ]
+    },
+    "UiList": {
+      "description": "A list rendered from a collection — the normalized form of `ListView.builder` (pass N3).",
+      "x-uir-kind": "ui.List",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "source",
+            "itemParam",
+            "template"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "ui.List",
+              "description": "Discriminant."
+            },
+            "source": {
+              "$ref": "l2.json#/$defs/Binding",
+              "description": "The collection rendered."
+            },
+            "itemParam": {
+              "type": "string",
+              "description": "The name bound to each item inside the template."
+            },
+            "indexParam": {
+              "type": "string",
+              "description": "The name bound to each index, if the builder takes one."
+            },
+            "template": {
+              "$ref": "l2.json#/$defs/UiNode",
+              "description": "The subtree rendered per item."
+            },
+            "key": {
+              "$ref": "l2.json#/$defs/Binding",
+              "description": "The per-item key, inferred when Flutter gave none (pass N9)."
+            }
+          }
+        }
+      ]
+    },
+    "UiCond": {
+      "description": "A conditional subtree — the normalized form of a collection-`if` or a ternary (pass N2).",
+      "x-uir-kind": "ui.Cond",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "test",
+            "then"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "ui.Cond",
+              "description": "Discriminant."
+            },
+            "test": {
+              "$ref": "l2.json#/$defs/Binding",
+              "description": "The condition."
+            },
+            "then": {
+              "$ref": "l2.json#/$defs/UiNode",
+              "description": "Rendered when true."
+            },
+            "otherwise": {
+              "$ref": "l2.json#/$defs/UiNode",
+              "description": "Rendered when false, if anything."
+            }
+          }
+        }
+      ]
+    },
+    "UiAsync": {
+      "description": "An asynchronous subtree — the normalized form of `FutureBuilder` (pass N4).\n\nThe waiting/error/data branch shape is mechanically recognizable in real Flutter code, which is what lets N4 pattern-match rather than interpret.",
+      "x-uir-kind": "ui.Async",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "source",
+            "data"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "ui.Async",
+              "description": "Discriminant."
+            },
+            "source": {
+              "$ref": "l2.json#/$defs/Binding",
+              "description": "The future or stream driving the subtree."
+            },
+            "loading": {
+              "$ref": "l2.json#/$defs/UiNode",
+              "description": "Rendered while pending."
+            },
+            "error": {
+              "$ref": "l2.json#/$defs/UiNode",
+              "description": "Rendered on failure."
+            },
+            "data": {
+              "$ref": "l2.json#/$defs/UiNode",
+              "description": "Rendered on success."
+            },
+            "dataParam": {
+              "type": "string",
+              "description": "The name bound to the resolved value inside `data`."
+            }
+          }
+        }
+      ]
+    },
+    "UiSlotRef": {
+      "description": "A reference to a named slot supplied by a parent.",
+      "x-uir-kind": "ui.SlotRef",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "slot"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "ui.SlotRef",
+              "description": "Discriminant."
+            },
+            "slot": {
+              "type": "string",
+              "description": "The slot name."
+            }
+          }
+        }
+      ]
+    },
+    "UiOverrideRef": {
+      "description": "A subtree a human owns.\n\nThe generator emits an import of the override instead of generated code, and `bridge sync` checks that the override's props still match the Flutter side — so a changed constructor is a named diff, not silent drift.",
+      "x-uir-kind": "ui.OverrideRef",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "overrideKey"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "ui.OverrideRef",
+              "description": "Discriminant."
+            },
+            "props": {
+              "type": "object",
+              "additionalProperties": {
+                "$ref": "l2.json#/$defs/Binding",
+                "description": "A prop passed to the override."
+              },
+              "description": "Props the override receives."
+            },
+            "overrideKey": {
+              "$ref": "shared.json#/$defs/Anchor",
+              "description": "The override key."
+            }
+          }
+        }
+      ]
+    },
+    "UiOpaque": {
+      "description": "A widget the extractor cannot model. Preserved with its source and reason (INV-4); routed to the override system.",
+      "x-uir-kind": "ui.Opaque",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "dartSource",
+            "reason"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "ui.Opaque",
+              "description": "Discriminant."
+            },
+            "dartSource": {
+              "type": "string",
+              "description": "The original Dart source."
+            },
+            "reason": {
+              "type": "string",
+              "description": "Why it could not be modeled."
+            },
+            "widget": {
+              "$ref": "shared.json#/$defs/WidgetRef",
+              "description": "The widget, when it could at least be identified."
+            }
+          }
+        }
+      ]
+    },
+    "UiNode": {
+      "description": "Any node in a render tree.",
+      "x-uir-union": true,
+      "oneOf": [
+        {
+          "$ref": "#/$defs/UiElement"
+        },
+        {
+          "$ref": "#/$defs/UiText"
+        },
+        {
+          "$ref": "#/$defs/UiList"
+        },
+        {
+          "$ref": "#/$defs/UiCond"
+        },
+        {
+          "$ref": "#/$defs/UiAsync"
+        },
+        {
+          "$ref": "#/$defs/UiSlotRef"
+        },
+        {
+          "$ref": "#/$defs/UiOverrideRef"
+        },
+        {
+          "$ref": "#/$defs/UiOpaque"
+        }
+      ]
+    },
+    "Component": {
+      "description": "A widget the application declares — a screen or a reusable widget.\n\nThis is what the compiler *generates*; it is never a construct to be mapped.",
+      "x-uir-kind": "ui.Component",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "name",
+            "render"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "ui.Component",
+              "description": "Discriminant."
+            },
+            "name": {
+              "type": "string",
+              "description": "The component name, e.g. `LoginScreen`."
+            },
+            "params": {
+              "type": "array",
+              "items": {
+                "$ref": "l1.json#/$defs/ParamDecl",
+                "description": "A parameter."
+              },
+              "description": "Constructor parameters, in order."
+            },
+            "localSignals": {
+              "type": "array",
+              "items": {
+                "$ref": "shared.json#/$defs/NodeId",
+                "description": "A signal."
+              },
+              "description": "Component-scoped signals — the State fields (Spec §2.3)."
+            },
+            "render": {
+              "$ref": "l2.json#/$defs/UiNode",
+              "description": "The render tree."
+            },
+            "semantics": {
+              "$ref": "#/$defs/SemanticsInfo",
+              "description": "Semantics for the component root, if any."
+            }
+          }
+        }
+      ]
+    }
+  }
+}

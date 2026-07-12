@@ -1,0 +1,13 @@
+name: m0_extractor
+description: >-
+  M0-T3 SPIKE. Throwaway extractor: walks hello_bridge with package:analyzer and dumps ad-hoc JSON
+  (widget trees, state fields, navigation). Deleted at M1-T7, when dart/bridge_analyzer begins.
+publish_to: 'none'
+version: 0.0.0
+
+environment:
+  sdk: ^3.11.0
+
+dependencies:
+  analyzer: ^14.0.0
+  path: ^1.9.0

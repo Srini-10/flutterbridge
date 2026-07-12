@@ -1,0 +1,13 @@
+{
+  "$schema": "https://unpkg.com/@changesets/config@3.0.0/schema.json",
+  "changelog": "@changesets/cli/changelog",
+  "commit": false,
+  "access": "restricted",
+  "baseBranch": "main",
+  "updateInternalDependencies": "patch",
+  "___comment": "Spec §1.4: the compiler train is released in lockstep. Runtime kits version independently (LTS policy) and are therefore NOT in this group.",
+  "linked": [
+    ["@bridge/core", "@bridge/compiler", "@bridge/plugin-sdk", "@bridge/cli", "@bridge/gen-react", "@bridge/verification"]
+  ],
+  "ignore": []
+}

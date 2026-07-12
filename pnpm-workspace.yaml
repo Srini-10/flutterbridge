@@ -1,0 +1,20 @@
+# Workspace members. Reserved package directories (see their README.md) carry no
+# package.json until their milestone, so they are not workspace members yet.
+packages:
+  - 'packages/*'
+  - 'packages/adapters/*'
+  - 'packages/generators/*'
+  - 'packages/runtimes/*'
+  - 'tools/*'
+
+# Explicitly approved postinstall scripts. esbuild is tsup's engine and needs its native binary.
+allowBuilds:
+  esbuild: true
+
+# Single source of truth for shared dev-tool versions (Spec v2.0 §1.3: deterministic builds).
+catalog:
+  '@microsoft/api-extractor': 7.58.9
+  '@types/node': 26.1.1
+  tsup: 8.5.1
+  typescript: 5.9.3
+  vitest: 4.1.10

@@ -1,0 +1,35 @@
+{
+  "name": "@bridge/widgets-material",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Material widget mappers (~28 for MVP, Blueprint §5.2).",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -b tsconfig.json && tsup",
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc -b tsconfig.json && tsc -p tsconfig.test.json",
+    "api-check": "api-extractor run --local"
+  },
+  "dependencies": {
+    "@bridge/uir": "workspace:*",
+    "@bridge/plugin-sdk": "workspace:*"
+  },
+  "devDependencies": {
+    "@microsoft/api-extractor": "catalog:",
+    "@types/node": "catalog:",
+    "tsup": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

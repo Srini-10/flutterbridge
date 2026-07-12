@@ -1,0 +1,123 @@
+/* M0-T4 SPIKE — kit chrome. Colours come only from tokens (see app/globals.css). */
+
+.bridge-scaffold {
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+  background: var(--bridge-color-scaffold-bg);
+  color: var(--bridge-color-on-surface);
+}
+
+/* Flutter's Scaffold body gets the remaining height as a *bounded* constraint — hence flex:1 plus
+   min-height:0, without which a scrollable child would grow the page instead of scrolling. It is a
+   flex column so that a child claiming the full body height (e.g. Center) actually receives a
+   definite height to centre within; `height: 100%` alone does not resolve against a flex item. */
+.bridge-scaffold-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.bridge-appbar {
+  display: flex;
+  align-items: center;
+  height: 56px;
+  flex-shrink: 0;
+  padding: 0 4px;
+  background: var(--bridge-color-appbar-bg);
+  color: var(--bridge-color-on-surface);
+}
+
+.bridge-appbar-leading,
+.bridge-appbar-actions {
+  display: flex;
+  align-items: center;
+  min-width: 48px;
+}
+
+.bridge-appbar-actions {
+  justify-content: flex-end;
+}
+
+/* Flutter centres the AppBar title on the web target. */
+.bridge-appbar-title {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+  font-size: 22px;
+  font-weight: 400;
+}
+
+.bridge-text {
+  font-size: 16px;
+  line-height: 1.4;
+}
+
+.bridge-textfield {
+  width: 100%;
+  box-sizing: border-box;
+  height: 48px;
+  padding: 0 0 4px;
+  font-size: 16px;
+  color: var(--bridge-color-on-surface);
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--bridge-color-outline);
+  border-radius: 0;
+  outline: none;
+}
+
+.bridge-textfield::placeholder {
+  color: var(--bridge-color-on-surface-variant);
+}
+
+.bridge-textfield:focus {
+  border-bottom: 2px solid var(--bridge-color-primary);
+  padding-bottom: 3px;
+}
+
+.bridge-elevated-button {
+  width: 100%;
+  height: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 24px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--bridge-color-primary);
+  background: var(--bridge-color-primary-container);
+  border: none;
+  border-radius: 24px;
+  cursor: pointer;
+}
+
+.bridge-elevated-button:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.bridge-progress {
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  border-style: solid;
+  border-color: var(--bridge-color-primary);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: bridge-spin 1s linear infinite;
+}
+
+@keyframes bridge-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bridge-progress {
+    animation-duration: 4s;
+  }
+}

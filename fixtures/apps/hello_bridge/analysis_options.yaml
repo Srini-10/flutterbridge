@@ -1,0 +1,18 @@
+# Spec v2.0 §8, Dart standards: strict analysis.
+#
+# This app is the walking skeleton every milestone gate runs against, so it must stay analyze-clean.
+# It is also "the MVP subset" (Blueprint §5.2) in executable form: if a construct is not in the
+# subset, it does not appear here.
+include: package:flutter_lints/flutter.yaml
+
+analyzer:
+  language:
+    strict-casts: true
+    strict-inference: true
+    strict-raw-types: true
+
+linter:
+  rules:
+    - always_declare_return_types
+    - prefer_final_locals
+    - unawaited_futures

@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://flutterbridge.dev/diagnostics/diagnostic-report.schema.json",
+  "title": "bridge_analyzer diagnostic report",
+  "description": "The machine-readable diagnostics contract (INV-16). Consumers: IDEs, CI, and the compiler's TypeScript half.\n\nAdditive-only until a major: a consumer MUST ignore fields it does not know, and a new optional field MUST NOT break one. Removing a field, renaming one, or changing its meaning bumps reportVersion — and a consumer that does not recognise the version MUST refuse to interpret the report rather than guess at it.\n\nOutput is canonical: keys sorted, no whitespace variance, no timestamps.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["reportVersion", "tool", "summary", "diagnostics"],
+  "properties": {
+    "reportVersion": {
+      "type": "integer",
+      "const": 1,
+      "description": "The version of this format. Not the analyzer's version."
+    },
+    "tool": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "description": "What produced the report.",
+      "properties": {
+        "name": { "type": "string", "const": "bridge_analyzer", "description": "The tool." },
+        "version": { "type": "string", "description": "The analyzer's version." }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["errors", "warnings", "infos", "total"],
+      "description": "Severity counts, so a consumer need not tally them itself.",
+      "properties": {
+        "errors": { "type": "integer", "minimum": 0, "description": "Error-severity diagnostics." },
+        "warnings": { "type": "integer", "minimum": 0, "description": "Warnings." },
+        "infos": { "type": "integer", "minimum": 0, "description": "Informational diagnostics — the compiler reporting a decision it made, so that it is never silent." },
+        "total": { "type": "integer", "minimum": 0, "description": "The sum." }
+      }
+    },
+    "diagnostics": {
+      "type": "array",
+      "description": "Every diagnostic, in a stable total order: file, line, column, code, message. The order is part of the contract — a CI job that diffs two reports must not see changes caused by traversal order.",
+      "items": { "$ref": "#/$defs/diagnostic" }
+    }
+  },
+  "$defs": {
+    "location": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["file", "line", "column"],
+      "description": "A place in the analyzed project. Paths are project-relative, never absolute: an absolute path would make the report depend on where the project sits on disk.",
+      "properties": {
+        "file": { "type": "string", "description": "Project-relative path." },
+        "line": { "type": "integer", "minimum": 1, "description": "1-based line." },
+        "column": { "type": "integer", "minimum": 1, "description": "1-based column." },
+        "length": { "type": "integer", "minimum": 1, "description": "Length in characters. Absent means a point." }
+      }
+    },
+    "diagnostic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "severity", "category", "title", "message", "docsSlug"],
+      "properties": {
+        "code": { "type": "string", "pattern": "^BRG[0-9]{4}$", "description": "The permanent code, e.g. BRG1201. Never reused, never renumbered." },
+        "severity": { "enum": ["error", "warning", "info"], "description": "How much it matters." },
+        "category": {
+          "enum": ["configuration", "extraction", "mapping", "generation", "verification"],
+          "description": "Which part of the compiler owns it (Spec §9.2 code namespaces)."
+        },
+        "title": { "type": "string", "description": "The code's invariant summary. Belongs to the code." },
+        "message": { "type": "string", "description": "What is wrong here, specifically. Belongs to the occurrence." },
+        "docsSlug": { "type": "string", "description": "The slug for `bridge_analyzer explain <code>` and the docs site." },
+        "location": { "$ref": "#/$defs/location", "description": "Where. Absent for diagnostics about the project rather than a place in it." },
+        "hint": { "type": "string", "description": "What the user should do next, as something they can act on." },
+        "related": {
+          "type": "array",
+          "description": "Secondary locations that explain the diagnostic — e.g. the first of two conflicting declarations.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["location", "message"],
+            "properties": {
+              "location": { "$ref": "#/$defs/location", "description": "Where." },
+              "message": { "type": "string", "description": "Why this location matters." }
+            }
+          }
+        },
+        "fixes": {
+          "type": "array",
+          "description": "Machine-applicable edits. A fix is a span and the text to put there — nothing more expressive, because anything more expressive stops being mechanically applicable, which is the whole point of shipping them to an IDE.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["description", "location", "replacement"],
+            "properties": {
+              "description": { "type": "string", "description": "What the fix does, in the user's terms." },
+              "location": { "$ref": "#/$defs/location", "description": "The span to replace." },
+              "replacement": { "type": "string", "description": "The text to put there." }
+            }
+          }
+        }
+      }
+    }
+  }
+}

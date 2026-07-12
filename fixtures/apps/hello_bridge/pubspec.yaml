@@ -1,0 +1,19 @@
+name: hello_bridge
+description: "FlutterBridge walking-skeleton fixture app (Blueprint §5.1)."
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.11.3
+
+dependencies:
+  flutter:
+    sdk: flutter
+  # The fixture's single package dependency: the one network call the FutureBuilder consumes.
+  http: ^1.2.0
+
+dev_dependencies:
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true

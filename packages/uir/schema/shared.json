@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://flutterbridge.dev/uir/shared.json",
+  "title": "UIR — shared definitions",
+  "description": "Types every layer depends on: identity, source locations, the node base contract, and the reserved diagnostic codes.",
+  "x-uir-layer": "shared",
+  "x-uir-version": "1.2.0",
+  "$defs": {
+    "NodeId": {
+      "type": "string",
+      "description": "A node's content-addressed identity: blake3 of the node's canonical form, minus its own id, anchor and span.\n\nIds are permanent. They key overrides, caches, incrementality and AI provenance (ADR-7), so the canonical form that produces them may never change meaning."
+    },
+    "Anchor": {
+      "type": "string",
+      "description": "A human-stable path to a node, e.g. `lib/screens/checkout.dart#CheckoutScreen/build/Column[0]/Row[2]`.\n\nStable across formatting-only edits. This is the key the override system uses, so a reformatted file must not orphan a human's hand-written component."
+    },
+    "SourceSpan": {
+      "type": "object",
+      "description": "A location in a Dart source file.",
+      "additionalProperties": false,
+      "required": ["file", "line", "column"],
+      "properties": {
+        "file": {
+          "type": "string",
+          "description": "Project-relative path. Never absolute: an absolute path would make output depend on where the project sits on disk."
+        },
+        "line": { "type": "integer", "description": "1-based line." },
+        "column": { "type": "integer", "description": "1-based column." },
+        "length": { "type": "integer", "description": "Length in characters. Absent means a point." }
+      }
+    },
+    "UirNodeBase": {
+      "type": "object",
+      "x-uir-abstract": true,
+      "description": "The fields every UIR node carries (Spec §2.3).\n\nNodes reference this through `allOf`. Children are held in arrays, and **array order is semantic**: it is the order the widgets appear in, and every generator, serializer and equality check preserves it.",
+      "additionalProperties": false,
+      "required": ["id", "kind", "span"],
+      "properties": {
+        "id": { "$ref": "shared.json#/$defs/NodeId", "description": "The node's stable, content-addressed identity." },
+        "kind": { "type": "string", "description": "The node's discriminant, e.g. `ui.Element`." },
+        "span": { "$ref": "shared.json#/$defs/SourceSpan", "description": "Where the node came from." },
+        "anchor": { "$ref": "shared.json#/$defs/Anchor", "description": "The override key, when the node is addressable by a human." },
+        "ext": {
+          "type": "object",
+          "description": "Plugin extension data, namespaced `x-<plugin>`. Core passes round-trip it untouched (Spec §2.6).",
+          "additionalProperties": { "x-uir-json": true, "description": "Arbitrary plugin-owned JSON." }
+        }
+      }
+    },
+    "TypeRef": {
+      "type": "object",
+      "description": "A resolved Dart type, as the analyzer saw it.",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string", "description": "The display name, e.g. `List<Item>`." },
+        "nullable": { "type": "boolean", "description": "Whether the type is nullable." },
+        "library": { "type": "string", "description": "The library that declares it, e.g. `package:flutter/material.dart`." }
+      }
+    },
+    "WidgetRef": {
+      "type": "object",
+      "description": "A reference to a widget class — a framework widget, a package widget, or one the application declares.",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string", "description": "The class name, e.g. `Scaffold`." },
+        "constructorName": { "type": "string", "description": "The named constructor, e.g. `builder` for `ListView.builder`." },
+        "library": { "type": "string", "description": "The declaring library. Distinguishes a framework widget from a package's, and from the application's own." },
+        "userDefined": {
+          "type": "boolean",
+          "description": "Whether the application declares this widget.\n\nC1 evidence: a user's own screens are what the compiler *generates*, not constructs it must map. Reporting them as unknown constructs was a false positive that would have opened every compatibility report with a lie."
+        }
+      }
+    },
+    "DiagnosticCode": {
+      "description": "Diagnostic codes reserved by the schema because a node or a pass carries them (Spec v2.1 §A6).\n\nOnly codes the UIR itself refers to are listed. The full registry lives in the compiler.",
+      "enum": [
+        "BRG2301",
+        "BRG2302",
+        "BRG2303"
+      ],
+      "x-uir-enum-docs": {
+        "BRG2301": "A non-serializable object was passed as a route argument (ADR-11a). A URL route carries an identifier, not an object graph. Error.",
+        "BRG2302": "Cross-route state was promoted to a store by N11 (ADR-11). Informational — promotion is never silent.",
+        "BRG2303": "A cross-route callback could not be promoted; an override is required (ADR-11). Error."
+      }
+    }
+  }
+}

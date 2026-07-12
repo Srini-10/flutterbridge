@@ -1,0 +1,53 @@
+/* M0-T4 SPIKE — theme tokens.
+ *
+ * These are hello_bridge's ThemeData literals, lifted into CSS custom properties. This is what
+ * normalization pass N10 (theme-tokenize) produces and what the theme engine consumes: the theme is
+ * *data*, so re-theming never touches a component.
+ *
+ *   ThemeData(brightness: light, primaryColor: 0xFF3F51B5, scaffoldBackgroundColor: 0xFFF6F6FA)
+ *   ThemeData(brightness: dark,  primaryColor: 0xFF9FA8DA, scaffoldBackgroundColor: 0xFF121212)
+ */
+
+:root {
+  --bridge-color-primary: #3f51b5;
+  --bridge-color-primary-container: #e8e6f8;
+  --bridge-color-scaffold-bg: #f6f6fa;
+  --bridge-color-appbar-bg: #faf3fb;
+  --bridge-color-on-surface: #1b1b1f;
+  --bridge-color-on-surface-variant: #46464f;
+  --bridge-color-outline: #79747e;
+  --bridge-color-error: #b3261e;
+}
+
+:root[data-theme='dark'] {
+  --bridge-color-primary: #9fa8da;
+  --bridge-color-primary-container: #33334a;
+  --bridge-color-scaffold-bg: #121212;
+  --bridge-color-appbar-bg: #1c1b1f;
+  --bridge-color-on-surface: #e6e1e5;
+  --bridge-color-on-surface-variant: #cac4d0;
+  --bridge-color-outline: #938f99;
+  --bridge-color-error: #f2b8b5;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  font-family:
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    Roboto,
+    sans-serif;
+  background: var(--bridge-color-scaffold-bg);
+  color: var(--bridge-color-on-surface);
+}

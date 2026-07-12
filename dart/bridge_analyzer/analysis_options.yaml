@@ -1,0 +1,36 @@
+# Spec v2.0 §8 — Dart standards: strict analysis, no `dynamic` in extraction paths.
+include: package:very_good_analysis/analysis_options.yaml
+
+analyzer:
+  language:
+    strict-casts: true
+    strict-inference: true
+    strict-raw-types: true
+  errors:
+    # A compiler that emits warnings teaches its own contributors to ignore warnings.
+    todo: error
+
+formatter:
+  page_width: 100
+
+linter:
+  rules:
+    # Determinism (Spec §3.5, D1–D5) is a design requirement, not a later optimization.
+    prefer_final_locals: true
+    prefer_final_in_for_each: true
+    always_declare_return_types: true
+    unawaited_futures: true
+
+    # House style, deliberately against very_good_analysis's defaults:
+    #
+    # Local variable types are written out. This is a compiler: the reader of `final x = foo(bar)`
+    # in an extraction path cannot tell whether `x` is a resolved element, an AST node, or a
+    # nullable of either — and getting that wrong is how silent extraction bugs happen (M0-T3, F6).
+    # Explicitness costs a few characters and buys the reviewer the type.
+    omit_local_variable_types: false
+    specify_nonobvious_local_variable_types: true
+    # Same reasoning, for the closure parameters that comparators and visitors are made of.
+    avoid_types_on_closure_parameters: false
+
+    # 100 columns, matching the formatter above.
+    lines_longer_than_80_chars: false

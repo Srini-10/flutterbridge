@@ -1,0 +1,654 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://flutterbridge.dev/uir/l3.json",
+  "title": "UIR L3 — application",
+  "description": "Routes, the signal graph, stores, endpoints and design tokens. Docs, server and design generators consume this layer alone.",
+  "x-uir-layer": "L3",
+  "$defs": {
+    "SignalScope": {
+      "description": "Where a signal lives.\n\nN11 (`promote-cross-route-state`, ADR-11) rewrites `component` to `store` when a signal or its mutator crosses a route boundary: a closure cannot be serialized to a URL, so the state must outlive the component that declared it.",
+      "enum": [
+        "component",
+        "store"
+      ],
+      "x-uir-enum-docs": {
+        "component": "Owned by one component — a Flutter State field.",
+        "store": "Owned by a store, and therefore able to cross a route boundary."
+      }
+    },
+    "StoreOrigin": {
+      "description": "Where a store came from.",
+      "enum": [
+        "declared",
+        "promoted"
+      ],
+      "x-uir-enum-docs": {
+        "declared": "The application declared it — e.g. a ChangeNotifier class.",
+        "promoted": "N11 synthesized it, to hold state that crosses a route boundary (ADR-11). Reported as BRG2302: promotion is never silent."
+      }
+    },
+    "EffectTiming": {
+      "description": "When an effect runs.",
+      "enum": [
+        "mount",
+        "update",
+        "unmount"
+      ],
+      "x-uir-enum-docs": {
+        "mount": "On mount — Flutter's `initState`.",
+        "update": "On dependency change — Flutter's `didUpdateWidget`.",
+        "unmount": "On unmount — Flutter's `dispose`."
+      }
+    },
+    "RouteArgumentTransport": {
+      "description": "How a route argument survives — or fails to survive — a URL boundary (ADR-11, ADR-11a).\n\nIn Flutter a route argument is a live Dart value. In every URL-routed target it is a string in an address bar. This enum is where that difference is made explicit rather than discovered at runtime.",
+      "enum": [
+        "primitive",
+        "promotedSignal",
+        "promotedCallback",
+        "objectTransport",
+        "unpromotable"
+      ],
+      "x-uir-enum-docs": {
+        "primitive": "A primitive. Crosses a URL boundary unchanged.",
+        "promotedSignal": "A signal read, promoted to a store by N11 and dropped from the transition (BRG2302).",
+        "promotedCallback": "A callback, promoted to a store action by N11 and dropped from the transition (BRG2302).",
+        "objectTransport": "A live object. A URL carries an identifier, not an object graph: reported as BRG2301 and left to the developer (evidence insufficient to infer identity and loader).",
+        "unpromotable": "A callback that captures state N11 cannot promote. Reported as BRG2303; an override is required."
+      }
+    },
+    "HttpMethod": {
+      "description": "An HTTP method.",
+      "enum": [
+        "get",
+        "post",
+        "put",
+        "patch",
+        "delete"
+      ],
+      "x-uir-enum-docs": {
+        "get": "GET.",
+        "post": "POST.",
+        "put": "PUT.",
+        "patch": "PATCH.",
+        "delete": "DELETE."
+      }
+    },
+    "MaterialRole": {
+      "description": "A Material 3 colour role.\n\nADR-13: `hello_bridge` declares only `brightness`, `primaryColor` and `scaffoldBackgroundColor`; every other colour Flutter paints is *derived* algorithmically. That information is not in the Dart source text — it is in Material's algorithm — so N10 computes the full role set with `material_color_utilities`, the same package Flutter itself uses. The colours we copied verbatim matched exactly; the ones we guessed were wrong by up to 15/255 per channel, invisibly (M0-T5 F1).",
+      "enum": [
+        "primary",
+        "onPrimary",
+        "primaryContainer",
+        "onPrimaryContainer",
+        "primaryFixed",
+        "primaryFixedDim",
+        "onPrimaryFixed",
+        "onPrimaryFixedVariant",
+        "secondary",
+        "onSecondary",
+        "secondaryContainer",
+        "onSecondaryContainer",
+        "secondaryFixed",
+        "secondaryFixedDim",
+        "onSecondaryFixed",
+        "onSecondaryFixedVariant",
+        "tertiary",
+        "onTertiary",
+        "tertiaryContainer",
+        "onTertiaryContainer",
+        "tertiaryFixed",
+        "tertiaryFixedDim",
+        "onTertiaryFixed",
+        "onTertiaryFixedVariant",
+        "error",
+        "onError",
+        "errorContainer",
+        "onErrorContainer",
+        "surface",
+        "onSurface",
+        "surfaceDim",
+        "surfaceBright",
+        "surfaceContainerLowest",
+        "surfaceContainerLow",
+        "surfaceContainer",
+        "surfaceContainerHigh",
+        "surfaceContainerHighest",
+        "onSurfaceVariant",
+        "surfaceTint",
+        "outline",
+        "outlineVariant",
+        "shadow",
+        "scrim",
+        "inverseSurface",
+        "onInverseSurface",
+        "inversePrimary"
+      ],
+      "x-uir-enum-docs": {
+        "primary": "The Material 3 `primary` colour role, derived from the seed and brightness by material_color_utilities (ADR-13). Never guessed.",
+        "onPrimary": "The Material 3 `onPrimary` colour role, derived from the seed and brightness by material_color_utilities (ADR-13). Never guessed.",
+        "primaryContainer": "The Material 3 `primaryContainer` colour role, derived from the seed and brightness by material_color_utilities (ADR-13). Never guessed.",
+        "onPrimaryContainer": "The Material 3 `onPrimaryContainer` colour role, derived from the seed and brightness by material_color_utilities (ADR-13). Never guessed.",
+        "primaryFixed": "The Material 3 `primaryFixed` colour role, derived from the seed and brightness by material_color_utilities (ADR-13). Never guessed.",
+        "primaryFixedDim": "The Material 3 `primaryFixedDim` colour role, derived from the seed and brightness by material_color_utilities (ADR-13). Never guessed.",
+        "onPrimaryFixed": "The Material 3 `onPrimaryFixed` colour role, derived from the seed and brightness by material_color_utilities (ADR-13). Never guessed.",
+        "onPrimaryFixedVariant": "The Material 3 `onPrimaryFixedVariant` colour role, derived from the seed and brightness by material_color_utilities (ADR-13). Never guessed.",
+        "secondary": "The Material 3 `secondary` colour role, derived from the seed and brightness by material_color_utilities (ADR-13). Never guessed.",
+        "onSecondary": "The Material 3 `onSecondary` colour role, derived from the seed and brightness by material_color_utilities (ADR-13). Never guessed.",
+        "secondaryContainer": "The Material 3 `secondaryContainer` colour role, derived from the seed and brightness by material_color_utilities (ADR-13). Never guessed.",
+        "onSecondaryContainer": "The Material 3 `onSecondaryContainer` colour role, derived from the seed and brightness by material_color_utilities (ADR-13). Never guessed.",
+        "secondaryFixed": "The Material 3 `secondaryFixed` colour role, derived from the seed and brightness by material_color_utilities (ADR-13). Never guessed.",
+        "secondaryFixedDim": "The Material 3 `secondaryFixedDim` colour role, derived from the seed and brightness by material_color_utilities (ADR-13). Never guessed.",
+        "onSecondaryFixed": "The Material 3 `onSecondaryFixed` colour role, derived from the seed and brightness by material_color_utilities (ADR-13). Never guessed.",
+        "onSecondaryFixedVariant": "The Material 3 `onSecondaryFixedVariant` colour role, derived from the seed and brightness by material_color_utilities (ADR-13). Never guessed.",
+        "tertiary": "The Material 3 `tertiary` colour role, derived from the seed and brightness by material_color_utilities (ADR-13). Never guessed.",
+        "onTertiary": "The Material 3 `onTertiary` colour role, derived from the seed and brightness by material_color_utilities (ADR-13). Never guessed.",
+        "tertiaryContainer": "The Material 3 `tertiaryContainer` colour role, derived from the seed and brightness by material_color_utilities (ADR-13). Never guessed.",
+        "onTertiaryContainer": "The Material 3 `onTertiaryContainer` colour role, derived from the seed and brightness by material_color_utilities (ADR-13). Never guessed.",
+        "tertiaryFixed": "The Material 3 `tertiaryFixed` colour role, derived from the seed and brightness by material_color_utilities (ADR-13). Never guessed.",
+        "tertiaryFixedDim": "The Material 3 `tertiaryFixedDim` colour role, derived from the seed and brightness by material_color_utilities (ADR-13). Never guessed.",
+        "onTertiaryFixed": "The Material 3 `onTertiaryFixed` colour role, derived from the seed and brightness by material_color_utilities (ADR-13). Never guessed.",
+        "onTertiaryFixedVariant": "The Material 3 `onTertiaryFixedVariant` colour role, derived from the seed and brightness by material_color_utilities (ADR-13). Never guessed.",
+        "error": "The Material 3 `error` colour role, derived from the seed and brightness by material_color_utilities (ADR-13). Never guessed.",
+        "onError": "The Material 3 `onError` colour role, derived from the seed and brightness by material_color_utilities (ADR-13). Never guessed.",
+        "errorContainer": "The Material 3 `errorContainer` colour role, derived from the seed and brightness by material_color_utilities (ADR-13). Never guessed.",
+        "onErrorContainer": "The Material 3 `onErrorContainer` colour role, derived from the seed and brightness by material_color_utilities (ADR-13). Never guessed.",
+        "surface": "The Material 3 `surface` colour role, derived from the seed and brightness by material_color_utilities (ADR-13). Never guessed.",
+        "onSurface": "The Material 3 `onSurface` colour role, derived from the seed and brightness by material_color_utilities (ADR-13). Never guessed.",
+        "surfaceDim": "The Material 3 `surfaceDim` colour role, derived from the seed and brightness by material_color_utilities (ADR-13). Never guessed.",
+        "surfaceBright": "The Material 3 `surfaceBright` colour role, derived from the seed and brightness by material_color_utilities (ADR-13). Never guessed.",
+        "surfaceContainerLowest": "The Material 3 `surfaceContainerLowest` colour role, derived from the seed and brightness by material_color_utilities (ADR-13). Never guessed.",
+        "surfaceContainerLow": "The Material 3 `surfaceContainerLow` colour role, derived from the seed and brightness by material_color_utilities (ADR-13). Never guessed.",
+        "surfaceContainer": "The Material 3 `surfaceContainer` colour role, derived from the seed and brightness by material_color_utilities (ADR-13). Never guessed.",
+        "surfaceContainerHigh": "The Material 3 `surfaceContainerHigh` colour role, derived from the seed and brightness by material_color_utilities (ADR-13). Never guessed.",
+        "surfaceContainerHighest": "The Material 3 `surfaceContainerHighest` colour role, derived from the seed and brightness by material_color_utilities (ADR-13). Never guessed.",
+        "onSurfaceVariant": "The Material 3 `onSurfaceVariant` colour role, derived from the seed and brightness by material_color_utilities (ADR-13). Never guessed.",
+        "surfaceTint": "The Material 3 `surfaceTint` colour role, derived from the seed and brightness by material_color_utilities (ADR-13). Never guessed.",
+        "outline": "The Material 3 `outline` colour role, derived from the seed and brightness by material_color_utilities (ADR-13). Never guessed.",
+        "outlineVariant": "The Material 3 `outlineVariant` colour role, derived from the seed and brightness by material_color_utilities (ADR-13). Never guessed.",
+        "shadow": "The Material 3 `shadow` colour role, derived from the seed and brightness by material_color_utilities (ADR-13). Never guessed.",
+        "scrim": "The Material 3 `scrim` colour role, derived from the seed and brightness by material_color_utilities (ADR-13). Never guessed.",
+        "inverseSurface": "The Material 3 `inverseSurface` colour role, derived from the seed and brightness by material_color_utilities (ADR-13). Never guessed.",
+        "onInverseSurface": "The Material 3 `onInverseSurface` colour role, derived from the seed and brightness by material_color_utilities (ADR-13). Never guessed.",
+        "inversePrimary": "The Material 3 `inversePrimary` colour role, derived from the seed and brightness by material_color_utilities (ADR-13). Never guessed."
+      }
+    },
+    "TokenGroup": {
+      "description": "Which design-token family a token belongs to.",
+      "enum": [
+        "color",
+        "typography",
+        "space",
+        "radius",
+        "shadow",
+        "motion"
+      ],
+      "x-uir-enum-docs": {
+        "color": "A colour role.",
+        "typography": "A type style.",
+        "space": "A spacing step.",
+        "radius": "A corner radius.",
+        "shadow": "An elevation shadow.",
+        "motion": "A duration or curve."
+      }
+    },
+    "SeoMeta": {
+      "type": "object",
+      "description": "Route metadata for the document head.",
+      "additionalProperties": false,
+      "required": [],
+      "properties": {
+        "title": {
+          "type": "string",
+          "description": "The page title."
+        },
+        "description": {
+          "type": "string",
+          "description": "The meta description."
+        }
+      }
+    },
+    "RouteArgument": {
+      "type": "object",
+      "description": "One argument passed to a route transition, and what became of it.",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "transport"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "The parameter name on the destination."
+        },
+        "transport": {
+          "$ref": "#/$defs/RouteArgumentTransport",
+          "description": "How it survives the URL boundary."
+        },
+        "binding": {
+          "$ref": "l2.json#/$defs/Binding",
+          "description": "The value passed, as bound at the call site."
+        },
+        "diagnostic": {
+          "$ref": "shared.json#/$defs/DiagnosticCode",
+          "description": "The diagnostic raised, when the argument cannot cross unchanged."
+        },
+        "promotedTo": {
+          "$ref": "shared.json#/$defs/NodeId",
+          "description": "The store this argument's state was promoted into, for the promoted transports."
+        }
+      }
+    },
+    "Signal": {
+      "description": "A unit of reactive state.\n\nEvery target's reactivity is a lowering of this: React hooks, Vue `computed`, Svelte runes and Angular signals all come from here (ADR-4). No generator ever sees `setState`.",
+      "x-uir-kind": "sig.Signal",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "type",
+            "scope"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "sig.Signal",
+              "description": "Discriminant."
+            },
+            "type": {
+              "$ref": "shared.json#/$defs/TypeRef",
+              "description": "Resolved type."
+            },
+            "scope": {
+              "$ref": "#/$defs/SignalScope",
+              "description": "Where the signal lives."
+            },
+            "initial": {
+              "$ref": "l1.json#/$defs/Expr",
+              "description": "The initial value, if any."
+            },
+            "store": {
+              "$ref": "shared.json#/$defs/NodeId",
+              "description": "The store that owns it, when scope is `store`."
+            }
+          }
+        }
+      ]
+    },
+    "Derived": {
+      "description": "A value computed from other signals — a Flutter getter over state.",
+      "x-uir-kind": "sig.Derived",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "body",
+            "type"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "sig.Derived",
+              "description": "Discriminant."
+            },
+            "deps": {
+              "type": "array",
+              "items": {
+                "$ref": "shared.json#/$defs/NodeId",
+                "description": "A signal."
+              },
+              "description": "The signals it reads."
+            },
+            "body": {
+              "$ref": "l1.json#/$defs/Expr",
+              "description": "The computation."
+            },
+            "type": {
+              "$ref": "shared.json#/$defs/TypeRef",
+              "description": "Resolved type."
+            }
+          }
+        }
+      ]
+    },
+    "Effect": {
+      "description": "A side effect tied to a component's lifecycle.",
+      "x-uir-kind": "sig.Effect",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "timing"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "sig.Effect",
+              "description": "Discriminant."
+            },
+            "deps": {
+              "type": "array",
+              "items": {
+                "$ref": "shared.json#/$defs/NodeId",
+                "description": "A signal."
+              },
+              "description": "The signals it depends on."
+            },
+            "timing": {
+              "$ref": "#/$defs/EffectTiming",
+              "description": "When it runs."
+            },
+            "body": {
+              "type": "array",
+              "items": {
+                "$ref": "l1.json#/$defs/Stmt",
+                "description": "A statement."
+              },
+              "description": "The effect body, in order."
+            }
+          }
+        }
+      ]
+    },
+    "Action": {
+      "description": "A mutation of state — the normalized form of a `setState` body or a store method.\n\n`writes` must include state mutated through **method calls** on owned collections (`add`, `remove`, `[]=`), not only assignments. C1 evidence: `FavoritesStore.toggle` mutates via `_favoriteIds.add/remove`, so an assignment-only analysis returns an empty write set — and generated React state that never updates.",
+      "x-uir-kind": "sig.Action",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "sig.Action",
+              "description": "Discriminant."
+            },
+            "writes": {
+              "type": "array",
+              "items": {
+                "$ref": "shared.json#/$defs/NodeId",
+                "description": "A signal written."
+              },
+              "description": "The signals this action writes."
+            },
+            "body": {
+              "type": "array",
+              "items": {
+                "$ref": "l1.json#/$defs/Stmt",
+                "description": "A statement."
+              },
+              "description": "The action body, in order."
+            },
+            "isAsync": {
+              "type": "boolean",
+              "description": "Whether the action is async."
+            }
+          }
+        }
+      ]
+    },
+    "Store": {
+      "description": "A collection of signals, derivations and actions that outlives any one component.",
+      "x-uir-kind": "app.Store",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "name",
+            "origin"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "app.Store",
+              "description": "Discriminant."
+            },
+            "name": {
+              "type": "string",
+              "description": "The store name."
+            },
+            "origin": {
+              "$ref": "#/$defs/StoreOrigin",
+              "description": "Whether the application declared it, or N11 synthesized it."
+            },
+            "signals": {
+              "type": "array",
+              "items": {
+                "$ref": "shared.json#/$defs/NodeId",
+                "description": "A signal."
+              },
+              "description": "The signals it owns."
+            },
+            "derived": {
+              "type": "array",
+              "items": {
+                "$ref": "shared.json#/$defs/NodeId",
+                "description": "A derivation."
+              },
+              "description": "The derivations it owns."
+            },
+            "actions": {
+              "type": "array",
+              "items": {
+                "$ref": "shared.json#/$defs/NodeId",
+                "description": "An action."
+              },
+              "description": "The actions it owns."
+            }
+          }
+        }
+      ]
+    },
+    "Route": {
+      "description": "One route of the application.",
+      "x-uir-kind": "app.Route",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "path",
+            "component"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "app.Route",
+              "description": "Discriminant."
+            },
+            "path": {
+              "type": "string",
+              "description": "The URL path, e.g. `/product/:id`."
+            },
+            "params": {
+              "type": "array",
+              "items": {
+                "$ref": "l1.json#/$defs/ParamDecl",
+                "description": "A route parameter."
+              },
+              "description": "Route parameters, in order."
+            },
+            "component": {
+              "$ref": "shared.json#/$defs/NodeId",
+              "description": "The component rendered."
+            },
+            "layout": {
+              "$ref": "shared.json#/$defs/NodeId",
+              "description": "The layout component wrapping it, if any."
+            },
+            "guards": {
+              "type": "array",
+              "items": {
+                "$ref": "shared.json#/$defs/NodeId",
+                "description": "A guard."
+              },
+              "description": "Guards, in order."
+            },
+            "meta": {
+              "$ref": "#/$defs/SeoMeta",
+              "description": "Document metadata."
+            }
+          }
+        }
+      ]
+    },
+    "RouteTransition": {
+      "description": "A navigation from one route to another — a `Navigator.push`, or a `go_router` navigation.\n\nThis is the input to N11 (ADR-11). C1 found that `go_router` is the dominant navigation shape in real apps and our first analyzer saw none of it; with an empty nav-graph, N11 silently does nothing — a pass that looks like it works because it never fires.",
+      "x-uir-kind": "app.RouteTransition",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "target"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "app.RouteTransition",
+              "description": "Discriminant."
+            },
+            "target": {
+              "$ref": "shared.json#/$defs/NodeId",
+              "description": "The destination route."
+            },
+            "arguments": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/RouteArgument",
+                "description": "An argument."
+              },
+              "description": "Arguments passed, in order."
+            },
+            "source": {
+              "$ref": "shared.json#/$defs/NodeId",
+              "description": "The component the navigation happens from."
+            }
+          }
+        }
+      ]
+    },
+    "Endpoint": {
+      "description": "A network call the application makes.",
+      "x-uir-kind": "app.Endpoint",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "method",
+            "path",
+            "response"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "app.Endpoint",
+              "description": "Discriminant."
+            },
+            "method": {
+              "$ref": "#/$defs/HttpMethod",
+              "description": "The HTTP method."
+            },
+            "path": {
+              "type": "string",
+              "description": "The request path."
+            },
+            "request": {
+              "$ref": "shared.json#/$defs/TypeRef",
+              "description": "The request body type, if any."
+            },
+            "response": {
+              "$ref": "shared.json#/$defs/TypeRef",
+              "description": "The response type."
+            }
+          }
+        }
+      ]
+    },
+    "Token": {
+      "description": "One design token.\n\nColour tokens are **derived**, never guessed: see MaterialRole and ADR-13. INV-20: every colour a mapped Material widget paints resolves to a token, and generated code contains no literal colour values.",
+      "x-uir-kind": "app.Token",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "group",
+            "name",
+            "light"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "app.Token",
+              "description": "Discriminant."
+            },
+            "group": {
+              "$ref": "#/$defs/TokenGroup",
+              "description": "The token family."
+            },
+            "name": {
+              "type": "string",
+              "description": "The token name within its group."
+            },
+            "role": {
+              "$ref": "#/$defs/MaterialRole",
+              "description": "The Material colour role, for colour tokens."
+            },
+            "light": {
+              "x-uir-json": true,
+              "description": "The value in the light scheme."
+            },
+            "dark": {
+              "x-uir-json": true,
+              "description": "The value in the dark scheme, when the theme defines one."
+            }
+          }
+        }
+      ]
+    }
+  }
+}

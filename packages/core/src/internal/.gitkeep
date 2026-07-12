@@ -1,0 +1,1 @@
+Internal modules for @bridge/core. Nothing here is part of the public API (Spec §8: public surface is src/index.ts only).

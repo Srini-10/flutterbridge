@@ -1,0 +1,30 @@
+{
+  "name": "flutterbridge",
+  "version": "0.0.0",
+  "private": true,
+  "description": "FlutterBridge \u2014 Flutter Application Compiler Platform (Spec v2.0, frozen)",
+  "type": "module",
+  "packageManager": "pnpm@11.11.0",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "test": "turbo run test",
+    "typecheck": "turbo run typecheck",
+    "api-check": "turbo run api-check",
+    "codegen": "pnpm --filter @bridge/schema-codegen build && node tools/schema-codegen/dist/cli.js generate && pnpm --filter @bridge/catalog-codegen build && node tools/catalog-codegen/dist/cli.js",
+    "codegen:check": "pnpm --filter @bridge/schema-codegen build && node tools/schema-codegen/dist/cli.js check && pnpm --filter @bridge/catalog-codegen build && node tools/catalog-codegen/dist/cli.js --check",
+    "lint:deps": "depcruise packages --config .dependency-cruiser.cjs",
+    "lint:stubs": "node tools/check-stubs.mjs",
+    "verify:depcruise-negative": "node tools/verify-depcruise-negative.mjs",
+    "ci": "pnpm run build && pnpm run test && pnpm run lint:deps && pnpm run lint:stubs && pnpm run verify:depcruise-negative"
+  },
+  "devDependencies": {
+    "@changesets/cli": "2.31.0",
+    "@types/node": "26.1.1",
+    "dependency-cruiser": "18.0.0",
+    "turbo": "2.10.4",
+    "typescript": "5.9.3"
+  }
+}

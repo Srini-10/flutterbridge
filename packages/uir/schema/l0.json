@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://flutterbridge.dev/uir/l0.json",
+  "title": "UIR L0 — source",
+  "description": "The source layer: the file table and provenance. Everything above it refers to files through this layer.",
+  "x-uir-layer": "L0",
+  "$defs": {
+    "SourceFile": {
+      "description": "One Dart source file in the analyzed project.\n\nThe two fingerprints are what make incremental compilation sound (Spec §7.2, ADR-5): editing a method *body* changes `implFingerprint` only, so dependents stay valid; changing a widget's constructor changes `apiFingerprint` and correctly invalidates them.",
+      "x-uir-kind": "l0.SourceFile",
+      "allOf": [
+        { "$ref": "shared.json#/$defs/UirNodeBase" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "path", "contentHash", "apiFingerprint", "implFingerprint"],
+          "properties": {
+            "kind": { "type": "string", "const": "l0.SourceFile", "description": "Discriminant." },
+            "path": { "type": "string", "description": "Project-relative path." },
+            "contentHash": { "type": "string", "description": "Hash of the file's bytes." },
+            "apiFingerprint": { "type": "string", "description": "Hash of the file's exported surface. Changing it invalidates dependents." },
+            "implFingerprint": { "type": "string", "description": "Hash of the file's bodies. Changing it invalidates only this file's own downstream work." }
+          }
+        }
+      ]
+    }
+  }
+}

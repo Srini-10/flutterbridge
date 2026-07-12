@@ -1,0 +1,44 @@
+{
+  "spike": "M0-T5",
+  "viewport": {
+    "width": 1200,
+    "height": 900
+  },
+  "deviceScaleFactor": 1,
+  "browser": "playwright-chromium",
+  "repeatable": {
+    "flutterLogin": true,
+    "reactLogin": true,
+    "flutterHome": true
+  },
+  "hashes": {
+    "pass1": {
+      "flutterLogin": "399729fd64f244d60c8628fe476ff4eb6ba5cbe4305573e99b8ebf3183d29cd9",
+      "reactLogin": "7f231e7e5f4187a09406ad93b1d4f15d2de4d3bf092245960a20dc95238e0e7c",
+      "flutterHome": "1f53e7677ca6717b7b03ba182a629fcb3ec66f1b5c34a5754deea310525ff17e"
+    },
+    "pass2": {
+      "flutterLogin": "399729fd64f244d60c8628fe476ff4eb6ba5cbe4305573e99b8ebf3183d29cd9",
+      "reactLogin": "7f231e7e5f4187a09406ad93b1d4f15d2de4d3bf092245960a20dc95238e0e7c",
+      "flutterHome": "1f53e7677ca6717b7b03ba182a629fcb3ec66f1b5c34a5754deea310525ff17e"
+    }
+  },
+  "diffs": [
+    {
+      "screen": "login",
+      "width": 1200,
+      "height": 900,
+      "totalPixels": 1080000,
+      "mismatchedPixels": 2665,
+      "mismatchPercent": 0.25,
+      "diffImage": "/Users/srinivasanp/Downloads/flutterbridge/spikes/m0-golden/diffs/login.diff.png"
+    }
+  ],
+  "notComparable": [
+    {
+      "screen": "home",
+      "reason": "The React reference implements the login screen only (M0-T4); its /home is an acknowledged placeholder. Diffing a real screen against a placeholder would produce a meaningless number. The Flutter home baseline is captured for information and will become comparable at M2.",
+      "flutterBaseline": "/Users/srinivasanp/Downloads/flutterbridge/spikes/m0-golden/baselines/flutter/home.png"
+    }
+  ]
+}

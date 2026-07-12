@@ -1,0 +1,138 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Deterministic builds (Spec §3.5, D1–D5) start with a deterministic CI: pinned toolchains,
+# frozen lockfile, no floating versions.
+env:
+  NODE_VERSION: '24.6.0'
+  FLUTTER_VERSION: '3.41.5'
+
+jobs:
+  ts:
+    name: typescript (build · test · architecture rules)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.11.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: install
+        run: pnpm install --frozen-lockfile
+
+      # The schema is the single source of truth: a generated model that no longer matches it is a
+      # model that silently disagrees with the compiler (Spec §2.5).
+      - name: generated code matches the schema
+        run: pnpm run codegen:check
+
+      - name: build
+        run: pnpm run build
+
+      - name: test
+        run: pnpm run test
+
+      - name: typecheck
+        run: pnpm run typecheck
+
+      # Spec §1.2 hard rules.
+      - name: architecture rules
+        run: pnpm run lint:deps
+
+      # Blueprint §2 stub discipline.
+      - name: stub tags
+        run: pnpm run lint:stubs
+
+      # M0-T1 acceptance: the rules must be observed rejecting a wrong import.
+      - name: architecture rules reject a forbidden import
+        run: pnpm run verify:depcruise-negative
+
+  # ADR-14 / M0-T7 condition C3. The analyzer AST is churn-prone (analyzer 14 redesigned it), so the
+  # compiler frontend is built on stable and *watched* on beta.
+  analyzer:
+    name: bridge_analyzer (${{ matrix.channel }})
+    runs-on: ubuntu-latest
+    continue-on-error: ${{ matrix.channel == 'beta' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        channel: [stable, beta]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: ${{ matrix.channel }}
+
+      - name: pub get (bridge_uir)
+        working-directory: dart/bridge_uir
+        run: dart pub get
+
+      - name: analyze (bridge_uir)
+        working-directory: dart/bridge_uir
+        run: dart analyze --fatal-infos
+
+      - name: test (bridge_uir)
+        working-directory: dart/bridge_uir
+        run: dart test --reporter=expanded
+
+      - name: pub get
+        working-directory: dart/bridge_analyzer
+        run: dart pub get
+
+      - name: analyze
+        working-directory: dart/bridge_analyzer
+        run: dart analyze --fatal-infos
+
+      - name: test
+        working-directory: dart/bridge_analyzer
+        run: dart test --reporter=expanded
+
+  flutter:
+    name: dart (fixture apps)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: pub get
+        working-directory: fixtures/apps/hello_bridge
+        run: flutter pub get
+
+      # M0-T2 acceptance: the walking-skeleton fixture analyzes clean.
+      - name: analyze
+        working-directory: fixtures/apps/hello_bridge
+        run: flutter analyze
+
+      # M0-T2 acceptance: the fixture still compiles for web (the target `flutter run -d chrome` exercises).
+      - name: build web
+        working-directory: fixtures/apps/hello_bridge
+        run: flutter build web --no-tree-shake-icons
+
+      # M1-T7: the loader, against a real Flutter application rather than one we built ourselves.
+      #
+      # This is the only job that has both a Flutter SDK and a `pub get`-ed fixture, so it is the only
+      # place `test/fixture_app_test.dart` can run — everywhere else it skips itself. It is the test
+      # that would have caught M0-T3's F6 (a project that had not been `pub get`-ed extracting to
+      # silent garbage), so it runs where it can actually run.
+      - name: pub get (bridge_analyzer)
+        working-directory: dart/bridge_analyzer
+        run: dart pub get
+
+      - name: preflight against the fixture app
+        working-directory: dart/bridge_analyzer
+        run: dart test test/fixture_app_test.dart --reporter=expanded
