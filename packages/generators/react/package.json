@@ -2,7 +2,7 @@
   "name": "@bridge/gen-react",
   "version": "0.0.0",
   "private": true,
-  "description": "Target #1 — Next.js generator: scaffolder, lower-signals, rsc-split, UINode emitters, route emitter.",
+  "description": "Target #1 \u2014 Next.js generator: scaffolder, lower-signals, rsc-split, UINode emitters, route emitter.",
   "type": "module",
   "exports": {
     ".": {
@@ -26,8 +26,11 @@
     "@bridge/plugin-sdk": "workspace:*"
   },
   "devDependencies": {
+    "@bridge/runtime-react": "workspace:*",
     "@microsoft/api-extractor": "catalog:",
     "@types/node": "catalog:",
+    "@types/react": "19.2.7",
+    "react": "19.2.7",
     "tsup": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"

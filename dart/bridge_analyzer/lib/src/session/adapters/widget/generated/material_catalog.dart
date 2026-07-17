@@ -142,6 +142,24 @@ abstract final class MaterialCatalog {
   /// Calls that batch state mutations and mean nothing else — `setState` (INV-22).
   static const Set<String> stateBatchCalls = <String>{'setState'};
 
+  /// The classes that own the navigation methods.
+  static const Set<String> navigationTypes = <String>{'Navigator', 'NavigatorState'};
+
+  /// Methods taking a Route object: the destination is constructed inline (`RouteTransition.component`).
+  static const Set<String> navigationPushRoute = <String>{'push', 'pushReplacement', 'pushAndRemoveUntil'};
+
+  /// Methods taking a path string: the destination is a declared route (`RouteTransition.target`).
+  static const Set<String> navigationPushPath = <String>{'pushNamed', 'pushReplacementNamed', 'pushNamedAndRemoveUntil', 'popAndPushNamed'};
+
+  /// Methods that return along an edge that already exists. Not transitions (Spec v2.4 §A17.3).
+  static const Set<String> navigationPop = <String>{'pop', 'maybePop', 'popUntil'};
+
+  /// The `Route` implementations whose builder produces the destination.
+  static const Set<String> navigationRouteTypes = <String>{'MaterialPageRoute', 'CupertinoPageRoute', 'PageRouteBuilder'};
+
+  /// The parameter of a route type that builds the destination widget.
+  static const String navigationBuilderProp = 'builder';
+
   /// Props that carry an accessibility label on any widget.
   static const Set<String> semanticLabelProps = <String>{'semanticLabel'};
 

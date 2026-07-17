@@ -31,6 +31,22 @@ export interface ThemeMeta {
   readonly nonRoleProps: readonly string[];
 }
 
+/** How a framework navigates. */
+export interface NavigationMeta {
+  /** The classes that own the navigation methods — `Navigator`, `NavigatorState`. */
+  readonly types: readonly string[];
+  /** Methods taking a **Route object**, whose destination is built inline → `RouteTransition.component`. */
+  readonly pushRoute: readonly string[];
+  /** Methods taking a **path string** → `RouteTransition.target`. */
+  readonly pushPath: readonly string[];
+  /** Methods that return along an existing edge. Not transitions at all (Spec v2.4 §A17.3). */
+  readonly pop: readonly string[];
+  /** The `Route` implementations whose `builder` produces the destination. */
+  readonly routeTypes: readonly string[];
+  /** The parameter of a route type that builds the destination widget. */
+  readonly builderProp: string;
+}
+
 /** A framework catalog. */
 export interface Catalog {
   readonly catalog: string;
@@ -42,6 +58,7 @@ export interface Catalog {
   readonly storeBases: readonly string[];
   readonly lifecycle: Readonly<Record<string, string>>;
   readonly stateBatchCalls: readonly string[];
+  readonly navigation: NavigationMeta;
   readonly semantics: SemanticsMeta;
   readonly theme: ThemeMeta;
   readonly widgets: readonly WidgetEntry[];
@@ -54,6 +71,26 @@ export function parseCatalog(json: unknown, path: string): Catalog {
   const required = ['catalog', 'priority', 'library', 'widgets'] as const;
   for (const key of required) {
     if (c[key] === undefined) throw new Error(`${path}: missing "${key}"`);
+  }
+
+  // One method cannot mean two things. `pushNamed` in both pushRoute and pushPath would make the
+  // destination depend on which list was consulted first, and a compiler may never be ambiguous.
+  const nav = c.navigation;
+  if (nav !== undefined) {
+    const groups = { pushRoute: nav.pushRoute, pushPath: nav.pushPath, pop: nav.pop };
+    const owner = new Map<string, string>();
+    for (const [group, methods] of Object.entries(groups)) {
+      for (const method of methods ?? []) {
+        const previous = owner.get(method);
+        if (previous !== undefined) {
+          throw new Error(
+            `${path}: navigation method "${method}" is in both "${previous}" and "${group}". ` +
+              `One method cannot both create an edge and not create one.`,
+          );
+        }
+        owner.set(method, group);
+      }
+    }
   }
 
   // A duplicate widget is a fact stated twice, and the second statement is the one nobody notices.

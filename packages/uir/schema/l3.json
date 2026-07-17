@@ -366,7 +366,7 @@
       ]
     },
     "Action": {
-      "description": "A mutation of state — the normalized form of a `setState` body or a store method.\n\n`writes` must include state mutated through **method calls** on owned collections (`add`, `remove`, `[]=`), not only assignments. C1 evidence: `FavoritesStore.toggle` mutates via `_favoriteIds.add/remove`, so an assignment-only analysis returns an empty write set — and generated React state that never updates.",
+      "description": "A mutation of state — the normalized form of a `setState` body or a store method.\n\n`writes` must include state mutated through **method calls** on owned collections (`add`, `remove`, `[]=`), not only assignments. C1 evidence: `FavoritesStore.toggle` mutates via `_favoriteIds.add/remove`, so an assignment-only analysis returns an empty write set — and generated React state that never updates.\n\nAn action may take **parameters** (Spec v2.5 §A18). `FavoritesStore.toggle(int id)` is an ordinary store method, and without `params` the `id` its body reads is declared nowhere: a `logic.Ref` to it is indistinguishable from a reference to a top-level function or a typo, and no target can emit it.",
       "x-uir-kind": "sig.Action",
       "allOf": [
         {
@@ -383,6 +383,14 @@
               "type": "string",
               "const": "sig.Action",
               "description": "Discriminant."
+            },
+            "params": {
+              "type": "array",
+              "items": {
+                "$ref": "l1.json#/$defs/ParamDecl",
+                "description": "A parameter."
+              },
+              "description": "The action's parameters, in order (Spec v2.5 §A18).\n\nA `ParamDecl` has no `id` — it is a value, not a node — so a `logic.Ref` in the body resolves to a parameter **by name**, within the action's scope, exactly as `ui.Component.params` already works. Absent means the action takes none, which is the common case and why this is optional."
             },
             "writes": {
               "type": "array",

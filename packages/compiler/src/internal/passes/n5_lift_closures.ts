@@ -24,10 +24,17 @@
 // not have an id for.
 //
 // That is not a restriction invented for convenience; it is what makes the capture set *knowable*. A
-// closure over `item` inside a `for (item in items)` genuinely cannot become a named, standalone action
-// without becoming a *function of* `item` — and `sig.Action` has no parameters. So such a closure is
+// closure over `item` inside a `for (item in items)` cannot become a named, standalone action without
+// becoming a *function of* `item` — which means rewriting the closure's signature **and** every call site
+// to pass it. That is lambda lifting, and it is a transform this pass does not do. So such a closure is
 // left exactly as it is, and `BRG2105` says so, naming the consequence: N11 will not be able to promote
 // it.
+//
+// Note the distinction Spec v2.5 §A18 sharpened. A closure's **own parameters** are bound, and since §A18
+// they are carried onto the action it becomes (`params`), so `(value) => setState(…)` lifts and arrives
+// with `value` declared. A **free local** is a different thing: nothing declares it and nothing passes it.
+// The first is a parameter the source wrote; the second would be a parameter this pass invented, and an
+// invented parameter is a call site that does not exist.
 //
 // Inventing a parameter, or lifting anyway and letting the capture dangle, would produce an action that
 // compiles and is wrong.
@@ -147,10 +154,12 @@ function lift(
       nodeId: lambda['id'] as string,
       message:
         `This closure writes state but captures ${free.length === 1 ? 'the local' : 'the locals'} ` +
-        `${free.map((n) => `\`${n}\``).join(', ')}, so it cannot be lifted into a named action: ` +
-        `sig.Action has no parameters, and an action closed over a name the UIR has no id for is an ` +
-        `action whose capture set nobody can compute. It stays a closure — which means cross-route ` +
-        `state promotion (N11) will not be able to move it into a store.`,
+        `${free.map((n) => `\`${n}\``).join(', ')}, so it cannot be lifted into a named action: an ` +
+        `action closed over a name the UIR has no id for is an action whose capture set nobody can ` +
+        `compute. Since Spec v2.5 §A18 an action may take parameters, but that does not reach this — ` +
+        `a captured local is not a parameter the source wrote, and turning it into one would mean ` +
+        `rewriting every call site to pass a value only this pass believes in. It stays a closure — ` +
+        `which means cross-route state promotion (N11) will not be able to move it into a store.`,
     });
     return undefined;
   }
@@ -158,12 +167,24 @@ function lift(
   const span = lambda['span'] as SourceSpan;
   const body = (lambda['body'] as unknown[] | undefined) ?? [];
   const isAsync = lambda['isAsync'] === true;
+  const params = (lambda['params'] as unknown[] | undefined) ?? [];
 
   // The content the id is a hash of. `span` is excluded by `stripIdentity`, so two identical closures
   // in two places are ONE action — which is what content addressing means, and is correct: they do the
   // same thing to the same signals.
   const content: Record<string, unknown> = {
     kind: 'sig.Action',
+    // The lambda's parameters, carried through (Spec v2.5 §A18). `freeLocals` already treats them as
+    // *bound*, so a parameterised closure lifts — and before §A18 the action it became had nowhere to put
+    // them, so they were dropped here and the body referenced names nothing declared. `onChanged: (value)
+    // => setState(() => _email = value)` lifted to an action whose body read an undeclared `value`.
+    //
+    // **Order is preserved and not sorted.** A write set is a set, and is sorted below; a parameter list is
+    // a sequence, and its order is the call site's contract.
+    //
+    // Omitted when empty, never `[]`: absent means "takes none" (§A18.3), and emitting `[]` would re-hash
+    // every parameterless action in every cached document to say nothing new.
+    ...(params.length > 0 ? { params } : {}),
     // Sorted. A write set is a *set*; its order must not depend on the order the walker happened to
     // find the assignments in, or the same action would hash to two ids on two runs (D2).
     writes: [...writes].sort(),

@@ -18,12 +18,21 @@
   "scripts": {
     "build": "tsc -b tsconfig.json && tsup",
     "test": "vitest run --passWithNoTests",
+    "bench": "vitest bench --run",
     "typecheck": "tsc -b tsconfig.json && tsc -p tsconfig.test.json",
     "api-check": "api-extractor run --local"
+  },
+  "peerDependencies": {
+    "react": "^19.0.0"
   },
   "devDependencies": {
     "@microsoft/api-extractor": "catalog:",
     "@types/node": "catalog:",
+    "@types/react": "19.2.7",
+    "@types/react-dom": "19.2.3",
+    "jsdom": "29.1.1",
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
     "tsup": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"

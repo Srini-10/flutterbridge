@@ -1,4 +1,8 @@
 {
+  // `lib` adds DOM here and *only* here. `tsconfig.base.json` is `["ES2023"]` with no DOM, which is right for
+  // this package's source: the graph, stores, theme and router touch no browser API, and `src/` typechecks
+  // clean without it — that is worth keeping true, and this file cannot weaken it, since it emits nothing.
+  // `react.test.ts` renders into jsdom and needs `document`, so the dependency is the test's, not the kit's.
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "composite": false,
@@ -6,6 +10,10 @@
     "emitDeclarationOnly": false,
     "noEmit": true,
     "rootDir": ".",
+    "lib": [
+      "ES2023",
+      "DOM"
+    ],
     "types": [
       "node"
     ]

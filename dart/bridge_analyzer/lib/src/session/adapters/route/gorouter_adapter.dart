@@ -47,7 +47,7 @@ import 'package:bridge_analyzer/src/session/adapters/adapter_result.dart';
 import 'package:bridge_analyzer/src/session/adapters/route/wrapper_resolver.dart';
 
 /// Understands `go_router`.
-final class GoRouterAdapter implements RouteAdapter {
+final class GoRouterAdapter implements RouteAdapter, TransitionAdapter {
   /// Creates the adapter.
   const GoRouterAdapter();
 
@@ -218,6 +218,8 @@ a constant. The compiler read its declared initializer ("$path") — but if it i
   /// wonderous uses `static String` (not `const`), and the evaluator correctly refuses those: a path
   /// that is not constant is a path that could differ between runs, and it has no place in a static
   /// graph. That is a real limitation, honestly reported, not a bug.
+
+
   static String? _constantString(Expression? node) {
     if (node == null) {
       return null;
@@ -226,6 +228,84 @@ a constant. The compiler read its declared initializer ("$path") — but if it i
       return node.value;
     }
     return node.computeConstantValue()?.value?.toStringValue();
+  }
+
+  // ── transitions (Spec v2.4 §A17) ───────────────────────────────────────────────────────────────
+
+  /// Methods that navigate **by path** — `context.go('/wonder/3')`.
+  ///
+  /// Declared here rather than in `catalog/widgets/material.json`: that catalog is Flutter/Material's
+  /// (`"library": "package:flutter/"`), and go_router is a different package. This adapter already
+  /// declares its own `symbols` the same way.
+  static const Set<String> _byPath = <String>{'go', 'push', 'pushReplacement', 'replace'};
+
+  /// Methods that navigate by **route name** rather than path — `context.goNamed('wonder')`.
+  static const Set<String> _byName = <String>{
+    'goNamed',
+    'pushNamed',
+    'pushReplacementNamed',
+    'replaceNamed',
+  };
+
+  /// Returning along an edge that already exists. Not a transition (§A17.3).
+  static const Set<String> _pop = <String>{'pop'};
+
+  @override
+  bool claimsTransition(AdapterContext context, MethodInvocation node) {
+    final String method = node.methodName.name;
+    if (!_byPath.contains(method) && !_byName.contains(method) && !_pop.contains(method)) {
+      return false;
+    }
+
+    // **Resolved, not named.** `go` and `push` are ordinary words; an application's own `push` on its
+    // own class is not go_router's. What makes this one go_router's is that the extension method
+    // resolves into `package:go_router/` — nothing about the call site says so.
+    final String? library = node.methodName.element?.library?.identifier;
+    return library != null && library.startsWith(_package);
+  }
+
+  @override
+  TransitionDeclaration? transitionOf(AdapterContext context, MethodInvocation node) {
+    final String method = node.methodName.name;
+    if (_pop.contains(method)) {
+      return null;
+    }
+
+    if (_byName.contains(method)) {
+      // A route *name* is not a path. Resolving one means reading the `name:` of every declared
+      // GoRoute, which this adapter does not currently record — so the edge is named as missing
+      // rather than guessed at.
+      context.report(
+        Codes.unsupportedWrapper,
+        'This navigation names its destination by route name rather than by path. The adapter reads '
+        'route paths, not names, so the edge cannot be resolved and will be missing from the route '
+        'graph — cross-route state promotion (N11) will not see it.',
+        node,
+      );
+      return null;
+    }
+
+    for (final Argument argument in node.argumentList.arguments) {
+      if (argument is NamedArgument) {
+        continue;
+      }
+      final String? path = _constantString(argument.argumentExpression);
+      if (path != null) {
+        return TransitionDeclaration.toPath(path: path, at: node);
+      }
+      break;
+    }
+
+    // `context.go('/wonder/$id')` — an interpolation. The *shape* of the destination is knowable but
+    // the destination is not, and a route graph that guesses which route an edge lands on is worse
+    // than one that admits the edge is unresolved.
+    context.report(
+      Codes.unsupportedWrapper,
+      'This navigation builds its path at runtime, so the destination cannot be resolved statically. '
+      'The edge will be missing from the route graph rather than guessed at.',
+      node,
+    );
+    return null;
   }
 
   /// The string a **mutable static** field was declared with, if it was declared with one here.

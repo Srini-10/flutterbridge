@@ -1,7 +1,7 @@
 // GENERATED CODE — DO NOT EDIT
 //
 // Produced by tools/schema-codegen from packages/uir/schema/*.json.
-// UIR schema version: 1.3.0
+// UIR schema version: 1.4.0
 //
 // Edit the schema and re-run `pnpm codegen`. Hand-edits to this file are lost on the next run,
 // and CI fails if this file does not match the schema (drift check).
@@ -11,10 +11,10 @@
 import { createHash } from 'node:crypto';
 
 /** The UIR schema version this module was generated from. */
-export const UIR_VERSION = '1.3.0' as const;
+export const UIR_VERSION = '1.4.0' as const;
 
 /** A hash of the schema sources this module was generated from. */
-export const UIR_SCHEMA_HASH = 'd18f741b2e7c669b' as const;
+export const UIR_SCHEMA_HASH = 'fc4e4eb130c9f948' as const;
 
 /** Node kind -> the fields of that node which hold `NodeId` references. */
 export const UIR_REFERENCE_FIELDS: Readonly<Record<string, readonly string[]>> = {
@@ -798,6 +798,8 @@ export interface WidgetRef {
 /// A mutation of state — the normalized form of a `setState` body or a store method.
 ///
 /// `writes` must include state mutated through **method calls** on owned collections (`add`, `remove`, `[]=`), not only assignments. C1 evidence: `FavoritesStore.toggle` mutates via `_favoriteIds.add/remove`, so an assignment-only analysis returns an empty write set — and generated React state that never updates.
+///
+/// An action may take **parameters** (Spec v2.5 §A18). `FavoritesStore.toggle(int id)` is an ordinary store method, and without `params` the `id` its body reads is declared nowhere: a `logic.Ref` to it is indistinguishable from a reference to a top-level function or a typo, and no target can emit it.
 export interface Action {
   /// The override key, when the node is addressable by a human.
   readonly anchor?: Anchor;
@@ -811,6 +813,10 @@ export interface Action {
   readonly isAsync?: boolean;
   /// Discriminant.
   readonly kind: 'sig.Action';
+  /// The action's parameters, in order (Spec v2.5 §A18).
+  ///
+  /// A `ParamDecl` has no `id` — it is a value, not a node — so a `logic.Ref` in the body resolves to a parameter **by name**, within the action's scope, exactly as `ui.Component.params` already works. Absent means the action takes none, which is the common case and why this is optional.
+  readonly params?: readonly ParamDecl[];
   /// Where the node came from.
   readonly span: SourceSpan;
   /// The signals this action writes.
@@ -2385,6 +2391,7 @@ export function parseAction(value: unknown, path = 'Action'): Action {
     id: parseNodeId(req(o, 'id', path), `${path}.id`),
     ...(own(o, 'isAsync') === undefined || own(o, 'isAsync') === null ? {} : { isAsync: asBool(own(o, 'isAsync'), `${path}.isAsync`) }),
     kind: 'sig.Action',
+    ...(own(o, 'params') === undefined || own(o, 'params') === null ? {} : { params: asList(own(o, 'params'), `${path}.params`, (v, p) => parseParamDecl(v, p)) }),
     span: parseSourceSpan(req(o, 'span', path), `${path}.span`),
     ...(own(o, 'writes') === undefined || own(o, 'writes') === null ? {} : { writes: asList(own(o, 'writes'), `${path}.writes`, (v, p) => parseNodeId(v, p)) }),
   };

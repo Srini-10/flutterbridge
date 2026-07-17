@@ -114,6 +114,24 @@ ${lifecycle}
   /// Calls that batch state mutations and mean nothing else — \`setState\` (INV-22).
   static const Set<String> stateBatchCalls = ${list(catalog.stateBatchCalls)};
 
+  /// The classes that own the navigation methods.
+  static const Set<String> navigationTypes = ${list(catalog.navigation.types)};
+
+  /// Methods taking a Route object: the destination is constructed inline (\`RouteTransition.component\`).
+  static const Set<String> navigationPushRoute = ${list(catalog.navigation.pushRoute)};
+
+  /// Methods taking a path string: the destination is a declared route (\`RouteTransition.target\`).
+  static const Set<String> navigationPushPath = ${list(catalog.navigation.pushPath)};
+
+  /// Methods that return along an edge that already exists. Not transitions (Spec v2.4 §A17.3).
+  static const Set<String> navigationPop = ${list(catalog.navigation.pop)};
+
+  /// The \`Route\` implementations whose builder produces the destination.
+  static const Set<String> navigationRouteTypes = ${list(catalog.navigation.routeTypes)};
+
+  /// The parameter of a route type that builds the destination widget.
+  static const String navigationBuilderProp = '${catalog.navigation.builderProp}';
+
   /// Props that carry an accessibility label on any widget.
   static const Set<String> semanticLabelProps = ${list(catalog.semantics.labelProps)};
 

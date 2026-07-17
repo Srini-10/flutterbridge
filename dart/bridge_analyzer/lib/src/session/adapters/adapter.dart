@@ -57,6 +57,28 @@ abstract interface class RouteAdapter implements PackageAdapter {
   List<RouteDeclaration> routesOf(AdapterContext context, InstanceCreationExpression node);
 }
 
+/// An adapter that recognises **navigation call sites** — `Navigator.push`, `context.go`.
+///
+/// Separate from [RouteAdapter] because it answers a different question about a different node.
+/// [RouteAdapter] reads *declarations*: an `InstanceCreationExpression` like `GoRoute(path: …)`. A
+/// navigation is a **`MethodInvocation`** — a thing that happens, not a thing that is declared. One
+/// adapter may be both (go_router declares routes *and* navigates between them); the interfaces are
+/// split so that neither has to pretend to be the other.
+///
+/// This exists so that `Navigator.push` is a fact about a *package* rather than a fact the extractor
+/// knows (ADR-18). Nothing under `session/extract/` may contain the word.
+abstract interface class TransitionAdapter implements PackageAdapter {
+  /// Whether this adapter recognises the invocation [node] as a navigation.
+  bool claimsTransition(AdapterContext context, MethodInvocation node);
+
+  /// The navigation [node] performs, or `null` when it carries no edge.
+  ///
+  /// `null` is not "not mine" — [claimsTransition] already said it was. It is *mine, and it is not an
+  /// edge*: a `Navigator.pop()` returns along a path that already exists rather than creating one, and
+  /// the nav graph gains nothing from a node for it (Spec v2.4 §A17.3).
+  TransitionDeclaration? transitionOf(AdapterContext context, MethodInvocation node);
+}
+
 /// An adapter that recognises widgets.
 ///
 /// ## INV-22 — no framework runtime primitive may survive extraction

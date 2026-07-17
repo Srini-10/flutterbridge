@@ -89,6 +89,36 @@ final class AdapterRegistry {
     return claiming.first.routesOf(context, node);
   }
 
+  /// The navigation the invocation [node] performs, through whichever adapter claims it.
+  ///
+  /// Returns `null` when no adapter claims it — the overwhelmingly common case, since most method
+  /// invocations in an application are not navigations — and also when an adapter claims it but it
+  /// carries no edge (a `Navigator.pop()`; Spec v2.4 §A17.3).
+  TransitionDeclaration? transitionOf(AdapterContext context, MethodInvocation node) {
+    final List<TransitionAdapter> claiming = <TransitionAdapter>[
+      for (final PackageAdapter adapter in adapters)
+        if (adapter is TransitionAdapter && adapter.claimsTransition(context, node)) adapter,
+    ];
+
+    if (claiming.isEmpty) {
+      return null;
+    }
+
+    // Same rule as `routesOf`, for the same reason: two adapters claiming one call at one priority
+    // means the meaning of the user's program would depend on the order of a list in our source.
+    if (claiming.length > 1 && claiming[0].priority == claiming[1].priority) {
+      context.report(
+        Codes.adapterConflict,
+        'The adapters `${claiming.map((TransitionAdapter a) => a.name).join('`, `')}` all claim this '
+        'navigation at the same priority. Which one wins would depend on the order they happen to be '
+        'listed in, so the compiler refuses to let that decide what your code means.',
+        node,
+      );
+    }
+
+    return claiming.first.transitionOf(context, node);
+  }
+
   /// What the widget adapters know about [type].
   ///
   /// Chained deliberately, and it is the one place chaining is allowed: `isWidget` is a question every

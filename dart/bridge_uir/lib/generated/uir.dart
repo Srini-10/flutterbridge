@@ -1,7 +1,7 @@
 // GENERATED CODE — DO NOT EDIT
 //
 // Produced by tools/schema-codegen from packages/uir/schema/*.json.
-// UIR schema version: 1.3.0
+// UIR schema version: 1.4.0
 //
 // Edit the schema and re-run `pnpm codegen`. Hand-edits to this file are lost on the next run,
 // and CI fails if this file does not match the schema (drift check).
@@ -26,12 +26,12 @@ import 'package:crypto/crypto.dart';
 import 'package:meta/meta.dart';
 
 /// The UIR schema version this library was generated from.
-const String uirVersion = '1.3.0';
+const String uirVersion = '1.4.0';
 
 /// A hash of the schema sources this library was generated from.
 ///
 /// Stamped into every emitted manifest: a UIR document always says which schema produced it.
-const String uirSchemaHash = 'd18f741b2e7c669b';
+const String uirSchemaHash = 'fc4e4eb130c9f948';
 
 /// Node kind -> the fields of that node which hold `NodeId` references.
 ///
@@ -1690,6 +1690,8 @@ final class WidgetRef {
 /// A mutation of state — the normalized form of a `setState` body or a store method.
 ///
 /// `writes` must include state mutated through **method calls** on owned collections (`add`, `remove`, `[]=`), not only assignments. C1 evidence: `FavoritesStore.toggle` mutates via `_favoriteIds.add/remove`, so an assignment-only analysis returns an empty write set — and generated React state that never updates.
+///
+/// An action may take **parameters** (Spec v2.5 §A18). `FavoritesStore.toggle(int id)` is an ordinary store method, and without `params` the `id` its body reads is declared nowhere: a `logic.Ref` to it is indistinguishable from a reference to a top-level function or a typo, and no target can emit it.
 @immutable
 final class Action extends UirNode {
   /// Creates a [Action].
@@ -1700,6 +1702,7 @@ final class Action extends UirNode {
     this.body,
     this.ext,
     this.isAsync,
+    this.params,
     this.writes,
   });
 
@@ -1716,6 +1719,7 @@ final class Action extends UirNode {
       ext: json['ext'] == null ? null : _asMap<Object?>(json['ext'], '$path.ext', (Object? v, String p) => v),
       id: _asString(_req(json, 'id', path), '$path.id'),
       isAsync: json['isAsync'] == null ? null : _asBool(json['isAsync'], '$path.isAsync'),
+      params: json['params'] == null ? null : _asList<ParamDecl>(json['params'], '$path.params', ParamDecl.fromJson),
       span: SourceSpan.fromJson(_req(json, 'span', path), '$path.span'),
       writes: json['writes'] == null ? null : _asList<NodeId>(json['writes'], '$path.writes', _asString),
     );
@@ -1736,6 +1740,11 @@ final class Action extends UirNode {
   /// Whether the action is async.
   final bool? isAsync;
 
+  /// The action's parameters, in order (Spec v2.5 §A18).
+  ///
+  /// A `ParamDecl` has no `id` — it is a value, not a node — so a `logic.Ref` in the body resolves to a parameter **by name**, within the action's scope, exactly as `ui.Component.params` already works. Absent means the action takes none, which is the common case and why this is optional.
+  final List<ParamDecl>? params;
+
   /// Where the node came from.
   final SourceSpan span;
 
@@ -1755,6 +1764,7 @@ final class Action extends UirNode {
     'id': id,
     'isAsync': isAsync,
     'kind': 'sig.Action',
+    'params': params?.map((ParamDecl v) => v.toJson()).toList(),
     'span': span.toJson(),
     'writes': writes,
   })! as Map<String, Object?>;
@@ -1769,6 +1779,7 @@ final class Action extends UirNode {
     Map<String, Object?>? ext,
     NodeId? id,
     bool? isAsync,
+    List<ParamDecl>? params,
     SourceSpan? span,
     List<NodeId>? writes,
   }) {
@@ -1778,6 +1789,7 @@ final class Action extends UirNode {
       ext: ext ?? this.ext,
       id: id ?? this.id,
       isAsync: isAsync ?? this.isAsync,
+      params: params ?? this.params,
       span: span ?? this.span,
       writes: writes ?? this.writes,
     );
@@ -1792,6 +1804,7 @@ final class Action extends UirNode {
         _equality.equals(other.ext, ext) &&
         _equality.equals(other.id, id) &&
         _equality.equals(other.isAsync, isAsync) &&
+        _equality.equals(other.params, params) &&
         _equality.equals(other.span, span) &&
         _equality.equals(other.writes, writes);
   }
@@ -1804,6 +1817,7 @@ final class Action extends UirNode {
     _equality.hash(ext),
     _equality.hash(id),
     _equality.hash(isAsync),
+    _equality.hash(params),
     _equality.hash(span),
     _equality.hash(writes),
   ]);

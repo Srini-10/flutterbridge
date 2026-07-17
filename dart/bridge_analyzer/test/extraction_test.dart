@@ -392,6 +392,166 @@ class _ScreenState extends State<Screen> {
     });
   });
 
+  group("an action's parameters (Spec v2.5 §A18)", () {
+    test('`toggle(int id)` declares `id` — the name its body reads', () async {
+      // The gap §A18 closes: the body references `id`, and before the amendment nothing declared it.
+      // A `logic.Ref` to it was indistinguishable from a reference to a top-level function or a typo,
+      // and the React generator could not resolve it — BRG3006.
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+
+class FavoritesStore extends ChangeNotifier {
+  final Set<int> _ids = <int>{};
+
+  void toggle(int id) {
+    if (_ids.contains(id)) {
+      _ids.remove(id);
+    } else {
+      _ids.add(id);
+    }
+    notifyListeners();
+  }
+}
+''');
+
+      expect(app.errors, isEmpty);
+
+      final Map<String, dynamic> action = app.only('sig.Action');
+      final List<dynamic> params = action['params']! as List<dynamic>;
+      expect(params, hasLength(1));
+
+      final Map<String, dynamic> param = params.single as Map<String, dynamic>;
+      expect(param['name'], 'id');
+      expect(param['type'], containsPair('name', 'int'));
+      expect(param['required'], isTrue, reason: 'a positional parameter is required');
+      expect(param.containsKey('named'), isFalse, reason: 'it is positional, not named');
+    });
+
+    test('a parameter is resolved by name, so its `logic.Ref` claims no target', () async {
+      // A `ParamDecl` is a value, not a node: it has no id, so nothing can refer to it *by id*. A
+      // `target` here would be a promise the builder would then report as BRG1201.
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+
+class FavoritesStore extends ChangeNotifier {
+  final Set<int> _ids = <int>{};
+
+  void toggle(int id) {
+    _ids.add(id);
+    notifyListeners();
+  }
+}
+''');
+
+      expect(app.errors, isEmpty);
+
+      final List<Map<String, dynamic>> refs = app
+          .ofKind('logic.Ref')
+          .where((Map<String, dynamic> r) => r['name'] == 'id')
+          .toList();
+      expect(refs, isNotEmpty, reason: 'the body reads `id`');
+      expect(
+        refs.every((Map<String, dynamic> r) => !r.containsKey('target')),
+        isTrue,
+        reason: 'a ParamDecl has no id, so a reference to one carries no target',
+      );
+    });
+
+    test('an action that takes none emits no `params` key at all', () async {
+      // Absent *is* the schema's word for "takes none". An empty list would be a second spelling of
+      // it, and would change the content of every action that has none.
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+
+class CounterStore extends ChangeNotifier {
+  int _count = 0;
+
+  void increment() {
+    _count++;
+    notifyListeners();
+  }
+}
+''');
+
+      expect(app.errors, isEmpty);
+
+      final Map<String, dynamic> action = app.only('sig.Action');
+      expect(
+        action.containsKey('params'),
+        isFalse,
+        reason: 'absent means "takes none"; `[]` would be a different statement',
+      );
+    });
+
+    test('positional order is kept — swapping `from` and `to` compiles, and is wrong', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+
+class RangeStore extends ChangeNotifier {
+  final List<int> _spans = <int>[];
+
+  void move(int from, int to, {required bool clamp, int step = 1}) {
+    _spans.add(from);
+    _spans.add(to);
+    notifyListeners();
+  }
+}
+''');
+
+      expect(app.errors, isEmpty);
+
+      final List<dynamic> params = app.only('sig.Action')['params']! as List<dynamic>;
+      expect(
+        params.map((dynamic p) => (p as Map<String, dynamic>)['name']),
+        <String>['from', 'to', 'clamp', 'step'],
+        reason: "a positional parameter's order is its meaning",
+      );
+
+      final Map<String, dynamic> clamp = params[2] as Map<String, dynamic>;
+      expect(clamp['named'], isTrue);
+      expect(clamp['required'], isTrue, reason: '`required bool clamp` says so');
+
+      final Map<String, dynamic> step = params[3] as Map<String, dynamic>;
+      expect(step['named'], isTrue);
+      expect(step.containsKey('required'), isFalse, reason: 'it has a default, so it is optional');
+      expect(
+        step['defaultValue'],
+        containsPair('kind', 'logic.Lit'),
+        reason: 'a default is lowered through the ordinary expression path',
+      );
+      expect(step['defaultValue'], containsPair('value', 1));
+    });
+
+    test('a parameter shadows a field of the same name, so it is not a write to the signal', () async {
+      // Dart's rule, and the reason the body resolves in the method's own scope. Recording the field
+      // as written would tell the generator to re-render on a change that never happened.
+      final Extracted app = await extract(r'''
+import 'package:flutter/material.dart';
+
+class Store extends ChangeNotifier {
+  int _count = 0;
+
+  void report(int _count) {
+    debugPrint('$_count');
+  }
+
+  void bump() {
+    _count++;
+    notifyListeners();
+  }
+}
+''');
+
+      expect(app.errors, isEmpty);
+      expect(
+        app.ofKind('sig.Action'),
+        hasLength(1),
+        reason: '`report` writes nothing: its `_count` is its own parameter',
+      );
+      expect(app.only('sig.Action').containsKey('params'), isFalse, reason: 'that action is `bump`');
+    });
+  });
+
   group('the widget tree', () {
     test('children keep source order — it is the order they appear on screen', () async {
       final Extracted app = await extract(counterApp);

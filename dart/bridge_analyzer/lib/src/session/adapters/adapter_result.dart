@@ -14,6 +14,66 @@ library;
 import 'package:analyzer/dart/ast/ast.dart';
 import 'package:meta/meta.dart';
 
+/// A navigation an adapter recognised at a call site.
+///
+/// **The adapter states intent; it does not resolve it.** It says "this call goes to the path
+/// `/wonder/3`" or "this call renders *that* expression" — it never mints a `NodeId`, because ids are
+/// the builder's business and a path only becomes a route by matching it against the routes the
+/// program actually declares.
+///
+/// Exactly one of [path] and [widget] is non-null, mirroring the destination rule the UIR carries
+/// (Spec v2.4 §A17): a navigation either names a route that exists, or constructs its destination
+/// inline — and the second has no path, and none is invented for it.
+@immutable
+final class TransitionDeclaration {
+  /// A navigation to a **declared route**, named by the path it asks for — `context.go('/wonder/3')`.
+  const TransitionDeclaration.toPath({
+    required String this.path,
+    required this.at,
+    this.arguments = const <TransitionArgument>[],
+  }) : widget = null;
+
+  /// A navigation whose destination is **constructed inline** —
+  /// `Navigator.push(context, MaterialPageRoute(builder: (_) => HomeScreen(id: 3)))`.
+  ///
+  /// [widget] is the expression that builds the destination (`HomeScreen(id: 3)`). It has no path, and
+  /// the adapter does not invent one: which URL such a push *becomes* on a path-based target is a
+  /// legalization decision, made in the layer that knows the target (§A17.6).
+  const TransitionDeclaration.toWidget({
+    required Expression this.widget,
+    required this.at,
+    this.arguments = const <TransitionArgument>[],
+  }) : path = null;
+
+  /// The path the navigation asks for, when it names a route. Null when [widget] is set.
+  final String? path;
+
+  /// The expression constructing the destination, when it is inline. Null when [path] is set.
+  final Expression? widget;
+
+  /// Where the navigation happens, for spans and diagnostics.
+  final AstNode at;
+
+  /// The arguments carried across the boundary, in source order.
+  final List<TransitionArgument> arguments;
+}
+
+/// One argument a navigation carries to its destination.
+///
+/// The *value* is left as an [Expression]: turning it into a binding needs the resolved scope, which
+/// is the extractor's, not the adapter's.
+@immutable
+final class TransitionArgument {
+  /// Creates an argument.
+  const TransitionArgument({required this.name, required this.value});
+
+  /// The parameter name on the destination.
+  final String name;
+
+  /// The value passed, at the call site.
+  final Expression value;
+}
+
 /// A route an adapter found.
 ///
 /// The **component is an expression**, not a name and not a symbol. Resolving an expression to the

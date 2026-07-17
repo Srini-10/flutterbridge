@@ -40,6 +40,7 @@ final class EmitValidator {
 
     _checkOrdering(nodes, diagnostics);
     _checkReferencesResolve(nodes, diagnostics);
+    _checkTransitionDestinations(nodes, diagnostics);
 
     final List<String>? lines = _serializeAll(nodes, diagnostics);
 
@@ -77,6 +78,87 @@ final class EmitValidator {
 
   /// Every `NodeId` a node refers to is present in the document.
   ///
+  /// Every `app.RouteTransition` names exactly one destination, of the right kind (Spec v2.4 §A17).
+  ///
+  /// A transition either names a route that exists (`target` -> an `app.Route`) or constructs its
+  /// destination inline (`component` -> a `ui.Component`). Both, or neither, is meaningless.
+  ///
+  /// **This is checked here because the schema cannot state it** (§A17.4). The dialect has no way to
+  /// say "exactly one of these two properties", and it could not help with the kinds either: a
+  /// `NodeId` is a `String`, and nothing about a string's shape says what it points at. That is not a
+  /// gap to apologise for — it is the same reason `_checkReferencesResolve` and
+  /// `_checkIdsAreFunctional` exist. An invariant the type system cannot hold is held here, at the
+  /// serialization boundary, before anything downstream can believe it.
+  void _checkTransitionDestinations(List<uir.UirNode> nodes, DiagnosticSink diagnostics) {
+    final Map<String, String> kindOf = <String, String>{};
+
+    void index(Map<String, Object?> json) {
+      final Object? id = json['id'];
+      final Object? kind = json['kind'];
+      if (id is String && kind is String) kindOf[id] = kind;
+      for (final Object? value in json.values) {
+        _forEachNode(value, index);
+      }
+    }
+
+    for (final uir.UirNode node in nodes) {
+      index(node.toJson());
+    }
+
+    void check(Map<String, Object?> json) {
+      if (json['kind'] == 'app.RouteTransition') {
+        final Object? target = json['target'];
+        final Object? component = json['component'];
+        final String id = json['id'] as String? ?? '(no id)';
+
+        if ((target == null) == (component == null)) {
+          diagnostics.add(
+            Diagnostic(
+              code: Codes.malformedTransition,
+              message:
+                  target == null
+                      ? 'The route transition "$id" names no destination. A transition with nowhere '
+                          'to go is not an edge.'
+                      : 'The route transition "$id" names both a route ("$target") and a component '
+                          '("$component"). It goes to one place.',
+            ),
+          );
+        } else if (target is String && kindOf[target] != null && kindOf[target] != 'app.Route') {
+          // A dangling id is `_checkReferencesResolve`'s to report; this is about naming the *wrong
+          // kind* of node, which resolves perfectly and means something false.
+          diagnostics.add(
+            Diagnostic(
+              code: Codes.malformedTransition,
+              message:
+                  'The route transition "$id" names "$target" as its target route, but that node is '
+                  'a ${kindOf[target]}. Only an app.Route can be a target; a destination with no '
+                  'path belongs in `component` (Spec v2.4 §A17).',
+            ),
+          );
+        } else if (component is String &&
+            kindOf[component] != null &&
+            kindOf[component] != 'ui.Component') {
+          diagnostics.add(
+            Diagnostic(
+              code: Codes.malformedTransition,
+              message:
+                  'The route transition "$id" names "$component" as the component it renders, but '
+                  'that node is a ${kindOf[component]}.',
+            ),
+          );
+        }
+      }
+
+      for (final Object? value in json.values) {
+        _forEachNode(value, check);
+      }
+    }
+
+    for (final uir.UirNode node in nodes) {
+      check(node.toJson());
+    }
+  }
+
   /// The generated `uirReferenceFields` map says which fields hold references — a `NodeId` is a
   /// `String` once the types are erased, so without the schema's help this check would have to guess
   /// which strings are ids, and a check that guesses is worse than no check.

@@ -202,13 +202,22 @@ final class SignalExtractor {
         continue;
       }
 
+      // The method's own scope: its parameters, over the class's fields. A parameter shadows a field
+      // of the same name — that is what Dart means — so a write to `id` in `set(int id)` is a write to
+      // the parameter, and naming the field in `writes` would tell the generator to re-render on a
+      // change that never happened. `logic.Ref` resolves a parameter to no target, because a
+      // `ParamDecl` is a value and has no id: the body names it, and the action's own `params`
+      // declares it (Spec v2.5 §A18).
+      final Scope inner = _scopeOf(member.parameters, scope);
+
       // A method that writes state is an action. One that does not is just a method, and turning it
       // into an action would tell the generator to notify subscribers of a change that never happened.
-      final List<String> writes = _signalsWrittenBy(member, scope);
+      final List<String> writes = _signalsWrittenBy(member, inner);
       if (writes.isEmpty || member.isSetter) {
         continue;
       }
 
+      final List<RawValue> params = _params(member.parameters, scope);
       final String symbol = out.symbols.action(name, owner: owner);
       actions.add(symbol);
       out.emit(
@@ -217,8 +226,11 @@ final class SignalExtractor {
           span: out.span(member),
           symbol: symbol,
           fields: <String, RawValue>{
+            // Absent, never empty. Absent *is* the schema's word for "takes none"; `[]` would be a
+            // second spelling of it, and would change the content of every action that has none.
+            if (params.isNotEmpty) 'params': RawList(params),
             'writes': RawList(writes.map(RawRef.new).toList()),
-            'body': RawList(expressions.bodyOf(member.body, scope)),
+            'body': RawList(expressions.bodyOf(member.body, inner)),
             if (member.body.isAsynchronous) 'isAsync': const RawLiteral(true),
           },
         ),
@@ -233,6 +245,43 @@ final class SignalExtractor {
       scope: scope,
     );
   }
+
+  /// The scope [list]'s parameters bind, enclosed by [enclosing].
+  ///
+  /// The same shape the other parameterized constructs use — a top-level function, a lambda, a
+  /// component's props — because a parameter means the same thing wherever it is written.
+  static Scope _scopeOf(FormalParameterList? list, Scope enclosing) => enclosing.child(<Binding>[
+    for (final FormalParameter parameter in list?.parameters ?? const <FormalParameter>[])
+      if (parameter.name != null)
+        Binding(name: parameter.name!.lexeme, binds: Binds.parameter),
+  ]);
+
+  /// The parameters [list] declares, as the `ParamDecl` value objects the schema asks for.
+  ///
+  /// **Read, never inferred.** Every field comes from what the source wrote: a parameter is `named`
+  /// because it is written between braces, `required` because Dart says it is. An unresolved type is
+  /// `out.typeRef`'s problem and is reported there — a plausible `dynamic` invented here would be a
+  /// lie nothing downstream could detect (INV-4).
+  ///
+  /// **Source order is kept.** For a positional parameter the order *is* the meaning: swapping the two
+  /// in `move(int from, int to)` compiles, and is wrong.
+  ///
+  /// [scope] is the one *enclosing* the method, which is where Dart evaluates a default: a default is
+  /// a constant expression and cannot see the parameters it sits among.
+  List<RawValue> _params(FormalParameterList? list, Scope scope) => <RawValue>[
+    for (final FormalParameter parameter in list?.parameters ?? const <FormalParameter>[])
+      RawMap(<String, RawValue>{
+        'name': RawLiteral(parameter.name?.lexeme ?? '_'),
+        'type': out.typeRef(parameter.declaredFragment?.element.type, at: parameter),
+        if (parameter.isNamed) 'named': const RawLiteral(true),
+        if (parameter.isRequired) 'required': const RawLiteral(true),
+        // `[int n = 0]` and `{int n = 0}` — the only two places a default can be written. Lowered
+        // through the ordinary expression path: a default is an expression, and it is not a special
+        // kind of one.
+        if (parameter.defaultClause case final FormalParameterDefaultClause clause)
+          'defaultValue': RawChild(expressions.extract(clause.value, scope)),
+      }),
+  ];
 
   /// The signals [member] writes — **including through method calls on them**.
   ///
