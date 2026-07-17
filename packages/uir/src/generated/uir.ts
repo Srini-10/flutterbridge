@@ -1,7 +1,7 @@
 // GENERATED CODE — DO NOT EDIT
 //
 // Produced by tools/schema-codegen from packages/uir/schema/*.json.
-// UIR schema version: 1.2.0
+// UIR schema version: 1.3.0
 //
 // Edit the schema and re-run `pnpm codegen`. Hand-edits to this file are lost on the next run,
 // and CI fails if this file does not match the schema (drift check).
@@ -11,10 +11,10 @@
 import { createHash } from 'node:crypto';
 
 /** The UIR schema version this module was generated from. */
-export const UIR_VERSION = '1.2.0' as const;
+export const UIR_VERSION = '1.3.0' as const;
 
 /** A hash of the schema sources this module was generated from. */
-export const UIR_SCHEMA_HASH = 'a2c185b828a6d9aa' as const;
+export const UIR_SCHEMA_HASH = 'd18f741b2e7c669b' as const;
 
 /** Node kind -> the fields of that node which hold `NodeId` references. */
 export const UIR_REFERENCE_FIELDS: Readonly<Record<string, readonly string[]>> = {
@@ -56,7 +56,7 @@ export const UIR_REFERENCE_FIELDS: Readonly<Record<string, readonly string[]>> =
   'logic.Ref': ['id', 'target'],
   'logic.Return': ['id'],
   'app.Route': ['component', 'guards', 'id', 'layout'],
-  'app.RouteTransition': ['id', 'source', 'target'],
+  'app.RouteTransition': ['component', 'id', 'source', 'target'],
   'sig.Signal': ['id', 'store'],
   'bind.Signal': ['id', 'signal'],
   'l0.SourceFile': ['id'],
@@ -1573,14 +1573,24 @@ export interface Route {
   readonly span: SourceSpan;
 }
 
-/// A navigation from one route to another — a `Navigator.push`, or a `go_router` navigation.
+/// A navigation from one place in the application to another — a `Navigator.push`, or a `go_router` navigation.
 ///
 /// This is the input to N11 (ADR-11). C1 found that `go_router` is the dominant navigation shape in real apps and our first analyzer saw none of it; with an empty nav-graph, N11 silently does nothing — a pass that looks like it works because it never fires.
+///
+/// **Exactly one of `target` and `component` is present** (Spec v2.4 §A17). A navigation either names a route that exists, or constructs its destination inline — and the second is not a route: it has no path, and none is invented for it. The dialect cannot express that exclusivity (a `NodeId` is a string; nothing about its shape says what it points at), so it is checked in code at emit and again at load — `BRG1307`.
+///
+/// A `Navigator.pop()` is **not** a transition: it returns along an edge that already exists rather than creating one.
 export interface RouteTransition {
   /// The override key, when the node is addressable by a human.
   readonly anchor?: Anchor;
   /// Arguments passed, in order.
   readonly arguments?: readonly RouteArgument[];
+  /// The `ui.Component` rendered, when the navigation constructs its destination inline — `Navigator.push(context, MaterialPageRoute(builder: (_) => HomeScreen()))`.
+  ///
+  /// There is no path here and none is invented: which URL such a push *becomes* on a path-based target is a legalization decision, made in the layer that knows the target (Spec v2.4 §A17.6).
+  ///
+  /// Absent when the navigation names a route; see `target`.
+  readonly component?: NodeId;
   /// Plugin extension data, namespaced `x-<plugin>`. Core passes round-trip it untouched (Spec §2.6).
   readonly ext?: Readonly<Record<string, unknown>>;
   /// The node's stable, content-addressed identity.
@@ -1591,8 +1601,10 @@ export interface RouteTransition {
   readonly source?: NodeId;
   /// Where the node came from.
   readonly span: SourceSpan;
-  /// The destination route.
-  readonly target: NodeId;
+  /// The destination route — an `app.Route` — when the navigation names one, as `context.go('/wonder/3')` does.
+  ///
+  /// Absent when the navigation constructs its destination inline; see `component`.
+  readonly target?: NodeId;
 }
 
 /// A unit of reactive state.
@@ -3626,12 +3638,13 @@ export function parseRouteTransition(value: unknown, path = 'RouteTransition'): 
   return {
     ...(own(o, 'anchor') === undefined || own(o, 'anchor') === null ? {} : { anchor: parseAnchor(own(o, 'anchor'), `${path}.anchor`) }),
     ...(own(o, 'arguments') === undefined || own(o, 'arguments') === null ? {} : { arguments: asList(own(o, 'arguments'), `${path}.arguments`, (v, p) => parseRouteArgument(v, p)) }),
+    ...(own(o, 'component') === undefined || own(o, 'component') === null ? {} : { component: parseNodeId(own(o, 'component'), `${path}.component`) }),
     ...(own(o, 'ext') === undefined || own(o, 'ext') === null ? {} : { ext: asMap(own(o, 'ext'), `${path}.ext`, (v) => v) }),
     id: parseNodeId(req(o, 'id', path), `${path}.id`),
     kind: 'app.RouteTransition',
     ...(own(o, 'source') === undefined || own(o, 'source') === null ? {} : { source: parseNodeId(own(o, 'source'), `${path}.source`) }),
     span: parseSourceSpan(req(o, 'span', path), `${path}.span`),
-    target: parseNodeId(req(o, 'target', path), `${path}.target`),
+    ...(own(o, 'target') === undefined || own(o, 'target') === null ? {} : { target: parseNodeId(own(o, 'target'), `${path}.target`) }),
   };
 }
 

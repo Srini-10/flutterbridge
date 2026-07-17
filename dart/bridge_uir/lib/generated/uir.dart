@@ -1,7 +1,7 @@
 // GENERATED CODE — DO NOT EDIT
 //
 // Produced by tools/schema-codegen from packages/uir/schema/*.json.
-// UIR schema version: 1.2.0
+// UIR schema version: 1.3.0
 //
 // Edit the schema and re-run `pnpm codegen`. Hand-edits to this file are lost on the next run,
 // and CI fails if this file does not match the schema (drift check).
@@ -26,12 +26,12 @@ import 'package:crypto/crypto.dart';
 import 'package:meta/meta.dart';
 
 /// The UIR schema version this library was generated from.
-const String uirVersion = '1.2.0';
+const String uirVersion = '1.3.0';
 
 /// A hash of the schema sources this library was generated from.
 ///
 /// Stamped into every emitted manifest: a UIR document always says which schema produced it.
-const String uirSchemaHash = 'a2c185b828a6d9aa';
+const String uirSchemaHash = 'd18f741b2e7c669b';
 
 /// Node kind -> the fields of that node which hold `NodeId` references.
 ///
@@ -76,7 +76,7 @@ const Map<String, List<String>> uirReferenceFields = <String, List<String>>{
   'logic.Ref': <String>['id', 'target'],
   'logic.Return': <String>['id'],
   'app.Route': <String>['component', 'guards', 'id', 'layout'],
-  'app.RouteTransition': <String>['id', 'source', 'target'],
+  'app.RouteTransition': <String>['component', 'id', 'source', 'target'],
   'sig.Signal': <String>['id', 'store'],
   'bind.Signal': <String>['id', 'signal'],
   'l0.SourceFile': <String>['id'],
@@ -6385,20 +6385,25 @@ final class Route extends UirNode {
   ]);
 }
 
-/// A navigation from one route to another — a `Navigator.push`, or a `go_router` navigation.
+/// A navigation from one place in the application to another — a `Navigator.push`, or a `go_router` navigation.
 ///
 /// This is the input to N11 (ADR-11). C1 found that `go_router` is the dominant navigation shape in real apps and our first analyzer saw none of it; with an empty nav-graph, N11 silently does nothing — a pass that looks like it works because it never fires.
+///
+/// **Exactly one of `target` and `component` is present** (Spec v2.4 §A17). A navigation either names a route that exists, or constructs its destination inline — and the second is not a route: it has no path, and none is invented for it. The dialect cannot express that exclusivity (a `NodeId` is a string; nothing about its shape says what it points at), so it is checked in code at emit and again at load — `BRG1307`.
+///
+/// A `Navigator.pop()` is **not** a transition: it returns along an edge that already exists rather than creating one.
 @immutable
 final class RouteTransition extends UirNode {
   /// Creates a [RouteTransition].
   const RouteTransition({
     required this.id,
     required this.span,
-    required this.target,
     this.anchor,
     this.arguments,
+    this.component,
     this.ext,
     this.source,
+    this.target,
   });
 
   /// Parses a [RouteTransition] from JSON, validating as it goes.
@@ -6411,11 +6416,12 @@ final class RouteTransition extends UirNode {
     return RouteTransition(
       anchor: json['anchor'] == null ? null : _asString(json['anchor'], '$path.anchor'),
       arguments: json['arguments'] == null ? null : _asList<RouteArgument>(json['arguments'], '$path.arguments', RouteArgument.fromJson),
+      component: json['component'] == null ? null : _asString(json['component'], '$path.component'),
       ext: json['ext'] == null ? null : _asMap<Object?>(json['ext'], '$path.ext', (Object? v, String p) => v),
       id: _asString(_req(json, 'id', path), '$path.id'),
       source: json['source'] == null ? null : _asString(json['source'], '$path.source'),
       span: SourceSpan.fromJson(_req(json, 'span', path), '$path.span'),
-      target: _asString(_req(json, 'target', path), '$path.target'),
+      target: json['target'] == null ? null : _asString(json['target'], '$path.target'),
     );
   }
 
@@ -6424,6 +6430,13 @@ final class RouteTransition extends UirNode {
 
   /// Arguments passed, in order.
   final List<RouteArgument>? arguments;
+
+  /// The `ui.Component` rendered, when the navigation constructs its destination inline — `Navigator.push(context, MaterialPageRoute(builder: (_) => HomeScreen()))`.
+  ///
+  /// There is no path here and none is invented: which URL such a push *becomes* on a path-based target is a legalization decision, made in the layer that knows the target (Spec v2.4 §A17.6).
+  ///
+  /// Absent when the navigation names a route; see `target`.
+  final NodeId? component;
 
   /// Plugin extension data, namespaced `x-<plugin>`. Core passes round-trip it untouched (Spec §2.6).
   final Map<String, Object?>? ext;
@@ -6437,8 +6450,10 @@ final class RouteTransition extends UirNode {
   /// Where the node came from.
   final SourceSpan span;
 
-  /// The destination route.
-  final NodeId target;
+  /// The destination route — an `app.Route` — when the navigation names one, as `context.go('/wonder/3')` does.
+  ///
+  /// Absent when the navigation constructs its destination inline; see `component`.
+  final NodeId? target;
 
   /// The node's discriminant.
   @override
@@ -6449,6 +6464,7 @@ final class RouteTransition extends UirNode {
   Map<String, Object?> toJson() => canonicalJson(<String, Object?>{
     'anchor': anchor,
     'arguments': arguments?.map((RouteArgument v) => v.toJson()).toList(),
+    'component': component,
     'ext': ext,
     'id': id,
     'kind': 'app.RouteTransition',
@@ -6464,6 +6480,7 @@ final class RouteTransition extends UirNode {
   RouteTransition copyWith({
     Anchor? anchor,
     List<RouteArgument>? arguments,
+    NodeId? component,
     Map<String, Object?>? ext,
     NodeId? id,
     NodeId? source,
@@ -6473,6 +6490,7 @@ final class RouteTransition extends UirNode {
     return RouteTransition(
       anchor: anchor ?? this.anchor,
       arguments: arguments ?? this.arguments,
+      component: component ?? this.component,
       ext: ext ?? this.ext,
       id: id ?? this.id,
       source: source ?? this.source,
@@ -6487,6 +6505,7 @@ final class RouteTransition extends UirNode {
     return other is RouteTransition &&
         _equality.equals(other.anchor, anchor) &&
         _equality.equals(other.arguments, arguments) &&
+        _equality.equals(other.component, component) &&
         _equality.equals(other.ext, ext) &&
         _equality.equals(other.id, id) &&
         _equality.equals(other.source, source) &&
@@ -6499,6 +6518,7 @@ final class RouteTransition extends UirNode {
     'RouteTransition',
     _equality.hash(anchor),
     _equality.hash(arguments),
+    _equality.hash(component),
     _equality.hash(ext),
     _equality.hash(id),
     _equality.hash(source),

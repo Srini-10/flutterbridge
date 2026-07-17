@@ -523,7 +523,7 @@
       ]
     },
     "RouteTransition": {
-      "description": "A navigation from one route to another — a `Navigator.push`, or a `go_router` navigation.\n\nThis is the input to N11 (ADR-11). C1 found that `go_router` is the dominant navigation shape in real apps and our first analyzer saw none of it; with an empty nav-graph, N11 silently does nothing — a pass that looks like it works because it never fires.",
+      "description": "A navigation from one place in the application to another — a `Navigator.push`, or a `go_router` navigation.\n\nThis is the input to N11 (ADR-11). C1 found that `go_router` is the dominant navigation shape in real apps and our first analyzer saw none of it; with an empty nav-graph, N11 silently does nothing — a pass that looks like it works because it never fires.\n\n**Exactly one of `target` and `component` is present** (Spec v2.4 §A17). A navigation either names a route that exists, or constructs its destination inline — and the second is not a route: it has no path, and none is invented for it. The dialect cannot express that exclusivity (a `NodeId` is a string; nothing about its shape says what it points at), so it is checked in code at emit and again at load — `BRG1307`.\n\nA `Navigator.pop()` is **not** a transition: it returns along an edge that already exists rather than creating one.",
       "x-uir-kind": "app.RouteTransition",
       "allOf": [
         {
@@ -533,8 +533,7 @@
           "type": "object",
           "additionalProperties": false,
           "required": [
-            "kind",
-            "target"
+            "kind"
           ],
           "properties": {
             "kind": {
@@ -544,7 +543,11 @@
             },
             "target": {
               "$ref": "shared.json#/$defs/NodeId",
-              "description": "The destination route."
+              "description": "The destination route — an `app.Route` — when the navigation names one, as `context.go('/wonder/3')` does.\n\nAbsent when the navigation constructs its destination inline; see `component`."
+            },
+            "component": {
+              "$ref": "shared.json#/$defs/NodeId",
+              "description": "The `ui.Component` rendered, when the navigation constructs its destination inline — `Navigator.push(context, MaterialPageRoute(builder: (_) => HomeScreen()))`.\n\nThere is no path here and none is invented: which URL such a push *becomes* on a path-based target is a legalization decision, made in the layer that knows the target (Spec v2.4 §A17.6).\n\nAbsent when the navigation names a route; see `target`."
             },
             "arguments": {
               "type": "array",
