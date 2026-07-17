@@ -5,6 +5,7 @@ library;
 
 import 'package:bridge_analyzer/src/builder/id_allocator.dart';
 import 'package:bridge_analyzer/src/builder/reference_resolver.dart';
+import 'package:bridge_analyzer/src/builder/route_index.dart';
 import 'package:bridge_analyzer/src/builder/validation.dart';
 import 'package:bridge_analyzer/src/diagnostics/diagnostic_sink.dart';
 
@@ -26,6 +27,13 @@ final class BuilderContext {
 
   /// Symbol -> id.
   final ReferenceResolver resolver;
+
+  /// The route table, for resolving a navigation path to the route it lands on (§A17).
+  ///
+  /// Built once, after every route has an id and before any transition is resolved — a route reference
+  /// needs the whole table, which no single file has. Empty until the builder fills it; a program with
+  /// no routes has an empty index, and every path resolves to nothing.
+  RouteIndex routeIndex = RouteIndex(const <({String path, String id})>[]);
 
   /// id -> canonical content, for every node built.
   ///

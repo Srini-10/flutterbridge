@@ -86,6 +86,8 @@ export class ModuleBuilder {
 
   private readonly lines: string[] = [];
   private readonly imports: ImportRequest[] = [];
+  /** Directive prologue lines — `'use client'` — rendered before the banner and imports (see toSource). */
+  private readonly directives: string[] = [];
   /** Module-scope names already taken, and the node that took each — so a collision can be reported. */
   private readonly declared = new Map<string, string>();
   private indent = 0;
@@ -157,6 +159,21 @@ export class ModuleBuilder {
     this.banner = text;
   }
 
+  /**
+   * Adds a **directive prologue** line — `'use client'` — rendered before the banner and every import.
+   *
+   * A directive is not an ordinary statement, and it cannot be emitted as one with {@link line}: React's
+   * `"use client"` only counts when it is the first thing in the module, before any import (a directive
+   * prologue is string-literal statements at the very top, comments aside). Emitting it into the body put it
+   * *after* the imports, where Next.js reads it as an inert string and treats the file as a server component —
+   * so a component that calls a hook threw at runtime (validation D1). This slot renders it where it counts.
+   *
+   * @param text - the directive, quotes and semicolon included, e.g. `"'use client';"`.
+   */
+  public directive(text: string): void {
+    if (!this.directives.includes(text)) this.directives.push(text);
+  }
+
   /** Appends a line at the current indentation. An empty string emits a blank line with no trailing spaces. */
   public line(text = ''): void {
     this.lines.push(text === '' ? '' : `${'  '.repeat(this.indent)}${text}`);
@@ -193,6 +210,9 @@ export class ModuleBuilder {
    */
   public toSource(): string {
     const out: string[] = [];
+    // The directive prologue comes first — before the banner and every import — because that is the only
+    // place React counts it (see `directive`). The scaffold files write `'use client'` the same way, by hand.
+    if (this.directives.length > 0) out.push(...this.directives, '');
     if (this.banner !== null) out.push(this.banner, '');
     out.push(...renderImports(this.imports));
 

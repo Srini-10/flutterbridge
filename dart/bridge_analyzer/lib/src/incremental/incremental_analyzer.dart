@@ -279,6 +279,9 @@ final class IncrementalAnalyzer {
         }
       case RawLiteral():
       case RawRef():
+      // A route reference names a path, not a declaration symbol, so it contributes no symbol to the
+      // dependency set. The path is resolved against the whole route table at build time (§A17).
+      case RawRouteRef():
         break;
     }
   }

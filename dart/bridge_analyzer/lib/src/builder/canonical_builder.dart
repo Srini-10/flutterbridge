@@ -23,6 +23,7 @@ library;
 import 'package:bridge_analyzer/src/builder/builder_context.dart';
 import 'package:bridge_analyzer/src/builder/canonical_sort.dart';
 import 'package:bridge_analyzer/src/builder/node_factory.dart';
+import 'package:bridge_analyzer/src/builder/route_index.dart';
 import 'package:bridge_analyzer/src/builder/validation.dart';
 import 'package:bridge_analyzer/src/diagnostics/diagnostic_sink.dart';
 import 'package:bridge_analyzer/src/model/raw_node.dart';
@@ -79,6 +80,11 @@ final class CanonicalBuilder {
     for (final RawNode record in records) {
       _declare(record, context, declaring);
     }
+
+    // The route table, now that every route has an id. A `RawRouteRef` — a navigation naming a path —
+    // resolves against this, because a path becomes a route only by matching the routes that exist,
+    // and no single file has them all (§A17).
+    context.routeIndex = _routeIndex(records, context);
 
     // Phase 2 — build. Every record is attempted, even after one fails: an author fixing ten
     // problems wants to see ten problems.
@@ -143,7 +149,32 @@ final class CanonicalBuilder {
         }
       case RawLiteral():
       case RawRef():
+      case RawRouteRef():
         break;
     }
+  }
+
+  /// The route table: every `app.Route`'s path, paired with the id its symbol resolves to.
+  ///
+  /// Routes are top-level records — a nested `GoRoute` is emitted on its own, carrying the joined path
+  /// — so this one pass over the records finds them all. A route whose symbol somehow did not resolve
+  /// is left out rather than indexed under a null id; that is a different failure, and it has its own
+  /// diagnostic.
+  RouteIndex _routeIndex(List<RawNode> records, BuilderContext context) {
+    final List<({String path, String id})> routes = <({String path, String id})>[];
+    for (final RawNode record in records) {
+      if (record.kind != 'app.Route' || record.symbol == null) {
+        continue;
+      }
+      final RawValue? path = record.fields['path'];
+      if (path is! RawLiteral || path.value is! String) {
+        continue;
+      }
+      final String? id = context.resolver.resolve(record.symbol!, record.span);
+      if (id != null) {
+        routes.add((path: path.value! as String, id: id));
+      }
+    }
+    return RouteIndex(routes);
   }
 }

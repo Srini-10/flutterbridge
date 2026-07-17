@@ -193,12 +193,16 @@ final class WidgetExtractor {
       final Expression value = argument.argumentExpression;
 
       switch (label) {
-        case 'child':
-          children.add(RawChild(extract(value, scope)));
         case _ when label == childrenProp:
           children.addAll(_childList(value, scope));
         case 'key':
           key = RawChild(bindings.extract(value, scope));
+        // `child` is a **slot**, not React children — a single child at a named place. The catalog says
+        // so (`Center/Padding/SizedBox: slots:{child}`), and it is the single source of truth: the runtime
+        // deliberately takes `child` as a prop, not `children`, and a hardcoded `case 'child'` here that
+        // routed it into the `children` list emitted `<Center><X/></Center>` against a `Center` that reads
+        // `props.child` — the subtree dropped, and the code did not typecheck (validation B1). So `child`
+        // falls through to the slot resolution below like every other slot, named by the catalog.
         case _ when registry.isSlot(name, label) && isWidget(value.staticType):
           slots[label] = RawChild(extract(value, scope, slot: label));
         case _ when isWidget(value.staticType):

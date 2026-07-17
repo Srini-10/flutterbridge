@@ -261,6 +261,27 @@ abstract final class Codes {
         'invariants are enforced: in code, at emit, before anything downstream can believe it.',
   );
 
+  /// A navigation names a path that matches no declared route.
+  static const DiagnosticCode unresolvedRoute = DiagnosticCode(
+    id: 'BRG1308',
+    category: DiagnosticCategory.extraction,
+    defaultSeverity: Severity.warning,
+    docsSlug: 'unresolved-route',
+    title: 'Navigation names a route that does not exist',
+    explanation:
+        "A navigation names a path — `context.go('/settings')`, `Navigator.pushNamed('/detail')` — "
+        'that matches no route the program declares, by exact path or by a parameterized pattern like '
+        '`/detail/:id`.\n'
+        '\n'
+        'The transition is dropped rather than pointed at a route that is not there: a nav graph with '
+        'an edge to nowhere is worse than one with the edge missing, and cross-route state promotion '
+        '(N11) reasons over the edges. The route may be declared through a wrapper the adapter cannot '
+        'read (BRG1304), named rather than pathed, or simply absent.\n'
+        '\n'
+        'This is a warning: the program still builds, and every other navigation is unaffected. It is '
+        'never guessed at — a path is matched against the routes that exist, or it is reported.',
+  );
+
   // ── BRG12xx — the canonical builder and the emitter ───────────────────────────────────────────
 
   /// A reference names a declaration that does not exist.
@@ -418,6 +439,7 @@ abstract final class Codes {
     adapterRejected,
     adapterConflict,
     malformedTransition,
+    unresolvedRoute,
     unresolvedReference,
     duplicateSymbol,
     idCollision,

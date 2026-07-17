@@ -102,9 +102,15 @@ class ElevatedButton extends Widget {
 }
 
 class SizedBox extends Widget {
-  const SizedBox({this.height, this.width, super.key});
+  const SizedBox({this.height, this.width, this.child, super.key});
   final double? height;
   final double? width;
+  final Widget? child;
+}
+
+class Center extends Widget {
+  const Center({this.child, super.key});
+  final Widget? child;
 }
 
 class MaterialApp extends Widget {

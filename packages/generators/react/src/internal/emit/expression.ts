@@ -25,6 +25,22 @@ import type { AnyUirNode, Expr, NodeId } from '@bridge/uir';
 import { GeneratorDiagnosticCode } from '../diagnostics/codes.js';
 import { identifierOf, type ModuleBuilder } from './module.js';
 
+/** The runtime kit. Where a Flutter framework value type — `EdgeInsets` — is mirrored. */
+const RUNTIME = '@bridge/runtime-react';
+
+/**
+ * Whether a constructed type is provided by the runtime kit, and so must be imported from it.
+ *
+ * Decided from the type's own **library**, not a hand-kept list of names (D2): `EdgeInsets` resolves to
+ * `package:flutter/…` and the kit mirrors it; `Product` resolves to the application's own package and does
+ * not. A kit value type added later needs no change here. A framework type the kit does *not* export is
+ * caught the moment the build-proof typechecks real output (`TS2305`), which is what that test is for.
+ */
+function isKitProvided(type: Node | undefined): boolean {
+  const library = type?.['library'];
+  return typeof library === 'string' && library.startsWith('package:flutter/');
+}
+
 /** What an expression needs in order to be lowered. */
 export interface EmitScope {
   /** The file being written. */
@@ -259,12 +275,18 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
       const typeName = String(node['typeName'] ?? '');
       const constructorName = node['constructorName'];
       const args = emitArguments(node['args'], scope);
+      // A kit-provided type — `EdgeInsets` — must be imported, or the reference dangles at `tsc` (D2). The
+      // import is registered here, automatically, from the type's own library; `module.use` returns the local
+      // name and folds a repeat into one import. A user type is written as-is, with no kit import invented.
+      const name = isKitProvided(node['type'] as Node | undefined)
+        ? scope.module.use(RUNTIME, typeName)
+        : identifierOf(typeName);
       // A named constructor — `EdgeInsets.all(16)` — is a static method in TypeScript, which is the shape the
       // kit's own `EdgeInsets` has, so it lowers without a `new`.
       if (typeof constructorName === 'string' && constructorName !== '') {
-        return `${identifierOf(typeName)}.${identifierOf(constructorName)}(${args})`;
+        return `${name}.${identifierOf(constructorName)}(${args})`;
       }
-      return `new ${identifierOf(typeName)}(${args})`;
+      return `new ${name}(${args})`;
     }
 
     case 'logic.ListLit': {

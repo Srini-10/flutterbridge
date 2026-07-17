@@ -553,6 +553,45 @@ class Store extends ChangeNotifier {
   });
 
   group('the widget tree', () {
+    test('a single-child wrapper puts its `child` in `slots`, not `children` (B1)', () async {
+      // The catalog is the single source of truth: `Center`/`Padding`/`SizedBox` declare `slots: {child}`.
+      // A single child is a slot — the kit's `Center` takes a `child` prop, not React children — and the
+      // analyzer must keep the distinction. A hardcoded `case 'child'` here that dropped it into `children`
+      // generated `<Center><X/></Center>` against a `Center` that reads `props.child`: the subtree vanished
+      // at runtime and the code did not typecheck (validation B1). This asserts the shape the fix restores.
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+
+class Screen extends StatelessWidget {
+  const Screen({super.key});
+  @override
+  Widget build(BuildContext context) => Center(
+    child: Padding(
+      child: SizedBox(child: const Text('leaf')),
+    ),
+  );
+}
+''');
+
+      expect(app.errors, isEmpty);
+      for (final String widget in <String>['Center', 'Padding', 'SizedBox']) {
+        final Map<String, dynamic> element = app.ofKind('ui.Element').firstWhere(
+          (Map<String, dynamic> e) => (e['component']! as Map<String, dynamic>)['name'] == widget,
+          orElse: () => throw StateError('no $widget element'),
+        );
+        expect(
+          (element['slots'] as Map<String, dynamic>?)?.containsKey('child'),
+          isTrue,
+          reason: '$widget.child is a slot the catalog declares, and belongs in `slots`',
+        );
+        expect(
+          element.containsKey('children'),
+          isFalse,
+          reason: '$widget has no `children` — its one child is a slot, not React children',
+        );
+      }
+    });
+
     test('children keep source order — it is the order they appear on screen', () async {
       final Extracted app = await extract(counterApp);
 

@@ -49,6 +49,23 @@ final class RawRef extends RawValue {
   final String symbol;
 }
 
+/// A reference to a route, by the concrete **path** a navigation names.
+///
+/// Unlike [RawRef], which names a declaration by the symbol it was declared under, a route reference
+/// names a route by the URL a navigation asks to go to — `context.go('/wonder/3')`. The declaring file
+/// is not known at the call site, and for a parameterized route (`/wonder/:id`) the concrete path is
+/// not the declared path at all, so a symbol cannot be built here. The builder resolves it against the
+/// route table it alone can see (§A17): a path matches the one route whose pattern it fits, and a path
+/// that matches none is `BRG1308` — the edge is dropped, never guessed at.
+@immutable
+final class RawRouteRef extends RawValue {
+  /// Creates a reference to the route the navigation to [path] lands on.
+  const RawRouteRef(this.path);
+
+  /// The concrete path the navigation names, e.g. `/wonder/3`.
+  final String path;
+}
+
 /// A nested node, embedded in its parent.
 @immutable
 final class RawChild extends RawValue {

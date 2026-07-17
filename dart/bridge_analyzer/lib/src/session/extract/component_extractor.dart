@@ -21,12 +21,20 @@ import 'package:bridge_analyzer/src/session/adapters/adapter_registry.dart';
 import 'package:bridge_analyzer/src/session/extract/raw_node_emitter.dart';
 import 'package:bridge_analyzer/src/session/extract/scope.dart';
 import 'package:bridge_analyzer/src/session/extract/signal_extractor.dart';
+import 'package:bridge_analyzer/src/session/extract/transition_extractor.dart';
 import 'package:bridge_analyzer/src/session/extract/widget_extractor.dart';
 
 /// Extracts components.
 final class ComponentExtractor {
   /// Creates an extractor.
-  const ComponentExtractor(this.out, this.widgets, this.signals, this.registry, this.context);
+  const ComponentExtractor(
+    this.out,
+    this.widgets,
+    this.signals,
+    this.registry,
+    this.context,
+    this.transitions,
+  );
 
   /// The record factory.
   final RawNodeEmitter out;
@@ -42,6 +50,9 @@ final class ComponentExtractor {
 
   /// What the adapters run in.
   final AdapterContext context;
+
+  /// Told which component a navigation happens from, so a transition can record its `source`.
+  final TransitionExtractor transitions;
 
   /// Whether [node] declares a component.
   ///
@@ -65,6 +76,11 @@ final class ComponentExtractor {
   }) {
     final String name = node.namePart.typeName.lexeme;
     final String symbol = out.symbols.component(name);
+
+    // A navigation anywhere in this component — an action body, a button's onPressed — happens *from*
+    // this component, and that is its transition's `source`. Set before the state and render are walked,
+    // where those navigations are, and cleared after so a navigation outside any component records none.
+    transitions.enclosingComponent = symbol;
 
     // Parameters come from the *widget* class's final fields — which is exactly what its constructor
     // sets, and what a caller passes.
@@ -121,6 +137,7 @@ final class ComponentExtractor {
       // A widget class with no `build` — an abstract base, or one whose build lives in a mixin. It is
       // not a component we can render, and pretending otherwise would emit a component with an
       // invented body. `ui.Component.render` is required, so there is nothing honest to emit.
+      transitions.enclosingComponent = null;
       return null;
     }
 
@@ -153,6 +170,7 @@ final class ComponentExtractor {
       ),
     );
 
+    transitions.enclosingComponent = null;
     return symbol;
   }
 

@@ -240,6 +240,78 @@ describe('INV-19 — no module-scope mutable state in the output (ADR-15)', () =
   });
 });
 
+describe('store emission — a store’s action writes through the signal, and its derived reads through it', () => {
+  // A store with a signal, an action that writes it (`count += 1`), and a derived over it (`count * 2`).
+  // The shapes the analyzer produces for a `ChangeNotifier`; asserted here on the emitted bytes because a
+  // store is not yet buildable end to end — `notifyListeners` has no lowering (validation C1) — so it cannot
+  // sit in the build-proof, only in an emission unit test. These two checks moved here when build.test.ts
+  // became a real, store-free build-proof.
+  function counterStoreApp(): AnyUirNode[] {
+    const int = { name: 'int' };
+    const countRef = { id: 'ref', kind: 'logic.Ref', span, type: int, name: 'count', target: 'sig-count' };
+    return [
+      signal('sig-count', 0, 'lib/state/counter.dart#count'),
+      {
+        id: 'act-inc',
+        kind: 'sig.Action',
+        span,
+        anchor: 'lib/state/counter.dart#increment',
+        writes: ['sig-count'],
+        body: [
+          {
+            id: 'stmt',
+            kind: 'logic.ExprStmt',
+            span,
+            expr: {
+              id: 'asg',
+              kind: 'logic.Assign',
+              span,
+              type: int,
+              operator: 'addAssign',
+              target: countRef,
+              value: { id: 'one', kind: 'logic.Lit', span, type: int, value: 1 },
+            },
+          },
+        ],
+      } as unknown as AnyUirNode,
+      {
+        id: 'der-2x',
+        kind: 'sig.Derived',
+        span,
+        anchor: 'lib/state/counter.dart#doubled',
+        type: int,
+        body: {
+          id: 'bin',
+          kind: 'logic.Binary',
+          span,
+          type: int,
+          operator: '*',
+          left: countRef,
+          right: { id: 'two', kind: 'logic.Lit', span, type: int, value: 2 },
+        },
+      } as unknown as AnyUirNode,
+      store('st-counter', 'Counter', { signals: ['sig-count'], derived: ['der-2x'], actions: ['act-inc'] }),
+      component('c1', 'HomeScreen', text('t1', 'hi')),
+      { id: 'r1', kind: 'app.Route', span, path: '/', component: 'c1' } as unknown as AnyUirNode,
+    ];
+  }
+
+  it('an action writes through the signal, not around it (`count.set(count.peek() + 1)`)', () => {
+    const { files } = reactGenerator.generate(harness(counterStoreApp()).context);
+    const source = fileAt(files, 'src/stores/counter.ts') ?? '';
+    // `count = count + 1` would rebind a local and leave the signal untouched — "state that never updates",
+    // which `sig.Action`'s own schema doc names as the defect.
+    expect(source).toContain('count.set(count.peek() + 1)');
+    expect(source).not.toMatch(/^\s*count = /m);
+  });
+
+  it('a derived reads through `.get()` (`derived(() => (count.get() * 2), \'doubled\')`)', () => {
+    const { files } = reactGenerator.generate(harness(counterStoreApp()).context);
+    const source = fileAt(files, 'src/stores/counter.ts') ?? '';
+    expect(source).toContain("derived(() => (count.get() * 2), 'doubled')");
+  });
+});
+
 describe('it refuses rather than invents', () => {
   it('reports an unmapped widget and emits nothing for it', () => {
     const nodes = [
@@ -315,8 +387,9 @@ describe('it refuses rather than invents', () => {
 describe('the real hello_bridge document', () => {
   it('parses, and is what the analyzer actually produced', () => {
     const nodes = helloBridge();
-    // 32 nodes: 30 from the analyzer, plus the two N5 lifted from closures.
-    expect(nodes.length).toBe(32);
+    // 33 nodes: 31 from the analyzer — including the `app.RouteTransition` for its one `Navigator.push`
+    // (M3-C) — plus the two N5 lifted from closures.
+    expect(nodes.length).toBe(33);
     expect(nodes.filter((n) => n.kind === 'ui.Component')).toHaveLength(3);
     expect(nodes.filter((n) => n.kind === 'app.Store')).toHaveLength(1);
   });

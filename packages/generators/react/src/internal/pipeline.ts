@@ -107,9 +107,8 @@ export function generateProject(context: GeneratorContext): GeneratorOutput {
     const module = new ModuleBuilder(path);
     module.setBanner(banner(`\`${String(component['name'])}\``));
     // Every component is client-scoped until `rsc-split` exists — see project.ts on why erring this way is
-    // the survivable direction.
-    module.line("'use client';");
-    module.line();
+    // the survivable direction. A directive, not a body line: it must precede every import to count (D1).
+    module.directive("'use client';");
     const name = emitComponent(component, module, { ...scope, module });
     files.push({ path, contents: module.toSource() });
     const id = component['id'];

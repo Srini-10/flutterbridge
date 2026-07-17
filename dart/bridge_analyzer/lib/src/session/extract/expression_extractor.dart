@@ -331,6 +331,17 @@ final class ExpressionExtractor {
   /// extractors refer to each other, and neither can be constructed first.
   late final StatementExtractorRef statements;
 
+  /// The transition extractor's hook, offered every method invocation so it can recognise a navigation.
+  ///
+  /// Nullable, and set once by the orchestrator, because a navigation is a `MethodInvocation` and this
+  /// is where every one passes through *with its scope* — the scope a navigation's arguments need to
+  /// bind (`HomeScreen(isDark: _isDark)` is a signal read only if the scope says so). Null in the rare
+  /// build that extracts expressions without transition support (a unit test of this extractor alone).
+  ///
+  /// A function rather than an interface so this extractor need not import the transition extractor,
+  /// which imports it — the orchestrator wires the two by passing a bound method.
+  TransitionHook? transitions;
+
   // ── assignment ────────────────────────────────────────────────────────────────────────────────
 
   RawNode _assignment(AssignmentExpression node, Scope scope) {
@@ -511,6 +522,12 @@ final class ExpressionExtractor {
   }
 
   RawNode _invocation(MethodInvocation node, Scope scope) {
+    // A navigation is a method invocation, and this is the one place every invocation is reached with
+    // the scope its arguments must bind against. The transition it emits is a *separate* top-level
+    // record — the imperative call still becomes the `logic.MethodCall` below, because the code does
+    // both: it navigates, and that navigation is a statement in the method's body.
+    transitions?.call(node, scope);
+
     Expression? target = node.realTarget;
 
     // `Uri.parse(...)`, `http.get(...)` — a static call, not a method on a receiver. The "receiver"
@@ -696,3 +713,10 @@ abstract interface class StatementExtractorRef {
   /// The closure a framework state-batching call wraps, if [node] is one.
   FunctionExpression? unwrapStateBatch(MethodInvocation node);
 }
+
+/// Offers a method invocation to the transition extractor, with the scope its arguments bind against.
+///
+/// A function, not an interface, and it breaks a would-be import cycle: the transition extractor builds
+/// argument bindings, which needs this extractor, so it cannot be imported *by* this extractor. The
+/// orchestrator wires the two together by passing a bound method through this hook.
+typedef TransitionHook = void Function(MethodInvocation node, Scope scope);

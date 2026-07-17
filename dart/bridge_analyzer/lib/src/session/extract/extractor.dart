@@ -50,6 +50,7 @@ import 'package:bridge_analyzer/src/session/extract/scope.dart';
 import 'package:bridge_analyzer/src/session/extract/signal_extractor.dart';
 import 'package:bridge_analyzer/src/session/extract/statement_extractor.dart';
 import 'package:bridge_analyzer/src/session/extract/token_extractor.dart';
+import 'package:bridge_analyzer/src/session/extract/transition_extractor.dart';
 import 'package:bridge_analyzer/src/session/extract/widget_extractor.dart';
 
 /// Extracts one resolved compilation unit.
@@ -87,6 +88,13 @@ final class Extractor {
     expressions.statements = statements;
 
     final BindingExtractor bindings = BindingExtractor(out, expressions);
+
+    // A navigation is a method invocation, so the transition extractor hangs off the expression
+    // extractor rather than the standalone route/token walk: it needs the scope a navigation's
+    // arguments bind against, and that exists only on the scoped walk.
+    final TransitionExtractor transitions = TransitionExtractor(out, adapters, context, bindings);
+    expressions.transitions = transitions.maybeExtract;
+
     final AnnotationExtractor annotations = AnnotationExtractor(adapters, context);
     final WidgetExtractor widgets = WidgetExtractor(
       out,
@@ -103,6 +111,7 @@ final class Extractor {
       signals,
       adapters,
       context,
+      transitions,
     );
 
     return Extractor._(

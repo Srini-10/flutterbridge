@@ -1,186 +1,70 @@
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import type { AnyUirNode } from '@bridge/uir';
+import { parseUirNode, type AnyUirNode } from '@bridge/uir';
 import { afterAll, describe, expect, it } from 'vitest';
 
 import { reactGenerator } from '../src/index.js';
 import { harness } from './support.js';
 
-// The build proof (M3-B) — does the emitted code actually compile against the real runtime?
+// The build-proof (M3-D) — the whole pipeline, over a program the analyzer really produced.
 //
-// ## Why this test exists and the other ones do not replace it
+// ## Why this used to prove nothing, and now does
 //
-// `generate.test.ts` asserts what the output *says*. This asserts that what it says is *true*: that every
-// import resolves, every runtime API is called with the arguments it actually takes, and every emitted `.tsx`
-// typechecks. Those are the claims a golden test cannot make — a golden is only ever as right as the day
-// someone recorded it, and a generator that emits `useSignal(count)` where the kit wants `useSignal(signal)`
-// produces a golden that passes forever and an application that does not build.
+// It once typechecked emitted code against a **hand-built** UIR — a program no analyzer run ever emitted.
+// That is exactly how the child-slot mismatch (validation B1) survived: the fixture put a single child in
+// `slots`, which is what the generator wants, while the real analyzer put it in `children`, which is what
+// broke. A build proof over an imagined program proves the imagination is consistent, not the pipeline.
 //
-// It typechecks against the **real, unmocked `@bridge/runtime-react`** — the frozen M3-A kit, resolved
-// through the workspace. That is what makes it a compatibility test between the two packages and not a test
-// of the generator's opinion of the kit.
-//
-// ## Why the generator does not import the runtime, and this test does
-//
-// `@bridge/runtime-react` is a **devDependency** here. `src/` never imports it — it emits *text* that names
-// it, which is ADR-6's whole shape ("generated code may only use public kit entrypoints"). The dependency is
-// the test's, so that `tsc` has something to resolve; `.dependency-cruiser.cjs` excludes `tests/` from the
-// cruise and `src/`'s import graph is unchanged. The compiler does the same thing with
-// `@bridge/widgets-material`.
+// So the input is now the **committed golden** `fixtures/uir/layout_proof.ndjson` — real analyzer output,
+// pinned byte-for-byte by `build_proof_test.dart`, which mints it from real Flutter source. This test takes
+// it the rest of the way: the real compiler (N1–N11, through the `bridge` CLI), the real generator, and
+// `tsc` against the real, unmocked `@bridge/runtime-react`. Flutter source → analyzer → compiler → generator
+// → tsc, with no hand-built node anywhere. Drift in either half fails a test: the analyzer half here, the
+// generator half in the Dart guard.
 //
 // ## What is not proved here
 //
-// `next build`. It needs a real install of Next into a scratch project, which is minutes of network per run
-// and would make this suite unrunnable offline. The emitted app imports nothing from `next` — only `react` and
-// the kit — so `tsc` covers every module the generator actually wrote. Running the App Router end-to-end is
-// `just e2e`, still a stub in the justfile, and belongs with the Playwright harness at M4-T3.
+// `next build` and the browser: the emitted app imports only `react` and the kit (never `next`), so `tsc`
+// covers every module the generator wrote. The App Router at runtime is `just e2e` (M4-T3, Playwright).
 
 const here = dirname(fileURLToPath(import.meta.url));
 const packageRoot = join(here, '..');
+const repoRoot = join(packageRoot, '..', '..', '..');
 const runtimeSrc = join(packageRoot, '..', '..', 'runtimes', 'react', 'src', 'index.ts');
+const goldenPath = join(repoRoot, 'fixtures', 'uir', 'layout_proof.ndjson');
+const cli = join(repoRoot, 'packages', 'cli', 'bin', 'bridge.mjs');
 
-const span = { file: 'lib/main.dart', line: 1, column: 1 } as const;
 const temporaries: string[] = [];
-
 afterAll(() => {
   for (const dir of temporaries) rmSync(dir, { recursive: true, force: true });
 });
 
-/** A counter app: a store with a signal and an action, a component that reads and writes it, a theme, a route. */
-function counterApp(): AnyUirNode[] {
-  const lit = (id: string, value: unknown, type = 'int'): unknown => ({
-    id,
-    kind: 'logic.Lit',
-    span,
-    type: { name: type },
-    value,
-  });
+/** Parses an NDJSON document the way the loader does — validating every line, never casting. */
+function parse(document: string, label: string): AnyUirNode[] {
+  return document
+    .split('\n')
+    .filter((line) => line.trim() !== '')
+    .map((line, index) => parseUirNode(JSON.parse(line), `${label}:${index + 1}`));
+}
 
-  return [
-    {
-      id: 'sig-count',
-      kind: 'sig.Signal',
-      span,
-      anchor: 'lib/state/counter.dart#count',
-      scope: 'store',
-      type: { name: 'int' },
-      initial: lit('lit-0', 0),
-    },
-    {
-      id: 'der-doubled',
-      kind: 'sig.Derived',
-      span,
-      anchor: 'lib/state/counter.dart#doubled',
-      type: { name: 'int' },
-      body: {
-        id: 'bin-1',
-        kind: 'logic.Binary',
-        span,
-        type: { name: 'int' },
-        operator: '*',
-        left: { id: 'ref-1', kind: 'logic.Ref', span, type: { name: 'int' }, name: 'count', target: 'sig-count' },
-        right: lit('lit-2', 2),
-      },
-    },
-    {
-      // `count += 1` — the shape that must become `count.set(count.peek() + 1)`, not `count = count + 1`.
-      id: 'act-increment',
-      kind: 'sig.Action',
-      span,
-      anchor: 'lib/state/counter.dart#increment',
-      writes: ['sig-count'],
-      body: [
-        {
-          id: 'stmt-1',
-          kind: 'logic.ExprStmt',
-          span,
-          expr: {
-            id: 'asg-1',
-            kind: 'logic.Assign',
-            span,
-            type: { name: 'int' },
-            operator: 'addAssign',
-            target: { id: 'ref-2', kind: 'logic.Ref', span, type: { name: 'int' }, name: 'count', target: 'sig-count' },
-            value: lit('lit-1', 1),
-          },
-        },
-      ],
-    },
-    {
-      id: 'store-counter',
-      kind: 'app.Store',
-      span,
-      name: 'Counter',
-      origin: 'declared',
-      signals: ['sig-count'],
-      derived: ['der-doubled'],
-      actions: ['act-increment'],
-    },
-    { id: 'tok-1', kind: 'app.Token', span, group: 'color', name: 'primary', light: '#FF3F51B5', dark: '#FF9FA8DA' },
-    { id: 'tok-2', kind: 'app.Token', span, group: 'space', name: 'gap', light: 8 },
-    {
-      id: 'comp-home',
-      kind: 'ui.Component',
-      span,
-      name: 'HomeScreen',
-      localSignals: ['sig-local'],
-      render: {
-        id: 'el-col',
-        kind: 'ui.Element',
-        span,
-        component: { name: 'Column', userDefined: false },
-        props: {
-          mainAxisAlignment: { id: 'b-1', kind: 'bind.Const', span, value: 'center' },
-          crossAxisAlignment: { id: 'b-2', kind: 'bind.Const', span, value: 'stretch' },
-        },
-        children: [
-          {
-            // A slot, not a child: `Center(child: ...)`. The catalog says `slots: ["child"]`, the analyzer
-            // puts it in `slots`, and the kit's `Center` takes a `child` prop — the same distinction, kept
-            // all the way through.
-            id: 'el-center',
-            kind: 'ui.Element',
-            span,
-            component: { name: 'Center', userDefined: false },
-            props: {},
-            slots: {
-              child: { id: 'txt-1', kind: 'ui.Text', span, value: { id: 'b-3', kind: 'bind.Const', span, value: 'Hello' } },
-            },
-            children: [],
-          },
-          {
-            id: 'el-pad',
-            kind: 'ui.Element',
-            span,
-            component: { name: 'SizedBox', userDefined: false },
-            props: { height: { id: 'b-4', kind: 'bind.Const', span, value: 8 } },
-            children: [],
-          },
-          {
-            id: 'txt-2',
-            kind: 'ui.Text',
-            span,
-            // A local signal read: the reactivity edge, which must become `useSignal(...)`.
-            value: { id: 'b-5', kind: 'bind.Signal', span, signal: 'sig-local' },
-          },
-        ],
-      },
-    },
-    {
-      id: 'sig-local',
-      kind: 'sig.Signal',
-      span,
-      anchor: 'lib/screens/home.dart#label',
-      scope: 'component',
-      type: { name: 'String' },
-      initial: lit('lit-s', 'hi', 'String'),
-    },
-    { id: 'route-1', kind: 'app.Route', span, path: '/', component: 'comp-home' },
-  ] as unknown as AnyUirNode[];
+/**
+ * The golden run through the **real compiler** (N1–N11), via the `bridge` CLI.
+ *
+ * Shelled, not imported: the generator does not depend on the compiler and must not start now, even in a
+ * test — `bridge normalize` is the same entrypoint an author uses, so this exercises the contract as shipped.
+ */
+function compiled(): AnyUirNode[] {
+  const dir = mkdtempSync(join(tmpdir(), 'bridge-compile-'));
+  temporaries.push(dir);
+  const raw = join(dir, 'raw.ndjson');
+  const out = join(dir, 'normalized.ndjson');
+  writeFileSync(raw, readFileSync(goldenPath));
+  execFileSync('node', [cli, 'normalize', raw, '--out', out], { stdio: 'pipe' });
+  return parse(readFileSync(out, 'utf8'), 'normalized');
 }
 
 /** Writes the emitted project to a temp directory and returns its root. */
@@ -195,89 +79,114 @@ function materialise(files: readonly { path: string; contents: string }[]): stri
   return root;
 }
 
-describe('the emitted project compiles against the real runtime', () => {
-  it('typechecks', () => {
-    const { context, reported } = harness(counterApp());
+/**
+ * A tsconfig for the check — not the one the app ships with.
+ *
+ * It maps the workspace packages by path so `tsc` resolves the *real* kit source rather than a stub, and
+ * drops the `next` plugin, which is a language-server concern `tsc` ignores anyway.
+ */
+function writeCheckTsconfig(root: string): string {
+  const path = join(root, 'tsconfig.check.json');
+  writeFileSync(
+    path,
+    `${JSON.stringify(
+      {
+        compilerOptions: {
+          target: 'ES2022',
+          lib: ['ES2023', 'DOM', 'DOM.Iterable'],
+          jsx: 'react-jsx',
+          module: 'ESNext',
+          moduleResolution: 'Bundler',
+          strict: true,
+          noEmit: true,
+          skipLibCheck: true,
+          esModuleInterop: true,
+          baseUrl: '.',
+          paths: {
+            '@/*': ['./src/*'],
+            '@bridge/runtime-react': [runtimeSrc.replace(/\.ts$/, '')],
+            react: [join(packageRoot, 'node_modules', '@types', 'react', 'index.d.ts').replace(/\.d\.ts$/, '')],
+            'react/jsx-runtime': [
+              join(packageRoot, 'node_modules', '@types', 'react', 'jsx-runtime.d.ts').replace(/\.d\.ts$/, ''),
+            ],
+          },
+        },
+        include: ['app/**/*.ts', 'app/**/*.tsx', 'src/**/*.ts', 'src/**/*.tsx'],
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  return path;
+}
+
+// One pass through the whole pipeline, shared by every assertion below.
+const nodes = compiled();
+const generated = reactGenerator.generate(harness(nodes).context);
+const componentSource =
+  generated.files.find((file) => file.path === 'src/components/home-screen.tsx')?.contents ?? '';
+
+describe('the emitted project compiles against the real runtime (M3-D build-proof)', () => {
+  it('the analyzer golden is the compiler’s output unchanged for this fixture', () => {
+    // The fixture is pure layout plus a component signal; N1–N11 have nothing to rewrite in it. Stating it
+    // makes the chain honest: the generator consumes exactly what the compiler produced.
+    expect(nodes.map((n) => n.id).sort()).toEqual(parse(readFileSync(goldenPath, 'utf8'), 'golden').map((n) => n.id).sort());
+  });
+
+  it('Flutter → analyzer → compiler → generator → tsc', () => {
+    const { context, reported } = harness(nodes);
     const { files } = reactGenerator.generate(context);
 
-    // The app is built entirely from M3-B's supported surface, so nothing should be refused. If this fires,
-    // the generator is rejecting something it claims to support.
-    expect(reported.filter((d) => d.severity === 'error')).toEqual([]);
+    // Nothing in the fixture is outside the supported surface, so nothing may be refused. If this fires, the
+    // generator is rejecting something it claims to support — or the analyzer drifted into a shape it cannot.
+    expect(reported.filter((diagnostic) => diagnostic.severity === 'error')).toEqual([]);
 
     const root = materialise(files);
-
-    // A tsconfig for the check, not the one the app ships with: it maps the workspace packages by path so tsc
-    // resolves the *real* kit source rather than a stub, and drops the `next` plugin, which is a
-    // language-server concern tsc ignores anyway.
-    writeFileSync(
-      join(root, 'tsconfig.check.json'),
-      `${JSON.stringify(
-        {
-          compilerOptions: {
-            target: 'ES2022',
-            lib: ['ES2023', 'DOM', 'DOM.Iterable'],
-            jsx: 'react-jsx',
-            module: 'ESNext',
-            moduleResolution: 'Bundler',
-            strict: true,
-            noEmit: true,
-            skipLibCheck: true,
-            esModuleInterop: true,
-            baseUrl: '.',
-            paths: {
-              '@/*': ['./src/*'],
-              '@bridge/runtime-react': [runtimeSrc.replace(/\.ts$/, '')],
-              react: [join(packageRoot, 'node_modules', '@types', 'react', 'index.d.ts').replace(/\.d\.ts$/, '')],
-              'react/jsx-runtime': [
-                join(packageRoot, 'node_modules', '@types', 'react', 'jsx-runtime.d.ts').replace(/\.d\.ts$/, ''),
-              ],
-            },
-          },
-          include: ['app/**/*.ts', 'app/**/*.tsx', 'src/**/*.ts', 'src/**/*.tsx'],
-        },
-        null,
-        2,
-      )}\n`,
-    );
-
+    const tsconfig = writeCheckTsconfig(root);
     const tsc = join(packageRoot, 'node_modules', '.bin', 'tsc');
     try {
-      execFileSync(tsc, ['-p', join(root, 'tsconfig.check.json')], { stdio: 'pipe', cwd: root });
+      execFileSync(tsc, ['-p', tsconfig], { stdio: 'pipe', cwd: root });
     } catch (error) {
       const failure = error as { stdout?: Buffer; stderr?: Buffer };
       const output = `${failure.stdout?.toString() ?? ''}${failure.stderr?.toString() ?? ''}`;
-      // The emitted files are printed on failure: a type error in generated code is a generator bug, and the
-      // only way to find it is to read what the generator wrote.
       const dump = files.map((file) => `\n──── ${file.path}\n${file.contents}`).join('');
       expect.unreachable(`the emitted project does not typecheck:\n${output}\n${dump}`);
     }
   }, 120_000);
 
-  it('emits a store whose action writes through the signal, not around it', () => {
-    const { context } = harness(counterApp());
-    const { files } = reactGenerator.generate(context);
-    const store = files.find((file) => file.path === 'src/stores/counter.ts')?.contents ?? '';
+  // ── regressions on the real output — the three defects M3-D fixed, asserted where they lived ──
 
-    // `count += 1` in Dart. Emitting `count = count + 1` would rebind a local and leave the signal untouched —
-    // "generated React state that never updates", which `sig.Action`'s own schema doc names as the defect.
-    expect(store).toContain('count.set(count.peek() + 1)');
-    expect(store).not.toMatch(/^\s*count = /m);
+  it('B1 — a single-child wrapper renders its child as a `child` prop, never JSX children', () => {
+    // `Center(child: …)` → the kit's `Center`, which reads `props.child`. Emitting `<Center><X/></Center>`
+    // dropped the subtree at runtime and did not typecheck; the analyzer now keeps `child` a slot, and the
+    // generator a `child={…}` prop.
+    expect(componentSource).toMatch(/<Center child=\{/);
+    expect(componentSource).toMatch(/<Padding [^>]*child=\{/);
+    expect(componentSource).toMatch(/<SizedBox [^>]*child=\{/);
+    // A single-child wrapper never takes JSX children — that was the B1 bug, and it dropped the subtree.
+    expect(componentSource).not.toMatch(/<Center>/);
   });
 
-  it('emits a derived that reads through .get()', () => {
-    const { context } = harness(counterApp());
-    const { files } = reactGenerator.generate(context);
-    const store = files.find((file) => file.path === 'src/stores/counter.ts')?.contents ?? '';
-    expect(store).toContain("derived(() => (count.get() * 2), 'doubled')");
+  it('B1 — nested single-child wrappers compose', () => {
+    expect(componentSource).toMatch(/<Center child=\{<Padding [^>]*child=\{<Column>/);
   });
 
-  it('emits a signal read in the tree as useSignal — the reactivity edge', () => {
-    const { context } = harness(counterApp());
-    const { files } = reactGenerator.generate(context);
-    const component = files.find((file) => file.path === 'src/components/home-screen.tsx')?.contents ?? '';
+  it('D1 — `\'use client\'` is the first line, before every import', () => {
+    expect(componentSource.startsWith("'use client';")).toBe(true);
+    const firstImport = componentSource.indexOf('import ');
+    expect(firstImport).toBeGreaterThan(-1);
+    expect(componentSource.indexOf("'use client';")).toBeLessThan(firstImport);
+  });
 
-    // `useSignal(label)`, not `label` (renders `[object Object]`) and not `label.peek()` (renders once and
-    // never updates).
-    expect(component).toContain('useSignal(label)');
+  it('D2 — a kit value type used in the tree is imported, not left dangling', () => {
+    expect(componentSource).toContain('EdgeInsets.all(16)');
+    expect(componentSource).toMatch(/import \{[^}]*\bEdgeInsets\b[^}]*\} from '@bridge\/runtime-react'/);
+  });
+
+  it('a component signal lives in the component and is read through the signal (ADR-15, ADR-4)', () => {
+    // Declared through `useState`'s initialiser — never at module scope (INV-19) and never re-allocated each
+    // render — and read through `.get()`, the reactive read, not the bare object (`[object Object]`).
+    expect(componentSource).toMatch(/const \[_count\] = useState\(\(\) => signal\(3\)\)/);
+    expect(componentSource).toContain('_count.get()');
   });
 });
