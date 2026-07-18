@@ -24,12 +24,20 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 
 import { CONFIG_FILES, defaultConfigDocument, parseConfig, type BridgeConfig } from '@bridge/core';
-import { load, LoadError, parseNdjson, PluginHost, Program, type Manifest } from '@bridge/compiler';
+import {
+  load,
+  LoadError,
+  parseNdjson,
+  PluginHost,
+  Program,
+  WidgetRegistry,
+  type Manifest,
+} from '@bridge/compiler';
 import type { Diagnostic, EmittedFile, GeneratorContext, ProgramView } from '@bridge/plugin-sdk';
 import { UIR_SCHEMA_HASH, UIR_VERSION, type AnyUirNode, type NodeId } from '@bridge/uir';
 
 import { bold, cyan, dim, green, json, red, yellow } from '../render.js';
-import { CliError, manifestPathFor } from '../document.js';
+import { CliError, manifestPathFor, normalize } from '../document.js';
 import { value, type Args } from '../args.js';
 import {
   command,
@@ -441,13 +449,32 @@ export async function generate(from: string, args: Args): Promise<{ output: stri
     );
   }
 
-  const nodes = loadDocument(input, relative(project.root, input)).nodes;
+  const loaded = loadDocument(input, relative(project.root, input));
 
   // Resolved from the **project**, not from the compiler — see `PluginHost.LoadOptions.from`. The CLI's own
   // `node_modules` is the fallback, which is what makes the first-party generator work with no install.
   const host = await PluginHost.load([project.config.generator, ...project.config.plugins], {
     from: pluginBases(project),
   });
+
+  // ## Normalize when handed a raw document
+  //
+  // **`bridge analyze && bridge generate` — the documented sequence — used to fail**, and it failed in the
+  // most misleading way available: the analyzer writes `uir.ndjson`, `generate` fell back to it when no
+  // normalized document existed, and un-normalized UIR has no `app.Token` nodes because N10 has not run
+  // yet. So every themed widget was refused with BRG3010, whose message says *"Give the app a
+  // `ColorScheme.fromSeed(...)`"* — advice the example application had already taken. The compiler was
+  // telling a user to fix something that was not broken.
+  //
+  // N1–N11 are not optional. Generating from a document that has not been through them is never correct,
+  // so there is no case in which the previous fallback did the right thing: it either found a normalized
+  // document, or it produced this.
+  //
+  // The same `normalize` helper `build` and the inspection commands use — one pipeline, so `bridge
+  // generate` and `bridge build` cannot come to different conclusions about the same document.
+  const widgets = WidgetRegistry.from(host.plugins);
+  const program = input === raw ? normalize(loaded, widgets).program : loaded;
+  const nodes = program.nodes;
   const generator = host.plugins.map((plugin) => plugin.generator).find((g) => g !== undefined);
   if (generator === undefined) {
     throw new CliError(

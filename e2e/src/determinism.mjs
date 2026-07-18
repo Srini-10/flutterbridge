@@ -10,11 +10,16 @@
 // break first. It is checked here rather than in a unit test because only the whole pipeline can be wrong
 // about it.
 
+import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 
+import { fileURLToPath } from 'node:url';
+
 import { APPS, appDir, buildApp } from './build-fixtures.mjs';
+
+const cliBin = fileURLToPath(new URL('../../packages/cli/bin/bridge.mjs', import.meta.url));
 
 const RUNS = 3;
 
@@ -45,6 +50,46 @@ function documents(app) {
   };
 }
 
+
+/**
+ * `bridge analyze && bridge generate` must produce exactly what `bridge build` produces.
+ *
+ * The documented two-command sequence used to fail, in the most misleading way available: `analyze` writes
+ * `uir.ndjson`, `generate` fell back to it when no normalized document existed, and un-normalized UIR has
+ * no `app.Token` nodes because N10 has not run. Every themed widget was refused with BRG3010 — whose
+ * message says *"Give the app a `ColorScheme.fromSeed(...)`"*, advice the example application had already
+ * taken. The compiler told a user to fix something that was not broken.
+ *
+ * Asserted here rather than in a unit test because the property is about the real pipeline: a unit test
+ * would have to re-implement the rule it is checking, which is a test of the test.
+ */
+function checkStagedEqualsBuild(app) {
+  // `appDir` is `<project>/build/bridge`; the project is two levels up. Derived rather than
+  // re-deriving the workspace root, so there is one definition of where fixtures live.
+  const project = join(appDir(app.name), '../..');
+  const bridge = (...argv) =>
+    execFileSync('node', [cliBin, ...argv], {
+      cwd: project,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+  bridge('clean');
+  bridge('build');
+  const built = fingerprint(appDir(app.name));
+
+  bridge('clean');
+  bridge('analyze');
+  bridge('generate');
+  const staged = fingerprint(appDir(app.name));
+
+  const differing = [...built.keys()].filter((path) => built.get(path) !== staged.get(path));
+  const ok = differing.length === 0 && built.size === staged.size;
+  console.log(`  ${ok ? 'ok  ' : 'FAIL'} ${'analyze+generate'.padEnd(12)} == build          ${built.size} files`);
+  for (const path of differing) console.log(`         differs: ${path}`);
+  return ok ? 0 : 1;
+}
+
 let failures = 0;
 
 for (const app of APPS) {
@@ -58,6 +103,8 @@ for (const app of APPS) {
     runs.push({ files: fingerprint(appDir(app.name)), docs: documents(app.name) });
     process.stdout.write(`  run ${i + 1}: ${runs[i].files.size} files\n`);
   }
+
+  failures += checkStagedEqualsBuild(app);
 
   const first = runs[0];
   for (let i = 1; i < RUNS; i += 1) {
