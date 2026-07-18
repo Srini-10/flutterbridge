@@ -20,6 +20,39 @@ const LOOSE = /BRIDGE[-_ ]?STUB/gi;
 /** The one legal form. */
 const STRICT = /BRIDGE-STUB\(M(\d+)\):\s*\S+/;
 
+/**
+ * Whether a line **declares** a stub, rather than mentioning one.
+ *
+ * A declaration opens its comment: `// BRIDGE-STUB(M2): …`, `# BRIDGE-STUB(M4): …`, ` * BRIDGE-STUB…`.
+ * Prose *about* a stub does not — it appears mid-sentence, usually quoted:
+ *
+ * ```
+ *  * `index.ts` carried `BRIDGE-STUB(M2): commands analyze | build | verify` from M0 to M5-A.
+ * ```
+ *
+ * That line describes a stub this project **retired**, and counting it inflated the census by one for
+ * three milestones. The census is a release-readiness number — "what deferred work remains" — so an
+ * inflated one is a wrong answer to a question somebody is about to make a decision with.
+ *
+ * It also had a second cost, which is the reason this is a rule rather than an exemption list: a linter
+ * that cannot tell a declaration from a description punishes describing things. Twice, accurate comments
+ * were reworded to appease it — documentation made worse to keep a tool quiet.
+ */
+function declaresStub(text) {
+  // Strip one leading comment marker and any indentation: `//`, `*`, `#`, `///`.
+  const content = text.replace(/^\s*(\/\/+|\*|#)\s*/, '');
+  return content.startsWith('BRIDGE-STUB') || content.startsWith('BRIDGE_STUB') || content.startsWith('BRIDGE STUB');
+}
+
+/**
+ * Compares by UTF-16 code unit — never `localeCompare`.
+ *
+ * The same rule the schema generator states and for the same reason: collation depends on the host's ICU
+ * data and on `LANG`/`LC_COLLATE`, so a `localeCompare` sort produces a different census order on a
+ * different machine. This census is printed, diffed and pasted into reports.
+ */
+const byCodeUnit = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+
 /** @param {string} dir @returns {string[]} */
 function walk(dir) {
   /** @type {string[]} */
@@ -46,12 +79,16 @@ for (const file of walk(ROOT)) {
     LOOSE.lastIndex = 0;
     if (!LOOSE.test(text)) return;
     const match = STRICT.exec(text);
+    // A mention that is well-formed but not a declaration is prose about a stub — neither a census
+    // entry nor a violation. A *malformed* mention still fails, wherever it appears: that check exists
+    // so a typo'd tag cannot hide, and prose is no excuse for one.
+    if (match && !declaresStub(text)) return;
     if (match) stubs.push({ file: rel, line: i + 1, milestone: Number(match[1]), text: text.trim() });
     else violations.push({ file: rel, line: i + 1, text: text.trim() });
   });
 }
 
-stubs.sort((a, b) => a.milestone - b.milestone || a.file.localeCompare(b.file) || a.line - b.line);
+stubs.sort((a, b) => a.milestone - b.milestone || byCodeUnit(a.file, b.file) || a.line - b.line);
 
 console.log(`stub census: ${stubs.length} tagged stub(s)`);
 for (const s of stubs) console.log(`  M${s.milestone}  ${s.file}:${s.line}`);

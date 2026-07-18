@@ -1,31 +1,58 @@
 {
   "$schema": "https://turbo.build/schema.json",
   "ui": "stream",
-  "globalDependencies": ["tsconfig.base.json", "pnpm-lock.yaml"],
+  "globalDependencies": [
+    "tsconfig.base.json",
+    "pnpm-lock.yaml"
+  ],
   "tasks": {
     "codegen": {
       "cache": true,
-      "outputs": ["src/generated/**"]
+      "outputs": [
+        "src/generated/**"
+      ]
     },
     "build": {
-      "dependsOn": ["codegen", "^build"],
-      "outputs": ["dist/**"]
+      "dependsOn": [
+        "codegen",
+        "^build"
+      ],
+      "outputs": [
+        "dist/**"
+      ]
     },
     "typecheck": {
-      "dependsOn": ["^build"],
+      "dependsOn": [
+        "^build"
+      ],
       "outputs": []
     },
     "test": {
-      "dependsOn": ["build"],
+      "dependsOn": [
+        "build"
+      ],
       "outputs": []
     },
     "corpus": {
-      "dependsOn": ["build"],
+      "dependsOn": [
+        "build"
+      ],
       "outputs": []
     },
     "api-check": {
-      "dependsOn": ["build"],
-      "outputs": ["etc/**"]
+      "dependsOn": [
+        "build"
+      ],
+      "outputs": [
+        "etc/**"
+      ]
+    },
+    "e2e": {
+      "dependsOn": [
+        "^build"
+      ],
+      "cache": false,
+      "outputs": []
     }
   }
 }
