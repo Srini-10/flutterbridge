@@ -131,6 +131,33 @@ export function formatColor(color: Rgba): string {
 }
 
 /**
+ * Formats a colour for CSS — `rgb(r g b)` when opaque, `rgb(r g b / a)` otherwise.
+ *
+ * **Not** {@link formatColor}, and the difference is the whole reason both exist. `formatColor` writes the
+ * project's interchange form, `#AARRGGBB`, which CSS reads as `#RRGGBBAA` — the exact confusion ADR-21 was
+ * written about, and pasting one into a stylesheet is how a colour arrives shifted by a byte with an alpha
+ * nobody asked for. So a colour reaches the DOM through this function and no other, and the two forms cannot
+ * be swapped by accident because they do not look alike.
+ *
+ * Space-separated syntax (CSS Color 4) rather than `rgba(r, g, b, a)`: one form covers both opaque and
+ * translucent, so there is no branch that could disagree with itself, and every browser Next 15 supports
+ * parses it.
+ *
+ * @param color - the colour.
+ * @returns a CSS colour value.
+ */
+export function cssColor(color: Rgba): string {
+  const r = clampChannel(color.r);
+  const g = clampChannel(color.g);
+  const b = clampChannel(color.b);
+  if (color.alpha >= 1) return `rgb(${r} ${g} ${b})`;
+  // Rounded to three places: an alpha is a ratio, and the full float would put a value like
+  // `0.12000000000000001` in a style attribute, making the emitted bytes depend on floating-point noise.
+  const alpha = Math.round(Math.max(0, Math.min(1, color.alpha)) * 1000) / 1000;
+  return `rgb(${r} ${g} ${b} / ${alpha})`;
+}
+
+/**
  * Composites `foreground` over `background` using the standard source-over rule.
  *
  * The one place alpha is actually resolved. Everything else here is a special case of it.

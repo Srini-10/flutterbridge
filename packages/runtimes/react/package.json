@@ -1,7 +1,6 @@
 {
   "name": "@bridge/runtime-react",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.1.0",
   "description": "Runtime compatibility kit: layout, theme, nav, state engines (animation engine post-MVP).",
   "type": "module",
   "exports": {
@@ -36,5 +35,17 @@
     "tsup": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
-  }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/flutterbridge/flutterbridge.git",
+    "directory": "packages/runtimes/react"
+  },
+  "license": "Apache-2.0"
 }
