@@ -78,7 +78,7 @@ describe('the generator is a plugin the host can load', () => {
   it('declares its target and runtimeRange', () => {
     // `runtimeRange` is INV-12/INV-13, required by ADR-6 and — until ADR-22 — declared nowhere.
     expect(reactGenerator.target).toBe('react');
-    expect(reactGenerator.runtimeRange).toBe('0.0.x');
+    expect(reactGenerator.runtimeRange).toBe('^0.1.0');
   });
 });
 
@@ -312,19 +312,98 @@ describe('store emission — a store’s action writes through the signal, and i
   });
 });
 
+describe('M4-A widget coverage — flex children and Material rules', () => {
+  // A screen using the M4-A widgets: Expanded/Spacer/Flexible (slot child / flex prop) and Divider (props).
+  // Emission over a hand-built tree; the real analyzer → generator → tsc proof of these lives in build.test.ts.
+  function screen(): AnyUirNode[] {
+    const slotChild = (id: string, w: string, props: Record<string, unknown>): unknown => ({
+      id,
+      kind: 'ui.Element',
+      span,
+      component: { name: w, userDefined: false },
+      props,
+      slots: { child: text(`${id}-t`, 'x') },
+    });
+    const c = { name: 'int' };
+    const flex2 = { id: 'f2', kind: 'bind.Const', span, value: 2, type: c };
+    const row = {
+      id: 'row',
+      kind: 'ui.Element',
+      span,
+      component: { name: 'Row', userDefined: false },
+      children: [
+        slotChild('exp', 'Expanded', { flex: flex2 }),
+        { id: 'sp', kind: 'ui.Element', span, component: { name: 'Spacer', userDefined: false } },
+        slotChild('flx', 'Flexible', {}),
+        {
+          id: 'div',
+          kind: 'ui.Element',
+          span,
+          component: { name: 'Divider', userDefined: false },
+          props: {
+            height: { id: 'h', kind: 'bind.Const', span, value: 8, type: c },
+            thickness: { id: 'th', kind: 'bind.Const', span, value: 1, type: c },
+          },
+        },
+      ],
+    };
+    return [
+      ...minimalApp().filter((n) => n.kind !== 'ui.Component' && n.kind !== 'app.Store'),
+      // `Divider` declares that it paints `outlineVariant`, and M4-B checks that against the program's own
+      // tokens before emitting (BRG3010, INV-20). A real app gets the role from `ColorScheme.fromSeed` via
+      // N10; this hand-built program has to state it, which is the point — the requirement is now visible in
+      // the fixture instead of being discovered in a browser as BRG4006.
+      {
+        id: 'tk-ov',
+        kind: 'app.Token',
+        span,
+        group: 'color',
+        name: 'outlineVariant',
+        role: 'outlineVariant',
+        light: '#FFCAC4D0',
+      } as unknown as AnyUirNode,
+      component('c1', 'HomeScreen', row),
+    ];
+  }
+
+  it('emits Expanded/Flexible/Spacer as flex children with the child slot as a prop', () => {
+    const { files, reported } = ((): { files: readonly { path: string; contents: string }[]; reported: unknown[] } => {
+      const h = harness(screen());
+      return { files: reactGenerator.generate(h.context).files, reported: h.reported };
+    })();
+    expect((reported as { severity: string }[]).filter((d) => d.severity === 'error')).toEqual([]);
+    const src = fileAt(files, 'src/components/home-screen.tsx') ?? '';
+    expect(src).toMatch(/<Expanded flex=\{2\} child=\{<Text>/);
+    expect(src).toMatch(/<Spacer \/>/);
+    expect(src).toMatch(/<Flexible child=\{<Text>/);
+    // All imported from the kit — no dangling reference.
+    expect(src).toMatch(/import \{[^}]*\bExpanded\b[^}]*\} from '@bridge\/runtime-react'/);
+    expect(src).toMatch(/import \{[^}]*\bSpacer\b[^}]*\} from '@bridge\/runtime-react'/);
+  });
+
+  it('emits Divider forwarding only representable props (never a Color)', () => {
+    const src = fileAt(reactGenerator.generate(harness(screen()).context).files, 'src/components/home-screen.tsx') ?? '';
+    expect(src).toMatch(/<Divider height=\{8\} thickness=\{1\} \/>/);
+  });
+});
+
 describe('it refuses rather than invents', () => {
   it('reports an unmapped widget and emits nothing for it', () => {
+    // `Scaffold` was the widget here until M4-G mapped it. A widget nothing has heard of is the case
+    // `BRG3001` is now reserved for — a widget the generator *knows* and cannot render gets `BRG3013` and
+    // names the capability — so the fixture uses one that genuinely is not in any catalog.
     const nodes = [
       ...minimalApp().filter((n) => n.kind !== 'ui.Component'),
-      component('c1', 'HomeScreen', element('e1', 'Scaffold', {}, [])),
+      component('c1', 'HomeScreen', element('e1', 'ParallaxCarousel', {}, [])),
     ];
     const { context, reported } = harness(nodes);
     reactGenerator.generate(context);
 
-    // A `<div>` where a `Scaffold` belonged is an application that renders, looks nearly right, and is wrong.
+    // A `<div>` where a `ParallaxCarousel` belonged is an application that renders, looks nearly right, and
+    // is wrong.
     const finding = reported.find((d) => d.code === 'BRG3001');
     expect(finding?.severity).toBe('error');
-    expect(finding?.message).toContain('Scaffold');
+    expect(finding?.message).toContain('ParallaxCarousel');
   });
 
   it('reports an opaque construct rather than guessing at it', () => {
@@ -387,9 +466,16 @@ describe('it refuses rather than invents', () => {
 describe('the real hello_bridge document', () => {
   it('parses, and is what the analyzer actually produced', () => {
     const nodes = helloBridge();
-    // 33 nodes: 31 from the analyzer — including the `app.RouteTransition` for its one `Navigator.push`
+    // 38 nodes: 36 from the analyzer — including the `app.RouteTransition` for its one `Navigator.push`
     // (M3-C) — plus the two N5 lifted from closures.
-    expect(nodes.length).toBe(33);
+    //
+    // It was 33 until M4-G, and none of the five that appeared is M4-G's doing. The golden was **stale by a
+    // milestone**: M4-E taught the analyzer to hoist every literal colour in a widget tree into an
+    // `app.Token`, and this fixture is minted from `fixtures/apps/hello_bridge` with no drift guard —
+    // `layout_proof.ndjson` has one (`build_proof_test.dart`), this does not, because regenerating it needs
+    // the real Flutter SDK and the Dart suite runs against stubs. So the drift was silent. Every added node
+    // is an `app.Token`; every other count below is unchanged.
+    expect(nodes.length).toBe(38);
     expect(nodes.filter((n) => n.kind === 'ui.Component')).toHaveLength(3);
     expect(nodes.filter((n) => n.kind === 'app.Store')).toHaveLength(1);
   });
@@ -400,25 +486,51 @@ describe('the real hello_bridge document', () => {
     expect(second.files).toEqual(first.files);
   });
 
-  it('emits nothing, because it is outside M3-B’s surface — and says exactly why', () => {
+  it('emits nothing — and what stops it is no longer the shell', () => {
     const { context, reported } = harness(helloBridge());
     const { files } = reactGenerator.generate(context);
 
-    // The honest result, and worth stating as an assertion rather than a footnote. `hello_bridge` builds on
-    // `MaterialApp` and `Scaffold`; M3-B maps seven layout widgets. So the generator refuses the whole
-    // project rather than emitting one that compiles around the holes and fails where they are.
+    // Still refused, and for entirely different reasons than it was before M4-G. Until this milestone the
+    // first thing `hello_bridge` hit was `BRG3001` on `MaterialApp` and `Scaffold`: this project's own
+    // walking-skeleton could not be compiled because the generator had no mapping for the two widgets every
+    // Flutter application is built out of. That is gone — see the assertion below.
     expect(files).toEqual([]);
     const codes = new Set(reported.filter((d) => d.severity === 'error').map((d) => d.code));
-    expect(codes.has('BRG3001')).toBe(true);
     expect(codes.has('BRG3005')).toBe(true);
   });
 
-  it('names MaterialApp and Scaffold as the widgets it cannot render', () => {
+  it('no longer reports a single unmapped widget — the shell is mapped (M4-G)', () => {
+    // The measurement this milestone is judged on. `MaterialApp`, `Scaffold`, `AppBar`, `IconButton` and
+    // `TextField` all resolve now; nothing in `hello_bridge`'s widget tree is unknown to the generator.
     const { context, reported } = harness(helloBridge());
     reactGenerator.generate(context);
-    const unmapped = reported.filter((d) => d.code === 'BRG3001').map((d) => d.message);
-    expect(unmapped.some((m) => m.includes('MaterialApp'))).toBe(true);
-    expect(unmapped.some((m) => m.includes('Scaffold'))).toBe(true);
+    expect(reported.filter((d) => d.code === 'BRG3001' && d.severity === 'error')).toEqual([]);
+  });
+
+  it('what remains is named precisely, and none of it is a widget mapping', () => {
+    // Every blocker left belongs to a different subsystem, and each says which. Asserted as a set so that a
+    // regression that re-introduces an unmapped widget — or silently drops one of these — fails here.
+    const { context, reported } = harness(helloBridge());
+    reactGenerator.generate(context);
+    const codes = [...new Set(reported.filter((d) => d.severity === 'error').map((d) => d.code))].sort();
+    expect(codes).toEqual([
+      // a call with Dart named arguments, whose callee signature the program does not carry
+      'BRG3002',
+      // `notifyListeners`, `mounted`, `widget` — framework primitives INV-22 should have erased
+      'BRG3006',
+      // a `FutureBuilder` whose loading and error branches are inside the builder (BRG2104 upstream)
+      'BRG3007',
+      // `Navigator.push(MaterialPageRoute(...))` — an inline destination with no path (§A17.6)
+      'BRG3008',
+      // the theme states `primaryColor:`, not a `ColorScheme`, so N10 derives no role set (INV-20)
+      'BRG3010',
+      // the *call site* of a navigation, which the schema does not link to its `app.RouteTransition`
+      'BRG3013',
+      // `MaterialApp.themeMode` — switching brightness after mount
+      'BRG3016',
+      // the roll-up: nothing is emitted from a program carrying an error
+      'BRG3005',
+    ].sort());
   });
 
   it('recovers declaration names from the references to them', () => {
@@ -443,7 +555,12 @@ describe('the real hello_bridge document', () => {
     // by the analyzer as ARGB — carried into a program M3-B *can* generate, so the passthrough is observable.
     // The generator must not re-encode them: the kit knows eight digits are ARGB, and a second place that
     // decides is a second place that can be wrong.
-    const tokens = (helloBridge() as unknown as Record<string, unknown>[]).filter((n) => n['kind'] === 'app.Token');
+    // The two the *theme* declares, by name. The other five are M4-E's hoisted literals — `colorFF3F51B5`
+    // and friends — which carry the same ARGB encoding but are named after their value rather than after a
+    // `ThemeData` parameter. Filtering by name keeps this test about ADR-21's passthrough rather than about
+    // how many colours the fixture happens to contain.
+    const tokens = (helloBridge() as unknown as Record<string, unknown>[])
+      .filter((n) => n['kind'] === 'app.Token' && !String(n['name'] ?? '').startsWith('color'));
     expect(tokens.length).toBe(2);
     const nodes = [...minimalApp().filter((n) => n.kind !== 'app.Token'), ...(tokens as unknown as AnyUirNode[])];
     const { files } = reactGenerator.generate(harness(nodes).context);
@@ -467,5 +584,276 @@ describe('the real hello_bridge document', () => {
       expect(finding.code, finding.message).toMatch(/^BRG3\d{3}$/);
       expect(finding.message.length).toBeGreaterThan(20);
     }
+  });
+});
+
+// ── M4-B: the capability registry ─────────────────────────────────────────────────────────────────
+//
+// A `WidgetMapping` used to say only which component to render, so everything else the kit component needed
+// was invisible to the generator: `Divider` reads the `outlineVariant` role, and an app whose theme had no
+// such token compiled cleanly and threw `BRG4006` on first paint. These assert the two requirements that are
+// now declared and checked before a byte is emitted.
+
+describe('M4-B declared capabilities are checked before emission', () => {
+  /** A one-widget screen, with whatever tokens the case needs. */
+  function appWith(widget: unknown, tokens: readonly unknown[]): AnyUirNode[] {
+    return [
+      ...(tokens as AnyUirNode[]),
+      component('c1', 'HomeScreen', widget as ReturnType<typeof element>),
+      { id: 'r1', kind: 'app.Route', span, path: '/', component: 'c1' } as unknown as AnyUirNode,
+    ];
+  }
+
+  const divider = {
+    id: 'div',
+    kind: 'ui.Element',
+    span,
+    component: { name: 'Divider', userDefined: false },
+    props: {},
+  };
+
+  const outlineVariant = {
+    id: 'tk-ov',
+    kind: 'app.Token',
+    span,
+    group: 'color',
+    name: 'outlineVariant',
+    role: 'outlineVariant',
+    light: '#FFCAC4D0',
+  };
+
+  it('BRG3010 — a widget painting a role the theme does not define is refused (INV-20)', () => {
+    const { context, reported } = harness(appWith(divider, []));
+    const { files } = reactGenerator.generate(context);
+    const errors = reported.filter((d) => d.severity === 'error');
+    expect(errors.some((d) => d.code === 'BRG3010')).toBe(true);
+    expect(errors.find((d) => d.code === 'BRG3010')?.message).toContain('outlineVariant');
+    // An error means nothing is emitted — a partial project would compile around the hole and fail where it is.
+    expect(files).toEqual([]);
+  });
+
+  it('BRG3010 passes once the role resolves — by `role`, not only by `name`', () => {
+    // The case the name-only index would have missed: a token whose `name` is what the author's ColorScheme
+    // parameter was called, carrying the role separately.
+    const namedDifferently = { ...outlineVariant, name: 'dividerColor', role: 'outlineVariant' };
+    const { context, reported } = harness(appWith(divider, [namedDifferently]));
+    reactGenerator.generate(context);
+    expect(reported.filter((d) => d.severity === 'error')).toEqual([]);
+  });
+
+  it('BRG3011 — a fractional Alignment is refused rather than snapped to the nearest keyword', () => {
+    const fractional = {
+      id: 'al',
+      kind: 'ui.Element',
+      span,
+      component: { name: 'Align', userDefined: false },
+      props: {
+        alignment: {
+          id: 'b1',
+          kind: 'bind.Expr',
+          span,
+          expr: {
+            id: 'n1',
+            kind: 'logic.New',
+            span,
+            typeName: 'Alignment',
+            type: { name: 'Alignment', library: 'package:flutter/widgets.dart' },
+            args: [
+              { id: 'x', kind: 'logic.Lit', span, value: 0.3, type: { name: 'double' } },
+              {
+                id: 'y',
+                kind: 'logic.Unary',
+                span,
+                operator: '-',
+                operand: { id: 'y0', kind: 'logic.Lit', span, value: 0.7, type: { name: 'double' } },
+                type: { name: 'double' },
+              },
+            ],
+          },
+        },
+      },
+    };
+    const { context, reported } = harness(appWith(fractional, []));
+    reactGenerator.generate(context);
+    const error = reported.find((d) => d.code === 'BRG3011');
+    expect(error).toBeDefined();
+    // The message states the position it could not express, so the author knows which call site to change.
+    expect(error?.message).toContain('Alignment(0.3, -0.7)');
+  });
+
+  it('a named Alignment is not refused — every kit constant is discrete by construction', () => {
+    const named = {
+      id: 'al',
+      kind: 'ui.Element',
+      span,
+      component: { name: 'Align', userDefined: false },
+      props: {
+        alignment: {
+          id: 'b1',
+          kind: 'bind.Expr',
+          span,
+          expr: {
+            id: 'r1',
+            kind: 'logic.Ref',
+            span,
+            name: 'Alignment.bottomRight',
+            type: { name: 'Alignment', library: 'package:flutter/widgets.dart' },
+          },
+        },
+      },
+    };
+    const { context, reported } = harness(appWith(named, []));
+    const { files } = reactGenerator.generate(context);
+    expect(reported.filter((d) => d.severity === 'error')).toEqual([]);
+    const src = fileAt(files, 'src/components/home-screen.tsx') ?? '';
+    expect(src).toContain('Alignment.bottomRight');
+  });
+
+  it('the unmapped-widget diagnostic lists what is actually supported, not a stale copy', () => {
+    const unknown = {
+      id: 'u1',
+      kind: 'ui.Element',
+      span,
+      component: { name: 'Mystery', userDefined: false },
+      props: {},
+    };
+    const { context, reported } = harness(appWith(unknown, []));
+    reactGenerator.generate(context);
+    const error = reported.find((d) => d.code === 'BRG3001');
+    expect(error).toBeDefined();
+    // Derived from WIDGET_MAP, so it cannot drift the way the hand-kept list did — it named seven widgets
+    // while fifteen were supported.
+    expect(error?.message).toContain('AspectRatio');
+    expect(error?.message).toContain('VerticalDivider');
+  });
+});
+
+// ── M4-C: the asset pipeline ──────────────────────────────────────────────────────────────────────
+
+describe('M4-C asset collection', () => {
+  function appWith(widget: unknown, tokens: readonly unknown[] = []): AnyUirNode[] {
+    return [
+      ...(tokens as AnyUirNode[]),
+      component('c1', 'HomeScreen', widget as ReturnType<typeof element>),
+      { id: 'r1', kind: 'app.Route', span, path: '/', component: 'c1' } as unknown as AnyUirNode,
+    ];
+  }
+
+  const imageWith = (nameBinding: unknown): unknown => ({
+    id: 'img',
+    kind: 'ui.Element',
+    span,
+    component: { name: 'Image', constructorName: 'asset', userDefined: false },
+    props: { name: nameBinding },
+  });
+
+  it('BRG3012 — an asset key that is not a constant is refused, not omitted', () => {
+    // Omitting it would leave the manifest short an entry and the app rendering a broken <img>, which looks
+    // like a slow network rather than a defect.
+    const computed = {
+      id: 'b',
+      kind: 'bind.Expr',
+      span,
+      expr: { id: 'r', kind: 'logic.Ref', span, name: 'path', type: { name: 'String' } },
+    };
+    const { context, reported } = harness(appWith(imageWith(computed)));
+    reactGenerator.generate(context);
+    const error = reported.find((d) => d.code === 'BRG3012');
+    expect(error).toBeDefined();
+    expect(error?.severity).toBe('error');
+  });
+
+  it('a constant key reaches the manifest, sorted and deduplicated', () => {
+    const key = (value: string): unknown => ({ id: `k-${value}`, kind: 'bind.Const', span, value });
+    const row = {
+      id: 'row',
+      kind: 'ui.Element',
+      span,
+      component: { name: 'Row', userDefined: false },
+      children: [
+        { ...(imageWith(key('z/last.png')) as object), id: 'i1' },
+        { ...(imageWith(key('a/first.png')) as object), id: 'i2' },
+        // The same asset twice is one manifest entry: the manifest is a property of the application.
+        { ...(imageWith(key('a/first.png')) as object), id: 'i3' },
+      ],
+    };
+    const { files } = reactGenerator.generate(harness(appWith(row)).context);
+    const manifest = fileAt(files, 'src/assets/manifest.ts') ?? '';
+    const keys = [...manifest.matchAll(/"([^"]+)": "\/assets\//g)].map((match) => match[1]);
+    expect(keys).toEqual(['a/first.png', 'z/last.png']);
+  });
+
+  it('a program with no assets still emits a manifest, so the scaffold always resolves', () => {
+    const { files } = reactGenerator.generate(harness(minimalApp()).context);
+    const manifest = fileAt(files, 'src/assets/manifest.ts') ?? '';
+    expect(manifest).toContain('export const assetManifest: AssetManifest');
+    expect(manifest).toContain('assets: {');
+  });
+});
+
+// ── M4-E: colours that cannot resolve ─────────────────────────────────────────────────────────────
+
+describe('M4-E colour resolution', () => {
+  const box = (colorBinding: unknown): unknown => ({
+    id: 'cb',
+    kind: 'ui.Element',
+    span,
+    component: { name: 'ColoredBox', userDefined: false },
+    props: { color: colorBinding },
+  });
+
+  function appWith(widget: unknown, tokens: readonly unknown[] = []): AnyUirNode[] {
+    return [
+      ...(tokens as AnyUirNode[]),
+      component('c1', 'HomeScreen', widget as ReturnType<typeof element>),
+      { id: 'r1', kind: 'app.Route', span, path: '/', component: 'c1' } as unknown as AnyUirNode,
+    ];
+  }
+
+  it('a resolved colour is a token name, and passes through untouched', () => {
+    // The analyzer hoists a constant colour into a token and hands down its name, so by the time the
+    // generator sees it there is no colour left to convert — which is why no colour code exists in the
+    // emitter at all.
+    const { context, reported } = harness(
+      appWith(box({ id: 'k', kind: 'bind.Const', span, value: 'colorFF2196F3' }), [
+        {
+          id: 'tk',
+          kind: 'app.Token',
+          span,
+          group: 'color',
+          name: 'colorFF2196F3',
+          light: '#FF2196F3',
+        } as unknown as AnyUirNode,
+      ]),
+    );
+    const { files } = reactGenerator.generate(context);
+    expect(reported.filter((d) => d.severity === 'error')).toEqual([]);
+    expect(fileAt(files, 'src/components/home-screen.tsx') ?? '').toContain(
+      "<ColoredBox color={'colorFF2196F3'} />",
+    );
+  });
+
+  it('BRG3014 — a runtime-computed colour is refused, not painted from one branch', () => {
+    const ternary = {
+      id: 'b',
+      kind: 'bind.Expr',
+      span,
+      expr: {
+        id: 'c',
+        kind: 'logic.Conditional',
+        span,
+        condition: { id: 'q', kind: 'logic.Lit', span, value: true, type: { name: 'bool' } },
+        then: { id: 't', kind: 'logic.Lit', span, value: 1, type: { name: 'int' } },
+        otherwise: { id: 'o', kind: 'logic.Lit', span, value: 2, type: { name: 'int' } },
+        type: { name: 'Color', library: 'package:flutter/painting.dart' },
+      },
+    };
+    const { context, reported } = harness(appWith(box(ternary)));
+    reactGenerator.generate(context);
+    const error = reported.find((d) => d.code === 'BRG3014');
+    expect(error).toBeDefined();
+    // Names the subsystem that owns the work, per §8 — never a generic message.
+    expect(error?.message).toContain('belongs to the analyzer');
+    expect(error?.message).toContain('INV-20');
   });
 });

@@ -36,8 +36,19 @@ const PRIMITIVES: Readonly<Record<string, string>> = {
  * @returns the type text. `unknown` for anything not primitive.
  */
 export function typeTextOf(type: Node | undefined): string {
-  const name = typeof type?.['name'] === 'string' ? type['name'] : 'unknown';
+  const declared = typeof type?.['name'] === 'string' ? type['name'] : 'unknown';
   const nullable = type?.['nullable'] === true;
+
+  // The `?` is stripped before the lookup, and that is not cosmetic. A `TypeRef.name` is the analyzer's
+  // `getDisplayString()`, which spells a nullable type `bool?` — *and* the ref sets `nullable: true`
+  // separately, so the suffix is a second statement of the same fact. Looking `bool?` up in a table keyed by
+  // `bool` missed, so **every nullable primitive became `unknown`**: a `bool?` parameter emitted as
+  // `unknown | null`, and `value ?? false` then had type `{}`, which does not assign to `boolean`.
+  //
+  // It went unseen until M4-F because nullable primitives only reach here as *parameters*, and no fixture had
+  // a callback taking one until a form did — `onChanged: (bool? value)` is Flutter's own signature for a
+  // tristate checkbox.
+  const name = declared.endsWith('?') ? declared.slice(0, -1) : declared;
   const base = PRIMITIVES[name] ?? 'unknown';
   // Dart's nullable `int?` is `number | null`, not `number | undefined`: Dart has one absent value and it is
   // `null`, and a Dart `null` crossing into JavaScript is still `null`.

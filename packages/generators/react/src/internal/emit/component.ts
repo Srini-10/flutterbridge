@@ -30,9 +30,14 @@ import { emitExpression, stringLiteral, type EmitScope } from './expression.js';
 import { emitStatements } from './statement.js';
 import { identifierOf, type ModuleBuilder } from './module.js';
 import { typeTextOf } from './types.js';
-import { mappingOf } from './widgets.js';
-
-const RUNTIME = '@bridge/runtime-react';
+import { useRuntime } from './runtime.js';
+import { missingCapabilityOf, OWNER_LABEL } from './unsupported.js';
+import {
+  UNSUPPORTED_PARAMETERS,
+  mappingOf,
+  supportedWidgetNames,
+  type WidgetMapping,
+} from './widgets.js';
 
 type Node = Record<string, unknown>;
 
@@ -80,7 +85,9 @@ export function emitComponent(component: Node, module: ModuleBuilder, scope: Emi
   module.line(`export function ${name}(${propsType}) {`);
   module.block(() => {
     const signals = declareLocalSignals(component, module, scope);
-    const inner = childScope(scope, signals, params);
+    // Actions the tree calls, declared before the tree that calls them. See `declareLocalActions`.
+    const actions = declareLocalActions(component, module, scope, signals);
+    const inner = childScope(scope, signals, params, actions);
     const tree = component['render'];
     if (tree === undefined) {
       module.line('return null;');
@@ -95,12 +102,42 @@ export function emitComponent(component: Node, module: ModuleBuilder, scope: Emi
 }
 
 /**
- * Emits the component's own signals.
+ * Emits the component's own signals, and **subscribes the component to them**.
  *
  * Through `useState`'s initialiser, which React runs once per mount. A bare `signal(0)` in the function body
  * would allocate a fresh signal on every render, so every write would be lost and the component would never
  * update — and a `signal(0)` at module scope would be INV-19, shared across requests. Neither is available;
  * this is the one shape that is both per-instance and stable.
+ *
+ * ## The subscription, and the defect that was here
+ *
+ * Each signal also gets `const <name>$ = useSignal(<name>);`, and **render-position reads use `<name>$`**.
+ * Without it the counter example did not count: `_count.set(…)` ran, the signal changed, and React never
+ * re-rendered because nothing had subscribed. The page sat at "You have pushed the button 0 times." through
+ * any number of clicks, with **no console error and no failed request** — every upstream stage green.
+ *
+ * Only a bare `bind.Signal` used to subscribe, by emitting `useSignal(…)` inline where it was read. A signal
+ * read from inside an *expression* — `'…$_count times.'`, `_count + 1`, `if (_count > 3)` — reaches the
+ * expression emitter as a `logic.Ref` and became `_count.get()`, which reads the value without subscribing
+ * to it. Interpolation is the single most common way a Flutter widget shows state, so the common case was
+ * the broken one.
+ *
+ * Two reasons the subscription is hoisted here rather than fixed at each read site:
+ *
+ *   * **Rules of hooks.** `useSignal` inline in JSX sits inside whatever conditional surrounds it, and a
+ *     `ui.Cond` branch or a `ui.List` template is exactly that. A hook called conditionally is a React
+ *     defect that shows up as a corrupted hook order on a later render — far from its cause. At the top of
+ *     the component it is unconditional by construction.
+ *   * **One subscription per signal.** Reading the same signal in three places should not mean three
+ *     `useSyncExternalStore` calls.
+ *
+ * Every component-local signal is subscribed, not only those the render reads. A signal that extraction
+ * lifted onto a component is state that component's UI depends on — that is why it was lifted — and the
+ * cost of being wrong is one extra render of one component, against the cost of missing one being a
+ * component that silently never updates.
+ *
+ * Action bodies keep reading `<name>.get()`. A handler must see the *current* value, and it must not call a
+ * hook; `actionScope` and `childScope` differ in exactly this, which is why they are two scopes.
  */
 function declareLocalSignals(
   component: Node,
@@ -111,7 +148,7 @@ function declareLocalSignals(
   const ids = Array.isArray(component['localSignals']) ? (component['localSignals'] as string[]) : [];
   if (ids.length === 0) return signals;
 
-  const signalFn = module.use(RUNTIME, 'signal');
+  const signalFn = useRuntime(module, 'signal');
   const useState = module.use('react', 'useState');
   for (const id of ids) {
     const node = scope.node(id) as unknown as Node | undefined;
@@ -129,8 +166,143 @@ function declareLocalSignals(
     const initial = node['initial'] === undefined ? 'undefined' : emitExpression(node['initial'] as Node, scope);
     module.line(`const [${local}] = ${useState}(() => ${signalFn}(${initial}));`);
   }
+
+  // The subscriptions, after every declaration — so the emitted block reads as "here is the state, here is
+  // what re-renders on it" rather than interleaving the two.
+  if (signals.size > 0) {
+    const useSignal = useRuntime(module, 'useSignal');
+    for (const local of signals.values()) module.line(`const ${local}$ = ${useSignal}(${local});`);
+  }
+
   module.line();
   return signals;
+}
+
+/** The subscribed value of a component-local signal — what render position reads. */
+function subscribedName(local: string): string {
+  return `${local}$`;
+}
+
+/**
+ * Emits the actions this component's tree calls, as local closures.
+ *
+ * **The gap M4-F found.** A callback that mutates component state — `onChanged: (v) { setState(() { _note =
+ * v; }); }` — is lifted by normalization into a top-level `sig.Action`, and the widget prop becomes a
+ * `logic.Ref` naming it. Nothing declared those actions in the component, so every one of them reached the
+ * expression emitter as an unresolvable reference and became `BRG3006`.
+ *
+ * It had gone unnoticed because no earlier fixture put a state-mutating callback *in the widget tree*: the
+ * corpus app's `onPressed` called a **store** action, which `rootScope` already resolved. A form is the first
+ * screen where the pattern is unavoidable, which is why a milestone about inputs is where it surfaced.
+ *
+ * A closure per action, declared before the tree, so the tree's `onChanged={handler}` is a reference to a
+ * stable local rather than an inline lambda re-created on every render. Only the actions the tree actually
+ * reaches are emitted — an action owned by a store is resolved by `rootScope` and must not be duplicated
+ * here, and a lifted action nothing calls is dead code.
+ */
+function declareLocalActions(
+  component: Node,
+  module: ModuleBuilder,
+  scope: EmitScope,
+  signals: ReadonlyMap<NodeId, string>,
+): Map<NodeId, string> {
+  const names = new Map<NodeId, string>();
+  const referenced = referencedActions(component['render'], scope);
+  if (referenced.length === 0) return names;
+
+  // Named from the id, and sorted by it, so two runs emit the same names in the same order. A lifted action
+  // has no name in the source — normalization synthesised it — so there is nothing more human to use.
+  for (const id of referenced) {
+    names.set(id, identifierOf(`handle_${id.slice(0, 8)}`));
+  }
+
+  for (const id of referenced) {
+    const action = scope.node(id) as unknown as Node | undefined;
+    if (action === undefined) continue;
+    const declared = asArray(action['params']);
+
+    // Typed, because the emitted project compiles under `strict` and an untyped parameter is `implicit any`
+    // — `TS7006`, which the build proof catches. The type is the one Dart declared, carried on the param.
+    const actionParams = declared
+      .map(
+        (param) =>
+          `${identifierOf(String(param['name'] ?? '_'))}: ${typeTextOf(param['type'] as Node | undefined)}`,
+      )
+      .join(', ');
+
+    module.line(`const ${names.get(id)!} = (${actionParams}) => {`);
+    module.block(() => {
+      module.lineAll(emitActionBody(action, actionScope(scope, signals, declared, names)));
+    });
+    module.line('};');
+  }
+  module.line();
+  return names;
+}
+
+/**
+ * A scope for an action's body, in which its parameters are **locals**.
+ *
+ * Not `childScope`: that one exists for a `ui.Component`, whose parameters are *props*, so it resolves a name
+ * to `props.x`. An action's parameters are ordinary arguments of an ordinary closure, and routing them
+ * through `childScope` emitted `_volume.set(props.value)` inside a handler on a component that has no props
+ * at all — code that referenced a variable which did not exist. The two kinds of parameter look identical in
+ * UIR and mean different things, which is exactly why they need different scopes rather than one with a flag.
+ */
+function actionScope(
+  parent: EmitScope,
+  signals: ReadonlyMap<NodeId, string>,
+  params: readonly Node[],
+  actions: ReadonlyMap<NodeId, string>,
+): EmitScope {
+  const names = new Set(params.map((param) => String(param['name'] ?? '')));
+  return {
+    ...parent,
+    report: parent.report.bind(parent),
+    node: parent.node.bind(parent),
+    declaredName: parent.declaredName.bind(parent),
+    declaresClass: parent.declaresClass.bind(parent),
+    // `.get()`, not the subscribed local: a handler runs after render and must read the value as it is
+    // *now*. Reading `_count$` would close over the value from the render that created the closure — the
+    // classic stale-closure bug, and the reason these are two scopes rather than one with a flag.
+    signalRead: (id) => {
+      const local = signals.get(id);
+      return local === undefined ? parent.signalRead(id) : `${local}.get()`;
+    },
+    signalLocal: (id) => signals.get(id) ?? parent.signalLocal(id),
+    localName: (id) => actions.get(id) ?? parent.localName(id),
+    // A bare name, not `props.x`. Innermost-first, so a parameter shadows an outer name of the same spelling.
+    paramInScope: (name) => (names.has(name) ? identifierOf(name) : parent.paramInScope(name)),
+  };
+}
+
+/**
+ * The ids of every `sig.Action` the tree references, sorted.
+ *
+ * By `target`, not by name: normalization gives a lifted action a synthetic name (`action$8c1f32c5`) that
+ * embeds its id, and parsing that string would be reading a fact the node already states properly.
+ */
+function referencedActions(tree: unknown, scope: EmitScope): NodeId[] {
+  const found = new Set<NodeId>();
+  const visit = (value: unknown): void => {
+    if (Array.isArray(value)) {
+      for (const item of value) visit(item);
+      return;
+    }
+    if (value === null || typeof value !== 'object') return;
+    const node = value as Node;
+    if (kindOf(node) === 'logic.Ref' && typeof node['target'] === 'string') {
+      const target = node['target'];
+      const declaration = scope.node(target) as unknown as Node | undefined;
+      // Only actions, and only ones nothing else already resolves — a store's action is `rootScope`'s.
+      if (declaration !== undefined && kindOf(declaration) === 'sig.Action' && scope.localName(target) === undefined) {
+        found.add(target);
+      }
+    }
+    for (const child of Object.values(node)) visit(child);
+  };
+  visit(tree);
+  return [...found].sort();
 }
 
 /** A signal's local name: its anchor, else the name its references use, else its id (see store.ts's `nameOf`). */
@@ -145,11 +317,42 @@ function nameOfSignal(node: Node, id: string, scope: EmitScope): string {
   return `signal_${id.slice(0, 8)}`;
 }
 
+/**
+ * A `ui.List`'s key, as a React key.
+ *
+ * ## Why a `ValueKey` is unwrapped rather than constructed
+ *
+ * React compares keys with `===` and wants a string or a number. Flutter's `ValueKey<T>(this.value)` **is**
+ * its value — the class exists to give that value `Key` identity, and its `operator ==` compares nothing
+ * else. So `ValueKey(item.id)` and `item.id` denote the same identity, and emitting the first as
+ * `new ValueKey(item.id)` would build a fresh object every render: a key that never matches itself, which is
+ * worse than no key at all because it remounts every row on every update.
+ *
+ * It also would not compile. `ValueKey` is a `package:flutter/` type, so the constructor path imports it
+ * from the runtime kit — which does not export it, and should not: there is nothing a kit `ValueKey` could
+ * do that the value does not already do.
+ *
+ * A key that is *not* a value key is left to the ordinary binding path, because its identity is not its
+ * argument.
+ */
+function listKey(binding: Node, scope: EmitScope): string {
+  const expr = binding['expr'];
+  if (expr !== null && typeof expr === 'object') {
+    const node = expr as Node;
+    const args = Array.isArray(node['args']) ? (node['args'] as Node[]) : [];
+    if (node['kind'] === 'logic.New' && String(node['typeName'] ?? '') === 'ValueKey' && args.length === 1) {
+      return emitExpression(args[0]!, scope);
+    }
+  }
+  return emitBinding(binding, scope);
+}
+
 /** A scope that resolves this component's signals and params. */
 function childScope(
   parent: EmitScope,
   signals: ReadonlyMap<NodeId, string>,
   params: readonly Node[],
+  actions: ReadonlyMap<NodeId, string> = new Map(),
 ): EmitScope {
   const paramNames = new Map<string, string>();
   for (const param of params) {
@@ -159,13 +362,20 @@ function childScope(
   return {
     module: parent.module,
     report: parent.report.bind(parent),
+    // Program-wide, so a child scope forwards it unchanged rather than rebuilding it per component.
+    themeRoles: parent.themeRoles,
     node: parent.node.bind(parent),
+    // The **subscribed** local. This is render position, so the value has to come from the thing that
+    // re-renders the component when it changes — see `declareLocalSignals` for the defect this fixes.
     signalRead: (id) => {
       const local = signals.get(id);
-      return local === undefined ? parent.signalRead(id) : `${local}.get()`;
+      return local === undefined ? parent.signalRead(id) : subscribedName(local);
     },
-    localName: (id) => parent.localName(id),
+    signalLocal: (id) => signals.get(id) ?? parent.signalLocal(id),
+    // An action this component declared resolves to its local closure; anything else is the parent's.
+    localName: (id) => actions.get(id) ?? parent.localName(id),
     declaredName: (id) => parent.declaredName(id),
+    declaresClass: (name) => parent.declaresClass(name),
     // A component's parameters are props, so a reference to one reads `props.x` rather than a bare name.
     paramInScope: (name) => {
       const param = paramNames.get(name);
@@ -192,8 +402,8 @@ function spanOf(node: Node): string {
 export function emitUiNode(node: Node, module: ModuleBuilder, scope: EmitScope, depth: number): string {
   switch (kindOf(node)) {
     case 'ui.Text': {
-      const value = emitBinding(node['value'] as Node, module, scope);
-      const Text = module.use(RUNTIME, 'Text');
+      const value = emitBinding(node['value'] as Node, scope);
+      const Text = useRuntime(module, 'Text');
       return `<${Text}>{${value}}</${Text}>`;
     }
 
@@ -204,7 +414,7 @@ export function emitUiNode(node: Node, module: ModuleBuilder, scope: EmitScope, 
       // A `ui.Cond` is a ternary, not an `if`: it is an expression, and it sits inside JSX where a statement
       // cannot go. An absent branch renders nothing — `null`, not an empty fragment, which would still create
       // a node.
-      const condition = emitBinding(node['condition'] as Node, module, scope);
+      const condition = emitBinding(node['condition'] as Node, scope);
       const then = node['then'] === undefined ? 'null' : emitUiNode(node['then'] as Node, module, scope, depth + 1);
       const otherwise =
         node['otherwise'] === undefined ? 'null' : emitUiNode(node['otherwise'] as Node, module, scope, depth + 1);
@@ -212,22 +422,53 @@ export function emitUiNode(node: Node, module: ModuleBuilder, scope: EmitScope, 
     }
 
     case 'ui.List': {
-      const items = emitBinding(node['items'] as Node, module, scope);
-      const itemName = identifierOf(String(node['itemName'] ?? 'item'));
-      const body = node['itemBuilder'] ?? node['body'];
+      // ## The field names are the schema's, and were not until M4-H
+      //
+      // This emitter read `items`, `itemName` and `itemBuilder`. `ui.List` has **`source`, `itemParam` and
+      // `template`** — it always has; `l2.json` is unambiguous and the analyzer has always emitted those.
+      // So every real `ui.List` would have emitted `undefined.map((item, index) => …)`.
+      //
+      // It was never caught because **`ui.List` had never been generated from real analyzer output**. No
+      // generator test constructs one, the build proof's fixture contains no `for`-element and no
+      // `.map().toList()`, and `hello_bridge`'s only repeat is a `ListView.builder`, which reached the
+      // generator opaque. A hand-built fixture agreeing with a hand-written emitter is exactly the class of
+      // defect M3-D's build proof exists to catch, and this one slipped through the gap in its coverage.
+      const source = emitBinding(node['source'] as Node, scope);
+      const itemName = identifierOf(String(node['itemParam'] ?? 'item'));
+      // Flutter's `itemBuilder` takes an index, and `ui.List` carries its name when it does. Defaulting to
+      // `index` rather than requiring it keeps a `for (x in xs)` list — which has no index — emitting the
+      // same shape it always did.
+      const indexName = identifierOf(String(node['indexParam'] ?? 'index'));
+      const body = node['template'];
       if (body === undefined) {
         scope.report(
           GeneratorDiagnosticCode.UnsupportedExpression,
           'error',
-          'a ui.List has no item template',
+          'a ui.List has no `template`, so there is nothing to render per item.',
           idOf(node),
         );
         return 'null';
       }
-      const inner = emitUiNode(body as Node, module, scope, depth + 1);
+      // The template's scope binds the two names the emitted `.map()` introduces. It did not until M4-H —
+      // the third defect in this dead path — so a template that read its item or its index reported
+      // `BRG3006` for a name the very next line of output declares.
+      const listScope: EmitScope = {
+        ...scope,
+        paramInScope: (name: string) =>
+          name === String(node['itemParam'] ?? '')
+            ? itemName
+            : name === String(node['indexParam'] ?? '')
+              ? indexName
+              : scope.paramInScope(name),
+      };
+      const inner = emitUiNode(body as Node, module, listScope, depth + 1);
       // N9 infers keys. If it produced one, it is on the node; if not, the index is used and that is stated
       // rather than silent — an index key is wrong the moment the list reorders.
-      const key = node['key'] === undefined ? 'index' : emitBinding(node['key'] as Node, module, scope);
+      // The key is evaluated **per item**, so it resolves in the list's scope, not the enclosing one. It
+      // read the outer scope until M4-H — the fourth defect in this path, and the one that could only
+      // appear once N9 actually lifted a key, which no fixture had made it do before. `key={ValueKey(
+      // items[index])}` reported `BRG3006` for `index`, a name the `.map()` on the same line binds.
+      const key = node['key'] === undefined ? indexName : listKey(node['key'] as Node, listScope);
       if (node['key'] === undefined) {
         scope.report(
           GeneratorDiagnosticCode.UnsupportedExpression,
@@ -237,7 +478,11 @@ export function emitUiNode(node: Node, module: ModuleBuilder, scope: EmitScope, 
           idOf(node),
         );
       }
-      return `{${items}.map((${itemName}, index) => <Fragment key={${key}}>${inner}</Fragment>)}`;
+      // `Fragment` was emitted and never imported — the second defect in this dead path, and the one that
+      // would have failed `tsc` rather than rendering wrongly. Declared through the module builder like every
+      // other name, so the import block carries it.
+      const fragment = module.use('react', 'Fragment');
+      return `{${source}.map((${itemName}, ${indexName}) => <${fragment} key={${key}}>${inner}</${fragment}>)}`;
     }
 
     case 'ui.Async': {
@@ -296,18 +541,41 @@ function emitElement(node: Node, module: ModuleBuilder, scope: EmitScope, depth:
   const mapping = mappingOf(widgetName);
 
   if (mapping === undefined) {
+    const constructorName =
+      typeof componentRef?.['constructorName'] === 'string' ? componentRef['constructorName'] : undefined;
+    const missing = missingCapabilityOf(widgetName, constructorName);
+    const spelling = constructorName === undefined ? widgetName : `${widgetName}.${constructorName}`;
+
+    if (missing !== undefined) {
+      // A widget the system knows about. Naming the capability and its owner is the difference between a
+      // diagnostic an author can act on and one that only says something is missing.
+      scope.report(
+        GeneratorDiagnosticCode.UnsupportedCapability,
+        'error',
+        `\`${spelling}\` needs ${missing.capability}, which is not built yet. That work belongs to ` +
+          `${OWNER_LABEL[missing.owner]}.` +
+          (missing.workaround === undefined ? '' : ` For now: ${missing.workaround}.`) +
+          ` It is not rendered — a placeholder would be an application that looks nearly right and is wrong.`,
+        idOf(node),
+      );
+      return 'null';
+    }
+
     scope.report(
       GeneratorDiagnosticCode.UnmappedWidget,
       'error',
-      `\`${widgetName}\` has no mapping to a runtime component. It is not rendered: a placeholder here ` +
-        `would be an application that looks nearly right and is wrong. Supported today: ` +
-        `${Object.keys(WIDGET_NAMES).join(', ')}.`,
+      `\`${spelling}\` is not a Flutter widget this generator has a mapping for, and not one it knows to be ` +
+        `unsupported. If it is your application's own widget, it should have extracted as a ui.Component — ` +
+        `that it did not is an extraction defect worth reporting. If it is a framework widget, it needs a ` +
+        `catalog entry and a mapping. Supported today: ${supportedWidgetNames().join(', ')}.`,
       idOf(node),
     );
     return 'null';
   }
 
-  const tag = module.use(RUNTIME, mapping.component);
+  checkCapabilities(widgetName, mapping, node, scope);
+
+  const tag = useRuntime(module, mapping.component);
   const props: string[] = [];
   const propMap = (node['props'] ?? {}) as Record<string, unknown>;
 
@@ -326,7 +594,7 @@ function emitElement(node: Node, module: ModuleBuilder, scope: EmitScope, depth:
       );
       continue;
     }
-    const value = emitBinding(propMap[flutterProp] as Node, module, scope, mapping.enums?.[flutterProp]);
+    const value = emitBinding(propMap[flutterProp] as Node, scope, mapping.enums?.[flutterProp]);
     props.push(`${mapped}={${value}}`);
   }
 
@@ -361,10 +629,128 @@ function emitElement(node: Node, module: ModuleBuilder, scope: EmitScope, depth:
   return `<${tag}${attributes}>\n${inner}\n${pad}</${tag}>`;
 }
 
-/** Names of supported widgets, for the diagnostic. */
-const WIDGET_NAMES: Readonly<Record<string, true>> = {
-  Text: true, Column: true, Row: true, Center: true, Padding: true, SizedBox: true, ElevatedButton: true,
-};
+/**
+ * Checks a widget's declared capability requirements before anything is emitted for it.
+ *
+ * A `WidgetMapping` used to say only which component to render, so everything else the kit component needed
+ * was invisible here: `Divider` reads the `outlineVariant` role, and an app whose theme has no such token
+ * compiled cleanly and threw `BRG4006` on first paint. A requirement the generator cannot see is a
+ * requirement it cannot check, so the mapping states them and this enforces them.
+ *
+ * Both checks are `error`s rather than warnings, under the compiler's own severity rule: *"error — the
+ * program is not fit to generate from. Something would have to be invented."* A missing role would have to be
+ * invented as some colour; an inexpressible alignment as some position.
+ */
+function checkCapabilities(
+  widgetName: string,
+  mapping: WidgetMapping,
+  node: Node,
+  scope: EmitScope,
+): void {
+  // A parameter the widget can be rendered *without* but not *with*. Narrower than refusing the widget, and
+  // it must not be the silent drop an unmapped prop gets: `IntrinsicWidth(stepWidth: 8)` is a different width
+  // from `IntrinsicWidth()`, so dropping it renders a box the author did not write.
+  const declared = (node['props'] ?? {}) as Record<string, unknown>;
+  for (const parameter of Object.keys(declared).sort()) {
+    const reason = UNSUPPORTED_PARAMETERS[`${widgetName}.${parameter}`];
+    if (reason === undefined) continue;
+    scope.report(
+      GeneratorDiagnosticCode.UnsupportedParameter,
+      'error',
+      `\`${widgetName}\` renders, but not with \`${parameter}\` set: ${reason}`,
+      idOf(node),
+    );
+  }
+
+  // INV-20's build-time half: every colour a mapped Material widget paints must resolve to an `app.Token`.
+  for (const role of mapping.roles ?? []) {
+    if (scope.themeRoles.has(role)) continue;
+    scope.report(
+      GeneratorDiagnosticCode.UnresolvedThemeRole,
+      'error',
+      `\`${widgetName}\` paints the Material role \`${role}\`, and this program's theme defines no token ` +
+        `for it. INV-20 (ADR-13) requires every colour a mapped widget paints to resolve to an app.Token, ` +
+        `so there is no default to fall back to — a literal here would be the compiler bug that invariant ` +
+        `names. Give the app a \`ColorScheme.fromSeed(...)\`, which makes N10 derive the full role set, or ` +
+        `state \`${role}\` on its ColorScheme.`,
+      idOf(node),
+    );
+  }
+
+  // Flutter's alignment is continuous; CSS flexbox has three positions per axis.
+  const props = (node['props'] ?? {}) as Record<string, unknown>;
+
+  // A colour that did not resolve to a token. The analyzer hoists every constant colour and recognises a
+  // `colorScheme.<role>` read (M4-E), so anything still shaped like an expression is a colour computed at
+  // runtime — which has no single value to put in the palette.
+  for (const prop of mapping.colorProps ?? []) {
+    const binding = props[prop] as Node | undefined;
+    if (binding === undefined) continue;
+    if (kindOf(binding) === 'bind.Const' && typeof binding['value'] === 'string') continue;
+    scope.report(
+      GeneratorDiagnosticCode.UnresolvableColor,
+      'error',
+      `\`${widgetName}.${prop}\` is a colour the analyzer could not resolve to an app.Token. Every ` +
+        `constant colour is hoisted into the palette and every \`colorScheme.<role>\` read names one ` +
+        `already, so this is a colour computed at run time — a ternary, or a value from a store. INV-20 ` +
+        `(ADR-13) requires a painted colour to resolve to a token, and picking one branch would be ` +
+        `inventing. That work belongs to the analyzer: it needs a colour whose value is knowable at build ` +
+        `time. Lift the choice to a theme role, or attach an override.`,
+      idOf(node),
+    );
+  }
+
+  for (const prop of mapping.alignmentProps ?? []) {
+    const binding = props[prop] as Node | undefined;
+    const position = constantAlignment(binding);
+    if (position === undefined) continue; // not a constant we can read — nothing proven, nothing reported
+    const discrete = (value: number): boolean => value === -1 || value === 0 || value === 1;
+    if (discrete(position.x) && discrete(position.y)) continue;
+    scope.report(
+      GeneratorDiagnosticCode.UnrepresentableAlignment,
+      'error',
+      `\`${widgetName}.${prop}\` is Alignment(${position.x}, ${position.y}), which CSS flexbox cannot ` +
+        `express: it offers three positions per axis and Flutter's alignment is continuous. Snapping to the ` +
+        `nearest keyword would place the child somewhere the author did not write, with nothing on screen ` +
+        `to say so. Use one of the nine named alignments, or attach an override.`,
+      idOf(node),
+    );
+  }
+}
+
+/**
+ * The `(x, y)` of a constant `Alignment(...)` construction, or `undefined` if the value is not one.
+ *
+ * Only the literal construction is readable here — `Alignment.center` is a `logic.Ref` to a static member the
+ * kit defines, and every one of those is discrete by construction, so a reference needs no check. Anything
+ * else (a variable, a conditional) is not a constant and is left alone: reporting on a value the generator
+ * cannot evaluate would be a guess, and a false `error` refuses a program that is fine.
+ */
+function constantAlignment(binding: Node | undefined): { x: number; y: number } | undefined {
+  if (binding === undefined || kindOf(binding) !== 'bind.Expr') return undefined;
+  const expr = binding['expr'] as Node | undefined;
+  if (expr === undefined || kindOf(expr) !== 'logic.New') return undefined;
+  const typeName = String(expr['typeName'] ?? '');
+  if (typeName !== 'Alignment' && typeName !== 'AlignmentDirectional') return undefined;
+  const args = asArray(expr['args']);
+  if (args.length !== 2) return undefined;
+  const x = constantNumber(args[0]);
+  const y = constantNumber(args[1]);
+  return x === undefined || y === undefined ? undefined : { x, y };
+}
+
+/** A numeric literal, or its negation — `Alignment(0.3, -0.7)` reaches here as a `Lit` and a `Unary`. */
+function constantNumber(node: Node | undefined): number | undefined {
+  if (node === undefined) return undefined;
+  if (kindOf(node) === 'logic.Lit') {
+    return typeof node['value'] === 'number' ? node['value'] : undefined;
+  }
+  if (kindOf(node) === 'logic.Unary' && node['operator'] === '-') {
+    const inner = constantNumber(node['operand'] as Node | undefined);
+    return inner === undefined ? undefined : -inner;
+  }
+  return undefined;
+}
 
 /**
  * Emits a `bind.*` as a TypeScript expression.
@@ -377,7 +763,6 @@ const WIDGET_NAMES: Readonly<Record<string, true>> = {
  */
 export function emitBinding(
   binding: Node | undefined,
-  module: ModuleBuilder,
   scope: EmitScope,
   enumMap?: Readonly<Record<string, string>>,
 ): string {
@@ -408,8 +793,17 @@ export function emitBinding(
     }
 
     case 'bind.Signal': {
-      // The reactivity edge. `useSignal` subscribes the component; the path, if any, is applied after the
-      // read, because subscribing to `items` and reading `.length` is what makes a length change re-render.
+      // The reactivity edge — but the subscription is no longer made *here*.
+      //
+      // This used to emit `useSignal(sig)` inline, which had two problems. It is a hook call wherever the
+      // binding happens to sit, including inside a `ui.Cond` branch or a `ui.List` template, where calling
+      // it is conditional and violates the rules of hooks. And it covered only bindings, so the identical
+      // read reached through an *expression* — an interpolation, a comparison — subscribed to nothing and
+      // silently never updated.
+      //
+      // `declareLocalSignals` now subscribes every component signal once, unconditionally, at the top of the
+      // component, and `childScope.signalRead` returns that subscribed value. So a binding and an expression
+      // read the same name and get the same reactivity, which is what they always meant.
       const id = binding['signal'];
       const read = typeof id === 'string' ? scope.signalRead(id) : undefined;
       if (read === undefined) {
@@ -421,11 +815,11 @@ export function emitBinding(
         );
         return 'undefined';
       }
-      const useSignal = module.use(RUNTIME, 'useSignal');
-      const signalExpr = read.endsWith('.get()') ? read.slice(0, -'.get()'.length) : read;
+      // The path is applied after the read: subscribing to `items` and then reading `.length` is what makes
+      // a length change re-render, where subscribing to `items.length` would subscribe to nothing.
       const path = Array.isArray(binding['path']) ? (binding['path'] as string[]) : [];
       const suffix = path.map((segment) => `.${identifierOf(segment)}`).join('');
-      return `${useSignal}(${signalExpr})${suffix}`;
+      return `${read}${suffix}`;
     }
 
     case 'bind.Expr':

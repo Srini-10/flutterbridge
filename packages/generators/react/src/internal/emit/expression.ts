@@ -24,22 +24,9 @@ import type { AnyUirNode, Expr, NodeId } from '@bridge/uir';
 
 import { GeneratorDiagnosticCode } from '../diagnostics/codes.js';
 import { identifierOf, type ModuleBuilder } from './module.js';
+import { RUNTIME_MODULE as RUNTIME, isKitProvided } from './runtime.js';
+import { OWNER_LABEL, missingCapabilityOf } from './unsupported.js';
 
-/** The runtime kit. Where a Flutter framework value type — `EdgeInsets` — is mirrored. */
-const RUNTIME = '@bridge/runtime-react';
-
-/**
- * Whether a constructed type is provided by the runtime kit, and so must be imported from it.
- *
- * Decided from the type's own **library**, not a hand-kept list of names (D2): `EdgeInsets` resolves to
- * `package:flutter/…` and the kit mirrors it; `Product` resolves to the application's own package and does
- * not. A kit value type added later needs no change here. A framework type the kit does *not* export is
- * caught the moment the build-proof typechecks real output (`TS2305`), which is what that test is for.
- */
-function isKitProvided(type: Node | undefined): boolean {
-  const library = type?.['library'];
-  return typeof library === 'string' && library.startsWith('package:flutter/');
-}
 
 /** What an expression needs in order to be lowered. */
 export interface EmitScope {
@@ -55,6 +42,18 @@ export interface EmitScope {
    * component and store emitters populate this; the expression emitter only asks.
    */
   signalRead(id: NodeId): string | undefined;
+  /**
+   * The identifier of the signal *object* declared by `id`, if one is in scope.
+   *
+   * Distinct from {@link signalRead}, which is the expression that reads its **value** — and in render
+   * position that is a subscribed local rather than anything derived from this name. Writing needs the
+   * object (`count.set(…)`, `count.peek()`); rendering needs the value.
+   *
+   * This exists because the two were previously recovered from one string: `signalName` took
+   * `signalRead(id)` and stripped a trailing `.get()`. That worked only while every read had that exact
+   * shape, and it silently produced the wrong identifier the moment one did not.
+   */
+  signalLocal(id: NodeId): string | undefined;
   /** The local name a declaration was bound to, if it is in scope (a param, a local, a lifted action). */
   localName(id: NodeId): string | undefined;
   /**
@@ -78,12 +77,73 @@ export interface EmitScope {
    * emits `value_d18f644e` where the source said `_favoriteIds`, which compiles and is unreviewable.
    */
   declaredName(id: NodeId): string | undefined;
+
+  /**
+   * Whether the program declares a class by this name that the generator emits.
+   *
+   * Always `false` today: M3-B emits no `logic.ClassDecl`, which is why a user type in a parameter position
+   * lowers to `unknown`. It is a question rather than a constant so that the day class emission exists, the
+   * refusal in `logic.New` lifts by itself instead of having to be found.
+   */
+  declaresClass(name: string): boolean;
   /** Looks a node up by id. */
   node(id: NodeId): AnyUirNode | undefined;
+  /**
+   * Every Material role the program's `app.Token` set resolves — by `role`, and by `name` for the tokens N10
+   * derives (which set both to the same string).
+   *
+   * The build-time half of INV-20. A `WidgetMapping` declares the roles its component paints, and
+   * `checkCapabilities` asks this set whether the program can supply them; a widget that paints a role no
+   * token defines is refused (`BRG3010`) rather than emitted to throw `BRG4006` in a browser.
+   *
+   * Program-wide and computed once, because the token set is the same for every file.
+   */
+  readonly themeRoles: ReadonlySet<string>;
 }
 
 /** A `logic.*` node, loosely typed: the generated union does not expose nested nodes as `AnyUirNode`. */
 type Node = Record<string, unknown>;
+
+/**
+ * Whether `holder` is the class Flutter hangs `type`'s named constants off.
+ *
+ * Flutter's convention is a plural or `-s` holder for a singular value type: `Curves` holds `Curve`s,
+ * `Colors` holds `Color`s, `Icons` holds `IconData`. Checked rather than assumed — a bare "the prefix is
+ * some Flutter class" test would rewrite any Flutter-typed reference into a member access that does not
+ * exist, which is the failure the narrower `prefix === typeName` check was protecting against.
+ */
+function isHolderOf(holder: string, type: string): boolean {
+  return holder === `${type}s` || holder === `${type}es`;
+}
+
+/**
+ * What an emitter returns when it has refused an expression and reported why.
+ *
+ * `'undefined'` is the text, and it is deliberately the same text a genuine Dart `null` lowers to: nothing is
+ * emitted from a refused program (the pipeline discards every file once an `error` is reported), so this
+ * value never reaches a file. Naming it makes "did this sub-expression refuse?" a check a caller can make,
+ * which is what stops one refusal becoming one diagnostic per argument.
+ */
+const REFUSED = 'undefined';
+
+/**
+ * Lowers a statement list. Assigned by `statement.ts` at import.
+ *
+ * A lambda may have a **statement** body — `validator: (value) { if (value == null) return 'required'; … }`
+ * is ordinary Dart and the shape every form validator has — so the expression emitter needs the statement
+ * emitter. But `statement.ts` already imports *this* module for its expressions, and a mutual import is a
+ * cycle, which `.dependency-cruiser.cjs` rejects at error severity.
+ *
+ * So the dependency goes one way and the function is handed back, which is the same wiring the analyzer's
+ * own extractor pair uses and for the same reason. It is a hook set once at module load, not per-request
+ * state: nothing here is shipped to a server, and nothing about it varies between programs.
+ */
+let lowerStatements: ((body: unknown, scope: EmitScope) => string[]) | undefined;
+
+/** Wires the statement emitter in. Called once, by `statement.ts`. */
+export function setStatementLowering(lower: (body: unknown, scope: EmitScope) => string[]): void {
+  lowerStatements = lower;
+}
 
 const kindOf = (node: Node): string => (typeof node['kind'] === 'string' ? node['kind'] : '<unknown>');
 const idOf = (node: Node): string | undefined => (typeof node['id'] === 'string' ? node['id'] : undefined);
@@ -172,11 +232,59 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
         if (param !== undefined) return param;
       }
 
+      // A **static const of a kit value type** — `Alignment.bottomRight`, `AlignmentDirectional.topStart`.
+      // Dart writes these as `Type.member` on a class the kit mirrors, and the kit mirrors them as static
+      // members for exactly this reason, so the lowering is the same text with an import attached.
+      //
+      // Guarded on both halves: the resolved type must be one the kit provides (its library is
+      // `package:flutter/…`, the same test `logic.New` uses), *and* the dotted name's prefix must be that
+      // type's own name. Without the second check a `Ref` of any Flutter-typed expression would be rewritten
+      // into a member access that does not exist; with it, the only thing that matches is the shape this
+      // branch is for. A kit type that does not export the member is caught by `tsc` in the build proof
+      // (`TS2339`), which is what that test is for.
+      if (typeof name === 'string' && isKitProvided(node['type'] as Node | undefined)) {
+        const typeName = String((node['type'] as Node | undefined)?.['name'] ?? '');
+        const [prefix, ...rest] = name.split('.');
+        if (typeName !== '' && prefix === typeName && rest.length === 1) {
+          return `${scope.module.use(RUNTIME, typeName)}.${identifierOf(rest[0]!)}`;
+        }
+
+        // The same shape, where Flutter's **holder** class is not its value type. `Curves.easeInOut` has
+        // type `Curve`, not `Curves`; `Colors.white` has type `Color`. The check above requires the dotted
+        // prefix to *be* the type's name, so it matches neither — and M4-H's build proof is the first
+        // fixture to reach one, because M4-E hoists every `Colors.*` into a token before it gets here.
+        //
+        // Widened to: the resolved type is kit-provided, the name is `Holder.member`, and the holder is
+        // pluralisation-adjacent to the type. Requiring a relationship at all is what keeps this from
+        // rewriting every Flutter-typed reference into a member access that does not exist; a holder the
+        // kit does not export is caught by `tsc` in the build proof, which is what that test is for.
+        if (rest.length === 1 && prefix !== undefined && typeName !== '' && isHolderOf(prefix, typeName)) {
+          return `${scope.module.use(RUNTIME, prefix)}.${identifierOf(rest[0]!)}`;
+        }
+      }
+
       // Otherwise the `Ref` names something outside the program — `notifyListeners()`, a top-level Dart
       // function, a package API. Emitting the bare name produces a file that does not compile, and picking a
       // plausible replacement is inventing. `notifyListeners` is the instructive case: under ADR-4 a signal
       // write *is* the notification, so the call is redundant — but "redundant" is a judgement about
       // ChangeNotifier's semantics, which belongs to whatever models them, not to a name lookup here.
+      // A name the generator *knows* it cannot lower gets the capability diagnostic, not the generic one.
+      // `Navigator.pushNamed` is the case that forced this: reporting "not declared in this program" blamed
+      // the program for a gap the compiler owns — the analyzer had already emitted the `app.RouteTransition`
+      // for that very call, and the kit's router was waiting for it.
+      const missing = typeof name === 'string' ? missingCapabilityOf(name, undefined) : undefined;
+      if (missing !== undefined) {
+        scope.report(
+          GeneratorDiagnosticCode.UnsupportedCapability,
+          'error',
+          `\`${name}\` needs ${missing.capability}, which is not built yet. That work belongs to ` +
+            `${OWNER_LABEL[missing.owner]}.` +
+            (missing.workaround === undefined ? '' : ` For now: ${missing.workaround}.`),
+          idOf(node),
+        );
+        return REFUSED;
+      }
+
       scope.report(
         GeneratorDiagnosticCode.UnresolvedReference,
         'error',
@@ -186,7 +294,7 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
           : 'a reference names neither a declaration in the program nor a name',
         idOf(node),
       );
-      return 'undefined';
+      return REFUSED;
     }
 
     case 'logic.Binary': {
@@ -260,27 +368,118 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
     case 'logic.MethodCall': {
       const receiver = emitExpression(node['receiver'] as Node, scope);
       refuseNamedArgs(node, scope);
+      const method = String(node['method'] ?? '');
+
+      // Dart's subscript. `a[b]` **is** `a.operator[](b)` — the language says so, the analyzer resolves it
+      // to that operator, and M4-H models it as the method call it is rather than as an opaque expression.
+      // JavaScript spells the same operator the same way, so the lowering is the subscript back again.
+      //
+      // Without this the generic branch below emitted `a.__(b)`: `identifierOf('[]')` sanitises the brackets
+      // into underscores, producing a method call on a name nothing declares. That is what the build proof
+      // caught the first time a real `items[index]` reached the generator.
+      if (method === '[]') {
+        const args = asArray(node['args']);
+        if (args.length === 1) {
+          return `${receiver}[${emitExpression(args[0] as Node, scope)}]`;
+        }
+      }
+
       const args = emitArguments(node['args'], scope);
-      return `${receiver}.${identifierOf(String(node['method'] ?? ''))}(${args})`;
+      return `${receiver}.${identifierOf(method)}(${args})`;
     }
 
     case 'logic.Call': {
       refuseNamedArgs(node, scope);
-      const callee = emitExpression(node['callee'] as Node, scope);
+      const target = node['callee'];
+      const callee = emitExpression(target as Node, scope);
+      // A refused callee stops the call. Emitting the arguments anyway produced one diagnostic per argument
+      // for a call that was already refused — `Navigator.pushNamed(context, '/details')` reported three, two
+      // of them naming `context`, a framework primitive nobody can act on. One refusal, at the callee, is the
+      // whole fact; the rest was noise that buried it.
+      //
+      // Guarded on the callee *existing*, because {@link REFUSED} is also what an absent expression emits. A
+      // call with no callee is a malformed document rather than a refusal, and it must keep falling through
+      // to a `tsc` failure instead of vanishing with no diagnostic at all.
+      if (target !== undefined && target !== null && callee === REFUSED) return REFUSED;
       return `${callee}(${emitArguments(node['args'], scope)})`;
     }
 
     case 'logic.New': {
-      refuseNamedArgs(node, scope);
       const typeName = String(node['typeName'] ?? '');
+
+      // A `GlobalKey` is a handle on a live widget's `State`. UIR carries values, signals, routes and
+      // components; it has nothing that denotes "the mounted element over there", so a key cannot be lowered
+      // to anything that would work. Refused at its construction — the root of the whole pattern — rather
+      // than at the `currentState!.validate()` call, so the diagnostic names the cause instead of a symptom.
+      if (typeName === 'GlobalKey' || typeName.startsWith('GlobalKey<')) {
+        scope.report(
+          GeneratorDiagnosticCode.UnsupportedGlobalKey,
+          'error',
+          'a `GlobalKey` is a handle on a live widget\'s State, and UIR has no construct that denotes one — ' +
+            'it is not a value, a signal, a route or a component. That gap belongs to the schema. A `Form` ' +
+            'in this kit validates every registered field when it is submitted, which needs no key; ' +
+            '`_formKey.currentState!.validate()` has no equivalent and is not emitted, because a button ' +
+            'that compiles and does nothing is worse than one that is refused.',
+          idOf(node),
+        );
+        return 'undefined';
+      }
       const constructorName = node['constructorName'];
-      const args = emitArguments(node['args'], scope);
-      // A kit-provided type — `EdgeInsets` — must be imported, or the reference dangles at `tsc` (D2). The
-      // import is registered here, automatically, from the type's own library; `module.use` returns the local
-      // name and folds a repeat into one import. A user type is written as-is, with no kit import invented.
-      const name = isKitProvided(node['type'] as Node | undefined)
-        ? scope.module.use(RUNTIME, typeName)
-        : identifierOf(typeName);
+      const kitProvided = isKitProvided(node['type'] as Node | undefined);
+
+      // Dart's named arguments have no positional equivalent in TypeScript, and lowering them needs the
+      // callee's signature — which the program does not carry for an arbitrary user class, so `refuseNamedArgs`
+      // refuses rather than guessing which parameter a value belongs to.
+      //
+      // For a **kit-provided** type the signature *is* known, because the kit authors it to a fixed
+      // convention: Dart's named parameters become one options object, positional stay positional. That is
+      // how `EdgeInsets.symmetric({ vertical: 8 })` and `new BoxConstraints({ maxWidth: 400 })` are already
+      // written, and applying the convention here is what makes them reachable — before M4-B, every named-arg
+      // construction of a framework value type was a hard `BRG3002`, including `EdgeInsets.symmetric`, whose
+      // kit signature had been waiting for it since M3-A.
+      if (!kitProvided) refuseNamedArgs(node, scope);
+
+      const positional = emitArguments(node['args'], scope);
+      const named = node['namedArgs'];
+      const options =
+        kitProvided && typeof named === 'object' && named !== null && Object.keys(named).length > 0
+          ? // Sorted, so the emitted bytes do not depend on the order the analyzer happened to walk the
+            // argument list — the same rule the element emitter applies to props.
+            `{ ${Object.keys(named as Record<string, Node>)
+              .sort()
+              .map((key) => `${identifierOf(key)}: ${emitExpression((named as Record<string, Node>)[key]!, scope)}`)
+              .join(', ')} }`
+          : undefined;
+      const args = [positional, options].filter((part) => part !== undefined && part !== '').join(', ');
+
+      // ## A construction of the application's own class has nothing to construct
+      //
+      // M3-B does not emit `logic.ClassDecl` — `types.ts` records that, which is why a user type in a
+      // parameter position lowers to `unknown` rather than to an invented interface. The *value* side had no
+      // such check: `const Wonder('Petra', …)` emitted `new Wonder('Petra', …)` referring to a class the
+      // generator had not written, and nothing said so. It compiled through every stage and failed at `tsc`
+      // with `TS2552: Cannot find name 'Wonder'`, which is the emitted project's problem to explain rather
+      // than the compiler's — precisely the "compiles around the hole" outcome the severity rule forbids.
+      //
+      // Refused here, with the class named. Not for a *framework* type: those are the kit's, and the kit
+      // exports them.
+      if (!kitProvided && !scope.declaresClass(typeName)) {
+        scope.report(
+          GeneratorDiagnosticCode.UnsupportedExpression,
+          'error',
+          `\`${typeName}\` is one of this application's own classes, and this generator does not emit ` +
+            `class declarations — so \`new ${typeName}(…)\` would name a type the project does not ` +
+            `contain. Missing capability: lowering a \`logic.ClassDecl\` to a TypeScript class. Owner: ` +
+            `this generator.`,
+          idOf(node),
+        );
+        return REFUSED;
+      }
+
+      // A kit-provided type must be imported, or the reference dangles at `tsc` (D2). The import is registered
+      // here, automatically, from the type's own library; `module.use` returns the local name and folds a
+      // repeat into one import. A user type is written as-is, with no kit import invented.
+      const name = kitProvided ? scope.module.use(RUNTIME, typeName) : identifierOf(typeName);
       // A named constructor — `EdgeInsets.all(16)` — is a static method in TypeScript, which is the shape the
       // kit's own `EdgeInsets` has, so it lowers without a `new`.
       if (typeof constructorName === 'string' && constructorName !== '') {
@@ -321,20 +520,50 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
     }
 
     case 'logic.Lambda': {
-      const params = asArray(node['params'])
-        .map((p) => identifierOf(String((p as Node)['name'] ?? '_')))
-        .join(', ');
+      const declared = asArray(node['params']).map((p) => String((p as Node)['name'] ?? '_'));
+      const params = declared.map((name) => identifierOf(name)).join(', ');
+
+      // A lambda's parameters are in scope *inside* it, and were not before M4-F: `validator: (value) { … }`
+      // lowered a body in which `value` resolved to nothing and became `BRG3006`. It had never come up
+      // because no earlier fixture put a lambda with a *body* in the widget tree — a store's action carries
+      // its parameters on the `sig.Action`, which `childScope` already handled.
+      //
+      // Resolution is by name and innermost-first, which is ordinary lexical scoping: a parameter shadows an
+      // outer name of the same spelling, exactly as it does in Dart.
+      const names = new Set(declared);
+      const inner: EmitScope = {
+        ...scope,
+        report: scope.report.bind(scope),
+        node: scope.node.bind(scope),
+        signalRead: scope.signalRead.bind(scope),
+        signalLocal: scope.signalLocal.bind(scope),
+        localName: scope.localName.bind(scope),
+        declaredName: scope.declaredName.bind(scope),
+        paramInScope: (name) => (names.has(name) ? identifierOf(name) : scope.paramInScope(name)),
+      };
+
       const body = node['body'];
+
+      // A **statement** body — `(value) { if (value == null) return 'required'; return null; }`, which is
+      // what every form validator is. It lowers to a block-bodied arrow, which is the same shape in both
+      // languages. Before M4-F this warned and then handed the statement *array* to the expression emitter,
+      // which reported it as `<unknown>`: a warning followed by an error, and no working output.
       if (Array.isArray(body)) {
-        scope.report(
-          GeneratorDiagnosticCode.UnsupportedExpression,
-          'warning',
-          'a lambda with a statement body reached the expression emitter; only its first expression is ' +
-            'lowered here',
-          idOf(node),
-        );
+        if (lowerStatements === undefined) {
+          scope.report(
+            GeneratorDiagnosticCode.UnsupportedExpression,
+            'error',
+            'a lambda with a statement body reached the expression emitter before the statement emitter ' +
+              'was wired in. That is a build defect in this package, not a defect in the program.',
+            idOf(node),
+          );
+          return 'undefined';
+        }
+        const lines = lowerStatements(body, inner);
+        return `(${params}) => {\n${lines.map((line) => `  ${line}`).join('\n')}\n}`;
       }
-      return `(${params}) => ${emitExpression(node['body'] as Node, scope)}`;
+
+      return `(${params}) => ${emitExpression(node['body'] as Node, inner)}`;
     }
 
     case 'logic.Await':
@@ -504,10 +733,9 @@ function readTarget(target: Node, targetText: string, scope: EmitScope): string 
   return targetText;
 }
 
-/** The local name of a signal in scope. Derived from its read expression, which is `<name>.get()`. */
+/** The identifier of a signal object in scope — asked for directly, never parsed out of a read. */
 function signalName(id: string, scope: EmitScope): string {
-  const read = scope.signalRead(id) ?? '';
-  return read.endsWith('.get()') ? read.slice(0, -'.get()'.length) : read;
+  return scope.signalLocal(id) ?? '';
 }
 
 /**

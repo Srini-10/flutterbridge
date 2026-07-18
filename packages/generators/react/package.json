@@ -1,7 +1,6 @@
 {
   "name": "@bridge/gen-react",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.1.0",
   "description": "Target #1 \u2014 Next.js generator: scaffolder, lower-signals, rsc-split, UINode emitters, route emitter.",
   "type": "module",
   "exports": {
@@ -34,5 +33,17 @@
     "tsup": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
-  }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/flutterbridge/flutterbridge.git",
+    "directory": "packages/generators/react"
+  },
+  "license": "Apache-2.0"
 }

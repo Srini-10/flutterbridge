@@ -167,6 +167,8 @@ function storeScope(
   return {
     module: parent.module,
     report: parent.report.bind(parent),
+    // Program-wide, so a child scope forwards it unchanged rather than rebuilding it per component.
+    themeRoles: parent.themeRoles,
     node: parent.node.bind(parent),
     signalRead: (id) => {
       const signal = signals.get(id);
@@ -175,8 +177,13 @@ function storeScope(
       if (computed !== undefined) return `${computed}.get()`;
       return parent.signalRead(id);
     },
+    // A store module is not a React component: nothing here is a hook, and `.get()` inside a store action
+    // or a `derived` body is exactly right — `derived` tracks its reads through the graph rather than
+    // through React. So reads and the object identifier coincide, unlike in a component.
+    signalLocal: (id) => signals.get(id) ?? derived.get(id) ?? parent.signalLocal(id),
     localName: (id) => actions.get(id) ?? parent.localName(id),
     declaredName: (id) => parent.declaredName(id),
+    declaresClass: (name) => parent.declaresClass(name),
     paramInScope: (name) => parent.paramInScope(name),
   };
 }

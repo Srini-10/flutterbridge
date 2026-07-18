@@ -39,6 +39,7 @@
 import type { BridgePlugin, GeneratorContext, GeneratorOutput, TargetGenerator } from '@bridge/plugin-sdk';
 
 import { generateProject } from './internal/pipeline.js';
+import { RUNTIME_KIT_RANGE } from './internal/emit/project.js';
 
 export { GeneratorDiagnosticCode } from './internal/diagnostics/codes.js';
 export { WIDGET_MAP, mappingOf, type WidgetMapping } from './internal/emit/widgets.js';
@@ -55,10 +56,14 @@ export const reactGenerator: TargetGenerator = {
   /**
    * The kit this generator's output is written against (INV-12/INV-13, ADR-6).
    *
-   * `0.0.x` because the kit is unpublished and pre-1.0; it becomes a real range when the kit ships. ADR-16
-   * pins the *Next* version in the scaffolder separately, and re-decides it at the M3-T6 freeze.
+   * Was `0.0.x` with the note "it becomes a real range when the kit ships" — M5-C is when it ships, so
+   * it is now the same constant the emitted `package.json` installs. One compatibility claim, declared
+   * once: the range this generator's output is written against *is* the range a generated app depends
+   * on, and two independently-maintained copies of that would eventually disagree.
+   *
+   * ADR-16 pins the *Next* version in the scaffolder separately, and re-decides it at the M3-T6 freeze.
    */
-  runtimeRange: '0.0.x',
+  runtimeRange: RUNTIME_KIT_RANGE,
 
   generate(context: GeneratorContext): GeneratorOutput {
     return generateProject(context);

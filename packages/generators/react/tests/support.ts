@@ -71,6 +71,18 @@ export function helloBridge(): AnyUirNode[] {
   return parseNdjson(readFileSync(path, 'utf8'));
 }
 
+/**
+ * The real `examples/counter` document, normalized — minted by `bridge_analyzer` from the example app.
+ *
+ * The subject of the browser suite, and therefore the right fixture for the defects that suite found: a
+ * hand-authored node graph would assert about a program shape the compiler does not actually produce, and
+ * both M5-D defects were in the gap between "the emitter handles this node" and "the app it produces runs".
+ */
+export function counter(): AnyUirNode[] {
+  const path = fileURLToPath(new URL('../../../../fixtures/uir/counter.normalized.ndjson', import.meta.url));
+  return parseNdjson(readFileSync(path, 'utf8'));
+}
+
 /** The file at `path` in an emitted project, or `undefined`. */
 export function fileAt(files: readonly { path: string; contents: string }[], path: string): string | undefined {
   return files.find((file) => file.path === path)?.contents;
