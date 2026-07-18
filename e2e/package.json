@@ -1,0 +1,17 @@
+{
+  "name": "@bridge/e2e",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Browser validation: real generated applications, a real production build, a real browser.",
+  "type": "module",
+  "scripts": {
+    "e2e": "node src/build-fixtures.mjs && playwright test",
+    "build-fixtures": "node src/build-fixtures.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.61.1",
+    "@types/node": "catalog:",
+    "typescript": "catalog:"
+  }
+}
