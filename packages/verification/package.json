@@ -1,7 +1,6 @@
 {
   "name": "@bridge/verification",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.1.0",
   "description": "Verifier host, first-party verifiers (static + visual at MVP), reference-build manager, report renderer.",
   "type": "module",
   "exports": {
@@ -31,5 +30,15 @@
     "tsup": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
-  }
+  },
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/flutterbridge/flutterbridge.git",
+    "directory": "packages/verification"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "private": true
 }

@@ -44,8 +44,20 @@ export function parseArgs(argv: readonly string[]): Args {
   return { command, positionals: rest, flags };
 }
 
-/** Flags that take a value. Everything else is boolean, so `--json <path>` cannot eat a positional. */
-const VALUED = new Set(['manifest', 'plugin', 'out', 'kind', 'depth']);
+/**
+ * Flags that take a value. Everything else is boolean, so `--json <path>` cannot eat a positional.
+ *
+ * **This list and `value()` must agree, and they silently did not.** `--config` was added with the
+ * production commands in M5-B, documented in `docs/guide/cli.md` as `--config <path>`, and never added
+ * here — so the parser treated it as a boolean, `value(args, 'config')` found `true`, and the documented
+ * form failed with *"--config needs a value."* while only `--config=<path>` worked. A flag can be read as
+ * a value and declared as a boolean, and nothing connects the two declarations.
+ *
+ * `kind` and `depth` are the mirror image: declared here, read by nothing. They cost nothing and are left
+ * rather than removed, because dropping them would change how `--kind x` parses — `x` would become a
+ * positional and, for a command that takes a document path, a confusing one.
+ */
+const VALUED = new Set(['config', 'manifest', 'plugin', 'out', 'kind', 'depth']);
 
 /** The value of [name], or undefined. Throws if it was given as a bare boolean. */
 export function value(args: Args, name: string): string | undefined {

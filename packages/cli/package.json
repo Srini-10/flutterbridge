@@ -1,7 +1,6 @@
 {
   "name": "@bridge/cli",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.1.0",
   "description": "The `bridge` command surface. Contains no compilation logic (INV-17).",
   "type": "module",
   "exports": {
@@ -14,29 +13,44 @@
   "types": "./dist/index.d.ts",
   "files": [
     "bin",
-    "dist"
+    "dist",
+    "vendor"
   ],
   "scripts": {
     "build": "tsc -b tsconfig.json && tsup",
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc -b tsconfig.json && tsc -p tsconfig.test.json",
-    "api-check": "api-extractor run --local"
+    "api-check": "api-extractor run --local",
+    "prepack": "node ../../tools/bundle-analyzer.mjs"
   },
   "dependencies": {
-    "@bridge/uir": "workspace:*",
-    "@bridge/core": "workspace:*",
     "@bridge/compiler": "workspace:*",
-    "@bridge/verification": "workspace:*"
+    "@bridge/core": "workspace:*",
+    "@bridge/gen-react": "workspace:*",
+    "@bridge/plugin-sdk": "workspace:*",
+    "@bridge/uir": "workspace:*",
+    "@bridge/widgets-material": "workspace:*"
   },
   "devDependencies": {
     "@microsoft/api-extractor": "catalog:",
     "@types/node": "catalog:",
     "tsup": "catalog:",
     "typescript": "catalog:",
-    "vitest": "catalog:",
-    "@bridge/widgets-material": "workspace:*"
+    "vitest": "catalog:"
   },
   "bin": {
     "bridge": "./bin/bridge.mjs"
+  },
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/flutterbridge/flutterbridge.git",
+    "directory": "packages/cli"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=20.0.0"
   }
 }
