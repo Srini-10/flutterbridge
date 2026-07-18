@@ -145,7 +145,11 @@ function check(
         `\`${component.name}.${name}\` holds a list of widgets inside \`props\`, as an expression. ` +
         `No pass and no generator can see those as UI. It cannot be repaired here: rebuilding elements ` +
         `from expressions loses the const/signal/param classification of every prop, which needs the ` +
-        `resolved scope and exists only in the frontend. The frontend must emit them as children.`,
+        `resolved scope and exists only in the frontend. ` +
+        `Most often the **catalog** is what is missing, not the frontend: extraction asks the catalog for ` +
+        `a widget's children property first and only falls back to inferring one from the argument's type, ` +
+        `and that fallback correctly declines when the list's element type is not itself a widget. ` +
+        `Declaring \`childrenProp: "${name}"\` for \`${component.name}\` is what puts them in the tree.`,
     });
   }
 
