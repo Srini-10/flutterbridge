@@ -1,0 +1,35 @@
+{
+  "$comment": "The `gap` package — https://pub.dev/packages/gap. The second catalog this repository has, and the first for a package rather than a framework. ADR-18 designed for exactly this: 'adding a package means adding a line in AdapterRegistry.production() and a file beside it — and nothing else, anywhere.' M4-I is where that claim was first tested. `Gap` is the single most-used unsupported widget in the M0 corpus at 115 instantiations — more than `Container`, more than `SizedBox` — and it is not a framework widget at all.",
+  "catalog": "gap",
+  "priority": 30,
+  "library": "package:gap/",
+  "widgets": [
+    {
+      "$comment": "`Gap(16)` — a fixed extent along the parent's main axis. Its one argument is positional, which is why it reached UIR as `_positional0` before this entry existed (ADR-0023). The name is the SDK's own field name.",
+      "name": "Gap",
+      "positionalProps": {
+        "": [
+          "mainAxisExtent"
+        ]
+      }
+    },
+    {
+      "$comment": "`SliverGap` is the sliver form. Present so its structure survives extraction and the generator refuses it by name with the sliver reason rather than as an unknown widget.",
+      "name": "SliverGap",
+      "positionalProps": {
+        "": [
+          "mainAxisExtent"
+        ]
+      }
+    },
+    {
+      "$comment": "`MaxGap(16)` — a gap that yields when space is short. Its `maxExtent` is the *most* it takes, which is a flex behaviour rather than a fixed size.",
+      "name": "MaxGap",
+      "positionalProps": {
+        "": [
+          "mainAxisExtent"
+        ]
+      }
+    }
+  ]
+}

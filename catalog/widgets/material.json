@@ -93,14 +93,89 @@
       "dynamicSchemeVariant"
     ]
   },
+  "lazyBuilders": {
+    "$comment": "Constructors whose children are produced by an `itemBuilder` closure over an index range rather than written as a list. Extraction expands them into `ui.List` — the same node `for (x in xs) W(x)` and `xs.map((x) => W(x)).toList()` produce — so nothing downstream has to know a builder existed. Keyed `Widget.constructor`. ADR-18: the fact that `ListView.builder`'s closure is called `itemBuilder` and its count `itemCount` is framework metadata, and belongs here rather than in an extractor.",
+    "ListView.builder": {
+      "builderProp": "itemBuilder",
+      "countProp": "itemCount"
+    },
+    "GridView.builder": {
+      "builderProp": "itemBuilder",
+      "countProp": "itemCount"
+    },
+    "PageView.builder": {
+      "builderProp": "itemBuilder",
+      "countProp": "itemCount"
+    }
+  },
+  "curves": {
+    "$comment": "Flutter's easing curves, from animation/curves.dart (Flutter 3.44.0). Every entry below is declared in the SDK as `Cubic(x1, y1, x2, y2)` — which is exactly CSS's `cubic-bezier(x1, y1, x2, y2)`, the same four control points of the same unit cubic Bezier. This is a correspondence, not an approximation, which is why the implicit-animation family can be implemented without an animation engine. `linear` is `_Linear` (curves.dart:1468) and maps to the CSS keyword. The curves NOT here have no CSS equivalent and are refused by name: `decelerate` (_DecelerateCurve, :1477), the ThreePointCubics `fastEaseInToSlowEaseOut` (:1500) and `easeInOutCubicEmphasized` (:1772) — two joined cubics, which one `cubic-bezier()` cannot express — and the bounce and elastic families (:1869-1884), which are piecewise and spring curves respectively.",
+    "linear": "linear",
+    "ease": "cubic-bezier(0.25, 0.1, 0.25, 1.0)",
+    "easeIn": "cubic-bezier(0.42, 0.0, 1.0, 1.0)",
+    "easeInBack": "cubic-bezier(0.6, -0.28, 0.735, 0.045)",
+    "easeInCirc": "cubic-bezier(0.6, 0.04, 0.98, 0.335)",
+    "easeInCubic": "cubic-bezier(0.55, 0.055, 0.675, 0.19)",
+    "easeInExpo": "cubic-bezier(0.95, 0.05, 0.795, 0.035)",
+    "easeInOut": "cubic-bezier(0.42, 0.0, 0.58, 1.0)",
+    "easeInOutBack": "cubic-bezier(0.68, -0.55, 0.265, 1.55)",
+    "easeInOutCirc": "cubic-bezier(0.785, 0.135, 0.15, 0.86)",
+    "easeInOutCubic": "cubic-bezier(0.645, 0.045, 0.355, 1.0)",
+    "easeInOutExpo": "cubic-bezier(1.0, 0.0, 0.0, 1.0)",
+    "easeInOutQuad": "cubic-bezier(0.455, 0.03, 0.515, 0.955)",
+    "easeInOutQuart": "cubic-bezier(0.77, 0.0, 0.175, 1.0)",
+    "easeInOutQuint": "cubic-bezier(0.86, 0.0, 0.07, 1.0)",
+    "easeInOutSine": "cubic-bezier(0.445, 0.05, 0.55, 0.95)",
+    "easeInQuad": "cubic-bezier(0.55, 0.085, 0.68, 0.53)",
+    "easeInQuart": "cubic-bezier(0.895, 0.03, 0.685, 0.22)",
+    "easeInQuint": "cubic-bezier(0.755, 0.05, 0.855, 0.06)",
+    "easeInSine": "cubic-bezier(0.47, 0.0, 0.745, 0.715)",
+    "easeInToLinear": "cubic-bezier(0.67, 0.03, 0.65, 0.09)",
+    "easeOut": "cubic-bezier(0.0, 0.0, 0.58, 1.0)",
+    "easeOutBack": "cubic-bezier(0.175, 0.885, 0.32, 1.275)",
+    "easeOutCirc": "cubic-bezier(0.075, 0.82, 0.165, 1.0)",
+    "easeOutCubic": "cubic-bezier(0.215, 0.61, 0.355, 1.0)",
+    "easeOutExpo": "cubic-bezier(0.19, 1.0, 0.22, 1.0)",
+    "easeOutQuad": "cubic-bezier(0.25, 0.46, 0.45, 0.94)",
+    "easeOutQuart": "cubic-bezier(0.165, 0.84, 0.44, 1.0)",
+    "easeOutQuint": "cubic-bezier(0.23, 1.0, 0.32, 1.0)",
+    "easeOutSine": "cubic-bezier(0.39, 0.575, 0.565, 1.0)",
+    "fastLinearToSlowEaseIn": "cubic-bezier(0.18, 1.0, 0.04, 1.0)",
+    "fastOutSlowIn": "cubic-bezier(0.4, 0.0, 0.2, 1.0)",
+    "linearToEaseOut": "cubic-bezier(0.35, 0.91, 0.33, 0.97)",
+    "slowMiddle": "cubic-bezier(0.15, 0.85, 0.85, 0.15)"
+  },
+  "rebuildBuilders": {
+    "$comment": "Widgets whose only purpose is to SCOPE A REBUILD. Flutter needs them because `setState` rebuilds a whole `State`; a `ListenableBuilder` exists so that only its subtree rebuilds when a listenable fires, and a `Builder` exists only to obtain a fresh `BuildContext`. Neither is a fact about the user interface. INV-22 is explicit: 'no framework lifecycle or runtime primitive may survive extraction… their meaning is already carried by UIR constructs.' Under ADR-4 and ADR-20 a signal read IS the subscription, so the rebuild scope a Flutter program had to state by hand is what the signal graph computes — and a `BuildContext` has no UIR meaning at all. So extraction replaces these with their builder's body. `valueProp` names the parameter whose listenable binds the builder's *value* parameter; the builder's `context` and `child` parameters are framework machinery and bind to nothing. Together these are the corpus's 2nd and 3rd most-used unsupported widgets — 41 instantiations.",
+    "Builder": {
+      "builderProp": "builder"
+    },
+    "ListenableBuilder": {
+      "builderProp": "builder"
+    },
+    "ValueListenableBuilder": {
+      "builderProp": "builder",
+      "valueProp": "valueListenable"
+    }
+  },
   "widgets": [
     {
       "name": "Text",
-      "role": "text"
+      "role": "text",
+      "positionalProps": {
+        "": [
+          "data"
+        ]
+      }
     },
     {
+      "$comment": "Not `role: text`. That role collapses a widget into a `ui.Text` node, which carries no record of which widget produced it — so a SelectableText became indistinguishable from a Text and lost the one thing that makes it a different widget. It is an ordinary element whose positional argument the catalog names, exactly as Icon's is.",
       "name": "SelectableText",
-      "role": "text"
+      "positionalProps": {
+        "": [
+          "data"
+        ]
+      }
     },
     {
       "name": "FutureBuilder",
@@ -219,6 +294,80 @@
       ]
     },
     {
+      "$comment": "Positional argument names differ per constructor, which is why positionalProps is keyed by constructor: Flutter declares Image.asset(String name) and Image.network(String src). The unnamed constructor takes `image:` as a named ImageProvider and has no positional argument, so it declares none.",
+      "name": "Image",
+      "positionalProps": {
+        "asset": [
+          "name"
+        ],
+        "network": [
+          "src"
+        ]
+      }
+    },
+    {
+      "name": "Icon",
+      "positionalProps": {
+        "": [
+          "icon"
+        ]
+      }
+    },
+    {
+      "name": "ConstrainedBox",
+      "slots": [
+        "child"
+      ]
+    },
+    {
+      "name": "FractionallySizedBox",
+      "slots": [
+        "child"
+      ]
+    },
+    {
+      "name": "ClipRect",
+      "slots": [
+        "child"
+      ]
+    },
+    {
+      "name": "Chip",
+      "slots": [
+        "label",
+        "avatar",
+        "deleteIcon"
+      ]
+    },
+    {
+      "name": "CircleAvatar",
+      "slots": [
+        "child"
+      ]
+    },
+    {
+      "name": "Badge",
+      "slots": [
+        "child",
+        "label"
+      ]
+    },
+    {
+      "name": "LinearProgressIndicator"
+    },
+    {
+      "name": "CircularProgressIndicator"
+    },
+    {
+      "name": "RichText"
+    },
+    {
+      "name": "Tooltip",
+      "slots": [
+        "child"
+      ]
+    },
+    {
       "name": "MaterialApp",
       "slots": [
         "home"
@@ -262,20 +411,29 @@
     {
       "name": "ElevatedButton",
       "slots": [
-        "child"
-      ]
+        "child",
+        "icon",
+        "label"
+      ],
+      "$comment": "`.icon` is a factory on the SAME class, so `icon` and `label` are parameters of it — found by M5-A running a real application, which reported BRG2112 for `TextButton.icon`."
     },
     {
       "name": "TextButton",
       "slots": [
-        "child"
-      ]
+        "child",
+        "icon",
+        "label"
+      ],
+      "$comment": "`.icon` is a factory on the SAME class, so `icon` and `label` are parameters of it — found by M5-A running a real application, which reported BRG2112 for `TextButton.icon`."
     },
     {
       "name": "OutlinedButton",
       "slots": [
-        "child"
-      ]
+        "child",
+        "icon",
+        "label"
+      ],
+      "$comment": "`.icon` is a factory on the SAME class, so `icon` and `label` are parameters of it — found by M5-A running a real application, which reported BRG2112 for `TextButton.icon`."
     },
     {
       "name": "IconButton",
@@ -381,6 +539,34 @@
       ]
     },
     {
+      "$comment": "`decoration` is a value (InputDecoration), not a slot — its own prefixIcon/suffixIcon are widgets, and they are slots *of the decoration*, which UIR carries inside the constructed value rather than on the field.",
+      "name": "TextField"
+    },
+    {
+      "name": "TextFormField"
+    },
+    {
+      "name": "FormField"
+    },
+    {
+      "name": "Checkbox"
+    },
+    {
+      "name": "Switch"
+    },
+    {
+      "name": "Radio"
+    },
+    {
+      "name": "Slider"
+    },
+    {
+      "name": "InputDecorator",
+      "slots": [
+        "child"
+      ]
+    },
+    {
       "name": "Form",
       "slots": [
         "child"
@@ -457,6 +643,604 @@
         "child"
       ],
       "transparentWithoutProps": []
+    },
+    {
+      "name": "Drawer",
+      "slots": [
+        "child"
+      ]
+    },
+    {
+      "$comment": "`children` holds the DrawerHeader and the destinations, in order.",
+      "name": "NavigationDrawer",
+      "childrenProp": "children"
+    },
+    {
+      "name": "NavigationDrawerDestination",
+      "slots": [
+        "icon",
+        "selectedIcon",
+        "label"
+      ]
+    },
+    {
+      "name": "DrawerHeader",
+      "slots": [
+        "child"
+      ]
+    },
+    {
+      "$comment": "M3's bottom navigation. Its ordered child list is `destinations`, not `children`.",
+      "name": "NavigationBar",
+      "childrenProp": "destinations"
+    },
+    {
+      "$comment": "`label` is a String prop here, not a slot — unlike NavigationRailDestination's, which is a Widget. The two spellings are Flutter's, not ours.",
+      "name": "NavigationDestination",
+      "slots": [
+        "icon",
+        "selectedIcon"
+      ]
+    },
+    {
+      "$comment": "`NavigationRailDestination` is NOT a Flutter Widget, and naming `destinations` here is what puts the rail's items into the UI tree anyway: extraction asks the catalog for the children property first and only falls back to inferring it from the type. Without this entry the whole list landed in `props` as an expression and N8 reported BRG2110 — whose message blamed the frontend. It was the catalog that was missing. See docs/m4/m4g-shells-and-navigation.md §3.",
+      "name": "NavigationRail",
+      "slots": [
+        "leading",
+        "trailing"
+      ],
+      "childrenProp": "destinations"
+    },
+    {
+      "name": "NavigationRailDestination",
+      "slots": [
+        "icon",
+        "selectedIcon",
+        "label"
+      ]
+    },
+    {
+      "$comment": "M2's bottom navigation, superseded by NavigationBar. `BottomNavigationBarItem` is not a Widget either — the same catalog mechanism carries it.",
+      "name": "BottomNavigationBar",
+      "childrenProp": "items"
+    },
+    {
+      "name": "BottomNavigationBarItem",
+      "slots": [
+        "icon",
+        "activeIcon"
+      ]
+    },
+    {
+      "$comment": "Sizes what it wraps for a slot that demands a preferred size — Scaffold's `appBar`, AppBar's `bottom`.",
+      "name": "PreferredSize",
+      "slots": [
+        "child"
+      ]
+    },
+    {
+      "name": "BottomAppBar",
+      "slots": [
+        "child"
+      ]
+    },
+    {
+      "$comment": "An in-tree banner. Not `Banner`, which is the debug ribbon and is not something an application authors.",
+      "name": "MaterialBanner",
+      "slots": [
+        "content",
+        "leading"
+      ],
+      "childrenProp": "actions"
+    },
+    {
+      "name": "IntrinsicHeight",
+      "slots": [
+        "child"
+      ]
+    },
+    {
+      "name": "IntrinsicWidth",
+      "slots": [
+        "child"
+      ]
+    },
+    {
+      "name": "OverflowBox",
+      "slots": [
+        "child"
+      ]
+    },
+    {
+      "name": "Baseline",
+      "slots": [
+        "child"
+      ]
+    },
+    {
+      "$comment": "Present so its structure survives extraction and the generator can refuse it *by name* with the reason. A SnackBar is shown by a call, not by being in the tree.",
+      "name": "SnackBar",
+      "slots": [
+        "content",
+        "action"
+      ]
+    },
+    {
+      "name": "TabBar",
+      "childrenProp": "tabs"
+    },
+    {
+      "name": "Tab",
+      "slots": [
+        "icon",
+        "child"
+      ]
+    },
+    {
+      "$comment": "The implicit-animation family: a target value and a duration, which is a CSS transition. Not the explicit family, which needs a per-frame value.",
+      "name": "AnimatedOpacity",
+      "slots": [
+        "child"
+      ]
+    },
+    {
+      "name": "AnimatedContainer",
+      "slots": [
+        "child"
+      ]
+    },
+    {
+      "name": "AnimatedAlign",
+      "slots": [
+        "child"
+      ]
+    },
+    {
+      "name": "AnimatedPadding",
+      "slots": [
+        "child"
+      ]
+    },
+    {
+      "$comment": "Present so its structure survives extraction and the generator refuses it by name: an exit transition needs the outgoing child to outlive its replacement, which React does not do.",
+      "name": "AnimatedSwitcher",
+      "slots": [
+        "child"
+      ]
+    },
+    {
+      "name": "Hero",
+      "slots": [
+        "child"
+      ]
+    },
+    {
+      "$comment": "Its `children` are the expanded body; `title`/`subtitle`/`leading`/`trailing` are the header.",
+      "name": "ExpansionTile",
+      "slots": [
+        "title",
+        "subtitle",
+        "leading",
+        "trailing"
+      ],
+      "childrenProp": "children"
+    },
+    {
+      "name": "DefaultTabController",
+      "slots": [
+        "child"
+      ]
+    },
+    {
+      "name": "ChoiceChip",
+      "slots": [
+        "label",
+        "avatar"
+      ]
+    },
+    {
+      "name": "FilterChip",
+      "slots": [
+        "label",
+        "avatar"
+      ]
+    },
+    {
+      "name": "ActionChip",
+      "slots": [
+        "label",
+        "avatar"
+      ]
+    },
+    {
+      "name": "ToggleButtons",
+      "childrenProp": "children"
+    },
+    {
+      "$comment": "`ButtonSegment` is NOT a Widget — the same shape as NavigationRailDestination. Naming `segments` as the children property is what puts them in the UI tree; see docs/m4/m4g §3.",
+      "name": "SegmentedButton",
+      "childrenProp": "segments"
+    },
+    {
+      "name": "ButtonSegment",
+      "slots": [
+        "label",
+        "icon"
+      ]
+    },
+    {
+      "$comment": "Present so its structure survives extraction and the generator refuses it by name: reordering is a drag, which is the gesture model.",
+      "name": "ReorderableListView",
+      "childrenProp": "children"
+    },
+    {
+      "$comment": "Present for the refusal. `columns` and `rows` are two ordered widget-bearing lists on one element, and `ui.Element` holds one — see the M4-I report §5.",
+      "name": "DataTable"
+    },
+    {
+      "$comment": "Present so its structure survives extraction and the generator refuses it by name: the cross-fade from placeholder to loaded image is the exit transition `AnimatedSwitcher` is refused for, applied to a load event the kit does not observe.",
+      "name": "FadeInImage"
+    },
+    {
+      "$comment": "`.icon` is a factory on the SAME class, so `icon` and `label` are parameters of it. Extraction keys on the type, not the constructor — the FloatingActionButton precedent.",
+      "name": "FilledButton",
+      "slots": [
+        "child",
+        "icon",
+        "label"
+      ]
     }
-  ]
+  ],
+  "constValues": {
+    "$comment": "A static const of one of these types is extracted as its VALUE, not as a reference. `Icons.star` is `IconData(0xe5f9, fontFamily: 'MaterialIcons')`; the codepoint is the icon's identity and the Dart name is an alias for it. Referencing it by name would oblige every runtime kit to carry Flutter's ~2000-entry Icons table. The listed fields are read off the evaluated constant and become the named arguments of a synthesised construction.",
+    "IconData": [
+      "codePoint",
+      "fontFamily",
+      "fontPackage"
+    ]
+  },
+  "material": {
+    "$comment": "Material's own numbers, transcribed from the Flutter SDK at the version in `flutterVersion`. Every value cites the file and line it came from. INV-20 forbids literals in kit components; this is where they live instead, and the kit reads them from generated source. A value that cannot be cited does not belong here.",
+    "flutterVersion": "3.44.0",
+    "stateLayerOpacity": {
+      "$comment": "material/elevated_button.dart:550-556 (_ElevatedButtonDefaultsM3.overlayColor). `dragged` is deliberately absent: WidgetState.dragged exists in Flutter but no M3 defaults class assigns it an opacity, so there is no framework value to state.",
+      "hover": 0.08,
+      "focus": 0.1,
+      "press": 0.1
+    },
+    "disabledOpacity": {
+      "$comment": "material/elevated_button.dart:401-402, 532, 541.",
+      "container": 0.12,
+      "content": 0.38
+    },
+    "elevationOverlay": {
+      "$comment": "material/elevation_overlay.dart:172-177 (_surfaceTintElevationOpacities). M3 renders elevation as a surface tint. Interpolated linearly between stops and clamped outside the range, per _surfaceTintOpacityForElevation at :45-67.",
+      "stops": [
+        {
+          "elevation": 0.0,
+          "opacity": 0.0
+        },
+        {
+          "elevation": 1.0,
+          "opacity": 0.05
+        },
+        {
+          "elevation": 3.0,
+          "opacity": 0.08
+        },
+        {
+          "elevation": 6.0,
+          "opacity": 0.11
+        },
+        {
+          "elevation": 8.0,
+          "opacity": 0.12
+        },
+        {
+          "elevation": 12.0,
+          "opacity": 0.14
+        }
+      ]
+    },
+    "icon": {
+      "$comment": "widgets/icon_theme_data.dart:51-59 (IconThemeData.fallback). fontFamily from material/icons.dart, which declares every IconData with it.",
+      "size": 24.0,
+      "fill": 0.0,
+      "weight": 400.0,
+      "grade": 0.0,
+      "opticalSize": 48.0,
+      "fontFamily": "MaterialIcons"
+    },
+    "components": {
+      "$comment": "Per-component M3 defaults. `colorRole` names a MaterialRole the theme resolves — never a literal colour (INV-20).",
+      "AppBar": {
+        "$comment": "material/app_bar.dart:2521-2557 (_AppBarDefaultsM3) — elevation 0, scrolledUnderElevation 3, toolbarHeight 64, background surface, foreground onSurface, leading icon onSurface, actions icon onSurfaceVariant, shadow and surfaceTint transparent. titleSpacing is NavigationToolbar.kMiddleSpacing = 16 (widgets/navigation_toolbar.dart:39). Note toolbarHeight 64 is the M3 default; kToolbarHeight (constants.dart:30) is 56 and is M2.",
+        "actionsIconColorRole": "onSurfaceVariant",
+        "backgroundColorRole": "surface",
+        "elevation": 0.0,
+        "foregroundColorRole": "onSurface",
+        "iconColorRole": "onSurface",
+        "scrolledUnderElevation": 3.0,
+        "titleSpacing": 16.0,
+        "titleTypography": "titleLarge",
+        "toolbarHeight": 64.0
+      },
+      "Badge": {
+        "$comment": "material/badge.dart:_BadgeDefaultsM3 — smallSize :494, largeSize :495, padding EdgeInsets.symmetric(horizontal:4) :496, alignment AlignmentDirectional.topEnd :497, background error :505, text onError :508. The offset is computed in build (:228-234), is direction-dependent, and carries an unconditional +Offset(0,8) shim, so it is not a single value to state.",
+        "smallSize": 6.0,
+        "largeSize": 16.0,
+        "padding": 4.0,
+        "backgroundColorRole": "error",
+        "textColorRole": "onError"
+      },
+      "BottomNavigationBar": {
+        "$comment": "material/bottom_navigation_bar.dart:933-936 — the selected colour is brightness-dependent: colorScheme.primary in light, colorScheme.secondary in dark. Height kBottomNavigationBarHeight = 56 (material/constants.dart:33). DIVERGENCE, stated as Tooltip's is: the SDK's unselected colour is `themeData.unselectedWidgetColor`, which theme_data.dart:484 resolves to the literals Colors.black54 / Colors.white70. A kit component may hold no literal (INV-20), so the catalog names M3's onSurfaceVariant — the role those literals stand in for — instead of inventing a hex.",
+        "backgroundColorRole": "surface",
+        "colorRole": "onSurfaceVariant",
+        "height": 56.0,
+        "iconSize": 24.0,
+        "labelTypography": "labelMedium",
+        "selectedColorRole": "primary",
+        "selectedColorRoleDark": "secondary"
+      },
+      "BottomSheet": {
+        "$comment": "material/bottom_sheet.dart:1483-1505 (_BottomSheetDefaultsM3) — elevation 1, a 28px top corner radius, maxWidth 640, background surfaceContainerLow, drag handle onSurfaceVariant. The drag handle size is Size(32, 4) (:137-138, :155).",
+        "backgroundColorRole": "surfaceContainerLow",
+        "dragHandleColorRole": "onSurfaceVariant",
+        "dragHandleHeight": 4.0,
+        "dragHandleWidth": 32.0,
+        "elevation": 1.0,
+        "maxWidth": 640.0,
+        "topRadius": 28.0
+      },
+      "Card": {
+        "$comment": "material/card.dart:_CardDefaultsM3 — elevation 1.0, margin EdgeInsets.all(4.0), colour surfaceContainerLow, shape RoundedRectangleBorder(12.0).",
+        "elevation": 1.0,
+        "margin": 4.0,
+        "borderRadius": 12.0,
+        "colorRole": "surfaceContainerLow"
+      },
+      "Checkbox": {
+        "$comment": "material/checkbox.dart — Checkbox.width = 18.0 (:405), _kStrokeWidth = 2.0 (:651), side width 2.0 in onSurfaceVariant at rest (_CheckboxDefaultsM3 :33). The selected fill is primary and the check is onPrimary.",
+        "size": 18.0,
+        "strokeWidth": 2.0,
+        "borderRadius": 2.0,
+        "borderColorRole": "onSurfaceVariant",
+        "fillColorRole": "primary",
+        "checkColorRole": "onPrimary"
+      },
+      "Chip": {
+        "$comment": "material/chip.dart:_ChipDefaultsM3 — label onSurfaceVariant :2510-2519, side BorderSide(outlineVariant) :2539, iconTheme primary at size 18 :2544-2549, padding EdgeInsets.all(8) :2552, height _kChipHeight :36. NOTE: _ChipDefaultsM3.color returns null with the comment 'Subclasses override this getter' (:2516) — a bare Chip has NO background default in the SDK, so none is stated here and the component paints no fill.",
+        "height": 32.0,
+        "padding": 8.0,
+        "labelPadding": 8.0,
+        "borderRadius": 8.0,
+        "labelColorRole": "onSurfaceVariant",
+        "sideColorRole": "outlineVariant",
+        "iconColorRole": "primary",
+        "iconSize": 18.0
+      },
+      "ChoiceChip": {
+        "$comment": "material/choice_chip.dart:272-330 (_ChoiceChipDefaultsM3) — an 8px rounded rectangle (not a stadium, unlike a bare Chip), selected fill secondaryContainer with onSecondaryContainer label, labelLarge. Geometry (height, padding) is the Chip entry's, which this reuses rather than restating.",
+        "borderRadius": 8.0,
+        "colorRole": "onSurfaceVariant",
+        "labelTypography": "labelLarge",
+        "selectedColorRole": "onSecondaryContainer",
+        "selectedContainerColorRole": "secondaryContainer"
+      },
+      "CircleAvatar": {
+        "$comment": "material/circle_avatar.dart — _defaultRadius 20.0 :177 (diameter 40.0), M3 background primaryContainer :209-210, foreground onPrimaryContainer :203-204. There is no _CircleAvatarDefaultsM3 class; these are private statics and inline M3 branches.",
+        "radius": 20.0,
+        "backgroundColorRole": "primaryContainer",
+        "foregroundColorRole": "onPrimaryContainer"
+      },
+      "CircularProgressIndicator": {
+        "$comment": "material/progress_indicator.dart:_CircularProgressIndicatorDefaultsM3Year2023 (:1535) — again the EFFECTIVE class, since year2023 defaults true (:1130). Diameter 36.0 from constraints :1552 (the 2024 class's 40.0 does not apply), strokeWidth :1546, strokeAlign center = 0.0 :1549, colour primary :1543.",
+        "size": 36.0,
+        "strokeWidth": 4.0,
+        "colorRole": "primary"
+      },
+      "Divider": {
+        "$comment": "material/divider.dart:_DividerDefaultsM3 — space 16, thickness 1.0, colour outlineVariant.",
+        "space": 16.0,
+        "thickness": 1.0,
+        "colorRole": "outlineVariant"
+      },
+      "Drawer": {
+        "$comment": "material/drawer.dart:61 (_kWidth 304), :778-806 (_DrawerDefaultsM3) — elevation 1, background surfaceContainerLow, shadow and surfaceTint transparent, and a 16px rounded end edge the SDK notes has no token yet but is in the spec.",
+        "backgroundColorRole": "surfaceContainerLow",
+        "elevation": 1.0,
+        "endRadius": 16.0,
+        "width": 304.0
+      },
+      "ExpansionTile": {
+        "$comment": "material/expansion_tile.dart:907-925 (_ExpansionTileDefaultsM3) — text onSurface both states; icon primary when expanded and onSurfaceVariant when collapsed. The tile reuses ListTile's geometry, so its heights are read from the ListTile entry rather than restated here.",
+        "colorRole": "onSurface",
+        "expandedIconColorRole": "primary",
+        "iconColorRole": "onSurfaceVariant"
+      },
+      "FloatingActionButton": {
+        "$comment": "material/floating_action_button.dart:775-833 (_FABDefaultsM3) — elevation 6, 56x56 regular / 40x40 small / 96x96 large, extended height 56 with 8px icon-label spacing, background primaryContainer, foreground onPrimaryContainer, icon 24 (36 large), radius 16 regular / 12 small / 28 large. Scaffold insets it by kFloatingActionButtonMargin = 16 (material/floating_action_button_location.dart:25).",
+        "borderRadius": 16.0,
+        "colorRole": "primaryContainer",
+        "elevation": 6.0,
+        "extendedHeight": 56.0,
+        "extendedIconLabelSpacing": 8.0,
+        "extendedPaddingEnd": 20.0,
+        "extendedPaddingStart": 16.0,
+        "foregroundColorRole": "onPrimaryContainer",
+        "iconSize": 24.0,
+        "largeBorderRadius": 28.0,
+        "largeIconSize": 36.0,
+        "largeSize": 96.0,
+        "margin": 16.0,
+        "size": 56.0,
+        "smallBorderRadius": 12.0,
+        "smallSize": 40.0
+      },
+      "IconButton": {
+        "$comment": "material/icon_button.dart:995-1012 (the documented _IconButtonDefaultsM3 style) — padding all(8), minimumSize 40x40, iconSize 24, StadiumBorder, elevation 0, transparent background (:1070-1071), foreground onSurfaceVariant (:1074-1083).",
+        "colorRole": "onSurfaceVariant",
+        "iconSize": 24.0,
+        "minSize": 40.0,
+        "padding": 8.0
+      },
+      "InputDecorator": {
+        "$comment": "material/input_decorator.dart:_InputDecoratorDefaultsM3 — activeIndicatorBorder is onSurfaceVariant at rest (:56), primary at width 2.0 when focused (:51), error (:48), and onSurface at 0.38 when disabled (:39). Outline disabled is onSurface at 0.12 (:62). contentPadding for the outline border is EdgeInsets.fromLTRB(12, 16, 12, 8) (:3341). The floating label scales by _kFinalLabelScale (:41).",
+        "paddingHorizontal": 12.0,
+        "paddingTop": 16.0,
+        "paddingBottom": 8.0,
+        "borderRadius": 4.0,
+        "borderWidth": 1.0,
+        "focusedBorderWidth": 2.0,
+        "labelScale": 0.75,
+        "borderColorRole": "onSurfaceVariant",
+        "focusedBorderColorRole": "primary",
+        "errorColorRole": "error",
+        "labelColorRole": "onSurfaceVariant",
+        "textColorRole": "onSurface",
+        "disabledOpacity": 0.38
+      },
+      "LinearProgressIndicator": {
+        "$comment": "material/progress_indicator.dart:_LinearProgressIndicatorDefaultsM3Year2023 (:1555). This is the EFFECTIVE class: year2023 resolves to true by default in 3.44.0 (:595-601), so the 2024 class's borderRadius of 2.0 does NOT apply and the default is null — hence no borderRadius here. minHeight :1568, colour primary :1562, track secondaryContainer :1565. Indeterminate cycle _kIndeterminateLinearDuration = 1800ms (:23).",
+        "minHeight": 4.0,
+        "colorRole": "primary",
+        "trackColorRole": "secondaryContainer",
+        "indeterminateDurationMs": 1800.0
+      },
+      "ListTile": {
+        "$comment": "material/list_tile.dart:_LisTileDefaultsM3 (the SDK's own typo). contentPadding is EdgeInsetsDirectional.only(start:16,end:24) at :1829; minLeadingWidth :1830; minVerticalPadding :1831. horizontalTitleGap is not in the defaults class — it is the literal 16 at :1029. Heights come from _defaultTileHeight at :1507-1509 (non-dense).",
+        "paddingStart": 16.0,
+        "paddingEnd": 24.0,
+        "minLeadingWidth": 24.0,
+        "minVerticalPadding": 8.0,
+        "horizontalTitleGap": 16.0,
+        "heightOneLine": 56.0,
+        "heightTwoLine": 72.0,
+        "heightThreeLine": 88.0,
+        "titleColorRole": "onSurface",
+        "subtitleColorRole": "onSurfaceVariant",
+        "iconColorRole": "onSurfaceVariant"
+      },
+      "MaterialBanner": {
+        "$comment": "material/banner.dart:501-519 (_BannerDefaultsM3) — elevation 1, background surfaceContainerLow, divider outlineVariant, content bodyMedium. Padding from :350-357 — start 16, top 24, end 16, bottom 4 for the two-line form; leading padding end 16 (:211).",
+        "backgroundColorRole": "surfaceContainerLow",
+        "colorRole": "onSurface",
+        "contentTypography": "bodyMedium",
+        "dividerColorRole": "outlineVariant",
+        "dividerThickness": 1.0,
+        "elevation": 1.0,
+        "leadingPaddingEnd": 16.0,
+        "paddingBottom": 4.0,
+        "paddingEnd": 16.0,
+        "paddingStart": 16.0,
+        "paddingTop": 24.0
+      },
+      "NavigationBar": {
+        "$comment": "material/navigation_bar.dart:1427-1480 (_NavigationBarDefaultsM3) — height 80, elevation 3, background surfaceContainer, indicator secondaryContainer with a StadiumBorder sized 64x32 (:29-30), icon size 24, icon/label onSurfaceVariant unselected and onSecondaryContainer selected, labelMedium.",
+        "backgroundColorRole": "surfaceContainer",
+        "colorRole": "onSurfaceVariant",
+        "elevation": 3.0,
+        "height": 80.0,
+        "iconSize": 24.0,
+        "indicatorColorRole": "secondaryContainer",
+        "indicatorHeight": 32.0,
+        "indicatorWidth": 64.0,
+        "labelTypography": "labelMedium",
+        "selectedColorRole": "onSecondaryContainer"
+      },
+      "NavigationDrawer": {
+        "$comment": "material/navigation_drawer.dart:726-750 (_NavigationDrawerDefaultsM3) — elevation 1, tileHeight 56, indicatorSize 336x56, background surfaceContainerLow, indicator secondaryContainer, icon/label onSurfaceVariant unselected and onSecondaryContainer selected.",
+        "backgroundColorRole": "surfaceContainerLow",
+        "colorRole": "onSurfaceVariant",
+        "elevation": 1.0,
+        "iconSize": 24.0,
+        "indicatorColorRole": "secondaryContainer",
+        "indicatorHeight": 56.0,
+        "indicatorWidth": 336.0,
+        "labelTypography": "labelLarge",
+        "selectedColorRole": "onSecondaryContainer",
+        "tileHeight": 56.0
+      },
+      "NavigationRail": {
+        "$comment": "material/navigation_rail.dart:1233-1272 (_NavigationRailDefaultsM3) — elevation 0, minWidth 80, minExtendedWidth 256, background surface, indicator secondaryContainer, icon size 24, unselected icon onSurfaceVariant and selected onSecondaryContainer, labels labelMedium in onSurface. Indicator geometry from :24-25 — _kCircularIndicatorDiameter 56, _kIndicatorHeight 32.",
+        "backgroundColorRole": "surface",
+        "colorRole": "onSurfaceVariant",
+        "elevation": 0.0,
+        "iconSize": 24.0,
+        "indicatorColorRole": "secondaryContainer",
+        "indicatorHeight": 32.0,
+        "indicatorWidth": 56.0,
+        "labelColorRole": "onSurface",
+        "labelTypography": "labelMedium",
+        "minExtendedWidth": 256.0,
+        "minWidth": 80.0,
+        "selectedColorRole": "onSecondaryContainer"
+      },
+      "Scaffold": {
+        "$comment": "material/theme_data.dart:453 — `scaffoldBackgroundColor ??= colorScheme.surface` under M3.",
+        "backgroundColorRole": "surface"
+      },
+      "SegmentedButton": {
+        "$comment": "material/segmented_button.dart:_SegmentedButtonDefaultsM3 — a stadium-ended row of outlined segments; selected segment fills secondaryContainer with onSecondaryContainer content, unselected onSurface, outline for the border, labelLarge, 40 high.",
+        "borderRadius": 20.0,
+        "borderWidth": 1.0,
+        "colorRole": "onSurface",
+        "labelTypography": "labelLarge",
+        "minHeight": 40.0,
+        "outlineColorRole": "outline",
+        "paddingInline": 12.0,
+        "selectedColorRole": "onSecondaryContainer",
+        "selectedContainerColorRole": "secondaryContainer"
+      },
+      "Slider": {
+        "$comment": "material/slider.dart:_SliderDefaultsM3Year2023 — the EFFECTIVE class, since year2023 defaults true as it does for the progress indicators. trackHeight 4.0 (:super), activeTrackColor primary, inactiveTrackColor surfaceContainerHighest, thumbColor primary. The 2024 class's trackHeight is 16.0 and does not apply.",
+        "trackHeight": 4.0,
+        "thumbSize": 20.0,
+        "activeTrackColorRole": "primary",
+        "inactiveTrackColorRole": "surfaceContainerHighest",
+        "thumbColorRole": "primary"
+      },
+      "Switch": {
+        "$comment": "material/switch.dart draws the M3 switch with a painter rather than from size constants, so no width/height is transcribable — the geometry below is the kit's own, stated as such. The COLOUR roles are Material's: a selected track is primary with an onPrimary thumb, an unselected one surfaceContainerHighest with an outline thumb and an outline track border.",
+        "selectedTrackColorRole": "primary",
+        "selectedThumbColorRole": "onPrimary",
+        "trackColorRole": "surfaceContainerHighest",
+        "thumbColorRole": "outline",
+        "trackBorderColorRole": "outline"
+      },
+      "TabBar": {
+        "$comment": "material/tabs.dart:2795-2830 (_TabsPrimaryDefaultsM3) — indicator primary, selected label primary, unselected onSurfaceVariant, both titleSmall, divider outlineVariant at height 1. Tab height _kTabHeight = 46 (:30); a tab with both text and icon is 72 (:31).",
+        "colorRole": "onSurfaceVariant",
+        "dividerColorRole": "outlineVariant",
+        "dividerHeight": 1.0,
+        "height": 46.0,
+        "indicatorColorRole": "primary",
+        "indicatorHeight": 3.0,
+        "labelTypography": "titleSmall",
+        "selectedColorRole": "primary",
+        "textAndIconHeight": 72.0
+      },
+      "ToggleButtons": {
+        "$comment": "material/toggle_buttons.dart:449 — `borderRadius` is themeable with no M3 defaults class; M3 supersedes ToggleButtons with SegmentedButton. DIVERGENCE, stated as Tooltip's and BottomNavigationBar's are: the catalog names SegmentedButton's own M3 roles so the two render consistently, rather than inventing a palette for a component the SDK leaves to the M2 theme.",
+        "borderRadius": 8.0,
+        "borderWidth": 1.0,
+        "colorRole": "onSurface",
+        "minHeight": 40.0,
+        "outlineColorRole": "outline",
+        "selectedColorRole": "onSecondaryContainer",
+        "selectedContainerColorRole": "secondaryContainer"
+      },
+      "Tooltip": {
+        "$comment": "material/tooltip.dart — verticalOffset :389, showDuration 1500ms :392, waitDuration Duration.zero :394, borderRadius Radius.circular(4) :496/:511, height 32.0 and padding symmetric(16,4) on the touch platforms :428/:439. DIVERGENCE, stated rather than hidden: Flutter 3.44 paints a tooltip with LITERAL colours (Colors.white / Colors.grey[700] at :495/:510), which INV-20 forbids a kit component from holding. The roles below are Material 3's own plain-tooltip roles, and using them is a deliberate, documented departure from this Flutter version's implementation rather than an invention — a literal here would be the compiler bug INV-20 names.",
+        "height": 32.0,
+        "paddingHorizontal": 16.0,
+        "paddingVertical": 4.0,
+        "verticalOffset": 24.0,
+        "borderRadius": 4.0,
+        "backgroundColorRole": "inverseSurface",
+        "textColorRole": "onInverseSurface"
+      }
+    }
+  }
 }

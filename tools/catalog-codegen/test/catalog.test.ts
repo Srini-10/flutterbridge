@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import { generateDart, generateTypeScript, parseCatalog } from '../src/index.js';
+import { generateRuntime } from '../src/runtime.js';
 
 const material = parseCatalog(
   JSON.parse(readFileSync(new URL('../../../catalog/widgets/material.json', import.meta.url), 'utf8')),
@@ -94,5 +95,79 @@ describe('one source, two languages', () => {
       expect(dart).toContain(`'${widget.name}'`);
       expect(ts).toContain(`"${widget.name}"`);
     }
+  });
+});
+
+// ── M4-C: positional names, const values, and Material's own numbers ──────────────────────────────
+
+describe('the catalog carries what ADR-0023 and the runtime kit need', () => {
+  it('positional argument names are keyed by constructor', () => {
+    const dart = generateDart(material);
+    // Flutter names them differently per constructor — `Image.asset(String name)` against
+    // `Image.network(String src)` — so one list per widget could not have been right for both.
+    expect(dart).toContain("'asset': <String>['name']");
+    expect(dart).toContain("'src'");
+    // `''` keys the unnamed constructor, which is how a constructor with no name has to be spelled.
+    expect(dart).toContain("'': <String>['icon']");
+  });
+
+  it('the positional names reach the analyzer only — the compiler has no use for them', () => {
+    // Each domain is generated the subset it needs (ADR-18). Extraction is where a positional argument is
+    // interpreted; by the time the compiler sees the program it is already a named prop.
+    expect(generateTypeScript(material)).not.toContain('positionalProps');
+  });
+
+  it('a positional name that collides with a slot is refused', () => {
+    expect(() =>
+      parseCatalog(
+        {
+          catalog: 'x',
+          priority: 1,
+          library: 'p',
+          widgets: [{ name: 'W', slots: ['child'], positionalProps: { '': ['child'] } }],
+        },
+        'x.json',
+      ),
+    ).toThrow(/cannot be reached both positionally and by name/);
+  });
+
+  it('two positional arguments cannot share a name', () => {
+    expect(() =>
+      parseCatalog(
+        {
+          catalog: 'x',
+          priority: 1,
+          library: 'p',
+          widgets: [{ name: 'W', positionalProps: { '': ['a', 'a'] } }],
+        },
+        'x.json',
+      ),
+    ).toThrow(/names two positional/);
+  });
+
+  it('constValues names the types whose static consts are extracted by value', () => {
+    // `Icons.star` is `IconData(0xe5f9, …)`; carrying the name instead would oblige every runtime kit to
+    // ship Flutter's ~2000-entry Icons table.
+    expect(generateDart(material)).toContain("'IconData': <String>['codePoint', 'fontFamily', 'fontPackage']");
+  });
+
+  it('the runtime kit gets Material’s numbers, and no colours', () => {
+    const runtime = generateRuntime(material);
+    // Transcribed from the Flutter SDK; the elevation curve is the one ElevationOverlay interpolates.
+    expect(runtime).toContain('ELEVATION_STOPS');
+    expect(runtime).toContain('{ elevation: 12.0, opacity: 0.14 }');
+    expect(runtime).toContain('STATE_LAYER_OPACITY');
+    expect(runtime).toContain('"hover": 0.08');
+    // A `dragged` opacity is absent because Flutter states none — not because it was forgotten.
+    expect(runtime).not.toContain('"dragged"');
+    // Colours are the theme's, from app.Token; a hex here would be the INV-20 violation this file prevents.
+    expect(runtime).not.toMatch(/#[0-9A-Fa-f]{6}/);
+    // A component default names a *role*, never a colour value.
+    expect(runtime).toContain('"colorRole": "outlineVariant"');
+  });
+
+  it('the runtime metadata is not generated into the other two domains', () => {
+    expect(generateDart(material)).not.toContain('ELEVATION_STOPS');
+    expect(generateTypeScript(material)).not.toContain('ELEVATION_STOPS');
   });
 });
