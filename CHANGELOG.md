@@ -3,7 +3,25 @@
 All notable changes to FlutterBridge. Format follows [Keep a Changelog](https://keepachangelog.com/1.1.0/);
 versioning will follow [Semantic Versioning](https://semver.org/) from the first release.
 
-## [Unreleased] — M5-F (cross-platform qualification)
+## [0.1.0] — 2026-07-19
+
+**The first public release.** FlutterBridge compiles a Flutter application to a React/Next.js project:
+`npm install -g @bridge/cli`, then `bridge build` in a Flutter project.
+
+What it is, in one paragraph: a Dart frontend reads your app through the resolved element model (never by
+parsing text), emits a layered intermediate representation, eleven target-neutral passes normalise it, and
+a pluggable generator lowers it to a target. It **refuses** what it cannot translate faithfully rather than
+approximating — a generated application that renders and is subtly wrong is worth less than one that says
+exactly what it could not do.
+
+Validated end to end on macOS: registry install → `bridge build` → `next build` → browser → determinism.
+Linux and Windows run the same pipeline in CI and are not hand-run; see
+[supported platforms](docs/guide/installation.md#supported-platforms).
+
+**951 tests** — 693 TypeScript, 240 Dart, 18 browser. **90 widgets** render; 120 are catalogued.
+**56.8%** of every widget instantiation across two real, unmodified Flutter applications.
+
+### M5-F (cross-platform qualification)
 
 **FlutterBridge 0.1.0 is ready for public release**, with macOS validated end to end and Linux/Windows
 fixed and CI-qualified but not yet hand-run. The platform table distinguishes the two.
@@ -90,7 +108,7 @@ against the real runtime kit, and a registry install.
 - Generator regression tests for both defects, asserted against a committed real analyzer document
   (`fixtures/uir/counter.normalized.ndjson`).
 
-## [0.1.0] — M5-C (distribution and packaging)
+### M5-C (distribution and packaging)
 
 **The first installable release.** Before this, FlutterBridge ran only from a checkout of its own
 repository. Validated by a full publish-and-install cycle against a local registry on macOS arm64:
