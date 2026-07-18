@@ -1,0 +1,10 @@
+{
+  "$schema": "https://flutterbridge.dev/schema/bridge.json",
+  "source": ".",
+  "out": "build/bridge",
+  "work": ".bridge",
+  "generator": "@bridge/gen-react",
+  "plugins": ["@bridge/widgets-material"],
+  "diagnostics": { "level": "warning" },
+  "build": { "typecheck": true }
+}
