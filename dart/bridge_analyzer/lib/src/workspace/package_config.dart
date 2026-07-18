@@ -106,6 +106,38 @@ final class PackageConfig {
   /// Whether [name] is a package this project can import.
   bool has(String name) => packages.containsKey(name);
 
+  /// The Dart SDK this project was resolved against, or `null` when it cannot be derived.
+  ///
+  /// **The SDK a project is analyzed against must be the SDK it was resolved against**, and that is
+  /// knowable from the project itself rather than from the machine running the analyzer. A Flutter
+  /// project's `package_config.json` names `sky_engine`, which lives inside the Flutter SDK's own
+  /// cache at `<flutter>/bin/cache/pkg/sky_engine` — so the Dart SDK beside it, at
+  /// `<flutter>/bin/cache/dart-sdk`, is the one `flutter pub get` resolved this project with.
+  ///
+  /// Without this, `package:analyzer` falls back to deriving the SDK from `Platform.resolvedExecutable`
+  /// — whatever `dart` happens to be running us. Two ways that is wrong:
+  ///
+  ///   * A machine with a standalone Dart on `PATH` *and* Flutter installed analyzes a Flutter project
+  ///     against the standalone SDK's core libraries. It does not fail; it resolves against the wrong
+  ///     `dart:core` and carries on, which is the quietly-wrong outcome the loader's schema check
+  ///     exists to prevent one layer up.
+  ///   * In an AOT binary `resolvedExecutable` is *the binary*, so the SDK is looked for beside it and
+  ///     is not there. That is the concrete failure `dart compile exe` produced: `PathNotFoundException`
+  ///     on `<binary dir>/lib/_internal/sdk_library_metadata/lib/libraries.dart`.
+  ///
+  /// Returns `null` for a plain Dart package, which has no `sky_engine` and for which the ambient SDK
+  /// is the right answer.
+  String? get dartSdkPath {
+    final PackageEntry? skyEngine = packages['sky_engine'];
+    if (skyEngine == null) {
+      return null;
+    }
+    // `<flutter>/bin/cache/pkg/sky_engine/lib` → up past lib, sky_engine and pkg → `<flutter>/bin/cache`.
+    final String cache = p.dirname(p.dirname(p.dirname(skyEngine.libRoot)));
+    final String sdk = p.join(cache, 'dart-sdk');
+    return Directory(sdk).existsSync() ? sdk : null;
+  }
+
   /// Resolves a `package:` URI to an absolute file path, or `null` if the package is unknown.
   ///
   /// Returns a path whether or not the file exists: *the package resolves* and *the file exists* are

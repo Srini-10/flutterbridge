@@ -20,6 +20,7 @@
 library;
 
 import 'package:analyzer/dart/ast/ast.dart';
+import 'package:analyzer/dart/ast/visitor.dart';
 import 'package:analyzer/dart/element/type.dart';
 import 'package:bridge_analyzer/src/diagnostics/codes.dart';
 import 'package:bridge_analyzer/src/model/raw_node.dart';
@@ -147,6 +148,46 @@ final class WidgetExtractor {
     int? index,
     String? slot,
   }) {
+    // A rebuild-scoping wrapper is not part of the UI, and INV-22 says it must not survive. See
+    // [_inlineRebuildBuilder].
+    final (String, String?)? rebuild = registry.rebuildBuilderOf(name);
+    if (rebuild != null) {
+      final RawNode? inlined = _inlineRebuildBuilder(
+        arguments: arguments,
+        scope: scope,
+        builderProp: rebuild.$1,
+        valueProp: rebuild.$2,
+        // The inlined body takes the *wrapper's* place in the tree, so it must take its anchor position
+        // too. Without this two `ListenableBuilder`s in one `Column` both inlined to a `Text` and claimed
+        // the anchor `…/Column/Text` — which is BRG1205, and it fired on the first run of this code. It is
+        // also the semantically right answer: an override attached to that position still addresses it.
+        index: index,
+        slot: slot,
+      );
+      if (inlined != null) {
+        return inlined;
+      }
+    }
+
+    // A lazy builder — `ListView.builder(itemCount:, itemBuilder:)` — is a `ui.List`, when it can be
+    // *proved* to be one. See [_lazyList].
+    final (String, String)? lazy = registry.lazyBuilderOf(name, constructorName);
+    if (lazy != null) {
+      final RawNode? expanded = _lazyList(
+        node,
+        name: name,
+        arguments: arguments,
+        scope: scope,
+        builderProp: lazy.$1,
+        countProp: lazy.$2,
+        index: index,
+        slot: slot,
+      );
+      if (expanded != null) {
+        return expanded;
+      }
+    }
+
     final WidgetRecognition recognition = registry.recogniseWidget(context, node.staticType);
     if (recognition.isTextWidget) {
       return _text(node, name, arguments, scope, index: index, slot: slot);
@@ -179,12 +220,23 @@ final class WidgetExtractor {
     final String? childrenProp =
         registry.childrenPropOf(name) ?? _soleWidgetListParameter(arguments);
 
+    // Positional arguments are counted separately from `props`, because the index a name is keyed by is
+    // the argument's position in the *call*, not its position among whatever has been extracted so far.
+    // Keying by `props.length` — as this did before ADR-0023 — made `_positional0` mean "the first
+    // positional argument" only when no named argument preceded it.
+    int positional = 0;
+
     for (final Argument argument in arguments.arguments) {
       if (argument is! NamedArgument) {
-        // A positional argument to a widget — `Text`'s data, `Icon`'s icon. Handled by the widgets
-        // that have one; for the rest it is a prop with no name, and the schema has nowhere to put it.
+        // A positional argument. The catalog names it (ADR-0023): `Image.asset`'s path is `name`,
+        // `Icon`'s is `icon`. Where it does not, the old synthetic key stands — the argument is still
+        // present and still correctly typed, and a generator that cannot interpret it refuses the widget
+        // rather than rendering it wrong.
         if (argument is Expression) {
-          props['_positional${props.length}'] = RawChild(bindings.extract(argument, scope));
+          final int index = positional++;
+          final String label =
+              registry.positionalPropOf(name, constructorName, index) ?? '_positional$index';
+          props[label] = RawChild(bindings.extract(argument, scope));
         }
         continue;
       }
@@ -244,6 +296,196 @@ final class WidgetExtractor {
 
   /// The single named parameter of [arguments] whose type is a list of widgets, if there is exactly one.
   ///
+  /// The body of a rebuild-scoping builder, extracted as UI — or `null` when it cannot be.
+  ///
+  /// ## Why the wrapper does not survive
+  ///
+  /// `ListenableBuilder`, `ValueListenableBuilder` and `Builder` exist because Flutter's `setState` rebuilds
+  /// a whole `State`: a program that wants a narrower rebuild has to draw the boundary by hand. INV-22 names
+  /// exactly this class of thing —
+  ///
+  /// > `setState`, `context.watch`, a `Consumer` wrapper, a hook's lifecycle helper — these are framework
+  /// > *machinery*, not program semantics. Their meaning is already carried by UIR constructs.
+  ///
+  /// — and here it is carried by the signal graph. ADR-4 and ADR-20 make a signal read *be* the
+  /// subscription, so the rebuild scope is computed rather than declared, and a `BuildContext` has no UIR
+  /// meaning at all. Keeping the wrapper would leave every downstream pass and every generator a Flutter
+  /// fact to learn to ignore.
+  ///
+  /// ## What binds to what
+  ///
+  /// The builder's parameters are `(BuildContext context, [T value,] Widget? child)`. Only `value` means
+  /// anything, and it means *the listenable's current value* — so it is bound to the listenable's own
+  /// binding, which for a `ValueNotifier` is a signal (the catalog lists it among its `stateHolders`).
+  /// Reading `value` in the body then produces exactly the `bind.Signal` that reading the notifier would.
+  ///
+  /// ## When it declines
+  ///
+  /// - the builder is not a closure written at the call site — there is no body to inline;
+  /// - the widget passes `child:`, whose whole point is a subtree the builder receives *without*
+  ///   rebuilding. Inlining would drop that argument, so the wrapper stays and is refused by name instead;
+  /// - the listenable is not a plain name, so there is no binding to bind `value` to.
+  ///
+  /// Each case falls through to ordinary element extraction, where the generator refuses it with a reason.
+  RawNode? _inlineRebuildBuilder({
+    required ArgumentList arguments,
+    required Scope scope,
+    required String builderProp,
+    required String? valueProp,
+    int? index,
+    String? slot,
+  }) {
+    Expression? builder;
+    Expression? listenable;
+    bool hasChild = false;
+    for (final Argument argument in arguments.arguments) {
+      if (argument is! NamedArgument) {
+        continue;
+      }
+      final String label = argument.name.lexeme;
+      if (label == builderProp) {
+        builder = argument.argumentExpression;
+      } else if (valueProp != null && label == valueProp) {
+        listenable = argument.argumentExpression;
+      } else if (label == 'child') {
+        hasChild = true;
+      }
+    }
+    if (builder is! FunctionExpression || hasChild) {
+      return null;
+    }
+
+    Scope inner = scope;
+    if (valueProp != null) {
+      // `(context, value, child)` — the value is the second parameter, which is Flutter's fixed signature.
+      final List<FormalParameter> params =
+          builder.parameters?.parameters ?? const <FormalParameter>[];
+      if (params.length < 2 || listenable is! SimpleIdentifier) {
+        return null;
+      }
+      final String? valueName = params[1].name?.lexeme;
+      final Binding? source = scope.lookup(listenable.name);
+      if (valueName == null || source == null) {
+        return null;
+      }
+      // Bound to the *listenable's own binding*, symbol included. A `ValueNotifier` is a signal, so reading
+      // `value` in the body yields the same `bind.Signal` that reading the notifier directly would — which
+      // is the whole reason the wrapper carries no information.
+      inner = scope.withBinding(
+        Binding(name: valueName, binds: source.binds, symbol: source.symbol),
+      );
+    }
+
+    return _widgetOfBody(builder.body, inner, index: index, slot: slot);
+  }
+
+  /// A lazy builder as a `ui.List`, or `null` when it cannot be proved to be one.
+  ///
+  /// ## What is proved, and why nothing less will do
+  ///
+  /// `ListView.builder(itemCount: n, itemBuilder: (context, i) => W)` is a for-each over a collection
+  /// **only when** the builder does nothing with `i` except index one collection, and `n` is that
+  /// collection's length. Then the loop visits every element of it exactly once, in order — which is what
+  /// `ui.List` means. Anything else is a builder over an index range, which `ui.List` cannot express, and
+  /// guessing would emit a loop over the wrong thing.
+  ///
+  /// So three conditions are checked, and all three must hold:
+  ///
+  ///   1. the builder is a closure taking `(BuildContext, int)`;
+  ///   2. every use of its index parameter is `C[i]`, for **one** collection expression `C`;
+  ///   3. the count is `C.length`, for the same `C`.
+  ///
+  /// When they do not, this returns `null` and the widget extracts as an ordinary element — whose
+  /// `itemBuilder` prop is then a closure the generator refuses by name, which is the honest outcome.
+  ///
+  /// ## Why this is here and not in N3
+  ///
+  /// N3 is called `expand-builders` and its header named this exact gap. It still cannot close it: the
+  /// template is a *widget subtree*, and building one from the expression the closure returns means redoing
+  /// the const/signal/param classification of every prop — which needs the resolved scope, and the resolved
+  /// scope exists only here. It is the same reason N8 refuses to rebuild elements from expressions
+  /// (`BRG2110`). N3 keeps verifying, and reports any builder that still arrives un-expanded.
+  ///
+  /// M4-H is where this became possible at all: until then `C[i]` reached UIR as an opaque expression, so
+  /// condition 2 could not even be tested. N3's header blamed the shape of `ListView.builder` — *"the
+  /// collection is not named there — only indexed"* — when the collection was named, and extraction was
+  /// discarding it.
+  RawNode? _lazyList(
+    Expression node, {
+    required String name,
+    required ArgumentList arguments,
+    required Scope scope,
+    required String builderProp,
+    required String countProp,
+    int? index,
+    String? slot,
+  }) {
+    Expression? builderArg;
+    Expression? countArg;
+    for (final Argument argument in arguments.arguments) {
+      if (argument is! NamedArgument) {
+        continue;
+      }
+      final String label = argument.name.lexeme;
+      if (label == builderProp) {
+        builderArg = argument.argumentExpression;
+      } else if (label == countProp) {
+        countArg = argument.argumentExpression;
+      }
+    }
+    if (builderArg is! FunctionExpression || countArg == null) {
+      return null;
+    }
+
+    // (1) `(BuildContext context, int i)`. The index is the second parameter; Flutter's signature is fixed.
+    final List<FormalParameter> params =
+        builderArg.parameters?.parameters ?? const <FormalParameter>[];
+    if (params.length != 2) {
+      return null;
+    }
+    final String? indexName = params[1].name?.lexeme;
+    if (indexName == null) {
+      return null;
+    }
+
+    // (2) every use of the index is `C[i]`, for one C.
+    final _IndexedCollections indexed = _IndexedCollections(indexName);
+    builderArg.body.accept(indexed);
+    if (!indexed.everyUseIsAnIndex || indexed.sources.length != 1) {
+      return null;
+    }
+    final Expression source = indexed.sources.values.single;
+
+    // (3) the count is `C.length`, for the same C.
+    if (countArg is! PropertyAccess && countArg is! PrefixedIdentifier) {
+      return null;
+    }
+    final String countText = countArg.toSource();
+    if (countText != '${source.toSource()}.length') {
+      return null;
+    }
+
+    // Proved. The item parameter is synthetic — Flutter's builder never names the item, only the index —
+    // and the template keeps saying `C[i]`, which is what the author wrote and what lowers correctly with
+    // the index in scope. Naming it after the widget keeps two lists in one parent from colliding.
+    const String itemParam = 'item';
+    final Scope inner = scope.withBinding(
+      Binding(name: indexName, binds: Binds.parameter),
+    ).withBinding(const Binding(name: itemParam, binds: Binds.parameter));
+
+    return RawNode(
+      kind: 'ui.List',
+      span: out.span(node),
+      anchorSegment: _segment(name, index, slot),
+      fields: <String, RawValue>{
+        'source': RawChild(bindings.extract(source, scope)),
+        'itemParam': const RawLiteral(itemParam),
+        'indexParam': RawLiteral(indexName),
+        'template': RawChild(_widgetOfBody(builderArg.body, inner)),
+      },
+    );
+  }
+
   /// `null` for none — and for *several*, because `ui.Element` holds one ordered `children` list and
   /// choosing between two candidates would be a guess. The caller leaves them in props, where they are
   /// visible as expressions rather than silently merged.
@@ -510,10 +752,10 @@ final class WidgetExtractor {
   }
 
   /// The single widget a function body returns.
-  RawNode _widgetOfBody(FunctionBody body, Scope scope) {
+  RawNode _widgetOfBody(FunctionBody body, Scope scope, {int? index, String? slot}) {
     switch (body) {
       case ExpressionFunctionBody():
-        return extract(body.expression, scope);
+        return extract(body.expression, scope, index: index, slot: slot);
       case BlockFunctionBody():
         // A builder with statements in it — `final x = ...; return Column(...)`. The returned widget
         // is the subtree; the statements around it are not expressible as a `ui.*` node, so the whole
@@ -524,7 +766,7 @@ final class WidgetExtractor {
         if (body.block.statements.length == 1 &&
             last is ReturnStatement &&
             last.expression != null) {
-          return extract(last.expression!, scope);
+          return extract(last.expression!, scope, index: index, slot: slot);
         }
         return out.opaqueUi(body, 'builder body with statements');
       case FunctionBody():
@@ -540,4 +782,49 @@ final class _MapToList {
   final Expression source;
   final String itemParam;
   final FunctionBody body;
+}
+
+/// Finds every use of a builder's index parameter, and what it indexes.
+///
+/// The proof obligation behind [WidgetExtractor._lazyList] condition 2: a `ListView.builder` is a for-each
+/// only if its index is used *for nothing but* indexing, and indexes only one collection. A builder that
+/// also writes `Text('Item \$i')`, or that indexes two lists, is a builder over a range — real, common, and
+/// not a `ui.List`.
+///
+/// Collections are keyed by source text. That is exact rather than approximate here: two occurrences of
+/// `_items[i]` in one closure are the same collection precisely when they are written the same way, and a
+/// closure that indexes `a.b[i]` and `a.c[i]` yields two keys and is correctly rejected.
+class _IndexedCollections extends RecursiveAstVisitor<void> {
+  _IndexedCollections(this.indexName);
+
+  /// The builder's index parameter.
+  final String indexName;
+
+  /// Collection source text → the expression, for every `C[index]` seen.
+  final Map<String, Expression> sources = <String, Expression>{};
+
+  /// Whether every reference to [indexName] so far has been as an index.
+  bool everyUseIsAnIndex = true;
+
+  @override
+  void visitIndexExpression(IndexExpression node) {
+    final Expression subscript = node.index;
+    final Expression target = node.realTarget;
+    if (subscript is SimpleIdentifier && subscript.name == indexName) {
+      sources[target.toSource()] = target;
+      // The receiver is still walked — `a[b[i]]` must not be mistaken for a plain indexed read — but the
+      // subscript is not, because this *is* its use and counting it again would fail the check it passes.
+      target.accept(this);
+      return;
+    }
+    super.visitIndexExpression(node);
+  }
+
+  @override
+  void visitSimpleIdentifier(SimpleIdentifier node) {
+    if (node.name == indexName) {
+      everyUseIsAnIndex = false;
+    }
+    super.visitSimpleIdentifier(node);
+  }
 }

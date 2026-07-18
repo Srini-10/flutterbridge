@@ -3,7 +3,7 @@ description: >-
   FlutterBridge compiler frontend. Loads a Flutter project through package:analyzer, extracts
   resolved semantics, and emits UIR as NDJSON. It never generates target code.
 publish_to: 'none'
-version: 0.0.1
+version: 0.1.0
 
 environment:
   sdk: ^3.11.0

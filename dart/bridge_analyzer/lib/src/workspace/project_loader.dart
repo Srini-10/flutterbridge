@@ -105,13 +105,34 @@ final class ProjectLoader {
       );
     }
 
+    // `p.url.joinAll(p.split(…))`, not a bare `p.relative`.
+    //
+    // ## Why the separator is normalised here
+    //
+    // A project-relative path stops being a filesystem path the moment it is written into UIR. It becomes
+    // `span.file`, which becomes an **anchor** — `'${raw.span.file}#$segment'` in `node_factory.dart` since
+    // M5-C's D4 — and an anchor is hashed into the node's id (ADR-17). So the path separator ends up inside
+    // every content address in the document.
+    //
+    // `p.relative` uses the *host's* separator. On Windows that is `\`, so the same Flutter source would
+    // produce `lib\main.dart`, anchors reading `lib\main.dart#_CounterScreenState`, and therefore **a
+    // different id for every node** — not a cosmetic difference but a wholly different document, failing
+    // every committed golden and sharing no cache entry with any other platform.
+    //
+    // M5-F found this by tracing the chain rather than by running Windows, which nobody here can do. It is
+    // the second of two cross-platform reproducibility defects in this milestone; the other was line
+    // endings, which changed `span.length` the same way and for the same underlying reason — a host detail
+    // reaching output that is supposed to describe only the program.
+    //
+    // POSIX separators are the canonical form because UIR is exchanged between two language domains and
+    // read on machines that did not produce it. On POSIX hosts this is a no-op.
     final List<String> libraryFiles = sortedPaths(
       libDir
           .listSync(recursive: true)
           .whereType<File>()
           .map((File f) => f.path)
           .where((String f) => f.endsWith('.dart'))
-          .map((String f) => p.relative(f, from: root)),
+          .map((String f) => p.url.joinAll(p.split(p.relative(f, from: root)))),
     );
 
     return LoadedProject(
@@ -125,6 +146,7 @@ final class ProjectLoader {
         dependencies: List<String>.unmodifiable(pubspec.allDependencyNames),
         sdkConstraint: pubspec.sdkConstraint,
         flutterConstraint: pubspec.flutterConstraint,
+        dartSdkPath: packageConfig.dartSdkPath,
       ),
       packageConfig: packageConfig,
     );

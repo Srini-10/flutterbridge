@@ -59,6 +59,36 @@ final class TokenExtractor {
     }
   }
 
+  /// Registers a **literal** colour as a token, and returns the token's name.
+  ///
+  /// INV-20 (ADR-13) is unambiguous: *"every colour a mapped Material widget paints must resolve to an
+  /// `app.Token`. Generated code and kit components contain no literal colour values."* A `Color(0xFF2196F3)`
+  /// written at a call site is a colour a mapped widget paints, so it has to become a token — and this is the
+  /// only place in the pipeline that *can* make one, because only the analyzer holds Dart's constant
+  /// evaluator. By the time the compiler sees `Colors.white` it is a name with no value attached.
+  ///
+  /// The name is derived from the value, so it is deterministic and self-deduplicating: the same colour
+  /// written in ten files is one token. It is also deliberately machine-looking — `colorFF2196F3` — because
+  /// a hoisted literal is *not* a designed token, and giving it a friendly name would disguise a colour the
+  /// author typed as one a designer chose.
+  ///
+  /// The three realms ADR-13 lists all benefit: a DTCG export, a Figma sync and every ui-realm kit now see
+  /// every colour the application uses, rather than only the ones that happened to be in a `ThemeData`.
+  String hoistColour(String hex, AstNode at) {
+    final String name = 'color${hex.substring(1)}';
+    // The light value is assigned rather than passed to the constructor, because `_Token` carries a *pair*
+    // and `extract` fills whichever half a `ThemeData` declared. A hoisted literal has one value and it is
+    // the light one: a colour written at a call site does not vary by brightness, which is exactly why
+    // hoisting it into the palette is what makes it themeable at all.
+    _tokens.putIfAbsent(
+      'color.$name',
+      () => _Token(
+        TokenDeclaration(group: 'color', name: name, value: hex, at: at, isDark: false),
+      ),
+    ).light = hex;
+    return name;
+  }
+
   /// Emits the tokens collected, merged. Called once, after the file has been walked.
   void flush() {
     // Sorted: two runs that discovered the tokens in different orders must emit the same bytes (D2).

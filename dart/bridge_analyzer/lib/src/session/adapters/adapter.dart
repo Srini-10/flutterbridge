@@ -113,6 +113,48 @@ abstract interface class WidgetAdapter implements PackageAdapter {
   /// was simply gone, and no pass and no generator could see it.
   String? childrenPropOf(String widget);
 
+  /// The name of [widget]'s [index]th **positional** argument under [constructorName], if the catalog
+  /// gives it one.
+  ///
+  /// A named argument's meaning is its label and a slot's is the catalog's; a positional argument has
+  /// neither. Before ADR-0023 one reached UIR as `_positional0` — present, correctly typed, and
+  /// uninterpretable by anything downstream, which is why `Image.asset`'s path and `Icon`'s icon could
+  /// not be rendered at all.
+  ///
+  /// [constructorName] is `null` for the unnamed constructor. Flutter names these differently per
+  /// constructor — `Image.asset(String name)` against `Image.network(String src)` — so one list per
+  /// widget could not have been right for both.
+  String? positionalPropOf(String widget, String? constructorName, int index);
+
+  /// The builder parameter of [widget], if its only purpose is to **scope a rebuild**.
+  ///
+  /// `Builder`, `ListenableBuilder`, `ValueListenableBuilder`. Flutter needs them because `setState`
+  /// rebuilds a whole `State`; under ADR-4 and ADR-20 a signal read *is* the subscription, so the scope a
+  /// program stated by hand is what the signal graph computes. INV-22 requires the wrapper not to survive
+  /// extraction, exactly as `setState` does not.
+  ///
+  /// Returns the builder parameter's name, and the parameter whose listenable binds the builder's *value*
+  /// parameter when it has one. `null` for a widget that is not one of these.
+  (String builderProp, String? valueProp)? rebuildBuilderOf(String widget);
+
+  /// The builder and count parameters of [widget]'s [constructorName], if it builds its children lazily.
+  ///
+  /// `ListView.builder(itemCount: n, itemBuilder: (context, i) => W)` states what
+  /// `for (final x in xs) W(x)` states, in the spelling Flutter chose for large lists — and extraction
+  /// expands both into `ui.List`, so nothing downstream has to know which spelling was used.
+  ///
+  /// Returns the two parameter *names*, because they are framework metadata: these three use
+  /// `itemBuilder`/`itemCount`, and a package with its own lazy list would use its own. `null` for a
+  /// constructor that writes its children out.
+  (String builderProp, String countProp)? lazyBuilderOf(String widget, String? constructorName);
+
+  /// The fields to read off a constant of [typeName], if its static consts are extracted **by value**.
+  ///
+  /// `Icons.star` is `IconData(0xe5f9, fontFamily: 'MaterialIcons')`. Extracting it as a reference would
+  /// oblige every runtime kit to carry Flutter's ~2000-entry `Icons` table for the name to resolve; the
+  /// codepoint is the icon's actual identity. `null` for a type whose consts are ordinary references.
+  List<String>? constValueFieldsOf(String typeName);
+
   /// Instance methods that are lifecycle hooks, and the effect timing each one is.
   Map<String, String> get lifecycleMethods;
 

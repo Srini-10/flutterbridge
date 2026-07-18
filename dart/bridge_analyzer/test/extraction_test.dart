@@ -111,6 +111,44 @@ class _CounterState extends State<Counter> {
 }
 ''';
 
+/// An app whose theme seeds from a **swatch**, not a plain colour — M5-A's D1/D2.
+const String swatchApp = '''
+import 'package:flutter/material.dart';
+
+class SwatchApp extends StatelessWidget {
+  const SwatchApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      theme: ThemeData(
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo),
+      ),
+      home: const ColoredBox(color: Colors.indigo, child: Text('swatch')),
+    );
+  }
+}
+''';
+
+/// The same app seeded from a plain `Color` — the case that always worked.
+const String plainColourApp = '''
+import 'package:flutter/material.dart';
+
+class PlainApp extends StatelessWidget {
+  const PlainApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      theme: ThemeData(
+        colorScheme: ColorScheme.fromSeed(seedColor: Color(0xFF3F51B5)),
+      ),
+      home: const ColoredBox(color: Color(0xFF3F51B5), child: Text('plain')),
+    );
+  }
+}
+''';
+
 void main() {
   group('assignment — the reason the schema was amended (v2.2 §A10)', () {
     test('`_count++` is a logic.Assign, not an opaque source string', () async {
@@ -846,6 +884,104 @@ class Screen extends StatelessWidget {
 
       expect(app.errors, isEmpty);
       expect(app.ofKind('ui.Component'), isEmpty);
+    });
+  });
+
+  group('a MaterialColor is a colour, and its channels are two levels down (M5-A D1/D2)', () {
+    // Together these made **every `Colors.<swatch>`** — `blue`, `red`, `deepPurple`, `teal` — silently
+    // unresolvable. Not wrong: *absent*. A colour that does not resolve produces no token, so the visible
+    // symptom was 45% of one real application's diagnostics blaming the frontend for roles the program
+    // had in fact declared.
+    //
+    // Neither was caught for five milestones because this fixture's Flutter stub could only express a
+    // plain `Color`: the build proof seeds from `Color(0xFF6750A4)` and names `Colors.white`, and both
+    // declare their channels on themselves. `temp_project.dart` now carries `ColorSwatch`/`MaterialColor`
+    // so the case that broke is expressible at all.
+    //
+    // M5-E extracted the walk into `session/colour_constants.dart`; it had been implemented twice, and
+    // both copies needed fixing for this same defect. These tests are what make that extraction checkable.
+
+    test('a swatch resolves to its primary ARGB, read through the (super) chain', () async {
+      final Extracted app = await extract(swatchApp);
+      expect(app.errors, isEmpty);
+
+      final Set<Object?> values =
+          app.ofKind('app.Token').map((Map<String, dynamic> t) => t['light']).toSet();
+
+      expect(
+        values,
+        contains('#FF3F51B5'),
+        reason: 'the swatch primary must resolve; before M5-A it produced no token at all',
+      );
+    });
+
+    test('a swatch and the plain colour it wraps tokenize identically', () async {
+      // The strongest form of the assertion: `Colors.indigo` and `Color(0xFF3F51B5)` *are* the same
+      // colour. If the walk stopped a level short, or read a shade rather than the primary, these differ.
+      final Extracted swatch = await extract(swatchApp);
+      final Extracted plain = await extract(plainColourApp);
+
+      Set<Object?> palette(Extracted app) =>
+          app.ofKind('app.Token').map((Map<String, dynamic> t) => t['light']).toSet();
+
+      expect(palette(swatch), isNotEmpty);
+      expect(palette(swatch), palette(plain));
+    });
+
+    test('every emitted colour is #AARRGGBB, upper case (ADR-21)', () async {
+      final Extracted app = await extract(swatchApp);
+      for (final Map<String, dynamic> token in app.ofKind('app.Token')) {
+        final Object? light = token['light'];
+        if (light is! String) {
+          continue;
+        }
+        // Hashed into cache keys and compared as text, so `#ff3f51b5` and `#FF3F51B5` must never both be
+        // reachable for one colour.
+        expect(light, matches(RegExp(r'^#[0-9A-F]{8}$')), reason: '$light is not canonical ARGB');
+      }
+    });
+  });
+
+  group('paths in UIR are platform-independent (M5-F)', () {
+    // `span.file` is not a filesystem path once it is written: it becomes an anchor —
+    // `'${span.file}#$segment'` in `node_factory.dart` — and an anchor is hashed into the node's id
+    // (ADR-17). So the separator ends up inside every content address in the document.
+    //
+    // `p.relative` uses the *host's* separator. On Windows that is `\`, which would give
+    // `lib\main.dart#_CounterScreenState` and therefore a different id for every node — not a cosmetic
+    // difference but a wholly different document, failing every committed golden and sharing no cache
+    // entry with any other platform.
+    //
+    // Found by tracing the chain, not by running Windows, which this milestone could not do. These
+    // assertions hold on every platform, which is the point: on POSIX they are a tautology, and on
+    // Windows they are the bug.
+
+    test('every span.file uses forward slashes', () async {
+      final Extracted app = await extract(counterApp);
+
+      final Iterable<Map<String, dynamic>> spans =
+          app.nodes.map((Map<String, dynamic> n) => n['span']).whereType<Map<String, dynamic>>();
+      expect(spans, isNotEmpty, reason: 'nothing to assert about if no node carries a span');
+
+      for (final Map<String, dynamic> span in spans) {
+        final Object? file = span['file'];
+        if (file is! String) {
+          continue;
+        }
+        expect(file, isNot(contains(r'\')), reason: '$file uses a Windows separator');
+      }
+    });
+
+    test('no anchor or id embeds a backslash', () async {
+      final Extracted app = await extract(counterApp);
+
+      // The whole document, as text: an anchor can appear nested anywhere, and a separator leaking into
+      // one is exactly what would change a node id.
+      expect(
+        app.bytes,
+        isNot(contains(r'\\')),
+        reason: 'a backslash in the emitted document means a host path reached UIR',
+      );
     });
   });
 }

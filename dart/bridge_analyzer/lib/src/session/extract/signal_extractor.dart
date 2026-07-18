@@ -143,6 +143,44 @@ final class SignalExtractor {
       }
     }
 
+    // ── 1b. Actions, named before any body is extracted. ──
+    //
+    // A method that writes state becomes a `sig.Action`, and a *reference* to that method — the tear-off
+    // `onDestinationSelected: _select`, which is how every real navigation surface is written — has to
+    // resolve to it. It did not until M4-G: the class scope was frozen after the signals pass, so a method
+    // name was not in it, and `_select` reached the generator as a `logic.Ref` with no `target`. The
+    // generator then reported `BRG3006` — *"`_select` is not declared in this program"* — which was true of
+    // the document and false of the program: the `sig.Action` was right there, unreachable.
+    //
+    // It survived this long because no earlier fixture passed a method tear-off as a callback. Every
+    // callback in the build proof is an inline lambda, and `hello_bridge`'s one tear-off is a *parameter*
+    // (`widget.onToggleTheme`), which resolves by a different path. A navigation shell is the first screen
+    // where the tear-off is the natural way to write it.
+    //
+    // Naming them needs its own pass, not a bigger loop: `_signalsWrittenBy` resolves names against the
+    // *signal* scope, so the signals must already be bound (they are, above) and the action bodies must not
+    // yet be extracted (they are not, below). This is the only point between the two.
+    final Scope signalScope = enclosing.child(bindings);
+    final Map<String, String> actionSymbols = <String, String>{};
+    for (final ClassMember member in node.body.members) {
+      if (member is! MethodDeclaration || member.isStatic) {
+        continue;
+      }
+      final String name = member.name.lexeme;
+      if (registry.lifecycleMethods[name] != null || member.isGetter || member.isSetter) {
+        continue;
+      }
+      // The same test the emitting loop applies, and it must stay the same test: a name bound here that the
+      // loop below declines to emit would be a `logic.Ref` pointing at a node the document does not contain,
+      // which is BRG1201 and is worse than the missing binding it replaced.
+      if (_signalsWrittenBy(member, _scopeOf(member.parameters, signalScope)).isEmpty) {
+        continue;
+      }
+      final String symbol = out.symbols.action(name, owner: owner);
+      actionSymbols[name] = symbol;
+      bindings.add(Binding(name: name, binds: Binds.action, symbol: symbol));
+    }
+
     final Scope scope = enclosing.child(bindings);
 
     // ── 2. Everything that reads or writes those signals. ──
@@ -218,7 +256,9 @@ final class SignalExtractor {
       }
 
       final List<RawValue> params = _params(member.parameters, scope);
-      final String symbol = out.symbols.action(name, owner: owner);
+      // Minted in the naming pass above, so the symbol a reference resolved to and the symbol the node is
+      // emitted under are the same string by construction rather than by two calls agreeing.
+      final String symbol = actionSymbols[name] ?? out.symbols.action(name, owner: owner);
       actions.add(symbol);
       out.emit(
         RawNode(

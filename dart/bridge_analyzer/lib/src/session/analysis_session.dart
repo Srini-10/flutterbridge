@@ -48,6 +48,10 @@ final class AnalysisSessionHandle {
        _scanner = scanner,
        _collection = AnalysisContextCollection(
          includedPaths: <String>[project.root],
+         // The SDK the project was *resolved* against, not the one running us. `ProjectInfo.dartSdkPath`
+         // derives it from the resolved package graph; `null` keeps `package:analyzer`'s own default,
+         // which is the right answer for a plain Dart package.
+         sdkPath: project.dartSdkPath,
        );
 
   /// The project being analyzed.
