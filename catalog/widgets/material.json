@@ -67,6 +67,12 @@
       "maybePop",
       "popUntil"
     ],
+    "overlayOpeners": [
+      "showDialog",
+      "showModalBottomSheet",
+      "showGeneralDialog",
+      "showMenu"
+    ],
     "routeTypes": [
       "MaterialPageRoute",
       "CupertinoPageRoute",

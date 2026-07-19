@@ -72,6 +72,14 @@ class RoutingApp extends MaterialApp {
   final Route<Object?>? Function(RouteSettings)? onGenerateRoute;
 }
 
+Object? showDialog<T>({required BuildContext context, required Widget Function(BuildContext) builder}) =>
+    null;
+
+Object? showModalBottomSheet<T>({
+  required BuildContext context,
+  required Widget Function(BuildContext) builder,
+}) => null;
+
 class Navigator {
   static Object? push<T>(BuildContext context, Route<T> route) => null;
   static Object? pushReplacement<T, R>(BuildContext context, Route<T> route) => null;
@@ -234,6 +242,7 @@ class _HomeState extends State<Home> {
 ''';
 
 void main() {
+  overlayNavigation();
   m7cGeneratedRoutes();
   m7bTransitionIdentity();
   group('inline MaterialPageRoute — the destination is a component (§A17)', () {
@@ -585,6 +594,135 @@ class _HomeState extends State<Home> {
 /// these pin is that the binding is real: the id in the statement is the id of the edge. Nothing
 /// downstream searches for it, which is the whole point — no span matching, no name matching, and the
 /// generator reads a reference rather than reconstructing one.
+void overlayNavigation() {
+  group('a route overlay is a navigation to an inline destination', () {
+    String app(String navigation) =>
+        '''
+import 'package:flutter/material.dart';
+
+class Sheet extends StatelessWidget {
+  const Sheet({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('sheet');
+}
+
+class Home extends StatefulWidget {
+  const Home({super.key});
+  @override
+  State<Home> createState() => _HomeState();
+}
+
+class _HomeState extends State<Home> {
+  @override
+  Widget build(BuildContext context) => ElevatedButton(
+    onPressed: () {
+      $navigation
+    },
+    child: const Text('open'),
+  );
+}
+
+class App extends StatelessWidget {
+  const App({super.key});
+  @override
+  Widget build(BuildContext context) => const MaterialApp(home: Home());
+}
+''';
+
+    test('showDialog is a push, bound to the edge it performs', () async {
+      // `showDialog` pushes a `DialogRoute` — ADR-0024 cites the SDK line. So an overlay is not a
+      // separate concept from navigation, and it closes with the same construct.
+      //
+      // It is claimed **separately from the navigator methods** because it is a top-level function: the
+      // navigator lookup keys on the enclosing type being `Navigator`, which could never match one. That
+      // is why it fell through to a generic "not declared in this program" for as long as it did (M6-E).
+      final Extracted extracted = await extractNav(
+        app('showDialog<void>(context: context, builder: (BuildContext c) => const Sheet());'),
+      );
+
+      expect(extracted.errors, isEmpty);
+      final Map<String, dynamic> navigate = extracted.ofKind('logic.Navigate').single;
+      final Map<String, dynamic> edge = extracted.ofKind('app.RouteTransition').single;
+
+      expect(navigate['action'], 'push');
+      expect(navigate['transition'], edge['id']);
+      // An inline destination: a component, never a path. §A17.6 — no URL, and none invented.
+      expect(edge['component'], isA<String>());
+      expect(edge['target'], isNull);
+    });
+
+    test('showModalBottomSheet is the same shape', () async {
+      final Extracted extracted = await extractNav(
+        app('showModalBottomSheet<void>(context: context, builder: (BuildContext c) => const Sheet());'),
+      );
+
+      expect(extracted.ofKind('logic.Navigate').single['action'], 'push');
+      expect(extracted.ofKind('app.RouteTransition').single['component'], isA<String>());
+    });
+
+    test("an application's own showDialog is not Flutter's", () async {
+      // C1, again. `showDialog` is an ordinary identifier and an application may declare one; claiming it
+      // by spelling would put an edge in the route graph the program does not have. What makes it
+      // Flutter's is that it resolves into `package:flutter/` — nothing about the call site says so.
+      final Extracted extracted = await extractNav('''
+import 'package:flutter/material.dart';
+
+Object? showDialog<T>({required BuildContext context, required Widget Function(BuildContext) builder}) =>
+    null;
+
+class Sheet extends StatelessWidget {
+  const Sheet({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('sheet');
+}
+
+class Home extends StatefulWidget {
+  const Home({super.key});
+  @override
+  State<Home> createState() => _HomeState();
+}
+
+class _HomeState extends State<Home> {
+  @override
+  Widget build(BuildContext context) => ElevatedButton(
+    onPressed: () {
+      showDialog<void>(context: context, builder: (BuildContext c) => const Sheet());
+    },
+    child: const Text('open'),
+  );
+}
+
+class App extends StatelessWidget {
+  const App({super.key});
+  @override
+  Widget build(BuildContext context) => const MaterialApp(home: Home());
+}
+''');
+
+      expect(extracted.ofKind('app.RouteTransition'), isEmpty);
+      expect(extracted.ofKind('logic.Navigate'), isEmpty);
+    });
+
+    test('an overlay whose builder does more than return a widget is refused, not guessed at', () async {
+      final Extracted extracted = await extractNav(
+        app('''
+      showDialog<void>(
+        context: context,
+        builder: (BuildContext c) {
+          debugPrint('building');
+          return const Sheet();
+        },
+      );
+'''),
+      );
+
+      expect(extracted.ofKind('app.RouteTransition'), isEmpty);
+      expect(extracted.ofKind('logic.Navigate'), isEmpty);
+      expect(extracted.codes(Severity.warning), contains('BRG1304'));
+    });
+  });
+}
+
 void m7bTransitionIdentity() {
   group('M7-B — a departure names its edge', () {
     String app(String navigation) =>

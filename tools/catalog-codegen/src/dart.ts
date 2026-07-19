@@ -213,6 +213,9 @@ ${lifecycle}
   /// The \`Route\` implementations whose builder produces the destination.
   static const Set<String> navigationRouteTypes = ${list(catalog.navigation?.routeTypes ?? [])};
 
+  /// Top-level functions that open a route overlay — a dialog, modal sheet or menu.
+  static const Set<String> navigationOverlayOpeners = ${list(catalog.navigation?.overlayOpeners ?? [])};
+
   /// The parameter of a route type that builds the destination widget.
   static const String navigationBuilderProp = '${catalog.navigation?.builderProp ?? ''}';
 

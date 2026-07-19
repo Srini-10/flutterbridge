@@ -152,6 +152,9 @@ abstract final class GapCatalog {
   /// The `Route` implementations whose builder produces the destination.
   static const Set<String> navigationRouteTypes = <String>{};
 
+  /// Top-level functions that open a route overlay — a dialog, modal sheet or menu.
+  static const Set<String> navigationOverlayOpeners = <String>{};
+
   /// The parameter of a route type that builds the destination widget.
   static const String navigationBuilderProp = '';
 
