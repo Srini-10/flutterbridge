@@ -150,7 +150,9 @@ void main() {
 
       final ({String bytes, List<String>? rebuilt}) after = await incremental();
 
-      expect(after.rebuilt, <String>[p.join('lib', 'main.dart')]);
+      // A rebuilt-file list is logical paths, `/`-separated on every platform — `p.join` would assert
+      // the host's spelling and pass only where it happens to match.
+      expect(after.rebuilt, <String>['lib/main.dart']);
       expect(
         after.bytes,
         await clean(),
@@ -167,7 +169,7 @@ void main() {
 
       final ({String bytes, List<String>? rebuilt}) after = await incremental();
 
-      expect(after.rebuilt, contains(p.join('lib', 'store.dart')));
+      expect(after.rebuilt, contains('lib/store.dart'));
       expect(after.bytes, await clean());
     });
 

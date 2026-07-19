@@ -110,7 +110,11 @@ FileDigest fakeDigest(String path, String source) {
   final List<String> imports =
       lines
           .where((String l) => l.startsWith('import '))
-          .map((String l) => p.normalize(p.join('lib', l.split("'")[1])))
+          // `p.url`, not `p.` — a digest key is a **logical** path, `/`-separated on every platform.
+          // This helper had production's exact bug: `p.join` gives `lib\base.dart` on Windows, no key
+          // matches in `DependencyGraph`, and every edge is silently dropped. The real fix is in
+          // `unit_digest.dart`; this is the same mistake, independently made, in the stand-in for it.
+          .map((String l) => p.url.normalize(p.url.join('lib', l.split("'")[1])))
           .toList()
         ..sort();
 
