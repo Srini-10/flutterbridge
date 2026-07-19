@@ -29,12 +29,18 @@ import type { AnyUirNode, NodeId } from '@bridge/uir';
 import { GeneratorDiagnosticCode } from './diagnostics/codes.js';
 import { isAppRoot, reportAppRoot } from './emit/app_root.js';
 import { assetManifestLines, collectAssets } from './emit/assets.js';
-import { emitComponent } from './emit/component.js';
+import { emitBinding, emitComponent } from './emit/component.js';
 import type { EmitScope } from './emit/expression.js';
-import { ModuleBuilder, fileNameOf } from './emit/module.js';
+import { ModuleBuilder, fileNameOf, identifierOf } from './emit/module.js';
 import { RUNTIME_MODULE } from './emit/runtime.js';
-import { banner, scaffold } from './emit/project.js';
-import { emitRoutes, reportUnsatisfiableRouteComponents, type RouteTable } from './emit/routes.js';
+import { banner, scaffold, type PageInput, type PageScreen } from './emit/project.js';
+import {
+  emitRoutes,
+  reportUnsatisfiableRouteComponents,
+  routeArguments,
+  routeNameOf,
+  type RouteTable,
+} from './emit/routes.js';
 import { emitStore } from './emit/store.js';
 import { emitTheme } from './emit/theme.js';
 
@@ -148,7 +154,8 @@ export function generateProject(context: GeneratorContext): GeneratorOutput {
   }
 
   // ── scaffold ──
-  const rootRouteName = firstRouteName(table.components, context.program.ofKind('app.Route') as unknown as Node[]);
+  const allRoutes = context.program.ofKind('app.Route') as unknown as Node[];
+  const rootRouteName = firstRouteName(table.components, allRoutes);
   const rootComponentId = rootRouteName === undefined ? undefined : table.components.get(rootRouteName);
   files.push(
     ...scaffold({
@@ -160,8 +167,14 @@ export function generateProject(context: GeneratorContext): GeneratorOutput {
       assetsModule: '@/assets/manifest',
       assetsName: 'assetManifest',
       stores,
-      root: rootComponentId === undefined ? undefined : componentModules.get(rootComponentId),
-      screens: screensOf(table, context.program.ofKind('app.RouteTransition') as unknown as Node[], componentModules),
+      page: pageOf(
+        table,
+        allRoutes,
+        context.program.ofKind('app.RouteTransition') as unknown as Node[],
+        componentModules,
+        rootComponentId,
+        scope,
+      ),
     }),
   );
 
@@ -188,6 +201,188 @@ export function generateProject(context: GeneratorContext): GeneratorOutput {
 
   // Sorted by path: the array is part of the output, and a caller diffing two runs compares arrays.
   return { files: [...files].sort((a, b) => (a.path < b.path ? -1 : 1)) };
+}
+
+/**
+ * Everything `app/page.tsx` needs: its imports, its wrappers, and the name it renders for each screen.
+ *
+ * ## Why the arguments are lowered here
+ *
+ * A route's `arguments` are `bind.*` nodes (ADR-0025 D1), and turning one into an expression needs the
+ * emit scope — resolution and reporting. The scaffolder has neither and should not grow them, so the
+ * lowering happens here and crosses over as text. It happens against a `ModuleBuilder` for
+ * `app/page.tsx`, so anything a value pulls in is imported by the file that uses it, and the page's whole
+ * import block is ordered by the one rule every other emitted file follows.
+ *
+ * ## Why a wrapper, rather than props on the outlet
+ *
+ * `RouterOutlet` is handed `Record<string, ComponentType>` and calls `createElement(component)`. A route
+ * that carries arguments therefore cannot be passed as its bare component — the arguments would be
+ * dropped at the last step, which is exactly the silence BRG3018 exists to prevent. So the page declares
+ * a component that supplies them:
+ *
+ * ```tsx
+ * function CounterPanelRoute() {
+ *   return <CounterPanel label="Taps" />;
+ * }
+ * ```
+ *
+ * **At module scope, never inline.** An arrow written into the map literal is a new component identity on
+ * every render of `Page`, and `Page` re-renders on every navigation — React would unmount and remount the
+ * screen each time, discarding its state. A module-scope function has one identity for the life of the
+ * module. The name is minted through `module.declare`, so a wrapper cannot collide with an imported
+ * component that happens to be called the same thing.
+ *
+ * A route with no arguments is passed as its component exactly as before, so the common case emits the
+ * bytes it always did.
+ */
+function pageOf(
+  table: RouteTable,
+  routes: readonly Node[],
+  transitions: readonly Node[],
+  modules: ReadonlyMap<string, { readonly module: string; readonly name: string }>,
+  rootComponentId: string | undefined,
+  scope: EmitScope,
+): PageInput {
+  const module = new ModuleBuilder('app/page.tsx');
+  const declarations: string[] = [];
+  const byRouteName = new Map<string, Node>();
+  for (const route of routes) byRouteName.set(routeNameOf(route), route);
+
+  // Every screen's import is reserved *before* any wrapper is named, so `declare` can see the names that
+  // are already taken. An import cannot be renamed on collision; a wrapper can.
+  const imported = new Map<string, { readonly module: string; readonly name: string }>();
+  const reserve = (componentId: string): { readonly module: string; readonly name: string } | undefined => {
+    const emitted = modules.get(componentId);
+    if (emitted === undefined) return undefined;
+    if (!imported.has(componentId)) {
+      module.use(emitted.module, emitted.name);
+      module.declare(emitted.name, componentId);
+      imported.set(componentId, emitted);
+    }
+    return emitted;
+  };
+
+  /** The identifier the page renders for `componentId`, declaring a wrapper when `route` carries arguments. */
+  const rendered = (componentId: string, route: Node | undefined): string | undefined => {
+    const emitted = reserve(componentId);
+    if (emitted === undefined) return undefined;
+
+    const args = route === undefined ? [] : routeArguments(route);
+    const props: string[] = [];
+    const unreachable: string[] = [];
+    for (const argument of args) {
+      const name = argument['name'];
+      const binding = argument['binding'];
+      if (typeof name !== 'string' || name === '') continue;
+      if (binding === null || typeof binding !== 'object') continue;
+
+      // Lowered **twice, on purpose**: once against a throwaway module with a report sink that only
+      // counts, and again for real if that came back clean.
+      //
+      // The probe exists because `emitBinding` answers "I could not resolve this" by reporting and
+      // returning `undefined`, and both halves of that are wrong here. The diagnostic is written for a
+      // binding inside a component — `a bind.Signal names 36d5792c…, which is not a signal in scope`,
+      // a content hash and no owner — and the `undefined` would be passed as a prop. At this call site
+      // the *reason* is knowable and specific, so the low-level report is suppressed and replaced below
+      // by one that names the capability and the pass that owns it.
+      let reports = 0;
+      emitBinding(binding as Node, {
+        ...scope,
+        module: new ModuleBuilder('<probe>'),
+        report: () => {
+          reports += 1;
+        },
+      });
+      if (reports > 0) {
+        unreachable.push(name);
+        continue;
+      }
+      // The real lowering, into the page's own module, so anything it imports is imported by the file
+      // that uses it. It cannot report — the probe just proved that — so it cannot report twice.
+      props.push(`${identifierOf(name)}={${emitBinding(binding as Node, { ...scope, module })}}`);
+    }
+
+    if (unreachable.length > 0) {
+      // The value is real, the analyzer recorded it, and the page cannot reach it. In every case measured
+      // this is the same shape: the argument reads a signal or an action declared by the **application
+      // root**, which `app_root.ts` consumes rather than emits — so the state it names has no home in the
+      // generated project. ADR-11 is the answer and N11 is the pass, but N11 walks
+      // `app.RouteTransition.arguments` only (see the compiler's `nav-graph` analysis); a declarative
+      // route's arguments are not promoted, so nothing has moved that state into a store.
+      scope.report(
+        GeneratorDiagnosticCode.UnsupportedCapability,
+        'error',
+        `the route \`${String(route?.['path'] ?? '/')}\` passes ` +
+          `${unreachable.map((name) => `\`${name}\``).join(', ')} to \`${emitted.name}\`, and the value is ` +
+          'state declared outside any component the project emits — typically the application root, which ' +
+          'is consumed into the route table and the theme rather than rendered. Missing capability: ' +
+          "promoting a **declarative route's** arguments into a store. " +
+          'Owner: N11 (`promote-cross-route-state`, ADR-11), which promotes the arguments an ' +
+          '`app.RouteTransition` carries and does not yet walk `app.Route.arguments`. The analyzer records ' +
+          'the argument correctly; nothing downstream has moved the state it reads anywhere the page can ' +
+          'read it, and passing `undefined` would render a screen that is silently wrong.',
+        typeof route?.['id'] === 'string' ? (route['id'] as string) : undefined,
+      );
+    }
+
+    if (props.length === 0) return emitted.name;
+
+    const wrapper = module.declare(`${emitted.name}Route`, `route:${componentId}`);
+    declarations.push(
+      `/** \`${String(route?.['path'] ?? '/')}\` — \`${emitted.name}\`, with the arguments the route records. */`,
+      `function ${wrapper}() {`,
+      `  return <${emitted.name} ${props.join(' ')} />;`,
+      '}',
+      '',
+    );
+    return wrapper;
+  };
+
+  const routeScreens: PageScreen[] = [];
+  for (const [routeName, componentId] of table.components) {
+    const name = rendered(componentId, byRouteName.get(routeName));
+    if (name !== undefined) routeScreens.push({ key: routeName, name });
+  }
+
+  // An inline destination is reached by a push, not by a route, so it has no `app.Route` and no arguments
+  // to construct it with — §A17.6 says a push carries no path, and `app.RouteTransition.arguments` is
+  // N11's business rather than the page's. It renders as its bare component.
+  const componentScreens: PageScreen[] = [];
+  const seen = new Set<string>();
+  for (const transition of transitions) {
+    const componentId = transition['component'];
+    if (typeof componentId !== 'string' || seen.has(componentId)) continue;
+    const emitted = reserve(componentId);
+    if (emitted === undefined) continue;
+    seen.add(componentId);
+    componentScreens.push({ key: componentId, name: emitted.name });
+  }
+
+  // Sorted by key: a map's order is not a fact about the program, and an emitter's traversal order must
+  // not reach the output (D1).
+  routeScreens.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+  componentScreens.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+
+  // The outlet's own import, added last so it cannot be mistaken for a screen's, and only when there is
+  // an outlet: a page that renders its root directly must not import one.
+  if (routeScreens.length > 0 || componentScreens.length > 0) {
+    module.use(RUNTIME_MODULE, 'RouterOutlet');
+  }
+
+  const root =
+    rootComponentId === undefined
+      ? undefined
+      : (routeScreens.find((screen) => table.components.get(screen.key) === rootComponentId)?.name ??
+        imported.get(rootComponentId)?.name);
+
+  return {
+    root,
+    routes: routeScreens,
+    components: componentScreens,
+    imports: [...module.importLines()],
+    declarations,
+  };
 }
 
 /** The route rendered at `/`, or the first one. */
@@ -280,49 +475,6 @@ function nameIndex(nodes: readonly AnyUirNode[]): Map<NodeId, string> {
   };
   for (const node of nodes) visit(node);
   return names;
-}
-
-/**
- * Every screen the router can show, keyed by the identity a navigation names it with.
- *
- * Two namespaces, kept apart exactly as `RouterOutlet` keeps them apart. A **route** is named by its
- * entry in the route table; an **inline destination** by its `ui.Component` node id, because it has no
- * route-table entry to be named by — §A17.6 says an inline push has no path and none is invented.
- *
- * A component reachable both ways appears in both maps, pointing at the same import. That is not
- * duplication to be optimised away: the two keys mean different things, and collapsing them is the
- * silent-wrong-screen collision the outlet's namespace separation exists to prevent.
- */
-function screensOf(
-  table: RouteTable,
-  transitions: readonly Node[],
-  modules: ReadonlyMap<string, { readonly module: string; readonly name: string }>,
-): {
-  routes: { key: string; module: string; name: string }[];
-  components: { key: string; module: string; name: string }[];
-} {
-  const routes: { key: string; module: string; name: string }[] = [];
-  for (const [routeName, componentId] of table.components) {
-    const emitted = modules.get(componentId);
-    if (emitted !== undefined) routes.push({ key: routeName, ...emitted });
-  }
-
-  const components: { key: string; module: string; name: string }[] = [];
-  const seen = new Set<string>();
-  for (const transition of transitions) {
-    const componentId = transition['component'];
-    if (typeof componentId !== 'string' || seen.has(componentId)) continue;
-    const emitted = modules.get(componentId);
-    if (emitted === undefined) continue;
-    seen.add(componentId);
-    components.push({ key: componentId, ...emitted });
-  }
-
-  // Sorted by key: a map's order is not a fact about the program, and an emitter's traversal order must
-  // not reach the output (D1).
-  routes.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
-  components.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
-  return { routes, components };
 }
 
 /**

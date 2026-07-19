@@ -425,6 +425,26 @@ final class ExpressionExtractor {
   /// which imports it — the orchestrator wires the two by passing a bound method.
   TransitionHook? transitions;
 
+  /// The route extractor's hook, offered every construction so it can learn the scope it sits in.
+  ///
+  /// Routes are emitted from a standalone walk that has no scope (see `extractor.dart`), but a route's
+  /// **arguments** must be bound in one: `home: LoginScreen(isDark: _isDark)` is a signal read only if
+  /// the scope says `_isDark` is a signal. This is where a construction is reached *with* that scope, so
+  /// it is where the answer is recorded for the standalone walk to use afterwards.
+  ///
+  /// Nullable and set once by the orchestrator, for the same reasons [transitions] is, and a function
+  /// rather than an interface for the same reason: the route extractor builds argument bindings, which
+  /// needs this extractor, so it cannot be imported *by* this extractor.
+  ConstructionHook? constructions;
+
+  /// Offers [node] to the [constructions] hook, if one is wired.
+  ///
+  /// A method rather than a bare field read because the widget extractor calls it too — a widget
+  /// construction reaches *that* extractor and never this one, and both are places a route's page can be
+  /// written. Routing both through here keeps one hook to wire rather than two.
+  void noteConstruction(InstanceCreationExpression node, Scope scope) =>
+      constructions?.call(node, scope);
+
   // ── assignment ────────────────────────────────────────────────────────────────────────────────
 
   RawNode _assignment(AssignmentExpression node, Scope scope) {
@@ -846,6 +866,11 @@ final class ExpressionExtractor {
   }
 
   RawNode _construction(InstanceCreationExpression node, Scope scope) {
+    // A route's page can be constructed inside a plain expression — `GoRoute(builder: (c, s) =>
+    // Screen(id: s.x))`, or a `MaterialApp(routes: {'/a': (c) => Screen()})` map — and this is where
+    // such a construction is reached with the scope its arguments bind against.
+    noteConstruction(node, scope);
+
     final String? constructorName = node.constructorName.name?.name;
     return RawNode(
       kind: 'logic.New',
@@ -1038,3 +1063,10 @@ abstract interface class StatementExtractorRef {
 /// extractor asks for an edge and is told what that edge is called, so a `logic.Navigate` can name it
 /// without anything ever searching for it.
 typedef TransitionHook = String? Function(MethodInvocation node, Scope scope);
+
+/// Offers a construction to the route extractor, with the scope its arguments bind against.
+///
+/// Returns nothing: unlike [TransitionHook] this records a fact for later rather than producing a node.
+/// Routes are emitted from a walk that visits the whole unit once and therefore sees a route's page
+/// *after* the router that declares it; the scope has to be banked at the moment it exists.
+typedef ConstructionHook = void Function(InstanceCreationExpression node, Scope scope);

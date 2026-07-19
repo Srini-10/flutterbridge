@@ -154,6 +154,21 @@ export class ModuleBuilder {
     return name;
   }
 
+  /**
+   * The rendered import block — the same lines {@link toSource} would emit, and in the same order.
+   *
+   * For the one file the scaffolder writes by hand but whose imports it cannot know in advance:
+   * `app/page.tsx` constructs the root route's component *with its arguments*, and lowering an argument
+   * can pull in a name the page must import. Collecting those on a builder and asking for the block keeps
+   * one rule for import order (see {@link toSource}) rather than a second, hand-maintained one that would
+   * drift from it.
+   *
+   * @returns the import statements, followed by a blank line; empty when nothing was imported.
+   */
+  public importLines(): readonly string[] {
+    return renderImports(this.imports);
+  }
+
   /** Sets the file's header comment. */
   public setBanner(text: string): void {
     this.banner = text;

@@ -212,7 +212,7 @@ final class TransitionExtractor {
     final List<RawValue> out = <RawValue>[];
     for (final TransitionArgument argument in arguments) {
       final RawNode binding = bindings.extract(argument.value, scope);
-      if (_isOpaque(binding)) {
+      if (BindingExtractor.isOpaque(binding)) {
         continue;
       }
       out.add(
@@ -224,19 +224,5 @@ final class TransitionExtractor {
       );
     }
     return out;
-  }
-
-  /// Whether [binding] carries an expression the UIR has no node for.
-  ///
-  /// Only a `bind.Expr` can, and only when its expression is the opaque escape hatch. A `bind.Const`,
-  /// `bind.Signal` or `bind.Param` is always representable; a `bind.Expr` over a `logic.Binary` or a
-  /// `logic.Ref` is too. It is the `logic.OpaqueExpr` — a Dart source string — that a route argument
-  /// must not become.
-  static bool _isOpaque(RawNode binding) {
-    if (binding.kind != 'bind.Expr') {
-      return false;
-    }
-    final RawValue? expr = binding.fields['expr'];
-    return expr is RawChild && expr.node.kind == 'logic.OpaqueExpr';
   }
 }
