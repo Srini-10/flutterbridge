@@ -75,7 +75,7 @@ matrix run. All four fired at once:
 | `byte-identical across platforms` | ✅ **passed** — UIR is identical on Linux, macOS and Windows |
 | `browser validation (linux)` | ✅ passed |
 | `packaged install` ubuntu / macOS | ✅ passed (after a fix) |
-| `packaged install` windows | ❌ then fixed; result pending |
+| `packaged install` windows | ❌ — three further defects, all fixed; final run pending |
 
 **`byte-identical across platforms` passing is the headline.** It is the property M5-F was built to
 establish and that nothing had ever checked across operating systems.
@@ -89,6 +89,15 @@ Two defects, both in code that only a real runner exercises:
   occurrence of this class** — the CLI had it with `dart.bat` (M5-E), the build proof with `tsc`
   (session 3), the release tooling now. The rule worth remembering: *anything invoked by name that is a
   launcher rather than an executable needs a shell on Windows.*
+- **`tar` output is CRLF on Windows**, so `pack-release.mjs` split its listing on `\n`, kept a trailing
+  `\r` on every entry, and reported 18 packaging problems for tarballs that were correct. **The checker
+  was wrong, not the artefact** — the worse of the two failures, because it would have blocked a good
+  release. Fixed by trimming each entry.
+
+One failure this session was **not** a defect and was not treated as one: `pnpm run build` exited
+`-1073741502` (`STATUS_DLL_INIT_FAILED`) on the Windows install job while the *same step* passed in the
+`pipeline` job on the same commit. A re-run got past it. Transient Windows process-init failure; no code
+change made, and none should be.
 
 ## 3. `mounted` — measured, and the amendment is now justified
 
@@ -148,7 +157,9 @@ and open a PR. Do not start M6-C before that; the two branches will only diverge
 
 ## 5. Next, in order
 
-1. **Confirm run 29684363395 is fully green.** If `windows · packaged install` passes, every job in the
+1. **Confirm the final matrix run is fully green** (last dispatched: 29684926520). Every job except
+   `windows · packaged install` has now passed at least once; that one has had three separate defects
+   fixed and needs one clean pass. If `windows · packaged install` passes, every job in the
    matrix has passed at least once and the platform table in `docs/guide/installation.md` can finally move
    Linux and Windows from ⚙️ to ✅ — with the evidence to back it.
 2. **Reconcile the branches** (§4).
