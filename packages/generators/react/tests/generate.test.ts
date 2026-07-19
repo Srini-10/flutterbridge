@@ -454,12 +454,22 @@ describe('it refuses rather than invents', () => {
     const { context, reported } = harness(nodes);
     reactGenerator.generate(context);
 
-    // §A17.2 refused `/_push/HomeScreen` in the analyzer because it invents a URL the developer never wrote.
-    // §A17.6 left the decision to "the layer that knows the target" — this one — "with the evidence in front
-    // of it, not guessed at". The evidence is one push in one fixture, so the generator declines too.
+    // §A17.2 refused `/_push/HomeScreen` in the analyzer because it invents a URL the developer never wrote,
+    // and this generator refuses for the same reason. What it must **not** do is explain itself with a
+    // measurement: BRG3008 told users it declined "on the evidence available — one push, in one fixture"
+    // for three milestones after M5-A had counted 17 and M6-D counted 62. A message that has to be
+    // re-measured to stay true is one nobody re-measures.
     const finding = reported.find((d) => d.code === 'BRG3008');
     expect(finding?.severity).toBe('error');
-    expect(finding?.message).toContain('legalization');
+    // Names the missing construct and the layer that owns it, per §8 — never a generic refusal.
+    expect(finding?.message).toContain('logic.Navigate');
+    expect(finding?.message).toContain('owned by the compiler, not by your program');
+    // Still refuses to invent the URL, which is the half of this that §A17.6 genuinely leaves here.
+    expect(finding?.message).toContain('§A17.2');
+
+    // The stale claim, pinned so it cannot return. Any count of programs, pushes or fixtures in a
+    // diagnostic is a defect by construction — it describes implementation history, not a capability.
+    expect(finding?.message).not.toMatch(/one push|one fixture|evidence available|sample of one/);
   });
 });
 

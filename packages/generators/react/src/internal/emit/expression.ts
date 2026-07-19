@@ -389,7 +389,6 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
     }
 
     case 'logic.Call': {
-      refuseNamedArgs(node, scope);
       const target = node['callee'];
       const callee = emitExpression(target as Node, scope);
       // A refused callee stops the call. Emitting the arguments anyway produced one diagnostic per argument
@@ -401,6 +400,15 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
       // call with no callee is a malformed document rather than a refusal, and it must keep falling through
       // to a `tsc` failure instead of vanishing with no diagnostic at all.
       if (target !== undefined && target !== null && callee === REFUSED) return REFUSED;
+
+      // The named-argument refusal belongs **after** the callee, for the reason stated directly above: it is
+      // part of "the rest", and it was the one piece still escaping the rule. M6-E measured what that cost:
+      // `showDialog(context: …, builder: …)` reported `BRG3013` naming the missing capability *and* a
+      // `BRG3002` saying the call "passes Dart named arguments", as though naming them differently might
+      // help. The second reads as a defect in valid Flutter code and points at work no author can do.
+      //
+      // A call the generator *can* lower still gets `BRG3002`, which is the case that diagnostic is for.
+      refuseNamedArgs(node, scope);
       return `${callee}(${emitArguments(node['args'], scope)})`;
     }
 
