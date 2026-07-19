@@ -93,7 +93,12 @@ examples/*/.bridge/
 packages/cli/vendor/
 
 # Release artifacts — the packed tarballs `just package` produces.
-release/
+#
+# **Anchored.** A bare `release/` matches a directory of that name at *any* depth, and it silently
+# swallowed `docs/release/` — the release report, the GitHub description and the migration notes were
+# written, reported as committed, and never actually tracked. `git status` does not show ignored files, so
+# a clean status looked like proof they had landed.
+/release/
 
 # M5-D: the browser suite's generated applications and Playwright output. Rebuilt by `just e2e` from the
 # real pipeline on every run — a stale copy would let the suite pass against code the generator no longer
