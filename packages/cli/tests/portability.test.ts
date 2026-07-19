@@ -15,7 +15,8 @@
 import { describe, expect, it } from 'vitest';
 
 import { parseArgs, value } from '../src/internal/args.js';
-import { run, spawnPlan } from '../src/internal/commands/project.js';
+import { run } from '../src/internal/commands/project.js';
+import { encodeArgument, encodeForShell, spawnPlan } from '../src/internal/spawn-plan.js';
 
 describe('running a subprocess', () => {
   it('works on this machine, for a program that exists', async () => {
@@ -51,29 +52,103 @@ describe('Windows process invocation', () => {
   // configurable). So the platform decision is exposed as a pure function and asserted directly — which is
   // better anyway: it states the rule rather than observing one consequence of it.
 
-  it('enables a shell on win32 and not elsewhere', () => {
-    // `dart`, `npx` and `flutter` are `.bat`/`.cmd` on Windows, and `CreateProcess` refuses those. Without
-    // a shell the CLI cannot analyze, resolve dependencies, or typecheck — three of its four stages.
-    expect(spawnPlan('dart', ['--version'], 'win32').shell).toBe(true);
-    expect(spawnPlan('dart', ['--version'], 'darwin').shell).toBe(false);
-    expect(spawnPlan('dart', ['--version'], 'linux').shell).toBe(false);
+  // A resolver stands in for `PATH`. `spawnPlan` takes one so the encoding stays a pure function; these
+  // tests supply what Windows would have found.
+  const asBatch = (name: string): string => `C:\\tools\\${name}.bat`;
+  const asExe = (name: string): string => `C:\\tools\\${name}.exe`;
+
+  it('uses a shell for a batch file, and not for a real executable', () => {
+    // `dart`, `npx` and `flutter` are `.bat`/`.cmd` on Windows and `CreateProcess` refuses those — without
+    // a shell, three of `bridge build`'s four stages die with ENOENT on a program plainly on PATH.
+    //
+    // But a shell is only needed for *those*. Sending a real `.exe` through `cmd.exe` was M5-E's mistake:
+    // it re-parses every argument, and CI caught it with `node -e 'process.stdout.write("ok")'` — no
+    // whitespace, so M5-E's whitespace-only quoting never fired, and `cmd.exe` split it into fragments.
+    expect(spawnPlan('dart', ['--version'], 'win32', asBatch).shell).toBe(true);
+    expect(spawnPlan('node', ['--version'], 'win32', asExe).shell).toBe(false);
+    expect(spawnPlan('dart', ['--version'], 'darwin', asBatch).shell).toBe(false);
+    expect(spawnPlan('dart', ['--version'], 'linux', asBatch).shell).toBe(false);
   });
 
-  it('quotes arguments containing whitespace when a shell is in play', () => {
-    // `cmd.exe` re-splits on spaces even from an argv array. Unquoted, the analyzer would be pointed at
-    // `C:\\Users\\me\\My` — a directory that does not exist.
-    const plan = spawnPlan('tool', ['--project', 'C:\\Users\\me\\My Projects\\app'], 'win32');
-    expect(plan.args[1]).toBe('"C:\\Users\\me\\My Projects\\app"');
+  it('falls back to a shell when the program cannot be resolved', () => {
+    // An unresolvable program should fail as ENOENT from the spawn, not as a different launch strategy
+    // chosen here. A shell is M5-E's behaviour and is the one that launches batch files.
+    expect(spawnPlan('mystery', [], 'win32', () => undefined).shell).toBe(true);
   });
 
-  it('leaves ordinary arguments untouched, on every platform', () => {
-    expect(spawnPlan('tool', ['--format', 'json'], 'win32').args).toEqual(['--format', 'json']);
-    expect(spawnPlan('tool', ['--format', 'json'], 'darwin').args).toEqual(['--format', 'json']);
+  it('trusts an explicit non-batch extension without resolving', () => {
+    expect(spawnPlan('C:\\tools\\node.exe', [], 'win32', () => undefined).shell).toBe(false);
+    expect(spawnPlan('C:\\tools\\dart.bat', [], 'win32', () => undefined).shell).toBe(true);
+  });
+
+  it('leaves a real executable to libuv, which already applies the documented rules', () => {
+    // libuv's `quote_cmd_arg` implements CommandLineToArgvW. Re-encoding here would escape the escapes.
+    const plan = spawnPlan('node', ['-e', 'process.stdout.write("ok")'], 'win32', asExe);
+    expect(plan.shell).toBe(false);
+    expect(plan.args).toEqual(['-e', 'process.stdout.write("ok")']);
   });
 
   it('does not quote on POSIX, where spawn handles arguments itself', () => {
     const plan = spawnPlan('tool', ['--project', '/Users/me/My Projects/app'], 'darwin');
     expect(plan.args[1]).toBe('/Users/me/My Projects/app');
+  });
+});
+
+describe('encoding an argument for CommandLineToArgvW', () => {
+  // The rules, from
+  // learn.microsoft.com/windows/win32/api/shellapi/nf-shellapi-commandlinetoargvw:
+  //
+  //   * a string in double quotes is one argument, whitespace included;
+  //   * `\"` is a literal quote;
+  //   * backslashes are literal unless they immediately precede a quote;
+  //   * `2n` backslashes then `"` → n backslashes, and the quote delimits;
+  //   * `2n+1` backslashes then `"` → n backslashes and a literal quote.
+  //
+  // Each case below is one of those clauses. They are asserted on the *encoding*, which is pure string
+  // logic and therefore checkable on every platform — only the round-trip needs Windows, and CI does that.
+
+  it('leaves an ordinary argument alone', () => {
+    expect(encodeArgument('--version')).toBe('--version');
+    expect(encodeArgument('C:\\tools\\dart.bat')).toBe('C:\\tools\\dart.bat');
+  });
+
+  it('quotes whitespace, which is the delimiter', () => {
+    expect(encodeArgument('C:\\My Projects\\app')).toBe('"C:\\My Projects\\app"');
+  });
+
+  it('quotes the empty argument, which would otherwise vanish', () => {
+    expect(encodeArgument('')).toBe('""');
+  });
+
+  it('escapes an embedded quote as \\"', () => {
+    expect(encodeArgument('say "hi"')).toBe('"say \\"hi\\""');
+  });
+
+  it('doubles backslashes that precede a quote, and only those', () => {
+    // `a\b` has a backslash that precedes a letter: literal, left alone.
+    expect(encodeArgument('a\\b c')).toBe('"a\\b c"');
+    // `a\"` — one backslash before a quote is 2n+1 with n=0: emit `\\` then `\"`.
+    expect(encodeArgument('a\\"')).toBe('"a\\\\\\""');
+  });
+
+  it('doubles trailing backslashes, which precede the closing quote', () => {
+    // Without doubling, the final backslash escapes the closing quote and the parse runs into the next
+    // argument — the classic failure this rule exists for.
+    expect(encodeArgument('C:\\path with space\\')).toBe('"C:\\path with space\\\\"');
+  });
+});
+
+describe('encoding an argument that cmd.exe reads first', () => {
+  it('escapes cmd metacharacters, including the quotes the first pass added', () => {
+    // Two parsers, two passes: CommandLineToArgvW so the program recovers the argument, then `^` so
+    // cmd.exe passes the metacharacters through instead of acting on them.
+    expect(encodeForShell('a&b')).toBe('a^&b');
+    expect(encodeForShell('x|y')).toBe('x^|y');
+    expect(encodeForShell('C:\\My Projects\\app')).toBe('^"C:\\My Projects\\app^"');
+  });
+
+  it('leaves an argument with nothing special in it untouched', () => {
+    expect(encodeForShell('--version')).toBe('--version');
   });
 });
 

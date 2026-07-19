@@ -21,7 +21,7 @@
 
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { delimiter, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 
 import { CONFIG_FILES, defaultConfigDocument, parseConfig, type BridgeConfig } from '@bridge/core';
 import {
@@ -39,6 +39,7 @@ import { UIR_SCHEMA_HASH, UIR_VERSION, type AnyUirNode, type NodeId } from '@bri
 import { bold, cyan, dim, green, json, red, yellow } from '../render.js';
 import { CliError, manifestPathFor, normalize } from '../document.js';
 import { value, type Args } from '../args.js';
+import { spawnPlan } from '../spawn-plan.js';
 import {
   command,
   isResolved,
@@ -706,39 +707,36 @@ export function programOf(nodes: readonly AnyUirNode[]): ProgramView {
 }
 
 
-/** How a program will be spawned on a given platform. */
-export interface SpawnPlan {
-  readonly program: string;
-  readonly args: readonly string[];
-  readonly shell: boolean;
-}
 
 /**
- * Decides how to invoke [program] on [platform] — the platform-specific part of {@link run}, extracted so
- * it can be asserted from any host.
+ * The file Windows would execute for a bare program name, or `undefined`.
  *
- * The Windows rules, and why each exists:
+ * Windows resolves a name by trying each extension in `PATHEXT`, in order, in each `PATH` directory —
+ * which is how `dart` finds `dart.bat`. Replicated here because the *extension* is what decides whether a
+ * shell is required, and `spawn` will not tell us before it fails.
  *
- *   * **`shell: true`.** `dart`, `npx` and `flutter` are `dart.bat` / `npx.cmd` there, and
- *     `child_process.spawn` without a shell calls `CreateProcess`, which executes `.exe` and refuses
- *     `.bat`. The spawn fails with `ENOENT` on a program plainly on `PATH`.
- *   * **Quoting.** A shell re-parses the argument vector, so `cmd.exe` splits on whitespace even from an
- *     array. `C:\\Users\\me\\My Projects\\app` would reach the analyzer as `C:\\Users\\me\\My`.
- *     Double quotes, because `cmd` does not honour single ones.
- *
- * On POSIX none of this applies and none of it is done: no shell, no re-parsing, no quoting — `spawn`
- * passes the vector through untouched, which is both correct and one less thing to get wrong.
+ * Cached: `run` is called several times per build and this is a directory scan.
  */
-export function spawnPlan(
-  program: string,
-  argv: readonly string[],
-  platform: string,
-): SpawnPlan {
-  if (platform !== 'win32') {
-    return { program, args: [...argv], shell: false };
+const resolvedPrograms = new Map<string, string | undefined>();
+function resolveOnPath(name: string): string | undefined {
+  if (resolvedPrograms.has(name)) return resolvedPrograms.get(name);
+
+  const extensions = (process.env['PATHEXT'] ?? '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean);
+  const directories = (process.env['PATH'] ?? '').split(delimiter).filter(Boolean);
+
+  let found: string | undefined;
+  outer: for (const directory of directories) {
+    for (const extension of extensions) {
+      const candidate = join(directory, `${name}${extension}`);
+      if (existsSync(candidate)) {
+        found = candidate;
+        break outer;
+      }
+    }
   }
-  const quote = (argument: string): string => (/[\s&|<>^]/.test(argument) ? `"${argument}"` : argument);
-  return { program: quote(program), args: argv.map(quote), shell: true };
+
+  resolvedPrograms.set(name, found);
+  return found;
 }
 
 /**
@@ -766,7 +764,7 @@ export function run(
   return new Promise((settle) => {
     let stdout = '';
     let stderr = '';
-    const plan = spawnPlan(program, argv, process.platform);
+    const plan = spawnPlan(program, argv, process.platform, resolveOnPath);
     const child = spawn(plan.program, [...plan.args], {
       cwd,
       stdio: ['ignore', 'pipe', 'pipe'],
