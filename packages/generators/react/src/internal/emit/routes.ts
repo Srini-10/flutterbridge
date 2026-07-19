@@ -115,6 +115,61 @@ export function emitRoutes(
 }
 
 /**
+ * Reports every route whose component cannot be constructed from what the route records.
+ *
+ * A route renders its component with no arguments — `page.tsx` emits `<Screen />`. If that component
+ * declares a required parameter, the emitted project cannot typecheck, and M6-C measured that this is
+ * silent today: `bridge build` reports success and the failure appears in `tsc`, one layer below the
+ * source the developer wrote.
+ *
+ * The arguments are not missing from the *document* — they are on the `ui.Element` in the app root's slot,
+ * as `props`. What is missing is a field on `app.Route` linking the two, so this is a gap the compiler
+ * owns and names rather than one the generator can close (see `BRG3018`).
+ *
+ * @param routes - every `app.Route` in the program.
+ * @param components - every `ui.Component`, to resolve `route.component` to its parameters.
+ * @param scope - reporting.
+ */
+export function reportUnsatisfiableRouteComponents(
+  routes: readonly Node[],
+  components: readonly Node[],
+  scope: EmitScope,
+): void {
+  const byId = new Map<string, Node>();
+  for (const component of components) {
+    const id = idOf(component);
+    if (id !== undefined) byId.set(id, component);
+  }
+
+  for (const route of routes) {
+    const component = route['component'];
+    if (typeof component !== 'string') continue;
+    const target = byId.get(component);
+    if (target === undefined) continue;
+
+    const params = Array.isArray(target['params']) ? (target['params'] as Node[]) : [];
+    // Only *required* parameters. An optional one is satisfied by its own default, so a route that omits it
+    // renders exactly what the Flutter program renders.
+    const required = params.filter((param) => param['required'] === true).map((param) => String(param['name']));
+    if (required.length === 0) continue;
+
+    scope.report(
+      GeneratorDiagnosticCode.RouteComponentArguments,
+      'error',
+      `the route \`${String(route['path'] ?? '/')}\` renders \`${String(target['name'] ?? component)}\`, whose ` +
+        `constructor requires ${required.map((name) => `\`${name}\``).join(', ')}. The construction site does ` +
+        'pass them and the analyzer does extract them — they are the `props` of the `ui.Element` in the app ' +
+        "root's slot — but `app.Route` has no field linking a route to that element, so the route emitter " +
+        'cannot reach them and would emit a component call with no arguments. Closing this needs the ' +
+        '`app.Route.arguments` amendment (docs/m6/GAP-route-constructor-arguments.md); it is not something ' +
+        'this generator can infer without re-deriving the route extractor and skipping the ADR-11a ' +
+        'URL-boundary analysis that a live-object argument requires.',
+      idOf(route),
+    );
+  }
+}
+
+/**
  * A route's name in the descriptor.
  *
  * `app.Route` has a `path`, not a name — the kit's `RouteDescriptor.name` is its own identity for the route,

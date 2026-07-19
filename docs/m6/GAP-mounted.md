@@ -211,3 +211,58 @@ schema change, so it stops here and is documented rather than implemented.
 `hello_bridge` cannot emit, and this is one of its remaining blockers — but **not the largest**. Its 28
 diagnostics are led by 19 × BRG3010, which are the compiler correctly refusing a theme that defines no full
 Material role set, and by 5 × BRG3002 for class emission. `mounted` is 2.
+
+---
+
+## M6-C follow-up — one concept or two? **Two.**
+
+The measurement above established that a vocabulary is needed and that it must be expression-level. It left
+open whether `mounted` and `context.mounted` are one schema concept or two. Classifying the 11 real
+`context.mounted` uses by their **enclosing declaration** settles it:
+
+| Enclosing scope | `context.mounted` uses |
+| --- | --- |
+| inside a `State` subclass | 2 |
+| **a top-level function** | **9** |
+
+The nine are in `changeProfilePhoto(...)`, `editDisplayName(...)` and `showCallAudioOutputPicker(...)` —
+free functions that take a `BuildContext` parameter:
+
+```dart
+Future<void> changeProfilePhoto(BuildContext context, …) async {
+  final action = await showModalBottomSheet<String>(…);
+  if (action == null || !context.mounted) return;     // ← no State here. None.
+```
+
+**There is no component for `component.mounted` to be about.** A single target-neutral member would have to
+invent one for these nine sites, and inventing is what INV-4 forbids. So the two are not spellings of one
+question:
+
+| | `mounted` | `context.mounted` |
+| --- | --- | --- |
+| Belongs to | the `State` instance | a `BuildContext` **value** |
+| Available in | a `State` method only | anywhere the value is — including a function with no component |
+| Asks about | *this* component | the element the **caller** handed over |
+| Real uses in corpus | 337 | 11 |
+
+The second row is the load-bearing one. `mounted` is resolved from the lexical scope; `context.mounted` is
+resolved from a value that was passed in, and in 9 of 11 cases it crossed a function boundary to get there.
+A representation that conflates them cannot express the common case of the rarer form.
+
+### What this implies for the amendment
+
+The `logic.Intrinsic` proposal above already had a two-member vocabulary, so **the proposed shape is
+unchanged and this measurement confirms it** rather than revising it. What changes is the justification for
+the second member, which was previously "it is a distinct API" and is now "9 of its 11 uses occur where the
+first member has nothing to refer to".
+
+It also adds a constraint the earlier text did not state: **`context.mounted` needs an operand**, because
+the context it asks about is a specific value. `component.mounted` is nullary — it means the enclosing
+component. So the two members do not have the same arity, which is a reason to prefer two distinct
+vocabulary members over one member with a flag.
+
+Still open, and still the only open question: what the runtime kit provides. `useMounted()` covers
+`component.mounted`. The free-function form has no React equivalent at all — a helper that takes a
+component handle is not idiomatic — and that is a lowering decision for the ADR, not a schema one.
+
+**Unchanged: not implemented.** This remains a schema change, and the M6 rule stops it here.

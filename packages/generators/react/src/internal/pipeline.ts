@@ -34,7 +34,7 @@ import type { EmitScope } from './emit/expression.js';
 import { ModuleBuilder, fileNameOf } from './emit/module.js';
 import { RUNTIME_MODULE } from './emit/runtime.js';
 import { banner, scaffold } from './emit/project.js';
-import { emitRoutes } from './emit/routes.js';
+import { emitRoutes, reportUnsatisfiableRouteComponents } from './emit/routes.js';
 import { emitStore } from './emit/store.js';
 import { emitTheme } from './emit/theme.js';
 
@@ -101,6 +101,14 @@ export function generateProject(context: GeneratorContext): GeneratorOutput {
     { ...scope, module: routesModule },
   );
   files.push({ path: routesModule.path, contents: routesModule.toSource() });
+
+  // Checked here rather than inside `emitRoutes`, because it needs the `ui.Component` nodes to resolve a
+  // route's component to its parameters, and the route emitter's input is deliberately the route table.
+  reportUnsatisfiableRouteComponents(
+    context.program.ofKind('app.Route') as unknown as Node[],
+    context.program.ofKind('ui.Component') as unknown as Node[],
+    scope,
+  );
 
   // ── stores ──
   const stores: { readonly module: string; readonly name: string }[] = [];
