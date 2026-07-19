@@ -8,16 +8,24 @@
 // > or a client-side stack is a legalization decision, to be made in the layer that knows the target — with
 // > the evidence in front of it, not guessed at here.
 //
-// This *is* that layer. So the decision is ours to make — and M3-B declines to make it, on the same grounds
-// §A17 used to refuse the other three options: **there is no evidence yet**. `hello_bridge` has one
-// `Navigator.push`; the two apps that would show the pattern at scale are not in this repository. Inventing
-// `/_push/HomeScreen` here would bake a routing policy into the generator on a sample of one — and §A17.2
-// already refused exactly that URL, in the analyzer, for exactly that reason.
+// This *is* that layer, and M3-B declined to decide, on the grounds that there was no evidence: at the time,
+// `hello_bridge` had one `Navigator.push` and the applications that would show the pattern at scale were not
+// in this repository.
+//
+// **That reasoning has expired, and the diagnostic below no longer repeats it.** M6-D measured 62 pushes and
+// 93 `MaterialPageRoute`s across two production applications, and ADR-0025 re-diagnosed the blocker: the
+// generator is not waiting for evidence about URL policy, it is waiting for a UIR node that says *perform
+// this transition here*. What a `component` destination becomes on a path-based target is still a
+// legalization decision this layer owns — but it is no longer the thing standing in the way.
+//
+// The lesson is worth keeping where the mistake was made: **a diagnostic must describe a capability, not the
+// state of the evidence when it was written.** "One push, in one fixture" was true for one milestone, shipped
+// to users for three more, and was wrong by more than an order of magnitude by the time anybody re-measured.
+// A sentence that has to be re-measured to stay true does not belong in a message.
 //
 // So a `component` destination reports `BRG3008` and is not emitted. That is a stated hole, which is the one
 // kind this project accepts. The router descriptor carries the declared routes; the state machine that would
-// push a component already exists in the kit (`createRouter`'s `Destination` union mirrors §A17 exactly), and
-// wiring it needs the legalization decision, which needs the evidence.
+// push a component already exists in the kit (`createRouter`'s `Destination` union mirrors §A17 exactly).
 
 import { GeneratorDiagnosticCode } from '../diagnostics/codes.js';
 import { stringLiteral, type EmitScope } from './expression.js';
@@ -65,10 +73,12 @@ export function emitRoutes(
       scope.report(
         GeneratorDiagnosticCode.UnroutableDestination,
         'error',
-        'this navigation constructs its destination inline (`Navigator.push(MaterialPageRoute(...))`), so ' +
-          'it has no path (Spec v2.4 §A17). Which URL it becomes on a path-based target is a legalization ' +
-          'decision this generator declines to make on the evidence available — one push, in one fixture. ' +
-          'Inventing a URL the developer never wrote is what §A17.2 refused.',
+        'this navigation constructs its destination inline (`Navigator.push(MaterialPageRoute(...))`), so it ' +
+          'names no route and has no path (Spec v2.4 §A17). Two things are missing and both are owned by the ' +
+          'compiler, not by your program: no UIR node says *perform this transition here* (ADR-0025 D2, ' +
+          '`logic.Navigate`), and a destination with no path needs a URL that only this generator can choose ' +
+          '— which it will not invent, because a URL the developer never wrote is what §A17.2 refused. ' +
+          'The route table and the runtime router are already emitted and are waiting on those two.',
         idOf(transition),
       );
     }

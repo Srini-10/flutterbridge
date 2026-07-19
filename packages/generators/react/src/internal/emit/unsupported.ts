@@ -40,6 +40,56 @@ export type CapabilityOwner =
   /** A modelling decision that has to be made before anything can be built. */
   | 'adr';
 
+/**
+ * The capability an imperative navigation needs, stated as a thing that could be built.
+ *
+ * Written once and shared by every entry that needs it, so the wording cannot drift between them and so
+ * the set of things blocked on one construct is greppable. **It names a capability, not a history**: no
+ * count of how many programs hit it, no fixture, no milestone. A sentence that has to be re-measured to
+ * stay true will eventually be false, and a diagnostic is the worst place for that to happen — `BRG3008`
+ * spent three milestones telling users the evidence was "one push, in one fixture" while the corpus grew
+ * past 60.
+ */
+const NAVIGATE_CALL =
+  'lowering an imperative navigation call — the analyzer emits an `app.RouteTransition` for the edge, the ' +
+  'route table is generated, and the runtime kit has the live router; what no UIR node says is *perform ' +
+  'this transition here*. ADR-0025 D2 names the construct (`logic.Navigate`)';
+
+/**
+ * A pop — a return along an existing edge, which is why it is not the same capability as a push.
+ *
+ * Measured as the **most frequent navigation verb in the corpus** (M6-D), which is also the evidence that
+ * decided ADR-0025 in favour of `logic.Navigate` over a field on the edge: a pop has no edge to carry one.
+ */
+const NAVIGATE_POP =
+  'lowering a pop. Spec v2.4 §A17.3 rules that a pop is not an `app.RouteTransition` at all — it returns ' +
+  'along an edge that already exists — so nothing in the document marks the call. ADR-0025 D2 covers it as ' +
+  'a `logic.Navigate` with no transition';
+
+/**
+ * A route overlay — a dialog, modal sheet or menu.
+ *
+ * These push a `Route`, so they are the same problem as an imperative navigation and close with it
+ * (ADR-0024 verified the SDK: `showDialog` → `DialogRoute`, `showModalBottomSheet` →
+ * `ModalBottomSheetRoute`, `showMenu` → `_PopupMenuRoute`).
+ */
+const OVERLAY_ROUTE =
+  'a route overlay — a dialog, modal sheet or menu is a navigation to an inline destination, so it needs ' +
+  'the same construct an imperative navigation does: a UIR node that says *perform this here*. ADR-0025 D2 ' +
+  'names it (`logic.Navigate`)';
+
+/**
+ * A messenger overlay — the `ScaffoldMessenger` family.
+ *
+ * Deliberately **not** `OVERLAY_ROUTE`. A snack bar is not a route: `showSnackBar` enqueues on the nearest
+ * `ScaffoldMessenger`, which owns the queue, the lifetime and the dismissal. `logic.Navigate` does not model
+ * that, so ADR-0025 does not close it and the owner is genuinely still an unmade decision.
+ */
+const OVERLAY_MESSENGER =
+  'a messenger overlay — a snack bar is not in the widget tree and is not a route either; it is enqueued on ' +
+  'the nearest `ScaffoldMessenger`, which owns its queue, its lifetime and its dismissal. That is a ' +
+  'different construct from a route overlay and no ADR models it yet';
+
 /** Why one widget cannot be rendered. */
 export interface MissingCapability {
   /** The capability, named as a thing that could be built. */
@@ -186,8 +236,8 @@ export const MISSING_CAPABILITIES: Readonly<Record<string, MissingCapability>> =
     workaround: 'a `ListTile` with a `Checkbox` in its `trailing` slot renders the same control',
   },
   DropdownButton: {
-    capability: 'imperative overlays — the menu is shown by a call, not by being in the tree',
-    owner: 'adr',
+    capability: OVERLAY_ROUTE,
+    owner: 'schema',
   },
   GlobalKey: {
     capability: 'a handle on a live widget State — UIR has no construct for one',
@@ -195,41 +245,64 @@ export const MISSING_CAPABILITIES: Readonly<Record<string, MissingCapability>> =
     workaround: 'a `Form` validates on submission, which needs no key',
   },
 
-  // ── Imperative overlays ──
+  // ── Overlays, which are two different problems and were one capability string ──
+  //
+  // M6-D separated them, because they had the same `capability` text and the same owner and do not have the
+  // same blocker:
+  //
+  //   * A **route overlay** *is* a navigation. The SDK settles it — `showDialog` pushes a `DialogRoute`,
+  //     `showModalBottomSheet` a `ModalBottomSheetRoute`, `showMenu` a `_PopupMenuRoute` (ADR-0024 cites the
+  //     SDK line numbers). So they are blocked by exactly what imperative navigation is blocked by, and
+  //     ADR-0025 D2 names the construct: `logic.Navigate`. **The owning layer is the schema.**
+  //
+  //   * A **messenger overlay** is not a route at all. `showSnackBar` enqueues on the nearest
+  //     `ScaffoldMessenger`, which owns the lifetime, the queue and the dismissal. `logic.Navigate` does not
+  //     model that, and no ADR does yet. **The owning layer is still an unmade decision.**
+  //
+  // Saying "an architectural decision that has not been made yet" about the first group became false the
+  // moment ADR-0025 was written, which is the whole reason this split exists.
   SnackBar: {
-    capability:
-      'imperative overlays — a SnackBar is not in the widget tree at all; it is an argument to ' +
-      '`ScaffoldMessenger.of(context).showSnackBar(...)`, a call whose effect is a transient overlay with ' +
-      'its own lifetime',
+    capability: OVERLAY_MESSENGER,
     owner: 'adr',
     workaround:
       'a `MaterialBanner` is a persistent message that *is* in the tree, and renders — the difference is ' +
       'exactly what makes one supported and the other not',
   },
   BottomSheet: {
-    capability:
-      'imperative overlays — `showModalBottomSheet` is a call. A `Scaffold`\'s `bottomSheet:` slot is a ' +
-      'different thing: it is in the tree, and it renders',
-    owner: 'adr',
+    capability: OVERLAY_ROUTE,
+    owner: 'schema',
     workaround: "put the sheet in `Scaffold(bottomSheet:)`, which is Flutter's own persistent form",
   },
   ScaffoldMessenger: {
-    capability: 'imperative overlays — its whole surface is `showSnackBar` / `showMaterialBanner`',
+    capability: OVERLAY_MESSENGER,
     owner: 'adr',
   },
   // The `of(context)` spelling as well as the bare name: a program never writes `ScaffoldMessenger` alone,
   // it writes `ScaffoldMessenger.of(context).showSnackBar(...)`, and the reference the generator refuses is
   // the qualified one. A lookup that only held the class name matched nothing a real program contains.
   'ScaffoldMessenger.of': {
-    capability: 'imperative overlays — its whole surface is `showSnackBar` / `showMaterialBanner`',
+    capability: OVERLAY_MESSENGER,
     owner: 'adr',
     workaround:
       'a `MaterialBanner` placed in the tree is a persistent message and renders; what has no equivalent is ' +
       'the transient overlay a call puts on screen',
   },
-  PopupMenuButton: { capability: 'imperative overlays', owner: 'adr' },
-  AlertDialog: { capability: 'imperative overlays', owner: 'adr' },
-  SnackBarAction: { capability: 'imperative overlays', owner: 'adr' },
+  PopupMenuButton: { capability: OVERLAY_ROUTE, owner: 'schema' },
+  AlertDialog: { capability: OVERLAY_ROUTE, owner: 'schema' },
+  SnackBarAction: { capability: OVERLAY_MESSENGER, owner: 'adr' },
+
+  // The **calls** that open a route overlay. Widget names alone never matched these: a program writes
+  // `showDialog(context: …, builder: …)`, and the reference the generator refuses is `showDialog`, not
+  // `AlertDialog`. Without an entry each fell through to `BRG3006` — *"`showDialog` is not declared in this
+  // program"* — which blames a valid Flutter program for a gap the compiler owns. M6-D found this by running
+  // the pipeline, not by reading the table: `showDialog` and `showModalBottomSheet` are the two most
+  // frequent overlay calls in the measured corpus and neither had an entry.
+  showDialog: { capability: OVERLAY_ROUTE, owner: 'schema' },
+  showModalBottomSheet: { capability: OVERLAY_ROUTE, owner: 'schema' },
+  showMenu: { capability: OVERLAY_ROUTE, owner: 'schema' },
+  showGeneralDialog: { capability: OVERLAY_ROUTE, owner: 'schema' },
+  showBottomSheet: { capability: OVERLAY_ROUTE, owner: 'schema' },
+  showSnackBar: { capability: OVERLAY_MESSENGER, owner: 'adr' },
 
   // ── Layout that needs measurement ──
   LayoutBuilder: {
@@ -314,27 +387,21 @@ export const MISSING_CAPABILITIES: Readonly<Record<string, MissingCapability>> =
   // site, and its schema is `additionalProperties: false`. Matching the two by source span would work and is
   // exactly the generator heuristic this project refuses. So the honest fix is a schema field, which is an
   // ADR — and this entry is what says so instead of a wrong sentence about the program.
-  'Navigator.push': {
-    capability:
-      'lowering an imperative navigation call — the router exists in the kit and the route table is emitted; ' +
-      'what is missing is a link from an app.RouteTransition to the call expression that performs it',
-    owner: 'schema',
-  },
-  'Navigator.pushNamed': {
-    capability: 'lowering an imperative navigation call (see `Navigator.push`)',
-    owner: 'schema',
-  },
-  'Navigator.pushReplacementNamed': {
-    capability: 'lowering an imperative navigation call (see `Navigator.push`)',
-    owner: 'schema',
-  },
-  'Navigator.pop': {
-    capability:
-      'lowering an imperative navigation call. A pop is not even an app.RouteTransition — Spec v2.4 §A17.3 ' +
-      'rules it a return along an edge that already exists — so nothing in the document marks the call at all',
-    owner: 'schema',
-  },
-  'Navigator.of': { capability: 'lowering an imperative navigation call (see `Navigator.push`)', owner: 'schema' },
+  'Navigator.push': { capability: NAVIGATE_CALL, owner: 'schema' },
+  'Navigator.pushNamed': { capability: NAVIGATE_CALL, owner: 'schema' },
+  'Navigator.pushReplacement': { capability: NAVIGATE_CALL, owner: 'schema' },
+  'Navigator.pushReplacementNamed': { capability: NAVIGATE_CALL, owner: 'schema' },
+  'Navigator.pushAndRemoveUntil': { capability: NAVIGATE_CALL, owner: 'schema' },
+  'Navigator.of': { capability: NAVIGATE_CALL, owner: 'schema' },
+  // A return, not a departure. Spec v2.4 §A17.3 rules that a pop is **not** an `app.RouteTransition` — it
+  // returns along an edge that already exists — so unlike a push there is no edge in the document to point
+  // at, and `logic.Navigate` carries no transition for it. Stated separately because "there is no edge" is a
+  // different fact from "the edge is not linked to its call site", and a user debugging a pop should read
+  // the one that is true of a pop.
+  'Navigator.pop': { capability: NAVIGATE_POP, owner: 'schema' },
+  'Navigator.popUntil': { capability: NAVIGATE_POP, owner: 'schema' },
+  'Navigator.maybePop': { capability: NAVIGATE_POP, owner: 'schema' },
+  'Navigator.popAndPushNamed': { capability: NAVIGATE_POP, owner: 'schema' },
 
   // ── M4-I: structures UIR cannot hold ──
   //

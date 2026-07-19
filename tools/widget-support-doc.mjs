@@ -90,18 +90,29 @@ ${recognisedOnly.length === 0 ? '_None: every catalogued widget has a mapping._'
 
 ## Unsupported Flutter features
 
-Whole areas, rather than individual widgets:
+Whole areas, rather than individual widgets. Each is refused with a diagnostic that names the missing
+capability and the layer that owns it — never a generic failure, and never a suggestion that your Flutter
+code is at fault.
 
-| Area | Status |
-| --- | --- |
-| Imperative navigation (\`Navigator.push\`) | [ADR-0024](../adr/0024-performing-a-navigation.md), proposed, not implemented |
-| Gestures beyond taps | not modelled |
-| Slivers | refused, never emulated |
-| Custom painting (\`CustomPaint\`, \`Canvas\`) | not modelled |
-| Explicit animation (\`AnimationController\`) | not modelled; implicit animations are supported |
-| Platform channels, plugins with native code | out of scope |
-| \`FutureBuilder\`/\`StreamBuilder\` | refused (\`BRG3007\`) — rendering a future needs loading and error branches, and inventing either is what a generator must not do |
-| User-defined classes as values | refused (\`BRG3002\`) — no class emission yet |
+| Area | Diagnostic | Status |
+| --- | --- | --- |
+| Imperative navigation — \`Navigator.push\` / \`pushNamed\` / \`pushReplacement\` | \`BRG3013\`, \`BRG3008\` | [ADR-0025](../adr/0025-the-navigation-model.md) D2 names the construct (\`logic.Navigate\`). Proposed, not implemented |
+| \`Navigator.pop\` / \`popUntil\` / \`maybePop\` | \`BRG3013\` | same construct. A pop is *not* a route transition (Spec v2.4 §A17.3), so it carries no edge |
+| Route overlays — \`showDialog\`, \`showModalBottomSheet\`, \`showMenu\` | \`BRG3013\` | the same blocker: an overlay pushes a \`Route\`, so it is a navigation to an inline destination |
+| Messenger overlays — \`showSnackBar\`, \`ScaffoldMessenger\` | \`BRG3013\` | a *different* blocker — a snack bar is enqueued, not routed. No ADR models it yet |
+| Route constructor arguments — \`home: Screen(id: …)\` | \`BRG3018\` | the analyzer extracts them; \`app.Route\` has no field linking a route to them ([ADR-0025](../adr/0025-the-navigation-model.md) D1) |
+| Routes computed at runtime — \`onGenerateRoute\` | \`BRG1304\` | the route table is not read from a function; the routes it builds are invisible to N11 |
+| Gestures beyond taps | \`BRG3013\` | not modelled |
+| Slivers | \`BRG3013\` | refused, never emulated |
+| Custom painting (\`CustomPaint\`, \`Canvas\`) | \`BRG3013\` | not modelled |
+| Explicit animation (\`AnimationController\`) | \`BRG3013\` | not modelled; implicit animations are supported |
+| Platform channels, plugins with native code | — | out of scope |
+| \`FutureBuilder\`/\`StreamBuilder\` | \`BRG3007\` | rendering a future needs loading and error branches, and inventing either is what a generator must not do |
+| User-defined classes as values | \`BRG3002\` | no class emission yet |
+
+Navigation is the largest of these, and what it costs a real application is measured rather than guessed —
+see the [navigation model validation](../m6/m6d-navigation-model-validation.md), which counts every
+navigation construct across 80 476 lines of two production Flutter apps.
 
 See [troubleshooting](../troubleshooting.md) for what each diagnostic means and what to do about it.
 `;
