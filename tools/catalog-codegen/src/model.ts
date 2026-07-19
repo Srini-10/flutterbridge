@@ -133,6 +133,8 @@ export interface Catalog {
   // made it cost a page of empty objects too.
   readonly componentBases?: readonly string[];
   readonly stateBase?: string;
+  /** The getter a `State` uses to reach its `StatefulWidget`'s fields — `widget` (INV-22). */
+  readonly componentPropsGetter?: { readonly name?: string };
   readonly stateHolders?: readonly string[];
   readonly storeBases?: readonly string[];
   readonly lifecycle?: Readonly<Record<string, string>>;

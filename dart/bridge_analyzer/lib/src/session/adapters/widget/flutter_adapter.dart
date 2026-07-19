@@ -207,6 +207,34 @@ final class FlutterWidgetAdapter implements WidgetAdapter, ThemeAdapter {
     return node.argumentList.arguments.isEmpty;
   }
 
+  @override
+  bool isComponentPropsGetter(Expression node) {
+    if (MaterialCatalog.componentPropsGetter.isEmpty) {
+      return false;
+    }
+
+    final SimpleIdentifier? identifier = switch (node) {
+      SimpleIdentifier() => node,
+      // `this.widget.isDark` — the same getter, written explicitly.
+      PropertyAccess(propertyName: final SimpleIdentifier name) => name,
+      _ => null,
+    };
+    if (identifier == null || identifier.name != MaterialCatalog.componentPropsGetter) {
+      return false;
+    }
+
+    // **Resolved, not named** (C1). A user's own field called `widget` is their data, and rewriting a read
+    // of it into a prop reference would silently change what the program means. The getter must be the one
+    // Flutter declares on `State`.
+    // The same shape `route/material_adapter.dart` uses: the declaring class and its library are what
+    // identify a framework member, and asking for those needs no element-subtype test.
+    final String? library = identifier.element?.library?.identifier;
+    if (library == null || !library.startsWith(_package)) {
+      return false;
+    }
+    return identifier.element?.enclosingElement?.name == MaterialCatalog.stateBase;
+  }
+
   // ── theme ─────────────────────────────────────────────────────────────────────────────────────
 
   @override

@@ -225,6 +225,12 @@ abstract final class MaterialCatalog {
   /// The base class of the `State` half of a stateful pair.
   static const String stateBase = 'State';
 
+  /// The getter a `State` uses to reach its `StatefulWidget`'s fields (INV-22).
+  ///
+  /// `widget.isDark` is a read of the component's own parameter `isDark`; `widget` is the framework's
+  /// word for "my own props" and must not survive extraction.
+  static const String componentPropsGetter = 'widget';
+
   /// Types whose *value* is state even when the field holding them is `final`.
   static const Set<String> stateHolders = <String>{'AnimationController', 'ChangeNotifier', 'ScrollController', 'TextEditingController', 'ValueNotifier'};
 

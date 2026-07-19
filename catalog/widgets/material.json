@@ -14,6 +14,10 @@
     "StatefulHookConsumerWidget"
   ],
   "stateBase": "State",
+  "componentPropsGetter": {
+    "$comment": "The getter a `State` uses to reach its `StatefulWidget`'s fields. `widget.isDark` is a read of the *component's* parameter `isDark` — extraction already lifts those fields onto `ui.Component.params`, so the read is a parameter reference and `widget` is the framework's word for 'my own props' (INV-22). Without this the receiver reached the generator as an undeclared name and every component that reads a prop was refused with BRG3006. flutter/widgets.dart:State.widget.",
+    "name": "widget"
+  },
   "stateHolders": [
     "AnimationController",
     "ChangeNotifier",

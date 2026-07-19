@@ -205,6 +205,18 @@ abstract interface class WidgetAdapter implements PackageAdapter {
   /// Returns `false` for almost everything, including a user's own method named `notifyListeners` — that is
   /// a call the program actually makes, and deleting it would be deleting the user's code.
   bool isChangeNotification(MethodInvocation node);
+
+  /// Whether [node] is the framework getter a `State` uses to reach its own props (INV-22).
+  ///
+  /// `widget.isDark` is a read of the **component's parameter** `isDark`. Extraction already lifts a
+  /// `StatefulWidget`'s fields onto `ui.Component.params`, so the receiver carries no information the UIR
+  /// lacks — it is the framework's word for "my own props", and the name `widget` is one no downstream
+  /// pass may know.
+  ///
+  /// Recognised so the *property* can be emitted as a parameter reference and the receiver dropped.
+  /// Without it the receiver reached the generator as an undeclared name and every component that reads a
+  /// prop was refused with BRG3006.
+  bool isComponentPropsGetter(Expression node);
 }
 
 /// An adapter that recognises design tokens.

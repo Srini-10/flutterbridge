@@ -132,4 +132,8 @@ final class GapWidgetAdapter implements WidgetAdapter {
   /// `gap` has no notifier of its own; nothing in it announces a change.
   @override
   bool isChangeNotification(MethodInvocation node) => false;
+
+  /// `gap` declares no stateful pair, so it has no props getter.
+  @override
+  bool isComponentPropsGetter(Expression node) => false;
 }

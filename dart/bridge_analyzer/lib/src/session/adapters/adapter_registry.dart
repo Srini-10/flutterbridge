@@ -282,6 +282,10 @@ final class AdapterRegistry {
   bool isChangeNotification(MethodInvocation node) =>
       widgetAdapters.any((WidgetAdapter a) => a.isChangeNotification(node));
 
+  /// Whether [node] is the framework getter a `State` uses to reach its own props (INV-22).
+  bool isComponentPropsGetter(Expression node) =>
+      widgetAdapters.any((WidgetAdapter a) => a.isComponentPropsGetter(node));
+
   /// Whether [library] is a framework, rather than the application being compiled.
   bool isFrameworkLibrary(String library) =>
       widgetAdapters.any((WidgetAdapter a) => a.isFrameworkLibrary(library));
