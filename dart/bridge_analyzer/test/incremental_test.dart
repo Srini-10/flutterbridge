@@ -536,4 +536,37 @@ import 'sibling.dart';
       expect(digest.imports, contains('lib/models/item.dart'));
     });
   });
+
+  group('the logical/host path boundary (W-5)', () {
+    // Since M5-F there are two path domains, and conflating them is what W-5 was:
+    //
+    //   * **logical** — project-relative, always `/`-separated, on every platform. `span.file`, anchors,
+    //     node ids, digest keys and import edges. Identical on every OS by construction, which is what
+    //     makes UIR byte-identical and a cache shareable.
+    //   * **host** — what `dart:io` and `package:analyzer` accept, separated by whatever the OS uses.
+    //
+    // Joining a host root to a logical path with the host's `join` produces a hybrid belonging to
+    // neither, which `package:analyzer` rejects outright:
+    //
+    //     Invalid argument(s): Only absolute normalized paths are supported:
+    //       C:\Users\RUNNER~1\...\bridge_analyzer_test_...\lib/main.dart
+    //
+    // Asserted against an explicit Windows context so it fails on any platform. Running it under the
+    // ambient context would make it a tautology on POSIX — which is exactly how the boundary survived
+    // until a Windows runner existed.
+
+    test('a host root joined to a logical path yields a pure host path', () {
+      final p.Context windows = p.Context(style: p.Style.windows);
+      const String root = r'C:\Users\me\project';
+      const String logical = 'lib/screens/home.dart';
+
+      final String converted = windows.joinAll(<String>[root, ...p.url.split(logical)]);
+
+      expect(converted, r'C:\Users\me\project\lib\screens\home.dart');
+      expect(converted, isNot(contains('/')), reason: 'a host path must not carry a URL separator');
+
+      // The bug, stated as the thing that must not happen.
+      expect(windows.join(root, logical), contains('/'));
+    });
+  });
 }

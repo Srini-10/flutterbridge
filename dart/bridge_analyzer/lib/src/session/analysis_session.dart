@@ -72,9 +72,31 @@ final class AnalysisSessionHandle {
     parser: _parser,
   );
 
+  /// The **host** path for a project-relative path.
+  ///
+  /// ## Two path domains, and the boundary between them
+  ///
+  /// Since M5-F this compiler has two kinds of path, and conflating them is what W-5 was:
+  ///
+  ///   * **Logical** — project-relative, always `/`-separated, on every platform. `span.file`, anchors,
+  ///     node ids (ADR-17), digest keys and import edges are all this. They are identical on every OS by
+  ///     construction, which is what makes UIR byte-identical and a cache shareable.
+  ///   * **Host** — what `dart:io` and `package:analyzer` accept. Separated by whatever the OS uses.
+  ///
+  /// `p.join(root, 'lib/main.dart')` on Windows produces `C:\…\project\lib/main.dart` — a hybrid that
+  /// belongs to neither domain, and `package:analyzer` rejects it outright:
+  ///
+  /// ```text
+  /// Invalid argument(s): Only absolute normalized paths are supported:
+  ///   C:\Users\RUNNER~1\AppData\Local\Temp\bridge_analyzer_test_…\lib/main.dart
+  /// ```
+  ///
+  /// Splitting on the URL separator and re-joining with the host's is the conversion. It is a no-op on
+  /// POSIX, which is exactly why the boundary went unnoticed until a Windows runner existed.
+  String _hostPath(String relativePath) => p.joinAll(<String>[project.root, ...p.url.split(relativePath)]);
+
   /// Reads the source of the project-relative [relativePath].
-  String readSource(String relativePath) =>
-      File(p.join(project.root, relativePath)).readAsStringSync();
+  String readSource(String relativePath) => File(_hostPath(relativePath)).readAsStringSync();
 
   /// The directives of [relativePath], read by parsing [source].
   ///
@@ -103,7 +125,7 @@ final class AnalysisSessionHandle {
   /// Returning `null` rather than throwing is deliberate: an unresolvable unit is a *finding about
   /// the project*, which the caller turns into a diagnostic. It is not a compiler bug.
   Future<ResolvedUnit?> resolve(String relativePath) async {
-    final String absolute = p.join(project.root, relativePath);
+    final String absolute = _hostPath(relativePath);
     final Object result = await _collection
         .contextFor(absolute)
         .currentSession
