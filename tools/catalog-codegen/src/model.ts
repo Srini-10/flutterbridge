@@ -86,6 +86,14 @@ export interface NavigationMeta {
   readonly routeTypes: readonly string[];
   /** The parameter of a route type that builds the destination widget. */
   readonly builderProp: string;
+  /**
+   * The `RouteSettings` property an `onGenerateRoute` switch selects on.
+   *
+   * Reading that switch is what makes a router written as a *function* visible to the static route
+   * graph. M6-D measured that the corpus declares **zero** `routes:` maps and routes entirely through
+   * `onGenerateRoute`, so without this the largest application's whole routing surface is invisible.
+   */
+  readonly settingsNameProp: string;
 }
 
 /**
