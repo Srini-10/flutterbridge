@@ -4,7 +4,7 @@
   "title": "UIR — shared definitions",
   "description": "Types every layer depends on: identity, source locations, the node base contract, and the reserved diagnostic codes.",
   "x-uir-layer": "shared",
-  "x-uir-version": "1.4.0",
+  "x-uir-version": "1.5.0",
   "$defs": {
     "NodeId": {
       "type": "string",

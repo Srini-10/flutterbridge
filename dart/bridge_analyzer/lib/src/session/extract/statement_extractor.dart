@@ -11,8 +11,11 @@
 library;
 
 import 'package:analyzer/dart/ast/ast.dart';
+import 'package:bridge_analyzer/src/diagnostics/codes.dart';
 import 'package:bridge_analyzer/src/model/raw_node.dart';
+import 'package:bridge_analyzer/src/session/adapters/adapter_context.dart';
 import 'package:bridge_analyzer/src/session/adapters/adapter_registry.dart';
+import 'package:bridge_analyzer/src/session/adapters/adapter_result.dart';
 import 'package:bridge_analyzer/src/session/extract/expression_extractor.dart';
 import 'package:bridge_analyzer/src/session/extract/raw_node_emitter.dart';
 import 'package:bridge_analyzer/src/session/extract/scope.dart';
@@ -20,7 +23,7 @@ import 'package:bridge_analyzer/src/session/extract/scope.dart';
 /// Extracts statements.
 final class StatementExtractor implements StatementExtractorRef {
   /// Creates an extractor emitting through [out], using [expressions] for the expressions inside.
-  const StatementExtractor(this.out, this.expressions, this.registry);
+  const StatementExtractor(this.out, this.expressions, this.registry, this.context);
 
   /// The record factory.
   final RawNodeEmitter out;
@@ -31,6 +34,9 @@ final class StatementExtractor implements StatementExtractorRef {
   /// The compiler's package knowledge. **This file has none of its own** (ISSUE-16): it does not know
   /// what `setState` is, and it must not. It asks.
   final AdapterRegistry registry;
+
+  /// What the adapters run in — the same context every other extractor hands them.
+  final AdapterContext context;
 
   @override
   List<RawValue> statementsOf(Block node, Scope scope) {
@@ -122,6 +128,21 @@ final class StatementExtractor implements StatementExtractorRef {
               span: out.span(node),
               fields: const <String, RawValue>{'statements': RawList(<RawValue>[])},
             );
+          }
+
+          // A navigation performed for its effect — `Navigator.pop(context);` (ADR-0025 D2).
+          //
+          // The same shape as the two erasures above and for the same reason: what a call *means* is a
+          // package fact, so the registry answers and this file never learns the word `Navigator`
+          // (ADR-18). The difference is that a navigation is not erased — it becomes a node, because
+          // unlike `notifyListeners` its effect is not already recorded anywhere else.
+          //
+          // INV-22 is what makes this mandatory rather than nice: `Navigator.pop` is a framework
+          // runtime primitive, and it has been surviving extraction as a call to an unresolvable name
+          // in violation of that invariant since the analyzer had a navigation adapter at all.
+          final RawNode? navigate = navigateOf(expression, node);
+          if (navigate != null) {
+            return navigate;
           }
         }
         return RawNode(
@@ -360,6 +381,58 @@ final class StatementExtractor implements StatementExtractorRef {
       for (final VariableDeclaration variable in statement.variables.variables)
         Binding(name: variable.name.lexeme, binds: Binds.local),
     ]);
+  }
+
+  /// A `logic.Navigate` for [expression] spanning [node], or null when it is not one.
+  ///
+  /// ## Why only a return, for now
+  ///
+  /// ADR-0025 D2 covers push, replace, pop and popUntil. Only the two **returns** are lowered here.
+  ///
+  /// A departure needs `transition` — the `app.RouteTransition` it performs — and a transition is
+  /// referenced by `NodeId`. Ids are content-addressed and minted by the builder (ADR-17), so at
+  /// extraction time the edge this call produces has no id to name yet. Emitting a departure without
+  /// its transition would produce a node that says *go somewhere* and not where: strictly worse than
+  /// the refusal it replaces, because the generator could no longer tell the developer what is
+  /// missing. So a departure keeps `BRG3013`, which names the capability and the owning layer.
+  ///
+  /// A return needs no such reference — §A17.3 rules that a pop is not a transition, so `transition`
+  /// is absent by design and there is nothing to wire. That is the same asymmetry that decided
+  /// ADR-0025 in favour of a statement over a field on the edge, and it is why the returns are
+  /// implementable first rather than by convenience.
+  ///
+  /// Returns are also the majority of the corpus: 143 uses against 83 departures (M6-D).
+  @override
+  RawNode? navigateOf(MethodInvocation expression, AstNode node) {
+    final NavigateAction? action = registry.navigationActionOf(context, expression);
+    if (action == null) {
+      return null;
+    }
+    if (action != NavigateAction.pop && action != NavigateAction.popUntil) {
+      return null;
+    }
+
+    // `popUntil`'s predicate is not modelled and is not silently dropped: a generator that lowered
+    // this as a plain pop would remove one entry where the program removes several, which is a wrong
+    // screen rather than a missing one.
+    if (action == NavigateAction.popUntil) {
+      out.report(
+        Codes.unsupportedWrapper,
+        'This pops until a predicate holds. `logic.Navigate` records the action but not the '
+        'predicate (ADR-0025 D2), so a generator cannot know where to stop. It is recorded as a '
+        'navigation rather than dropped, and a target that cannot express the predicate must refuse '
+        'it rather than pop once.',
+        expression,
+      );
+    }
+
+    return RawNode(
+      kind: 'logic.Navigate',
+      span: out.span(node),
+      fields: <String, RawValue>{
+        'action': RawLiteral(action.name),
+      },
+    );
   }
 
   static String _describe(Statement node) => switch (node) {

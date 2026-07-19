@@ -265,6 +265,24 @@ a constant. The compiler read its declared initializer ("$path") — but if it i
   }
 
   @override
+  NavigateAction? navigationActionOf(AdapterContext context, MethodInvocation node) {
+    // The same four effects, reached through a different package's spelling — which is the whole point
+    // of naming `NavigateAction` for the effect. `context.go('/x')` and `Navigator.pushNamed('/x')`
+    // produce the same node, and a generator never learns which package the author wrote.
+    final String method = node.methodName.name;
+    if (_pop.contains(method)) {
+      return NavigateAction.pop;
+    }
+    if (method.startsWith('pushReplacement') || method.startsWith('replace')) {
+      return NavigateAction.replace;
+    }
+    if (_byPath.contains(method) || _byName.contains(method)) {
+      return NavigateAction.push;
+    }
+    return null;
+  }
+
+  @override
   TransitionDeclaration? transitionOf(AdapterContext context, MethodInvocation node) {
     final String method = node.methodName.name;
     if (_pop.contains(method)) {

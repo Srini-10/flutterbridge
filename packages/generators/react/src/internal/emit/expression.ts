@@ -35,6 +35,18 @@ export interface EmitScope {
   /** Reports a finding. */
   report(code: string, severity: 'error' | 'warning' | 'info', message: string, nodeId?: string): void;
   /**
+   * The identifier of the component's router, when its tree performs a navigation (ADR-0025 D2).
+   *
+   * `useRouter()` is a **hook**, so it cannot be called at the navigation site — the corpus writes
+   * navigation as `onPressed: () => Navigator.pop(context)`, and a hook inside a callback is a
+   * rules-of-hooks violation React throws on at runtime rather than one `tsc` catches. It is hoisted to
+   * the component body exactly as `useSignal` is, and the call site reads this name.
+   *
+   * Absent when the component navigates nowhere, so such a component declares no router and imports
+   * nothing for one — the emitted file says what the component actually does.
+   */
+  readonly routerLocal?: string;
+  /**
    * The local expression that reads a signal declared by `id`, if one is in scope.
    *
    * A `logic.Ref` whose target is a `sig.Signal` must become `count.get()`, not `count` — the signal is an

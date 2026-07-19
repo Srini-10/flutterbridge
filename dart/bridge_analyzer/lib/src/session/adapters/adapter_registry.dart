@@ -122,6 +122,19 @@ final class AdapterRegistry {
     return claiming.first.transitionOf(context, node);
   }
 
+  /// What the navigation adapters say [node] does to the stack, or `null` if none claims it.
+  ///
+  /// Claiming is resolved exactly as `transitionOf` resolves it — same adapters, same priority rule —
+  /// because a call is one navigation and two answers about it must come from one adapter.
+  NavigateAction? navigationActionOf(AdapterContext context, MethodInvocation node) {
+    for (final PackageAdapter adapter in adapters) {
+      if (adapter is TransitionAdapter && adapter.claimsTransition(context, node)) {
+        return adapter.navigationActionOf(context, node);
+      }
+    }
+    return null;
+  }
+
   /// What the widget adapters know about [type].
   ///
   /// Chained deliberately, and it is the one place chaining is allowed: `isWidget` is a question every

@@ -1,7 +1,7 @@
 // GENERATED CODE — DO NOT EDIT
 //
 // Produced by tools/schema-codegen from packages/uir/schema/*.json.
-// UIR schema version: 1.4.0
+// UIR schema version: 1.5.0
 //
 // Edit the schema and re-run `pnpm codegen`. Hand-edits to this file are lost on the next run,
 // and CI fails if this file does not match the schema (drift check).
@@ -26,12 +26,12 @@ import 'package:crypto/crypto.dart';
 import 'package:meta/meta.dart';
 
 /// The UIR schema version this library was generated from.
-const String uirVersion = '1.4.0';
+const String uirVersion = '1.5.0';
 
 /// A hash of the schema sources this library was generated from.
 ///
 /// Stamped into every emitted manifest: a UIR document always says which schema produced it.
-const String uirSchemaHash = 'fc4e4eb130c9f948';
+const String uirSchemaHash = '9b5c1183b869601f';
 
 /// Node kind -> the fields of that node which hold `NodeId` references.
 ///
@@ -66,6 +66,7 @@ const Map<String, List<String>> uirReferenceFields = <String, List<String>>{
   'logic.Lit': <String>['id'],
   'logic.MapLit': <String>['id'],
   'logic.MethodCall': <String>['id'],
+  'logic.Navigate': <String>['id', 'transition'],
   'logic.New': <String>['id'],
   'logic.NullCheck': <String>['id'],
   'logic.OpaqueDecl': <String>['id'],
@@ -591,6 +592,33 @@ enum MaterialRole {
   String toJson() => name;
 }
 
+/// What a `logic.Navigate` does.
+///
+/// Named for the **effect on the navigation stack**, not for the Flutter API that produced it: a `go_router` `context.go` and a `Navigator.pushNamed` are both `push`, and a generator lowers the effect rather than recognising a package. ADR-0025 §5 is why — the M6-D corpus found zero `go_router` in two production applications after C1 recorded it as dominant, so which package is popular is not something to build a vocabulary on.
+enum NavigateAction {
+  /// A new entry on the stack. `Navigator.push`, `pushNamed`, and every route overlay — a dialog, modal sheet or menu pushes a `Route` (ADR-0024 cites the SDK).
+  push,
+  /// The current entry is replaced. `pushReplacement`, `pushReplacementNamed`.
+  replace,
+  /// The top entry is removed. `pop`, `maybePop`.
+  pop,
+  /// Entries are removed until a predicate holds. The predicate is **not** modelled; a generator that cannot express one must refuse rather than approximate.
+  popUntil,
+  ;
+
+  /// Parses a [NavigateAction] from its wire value. Rejects anything outside the enum.
+  static NavigateAction fromJson(Object? value, [String path = 'NavigateAction']) {
+    final String raw = _asString(value, path);
+    for (final NavigateAction candidate in NavigateAction.values) {
+      if (candidate.name == raw) return candidate;
+    }
+    throw UirParseError(path, 'unknown NavigateAction "$raw"');
+  }
+
+  /// The wire value.
+  String toJson() => name;
+}
+
 /// How a route argument survives — or fails to survive — a URL boundary (ADR-11, ADR-11a).
 ///
 /// In Flutter a route argument is a live Dart value. In every URL-routed target it is a string in an address bar. This enum is where that difference is made explicit rather than discovered at runtime.
@@ -863,6 +891,8 @@ sealed class Stmt extends UirNode {
         return For.fromJson(json, path);
       case 'logic.If':
         return If.fromJson(json, path);
+      case 'logic.Navigate':
+        return Navigate.fromJson(json, path);
       case 'logic.OpaqueStmt':
         return OpaqueStmt.fromJson(json, path);
       case 'logic.Return':
@@ -5168,6 +5198,127 @@ final class MethodCall extends Expr {
   ]);
 }
 
+/// Performing a navigation — a push, a pop, or the opening of a route overlay (ADR-0025 D2).
+///
+/// `app.RouteTransition` is a *declarative edge in the navigation graph*; it is the input to N11 (ADR-11) and says where an application **can** go. It does not say where it **does** go, and nothing else did either: a `Navigator.pushNamed` survived extraction as an ordinary call to an unresolvable name, in violation of INV-22, and the generator had a route table, a live router and a call it could not connect to either.
+///
+/// This is that connection, and it is a **statement** rather than a field on the edge for one measured reason: a pop has no edge. Spec v2.4 §A17.3 rules that a pop returns along an edge that already exists rather than creating one, and the M6-D corpus measured pops as the most frequent navigation verb in real Flutter — 143 uses against 83 pushes. A `site` field on `app.RouteTransition` could not have expressed one.
+///
+/// **Scope.** The result of a navigation is not modelled: this node is evaluated for effect. `final ok = await showDialog<bool>(...)` — 19 measured sites — is still refused, because a statement carries no value. See `docs/m7/m7a-navigation-implementation.md`.
+@immutable
+final class Navigate extends Stmt {
+  /// Creates a [Navigate].
+  const Navigate({
+    required this.action,
+    required this.id,
+    required this.span,
+    this.anchor,
+    this.ext,
+    this.transition,
+  });
+
+  /// Parses a [Navigate] from JSON, validating as it goes.
+  factory Navigate.fromJson(Object? value, [String path = 'Navigate']) {
+    final Map<String, Object?> json = _asObject(value, path);
+    final String kind = _asString(_req(json, 'kind', path), '$path.kind');
+    if (kind != 'logic.Navigate') {
+      throw UirParseError('$path.kind', 'expected "logic.Navigate", got "$kind"');
+    }
+    return Navigate(
+      action: NavigateAction.fromJson(_req(json, 'action', path), '$path.action'),
+      anchor: json['anchor'] == null ? null : _asString(json['anchor'], '$path.anchor'),
+      ext: json['ext'] == null ? null : _asMap<Object?>(json['ext'], '$path.ext', (Object? v, String p) => v),
+      id: _asString(_req(json, 'id', path), '$path.id'),
+      span: SourceSpan.fromJson(_req(json, 'span', path), '$path.span'),
+      transition: json['transition'] == null ? null : _asString(json['transition'], '$path.transition'),
+    );
+  }
+
+  /// What the navigation does.
+  final NavigateAction action;
+
+  /// The override key, when the node is addressable by a human.
+  final Anchor? anchor;
+
+  /// Plugin extension data, namespaced `x-<plugin>`. Core passes round-trip it untouched (Spec §2.6).
+  final Map<String, Object?>? ext;
+
+  /// The node's stable, content-addressed identity.
+  final NodeId id;
+
+  /// Where the node came from.
+  final SourceSpan span;
+
+  /// The `app.RouteTransition` this performs, for a departure.
+  ///
+  /// **Absent for a return** (`pop`, `popUntil`, `maybePop`): §A17.3 rules that a pop is not a transition, so there is no edge to name. A reader must not treat its absence as an incomplete document — `action` says which case it is.
+  final NodeId? transition;
+
+  /// The node's discriminant.
+  @override
+  String get kind => 'logic.Navigate';
+
+  /// Serializes to canonical JSON: keys sorted, nulls omitted.
+  @override
+  Map<String, Object?> toJson() => canonicalJson(<String, Object?>{
+    'action': action.toJson(),
+    'anchor': anchor,
+    'ext': ext,
+    'id': id,
+    'kind': 'logic.Navigate',
+    'span': span.toJson(),
+    'transition': transition,
+  })! as Map<String, Object?>;
+
+  /// Returns a copy with the given fields replaced. The original is never mutated.
+  ///
+  /// An omitted argument keeps its current value; `copyWith` cannot set a field back to
+  /// null. Construct a new node when that is what you mean.
+  Navigate copyWith({
+    NavigateAction? action,
+    Anchor? anchor,
+    Map<String, Object?>? ext,
+    NodeId? id,
+    SourceSpan? span,
+    NodeId? transition,
+  }) {
+    return Navigate(
+      action: action ?? this.action,
+      anchor: anchor ?? this.anchor,
+      ext: ext ?? this.ext,
+      id: id ?? this.id,
+      span: span ?? this.span,
+      transition: transition ?? this.transition,
+    );
+  }
+
+  @override
+  R accept<R>(StmtVisitor<R> visitor) => visitor.visitNavigate(this);
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is Navigate &&
+        _equality.equals(other.action, action) &&
+        _equality.equals(other.anchor, anchor) &&
+        _equality.equals(other.ext, ext) &&
+        _equality.equals(other.id, id) &&
+        _equality.equals(other.span, span) &&
+        _equality.equals(other.transition, transition);
+  }
+
+  @override
+  int get hashCode => Object.hashAll(<Object?>[
+    'Navigate',
+    _equality.hash(action),
+    _equality.hash(anchor),
+    _equality.hash(ext),
+    _equality.hash(id),
+    _equality.hash(span),
+    _equality.hash(transition),
+  ]);
+}
+
 /// A constructor invocation.
 @immutable
 final class New extends Expr {
@@ -6259,6 +6410,7 @@ final class Route extends UirNode {
     required this.path,
     required this.span,
     this.anchor,
+    this.arguments,
     this.ext,
     this.guards,
     this.layout,
@@ -6275,6 +6427,7 @@ final class Route extends UirNode {
     }
     return Route(
       anchor: json['anchor'] == null ? null : _asString(json['anchor'], '$path.anchor'),
+      arguments: json['arguments'] == null ? null : _asList<RouteArgument>(json['arguments'], '$path.arguments', RouteArgument.fromJson),
       component: _asString(_req(json, 'component', path), '$path.component'),
       ext: json['ext'] == null ? null : _asMap<Object?>(json['ext'], '$path.ext', (Object? v, String p) => v),
       guards: json['guards'] == null ? null : _asList<NodeId>(json['guards'], '$path.guards', _asString),
@@ -6289,6 +6442,13 @@ final class Route extends UirNode {
 
   /// The override key, when the node is addressable by a human.
   final Anchor? anchor;
+
+  /// Arguments the construction site passed to the component, in order (ADR-0025 D1).
+  ///
+  /// **Distinct from `params`**, which are the route's *path* parameters — the `:id` in `/user/:id`, supplied by the router at navigation time. These are supplied by the author at the construction site: `home: CounterPanel(label: 'Taps')`. The two differ in who provides them and when, which is why reusing `params` for both would have conflated them.
+  ///
+  /// The same `RouteArgument` an `app.RouteTransition` carries, deliberately: a declarative route and an imperative navigation are the same question asked twice, and before this field only one of them could answer. It is what makes `transport` — and so ADR-11a's live-object refusal (BRG2301) — reachable for a declarative route, which it was not.
+  final List<RouteArgument>? arguments;
 
   /// The component rendered.
   final NodeId component;
@@ -6325,6 +6485,7 @@ final class Route extends UirNode {
   @override
   Map<String, Object?> toJson() => canonicalJson(<String, Object?>{
     'anchor': anchor,
+    'arguments': arguments?.map((RouteArgument v) => v.toJson()).toList(),
     'component': component,
     'ext': ext,
     'guards': guards,
@@ -6343,6 +6504,7 @@ final class Route extends UirNode {
   /// null. Construct a new node when that is what you mean.
   Route copyWith({
     Anchor? anchor,
+    List<RouteArgument>? arguments,
     NodeId? component,
     Map<String, Object?>? ext,
     List<NodeId>? guards,
@@ -6355,6 +6517,7 @@ final class Route extends UirNode {
   }) {
     return Route(
       anchor: anchor ?? this.anchor,
+      arguments: arguments ?? this.arguments,
       component: component ?? this.component,
       ext: ext ?? this.ext,
       guards: guards ?? this.guards,
@@ -6372,6 +6535,7 @@ final class Route extends UirNode {
     if (identical(this, other)) return true;
     return other is Route &&
         _equality.equals(other.anchor, anchor) &&
+        _equality.equals(other.arguments, arguments) &&
         _equality.equals(other.component, component) &&
         _equality.equals(other.ext, ext) &&
         _equality.equals(other.guards, guards) &&
@@ -6387,6 +6551,7 @@ final class Route extends UirNode {
   int get hashCode => Object.hashAll(<Object?>[
     'Route',
     _equality.hash(anchor),
+    _equality.hash(arguments),
     _equality.hash(component),
     _equality.hash(ext),
     _equality.hash(guards),
@@ -9297,6 +9462,9 @@ abstract interface class StmtVisitor<R> {
   /// Visits a [If].
   R visitIf(If node);
 
+  /// Visits a [Navigate].
+  R visitNavigate(Navigate node);
+
   /// Visits a [OpaqueStmt].
   R visitOpaqueStmt(OpaqueStmt node);
 
@@ -9413,6 +9581,8 @@ UirNode uirNodeFromJson(Object? value, [String path = 'UirNode']) {
       return MapLit.fromJson(json, path);
     case 'logic.MethodCall':
       return MethodCall.fromJson(json, path);
+    case 'logic.Navigate':
+      return Navigate.fromJson(json, path);
     case 'logic.New':
       return New.fromJson(json, path);
     case 'logic.NullCheck':

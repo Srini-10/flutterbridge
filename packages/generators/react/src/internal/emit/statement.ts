@@ -184,6 +184,51 @@ export function emitStatement(statement: Stmt | Node | undefined, scope: EmitSco
       return [];
     }
 
+    case 'logic.Navigate': {
+      // ADR-0025 D2. The analyzer replaced the framework call with this node, so the generator lowers a
+      // *stack effect* and never learns which package the author wrote — a `go_router` `context.go` and
+      // a `Navigator.pushNamed` arrive identically. That is the property ADR-0025 §5 exists to protect.
+      const action = String(node['action'] ?? '');
+      const router = scope.routerLocal;
+      if (router === undefined) {
+        // The component emitter declares the router whenever the component contains one of these, so
+        // this is unreachable from a whole component and reachable only if a `logic.Navigate` is lowered
+        // outside one. Reported rather than assumed away: emitting `undefined.pop()` would be a runtime
+        // crash on click, which is the failure mode this project refuses to ship.
+        scope.report(
+          GeneratorDiagnosticCode.UnresolvedReference,
+          'error',
+          'a navigation is lowered outside a component, so there is no router in scope for it. The ' +
+            'router is declared per component; a navigation reached this generator from somewhere that ' +
+            'has none.',
+          idOf(node),
+        );
+        return [];
+      }
+
+      switch (action) {
+        case 'pop':
+          return [`${router}.pop();`];
+        default:
+          // `push`, `replace` and `popUntil` are modelled by the schema and not lowered yet — a push
+          // needs its `transition` resolved to a destination, and `popUntil` carries no predicate
+          // (ADR-0025 D2 says so explicitly). Named precisely rather than left to the generic statement
+          // refusal below, because M6-E's finding was that a navigation refusal must say which
+          // capability is missing and who owns it, and a new node kind is not a licence to stop.
+          scope.report(
+            GeneratorDiagnosticCode.UnsupportedCapability,
+            'error',
+            `a \`${action}\` navigation reaches this generator as a \`logic.Navigate\` (ADR-0025 D2) ` +
+              'and is not lowered yet. The runtime kit already performs it — `useRouter()` exposes ' +
+              '`push`, `replace` and `pop` — so the remaining work is resolving the transition this ' +
+              'node names to a destination the router can take. That belongs to this generator, and no ' +
+              'part of it belongs to your program.',
+            idOf(node),
+          );
+          return [];
+      }
+    }
+
     default:
       scope.report(
         GeneratorDiagnosticCode.UnsupportedStatement,

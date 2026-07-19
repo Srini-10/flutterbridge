@@ -84,7 +84,7 @@ final class Extractor {
     // Expressions and statements are mutually recursive — a lambda body holds statements, a statement
     // holds expressions — so one of them must be wired after construction. The alternative is a single
     // class that does both, which is the God extractor this design exists to avoid.
-    final StatementExtractor statements = StatementExtractor(out, expressions, adapters);
+    final StatementExtractor statements = StatementExtractor(out, expressions, adapters, context);
     expressions.statements = statements;
 
     final BindingExtractor bindings = BindingExtractor(out, expressions);

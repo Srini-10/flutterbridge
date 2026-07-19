@@ -506,6 +506,14 @@
               },
               "description": "Route parameters, in order."
             },
+            "arguments": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/RouteArgument",
+                "description": "An argument."
+              },
+              "description": "Arguments the construction site passed to the component, in order (ADR-0025 D1).\n\n**Distinct from `params`**, which are the route's *path* parameters — the `:id` in `/user/:id`, supplied by the router at navigation time. These are supplied by the author at the construction site: `home: CounterPanel(label: 'Taps')`. The two differ in who provides them and when, which is why reusing `params` for both would have conflated them.\n\nThe same `RouteArgument` an `app.RouteTransition` carries, deliberately: a declarative route and an imperative navigation are the same question asked twice, and before this field only one of them could answer. It is what makes `transport` — and so ADR-11a's live-object refusal (BRG2301) — reachable for a declarative route, which it was not."
+            },
             "component": {
               "$ref": "shared.json#/$defs/NodeId",
               "description": "The component rendered."
