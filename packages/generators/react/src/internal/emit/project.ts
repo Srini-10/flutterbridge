@@ -30,6 +30,71 @@ import type { EmittedFile } from '@bridge/plugin-sdk';
 const NEXT_VERSION = '15.5.20';
 const REACT_VERSION = '19.2.7';
 
+/**
+ * The type stubs, versioned **separately from the packages they describe**.
+ *
+ * These were emitted as `REACT_VERSION` for both, and `@types/react-dom@19.2.7` does not exist — the
+ * `19.2.x` line of `@types/react-dom` ends at `19.2.3`. So `npm install` in *every* generated project
+ * died with `ETARGET / No matching version found`, before installing anything.
+ *
+ * The mistake is a reasonable-sounding assumption that is simply not true of DefinitelyTyped: a stub
+ * package tracks the *major and minor* of its subject and then versions on its own patch cadence,
+ * because it is published whenever the types change and not whenever React does. `@types/react` and
+ * `@types/react-dom` are two packages with two release histories, and neither follows `react`.
+ *
+ * This repository already knew — `packages/runtimes/react/package.json` pins `19.2.3` for the DOM
+ * stubs and `19.2.7` for the React ones. The generator had reconstructed the number instead of using
+ * the known-good one, which is how a value that is right in one file becomes wrong in another.
+ */
+const REACT_TYPES_VERSION = '19.2.7';
+const REACT_DOM_TYPES_VERSION = '19.2.3';
+
+/**
+ * The runtime kit range an app emitted by *this* generator needs.
+ *
+ * **This was `workspace:*` until M5-C, and that made every generated application uninstallable
+ * anywhere but inside this monorepo** — `workspace:` is a pnpm-only protocol, and `npm install` in an
+ * emitted project fails outright with `EUNSUPPORTEDPROTOCOL`. The generator's whole output is a
+ * project someone is meant to run, so the one dependency the generator itself controls has to be
+ * expressible to the package managers people actually use.
+ *
+ * A caret range, not an exact pin: the emitted code calls the kit's public API, and ADR-6 makes that
+ * API the contract between them, so a patch or minor kit release is exactly the thing a generated app
+ * should be able to take without regenerating. A breaking kit release changes the major, and this
+ * constant with it.
+ *
+ * `runtime-kit-range.test.ts` asserts that the installed kit satisfies this range, so the two cannot
+ * drift apart silently — the range is declared once here and *verified* against the kit, rather than
+ * restated in two places that will eventually disagree.
+ *
+ * Exported because the generator declares the same fact twice over: here, as the dependency a
+ * generated app installs, and as `TargetGenerator.runtimeRange`, the SPI field INV-12/INV-13 require.
+ * Those are the same compatibility claim seen from two sides, so they are one constant.
+ */
+export const RUNTIME_KIT_RANGE = '^0.1.0';
+
+// ## Emitted imports carry no file extension
+//
+// Local specifiers are `@/theme/tokens` and `./providers`, never `@/theme/tokens.js`. They *were* `.js`,
+// and that made **every generated application fail `next build`**:
+//
+// ```text
+// ./app/page.tsx
+// Module not found: Can't resolve '@/components/counter-screen.js'
+// ```
+//
+// The trap is that it typechecked clean. This scaffolder configures `"moduleResolution": "Bundler"`, and
+// under Bundler resolution TypeScript accepts a `.js` specifier and resolves it to the `.tsx` file beside
+// it — the `.js` convention belongs to `NodeNext`, where the emitted JavaScript really is what runs.
+// webpack does no such mapping: it looks for a file literally named `counter-screen.js`, finds `.tsx`, and
+// stops.
+//
+// So `tsc --noEmit` passed and `next build` failed, and **`tsc` was the only gate the pipeline had**.
+// M5-B and M5-C both reported "the emitted project typechecks clean against the real kit" — true, and not
+// the same claim as "the application builds". Three milestones were green on a project that could never
+// have run in a browser. That gap is what M5-D exists to close, and `next build` is now part of the suite
+// rather than something a person remembers to try.
+
 /** What the scaffolder needs to know about the generated app. */
 export interface ScaffoldInput {
   /** The package name for the generated project. */
@@ -42,6 +107,10 @@ export interface ScaffoldInput {
   readonly routesModule: string;
   /** The exported route table's name. */
   readonly routesName: string;
+  /** The module path of the asset manifest. */
+  readonly assetsModule: string;
+  /** The exported asset manifest's name. */
+  readonly assetsName: string;
   /** Store definitions to provide: `{ module, name }`. */
   readonly stores: readonly { readonly module: string; readonly name: string }[];
   /** The component the root route renders: `{ module, name }`, if there is one. */
@@ -91,14 +160,14 @@ function packageJson(input: ScaffoldInput): string {
     type: 'module',
     scripts: { dev: 'next dev', build: 'next build', start: 'next start' },
     dependencies: {
-      '@bridge/runtime-react': 'workspace:*',
+      '@bridge/runtime-react': RUNTIME_KIT_RANGE,
       next: NEXT_VERSION,
       react: REACT_VERSION,
       'react-dom': REACT_VERSION,
     },
     devDependencies: {
-      '@types/react': REACT_VERSION,
-      '@types/react-dom': REACT_VERSION,
+      '@types/react': REACT_TYPES_VERSION,
+      '@types/react-dom': REACT_DOM_TYPES_VERSION,
       typescript: '5.9.3',
     },
   };
@@ -150,7 +219,7 @@ function layout(input: ScaffoldInput): string {
     '',
     "import type { ReactNode } from 'react';",
     '',
-    "import { Providers } from './providers.js';",
+    "import { Providers } from './providers';",
     '',
     `/** The application shell for \`${input.name}\`. */`,
     'export default function RootLayout({ children }: { readonly children: ReactNode }) {',
@@ -177,22 +246,31 @@ function providers(input: ScaffoldInput): string {
   const lines: string[] = ["'use client';", '', banner('the program'), ''];
   // Same order the module builder produces: packages first, then the project's own modules, each
   // lexicographic. `sortSpecifiers` is the rule; this file is checked against it like any other.
-  lines.push("import { RouterProvider, StoreProvider, ThemeProvider } from '@bridge/runtime-react';");
+  lines.push(
+    "import { AssetProvider, RouterProvider, StoreProvider, ThemeProvider } from '@bridge/runtime-react';",
+  );
   lines.push("import type { ReactNode } from 'react';");
   const local = [
+    { specifier: input.assetsModule, name: input.assetsName },
     { specifier: input.routesModule, name: input.routesName },
     ...input.stores.map((store) => ({ specifier: store.module, name: store.name })),
     { specifier: input.themeModule, name: input.themeName },
   ].sort((a, b) => (a.specifier < b.specifier ? -1 : a.specifier > b.specifier ? 1 : 0));
   for (const entry of local) lines.push(`import { ${entry.name} } from '${entry.specifier}';`);
   lines.push('');
-  lines.push('/** Scopes every store, the theme and the router to this client root (ADR-15). */');
+  lines.push(
+    '/** Scopes every store, the theme, the assets and the router to this client root (ADR-15). */',
+  );
   lines.push('export function Providers({ children }: { readonly children: ReactNode }) {');
 
   // Nested providers, innermost last. Built as text rather than by folding a tree: the nesting is fixed and
   // shallow, and a fold would make the indentation a function of the store count.
-  const open: string[] = [`<ThemeProvider descriptor={${input.themeName}}>`, `<RouterProvider descriptor={${input.routesName}}>`];
-  const close: string[] = ['</RouterProvider>', '</ThemeProvider>'];
+  const open: string[] = [
+    `<ThemeProvider descriptor={${input.themeName}}>`,
+    `<AssetProvider manifest={${input.assetsName}}>`,
+    `<RouterProvider descriptor={${input.routesName}}>`,
+  ];
+  const close: string[] = ['</RouterProvider>', '</AssetProvider>', '</ThemeProvider>'];
   for (const store of input.stores) {
     open.push(`<StoreProvider definition={${store.name}}>`);
     close.unshift('</StoreProvider>');

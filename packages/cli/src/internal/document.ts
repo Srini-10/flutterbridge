@@ -8,6 +8,7 @@
 
 import { readFileSync, existsSync } from 'node:fs';
 import { basename, dirname, extname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import {
   load,
@@ -62,8 +63,15 @@ export async function openDocument(args: Args): Promise<Document> {
     ? (JSON.parse(readFileSync(manifestPath, 'utf8')) as Manifest)
     : undefined;
 
+  // Resolved from the working directory first, then from this package — the same bases the production
+  // commands use (`pluginBases`). M5-B fixed the production path and left this one calling the bare
+  // form, which resolves relative to `@bridge/compiler` and therefore finds only plugins the compiler
+  // itself depends on. In a checkout that difference is invisible; in an install it means
+  // `bridge inspect --plugin <my-catalog>` cannot see a catalog that `bridge build` loads fine.
   const specifiers = (value(args, 'plugin') ?? DEFAULT_PLUGIN).split(',').filter(Boolean);
-  const host = await PluginHost.load(specifiers);
+  const host = await PluginHost.load(specifiers, {
+    from: [process.cwd(), fileURLToPath(new URL('../', import.meta.url))],
+  });
   const widgets = WidgetRegistry.from(host.plugins);
 
   const loaded = load(readFileSync(path, 'utf8'), manifest);

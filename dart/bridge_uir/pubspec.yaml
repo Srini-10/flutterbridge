@@ -3,7 +3,7 @@ description: >-
   The Universal Intermediate Representation, as Dart models. Every type in this package is GENERATED
   from packages/uir/schema by tools/schema-codegen. Nothing here is hand-written.
 publish_to: 'none'
-version: 0.0.1
+version: 0.1.0
 
 environment:
   sdk: ^3.11.0

@@ -28,6 +28,7 @@ import 'package:bridge_analyzer/src/session/adapters/annotations/default_annotat
 import 'package:bridge_analyzer/src/session/adapters/route/gorouter_adapter.dart';
 import 'package:bridge_analyzer/src/session/adapters/route/material_adapter.dart';
 import 'package:bridge_analyzer/src/session/adapters/widget/flutter_adapter.dart';
+import 'package:bridge_analyzer/src/session/adapters/widget/gap_adapter.dart';
 
 /// The adapters this build understands.
 final class AdapterRegistry {
@@ -48,6 +49,8 @@ final class AdapterRegistry {
     const GoRouterAdapter(),
     const MaterialRouteAdapter(),
     const FlutterWidgetAdapter(),
+    // The first package adapter, and the test of this doc comment's own claim. See `gap_adapter.dart`.
+    const GapWidgetAdapter(),
     const DefaultAnnotationAdapter(),
   ]);
 
@@ -199,6 +202,53 @@ final class AdapterRegistry {
       final String? prop = adapter.childrenPropOf(widget);
       if (prop != null) {
         return prop;
+      }
+    }
+    return null;
+  }
+
+  /// The name of [widget]'s [index]th positional argument, if any adapter gives it one.
+  String? positionalPropOf(String widget, String? constructorName, int index) {
+    for (final WidgetAdapter adapter in widgetAdapters) {
+      final String? name = adapter.positionalPropOf(widget, constructorName, index);
+      if (name != null) {
+        return name;
+      }
+    }
+    return null;
+  }
+
+  /// The builder parameter of [widget], if any adapter says its only purpose is to scope a rebuild.
+  (String builderProp, String? valueProp)? rebuildBuilderOf(String widget) {
+    for (final WidgetAdapter adapter in widgetAdapters) {
+      final (String, String?)? entry = adapter.rebuildBuilderOf(widget);
+      if (entry != null) {
+        return entry;
+      }
+    }
+    return null;
+  }
+
+  /// The builder and count parameters of [widget]'s [constructorName], if any adapter says it builds its
+  /// children lazily.
+  ///
+  /// First adapter with an answer wins, in priority order — the same rule every other question here uses.
+  (String builderProp, String countProp)? lazyBuilderOf(String widget, String? constructorName) {
+    for (final WidgetAdapter adapter in widgetAdapters) {
+      final (String, String)? entry = adapter.lazyBuilderOf(widget, constructorName);
+      if (entry != null) {
+        return entry;
+      }
+    }
+    return null;
+  }
+
+  /// The fields to read off a constant of [typeName], if any adapter extracts its consts by value.
+  List<String>? constValueFieldsOf(String typeName) {
+    for (final WidgetAdapter adapter in widgetAdapters) {
+      final List<String>? fields = adapter.constValueFieldsOf(typeName);
+      if (fields != null) {
+        return fields;
       }
     }
     return null;

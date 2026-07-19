@@ -27,9 +27,12 @@ import type { Diagnostic, EmittedFile, GeneratorContext, GeneratorOutput } from 
 import type { AnyUirNode, NodeId } from '@bridge/uir';
 
 import { GeneratorDiagnosticCode } from './diagnostics/codes.js';
+import { isAppRoot, reportAppRoot } from './emit/app_root.js';
+import { assetManifestLines, collectAssets } from './emit/assets.js';
 import { emitComponent } from './emit/component.js';
 import type { EmitScope } from './emit/expression.js';
 import { ModuleBuilder, fileNameOf } from './emit/module.js';
+import { RUNTIME_MODULE } from './emit/runtime.js';
 import { banner, scaffold } from './emit/project.js';
 import { emitRoutes } from './emit/routes.js';
 import { emitStore } from './emit/store.js';
@@ -77,6 +80,17 @@ export function generateProject(context: GeneratorContext): GeneratorOutput {
   });
   files.push({ path: themeModule.path, contents: themeModule.toSource() });
 
+  // ── assets ──
+  //
+  // Collected from the whole program before any component is emitted, because an asset referenced from two
+  // screens is one manifest entry — the manifest is a property of the application, not of a file in it.
+  const assets = collectAssets(context.program.nodes as unknown as Node[], scope);
+  const assetsModule = new ModuleBuilder('src/assets/manifest.ts');
+  assetsModule.setBanner(banner("the program's asset references"));
+  assetsModule.use(RUNTIME_MODULE, 'AssetManifest', { typeOnly: true });
+  assetsModule.lineAll(assetManifestLines(assets, 'assetManifest'));
+  files.push({ path: assetsModule.path, contents: assetsModule.toSource() });
+
   // ── routes ──
   const routesModule = new ModuleBuilder('src/routes/routes.ts');
   routesModule.setBanner(banner("the program's app.Route nodes"));
@@ -96,12 +110,21 @@ export function generateProject(context: GeneratorContext): GeneratorOutput {
     module.setBanner(banner(`\`${String(store['name'])}\``));
     const name = emitStore(store, module, { ...scope, module });
     files.push({ path, contents: module.toSource() });
-    stores.push({ module: `@/stores/${fileNameOf(String(store['name'] ?? 'store'))}.js`, name });
+    stores.push({ module: `@/stores/${fileNameOf(String(store['name'] ?? 'store'))}`, name });
   }
 
   // ── components ──
   const componentModules = new Map<string, { readonly module: string; readonly name: string }>();
   for (const component of context.program.ofKind('ui.Component') as unknown as Node[]) {
+    // An application root emits no file. Everything a `MaterialApp` carries has already been consumed —
+    // `home:`/`routes:` into `app.Route`, `theme:` into the tokens N10 expands — and `layout.tsx`,
+    // `providers.tsx` and `page.tsx` below *are* its lowering. Emitting a component for it would mount the
+    // whole application a second time, inside itself. `app_root.ts` has the evidence and reports the
+    // parameters that genuinely have nowhere to go.
+    if (isAppRoot(component)) {
+      reportAppRoot(component, report);
+      continue;
+    }
     const base = fileNameOf(String(component['name'] ?? 'component'));
     const path = `src/components/${base}.tsx`;
     const module = new ModuleBuilder(path);
@@ -112,7 +135,7 @@ export function generateProject(context: GeneratorContext): GeneratorOutput {
     const name = emitComponent(component, module, { ...scope, module });
     files.push({ path, contents: module.toSource() });
     const id = component['id'];
-    if (typeof id === 'string') componentModules.set(id, { module: `@/components/${base}.js`, name });
+    if (typeof id === 'string') componentModules.set(id, { module: `@/components/${base}`, name });
   }
 
   // ── scaffold ──
@@ -121,10 +144,12 @@ export function generateProject(context: GeneratorContext): GeneratorOutput {
   files.push(
     ...scaffold({
       name: 'bridge-app',
-      themeModule: '@/theme/tokens.js',
+      themeModule: '@/theme/tokens',
       themeName,
-      routesModule: '@/routes/routes.js',
+      routesModule: '@/routes/routes',
       routesName: table.descriptor,
+      assetsModule: '@/assets/manifest',
+      assetsName: 'assetManifest',
       stores,
       root: rootComponentId === undefined ? undefined : componentModules.get(rootComponentId),
     }),
@@ -182,18 +207,35 @@ function rootScope(
     }
   }
   const names = nameIndex(context.program.nodes);
+
+  // Every role the theme can resolve. Both keys, because the two producers differ: N10 sets `name` and `role`
+  // to the same string for the 46 it derives from a seed, while a theme that states a colour directly carries
+  // its own `name` and a `role` only when the parameter it came from *is* a role (`ColorScheme(primary: …)`).
+  // A role-only index would miss the first; a name-only index would miss the second.
+  const themeRoles = new Set<string>();
+  for (const token of context.program.ofKind('app.Token') as unknown as Node[]) {
+    if (token['group'] !== 'color') continue;
+    if (typeof token['name'] === 'string') themeRoles.add(token['name']);
+    if (typeof token['role'] === 'string') themeRoles.add(token['role']);
+  }
+
   return {
     module: new ModuleBuilder('<none>'),
     report,
+    themeRoles,
     node: (id: NodeId) => context.program.get(id) as AnyUirNode | undefined,
     // A store member read from outside its store needs `useStore(...)` in scope, which M3-B's component
     // emitter does not yet establish — so it resolves to nothing here and the reader reports BRG3006 rather
     // than emitting a name that does not exist.
     signalRead: () => undefined,
+    signalLocal: () => undefined,
     localName: () => undefined,
     // Nothing is inside an action at the top level; the store and component emitters layer their own.
     paramInScope: () => undefined,
     declaredName: (id) => names.get(id),
+    // No class is ever emitted — M3-B lowers no `logic.ClassDecl`. Stated once, here, so `logic.New` can
+    // refuse a construction of one by name instead of emitting a reference that fails at `tsc`.
+    declaresClass: () => false,
   };
 }
 

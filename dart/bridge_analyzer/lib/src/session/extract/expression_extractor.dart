@@ -15,20 +15,32 @@ library;
 
 import 'package:analyzer/dart/ast/ast.dart';
 import 'package:analyzer/dart/ast/token.dart';
+import 'package:analyzer/dart/constant/value.dart';
 import 'package:analyzer/dart/element/element.dart';
 import 'package:analyzer/dart/element/type.dart';
 import 'package:bridge_analyzer/src/diagnostics/codes.dart';
 import 'package:bridge_analyzer/src/model/raw_node.dart';
+import 'package:bridge_analyzer/src/session/adapters/adapter_registry.dart';
+import 'package:bridge_analyzer/src/session/colour_constants.dart';
 import 'package:bridge_analyzer/src/session/extract/raw_node_emitter.dart';
 import 'package:bridge_analyzer/src/session/extract/scope.dart';
 
 /// Extracts expressions.
 final class ExpressionExtractor {
-  /// Creates an extractor emitting through [out].
-  ExpressionExtractor(this.out);
+  /// Creates an extractor emitting through [out], consulting [registry] for framework facts.
+  ExpressionExtractor(this.out, this.registry);
 
   /// The record factory.
   final RawNodeEmitter out;
+
+  /// The adapters. Consulted for two things here: which types' static consts are values (ADR-0023), and
+  /// what counts as a colour (M4-E).
+  final AdapterRegistry registry;
+
+  /// Where a hoisted literal colour becomes an `app.Token`. Wired after construction, because the token
+  /// extractor and this one are built in the same pass and neither can precede the other.
+  late final String Function(String hex, AstNode at) hoistColour;
+
 
   /// Dart's assignment operators, and the enum value each maps to (Spec v2.2 §A10).
   ///
@@ -53,6 +65,18 @@ final class ExpressionExtractor {
 
   /// Extracts [node] in [scope].
   RawNode extract(Expression node, Scope scope) {
+    // A colour, before anything else. INV-20 (ADR-13) requires every colour a mapped widget paints to
+    // resolve to an `app.Token`, and this is the only place in the pipeline that can make that true: a
+    // colour's *value* exists in Dart's constant evaluator and nowhere downstream. `Colors.white` reaches
+    // the compiler as a name with no value; `Color(0xFF2196F3)` as an integer nobody knows is a colour.
+    //
+    // Recognised by the resolved **type**, not by the parameter's name — so a colour nested three levels
+    // deep inside a `BoxDecoration`'s `boxShadow` list is found by the same rule that finds a `ColoredBox`'s
+    // `color`, and no widget is special-cased.
+    if (_colour(node) case final RawNode colour) {
+      return colour;
+    }
+
     switch (node) {
       case ParenthesizedExpression():
         // Parentheses are grouping, not semantics. The tree already carries the precedence.
@@ -114,6 +138,9 @@ final class ExpressionExtractor {
       // and asking for one produced 29 false BRG1303s in a seven-file fixture. A static access is a
       // reference to a declared constant; it is not a property read on a value.
       case PrefixedIdentifier() when _isStaticQualifier(node.prefix):
+        if (_constValue(node) case final RawNode folded) {
+          return folded;
+        }
         return _reference(
           node,
           node.prefix.element is PrefixElement
@@ -137,6 +164,9 @@ final class ExpressionExtractor {
       case PropertyAccess() when node.target != null:
         final Expression target = node.target!;
         if (target is Identifier && _isStaticQualifier(target)) {
+          if (_constValue(node) case final RawNode folded) {
+            return folded;
+          }
           return _reference(node, '${target.name}.${node.propertyName.name}', scope);
         }
         return RawNode(
@@ -151,6 +181,42 @@ final class ExpressionExtractor {
 
       case MethodInvocation():
         return _invocation(node, scope);
+
+      // `items[index]` — Dart's subscript, which **is** a method call: the language defines `a[b]` as
+      // `a.operator[](b)`, and the analyzer resolves it to that operator's element. So it is modelled as one
+      // rather than as an opaque expression, and no schema construct had to be invented for it.
+      //
+      // ## Why this was worth doing, beyond one operator
+      //
+      // It reached UIR as `logic.OpaqueExpr(reason: 'index')` until M4-H, and that single hole is what made
+      // `ListView.builder` unsupportable. N3's own header says so:
+      //
+      // > What it *cannot* do is recover a template from `ListView.builder(itemCount: n, itemBuilder:
+      // > (c, i) => W(items[i]))`, **because the collection is not named there — only indexed.**
+      //
+      // The collection *was* named — it is the receiver of the subscript — and extraction was throwing it
+      // away. With the receiver visible, N3 can prove the builder is a for-each over that collection and
+      // expand it. The owner was the analyzer, not the schema and not the compiler, and it was found by
+      // reading real analyzer output rather than the triage note, which had recorded the owner as the
+      // analyzer for the wrong reason ("cannot see an iterable to map over").
+      //
+      // An assignment *to* a subscript — `items[0] = x` — is not this case: it resolves to `operator []=`,
+      // which takes the value as a second argument and is a statement rather than an expression. It stays
+      // opaque, and `_target` reports it, because writing it as `operator[]` would silently drop the write.
+      case IndexExpression() when !node.inSetterContext():
+        return RawNode(
+          kind: 'logic.MethodCall',
+          span: out.span(node),
+          fields: <String, RawValue>{
+            'receiver': RawChild(extract(node.realTarget, scope)),
+            // The operator's name as Dart spells it. A generator lowering this for a list or a map emits
+            // `a[b]`, which is the same operator in JavaScript; one that cannot must report the method it
+            // does not know, which is strictly better than an opaque blob with no receiver.
+            'method': const RawLiteral('[]'),
+            'args': RawList(<RawValue>[RawChild(extract(node.index, scope))]),
+            'type': out.typeRef(node.staticType, at: node),
+          },
+        );
 
       case FunctionExpressionInvocation():
         return RawNode(
@@ -490,6 +556,165 @@ final class ExpressionExtractor {
     );
   }
 
+  /// A colour expression, lowered to the **name of the token that holds it**.
+  ///
+  /// Every colour form real Flutter uses reaches here as one of three shapes, all confirmed by running the
+  /// analyzer over them (the M4-E probe):
+  ///
+  ///     Color(0xFF2196F3)                        logic.New Color(Lit int)
+  ///     Colors.white                             logic.Ref, type Color
+  ///     Color.fromARGB(255, 33, 150, 243)        logic.New Color.fromARGB(Lit…)
+  ///     Colors.blue.shade700                     logic.PropertyAccess, type Color
+  ///     Theme.of(context).colorScheme.primary    nested PropertyAccess over a Call, type Color
+  ///
+  /// The first four **constant-evaluate**, so they are hoisted into an `app.Token` and replaced by that
+  /// token's name. The fifth does not — it is a read of the ambient theme — but it does not need to: a chain
+  /// ending in `colorScheme.<role>` already *names* a token, and that name is what the widget wants. So both
+  /// paths converge on the same output, a string naming a token, and the runtime resolves it through the
+  /// theme exactly as it resolves any other role.
+  ///
+  /// A colour that is neither constant nor a role read — `someCondition ? a : b`, a colour from a store —
+  /// returns `null` and falls through to ordinary expression extraction, where the generator refuses it with
+  /// a diagnostic naming the capability. Silently painting one of the branches would be the invention this
+  /// pipeline exists to prevent.
+  RawNode? _colour(Expression node) {
+    final DartType? type = node.staticType;
+    if (type is! InterfaceType || type.element.name != 'Color') {
+      return null;
+    }
+    // Only a framework `Color`. An application class of the same name is its own type.
+    final String library = type.element.library.identifier;
+    if (!registry.isFrameworkLibrary(library)) {
+      return null;
+    }
+
+    final String? token = _constantColourToken(node) ?? _roleOf(node);
+    if (token == null) {
+      return null;
+    }
+    return RawNode(
+      kind: 'logic.Lit',
+      span: out.span(node),
+      fields: <String, RawValue>{
+        'value': RawLiteral(token),
+        // A token *name*, so the type is String — which is what it now is. Recording it as `Color` would
+        // tell every later pass that a string is a colour.
+        'type': const RawMap(<String, RawValue>{'name': RawLiteral('String'), 'library': RawLiteral('dart:core')}),
+      },
+    );
+  }
+
+  /// The token holding [node]'s constant value, or `null` if it is not constant.
+  String? _constantColourToken(Expression node) {
+    final DartObject? value = node.computeConstantValue()?.value;
+    if (value == null) {
+      return null;
+    }
+    final int? argb = packedArgbOf(value);
+    if (argb == null) {
+      return null;
+    }
+    return hoistColour(argbHex(argb), node);
+  }
+
+  /// The Material role a `…colorScheme.<role>` chain names, or `null`.
+  ///
+  /// The one colour form that is *not* constant and still resolves: reading the ambient theme. It is
+  /// recognised structurally — a property read whose receiver is a property read named `colorScheme` — so
+  /// `Theme.of(context).colorScheme.primary` and a `colorScheme` held in a local both work, and neither
+  /// `Theme` nor `of` is named anywhere in this function.
+  static String? _roleOf(Expression node) {
+    final (Expression? receiver, String? property) = switch (node) {
+      PropertyAccess() => (node.target, node.propertyName.name),
+      PrefixedIdentifier() => (node.prefix, node.identifier.name),
+      _ => (null, null),
+    };
+    if (receiver == null || property == null) {
+      return null;
+    }
+    final String? receiverName = switch (receiver) {
+      PropertyAccess() => receiver.propertyName.name,
+      PrefixedIdentifier() => receiver.identifier.name,
+      SimpleIdentifier() => receiver.name,
+      _ => null,
+    };
+    return receiverName == 'colorScheme' ? property : null;
+  }
+
+  /// A static const extracted as its **value**, if the catalog says this type's consts are values.
+  ///
+  /// `Icons.star` resolves to `IconData(0xe5f9, fontFamily: 'MaterialIcons')`. Emitting a reference to
+  /// the *name* would oblige every runtime kit to carry Flutter's ~2000-entry `Icons` table so that
+  /// `Icons.star` resolves to something; the codepoint is the icon's actual identity, and it is what the
+  /// constant holds. So the reference is replaced by the construction it denotes.
+  ///
+  /// Which types this applies to, and which of their fields to read, is the catalog's answer and not this
+  /// function's — `MaterialCatalog.constValues`, per ADR-18. A second font-backed type is a JSON edit.
+  ///
+  /// `null` whenever anything is not exactly as expected: a type the catalog does not list, a constant
+  /// the evaluator cannot resolve, a field that is absent or is not a primitive. Every one of those falls
+  /// back to the ordinary reference, which is the behaviour that existed before — so this can only add
+  /// information, never lose it.
+  RawNode? _constValue(Expression node) {
+    final DartType? type = node.staticType;
+    final String? typeName = type is InterfaceType ? type.element.name : null;
+    if (typeName == null) {
+      return null;
+    }
+    final List<String>? fields = registry.constValueFieldsOf(typeName);
+    if (fields == null) {
+      return null;
+    }
+    final DartObject? value = node.computeConstantValue()?.value;
+    if (value == null) {
+      return null;
+    }
+
+    final Map<String, RawValue> namedArgs = <String, RawValue>{};
+    for (final String field in fields) {
+      final DartObject? read = value.getField(field);
+      if (read == null || read.isNull) {
+        // An unset optional — `fontPackage` on a Material icon. Absent rather than null: the emitted
+        // construction should say what the constant says, and it says nothing about this field.
+        continue;
+      }
+      final Object? primitive =
+          read.toIntValue() ?? read.toDoubleValue() ?? read.toStringValue() ?? read.toBoolValue();
+      if (primitive == null) {
+        // A field this cannot read is a constant this cannot faithfully reproduce, so none of it is
+        // used. A partial construction would silently drop whatever the field carried.
+        return null;
+      }
+      // `namedArgs` maps a name to an **Expr node**, not to a value — the schema is explicit and
+      // BRG1204 catches the difference. Each field becomes the `logic.Lit` it would have been had the
+      // constant's initializer been written at this call site, which is exactly what it denotes.
+      namedArgs[field] = RawChild(
+        RawNode(
+          kind: 'logic.Lit',
+          span: out.span(node),
+          fields: <String, RawValue>{
+            'value': RawLiteral(primitive),
+            'type': out.typeRef(read.type, at: node),
+          },
+        ),
+      );
+    }
+    if (namedArgs.isEmpty) {
+      return null;
+    }
+
+    return RawNode(
+      kind: 'logic.New',
+      span: out.span(node),
+      fields: <String, RawValue>{
+        'typeName': RawLiteral(typeName),
+        'namedArgs': RawMap(namedArgs),
+        'isConst': const RawLiteral(true),
+        'type': out.typeRef(type, at: node),
+      },
+    );
+  }
+
   RawNode _instanceRef(Expression node, String name) => RawNode(
     kind: 'logic.Ref',
     span: out.span(node),
@@ -681,6 +906,17 @@ final class ExpressionExtractor {
     return out.opaqueExpr(node, reason);
   }
 
+  /// A construct's name, **as a Dart programmer would say it**.
+  ///
+  /// The fallback used to be `node.runtimeType.toString()`, which prints the *analyzer's own
+  /// implementation class*: real applications produced diagnostics reading "A `AdjacentStringsImpl` has no
+  /// UIR representation" and "A `RethrowExpressionImpl` …". That names a private class in a package the
+  /// user does not depend on, for a construct they wrote as `'a' 'b'` and `rethrow`.
+  ///
+  /// M5-A's diagnostic audit found it by reading what two real applications actually printed — 25
+  /// `AdjacentStringsImpl` and 4 `RethrowExpressionImpl` between them. Every construct a real program hit is
+  /// now named; the fallback strips the `Impl` suffix the analyzer adds, so a construct nobody has met yet
+  /// degrades to `AdjacentStrings` rather than to something that looks like a leak.
   static String _describe(AstNode node) => switch (node) {
     CascadeExpression() => 'cascade',
     SpreadElement() => 'spread',
@@ -691,8 +927,24 @@ final class ExpressionExtractor {
     IndexExpression() => 'index',
     IsExpression() => 'is-check',
     ThrowExpression() => 'throw expression',
-    _ => node.runtimeType.toString(),
+    // `'a' 'b'` — Dart's adjacent string literals, which the language concatenates at compile time.
+    AdjacentStrings() => 'adjacent string literals',
+    RethrowExpression() => 'rethrow',
+    AwaitExpression() => 'await expression',
+    FunctionExpressionInvocation() => 'call of a function-valued expression',
+    SetOrMapLiteral() => 'set or map literal',
+    _ => _plainName(node),
   };
+
+  /// A node's class name without the analyzer's `Impl` suffix.
+  ///
+  /// A last resort. It is still an implementation name, and still worse than a written one — but
+  /// `AdjacentStrings` is at least a phrase a Dart programmer can search for, where `AdjacentStringsImpl`
+  /// is a class they cannot see.
+  static String _plainName(AstNode node) {
+    final String name = node.runtimeType.toString();
+    return name.endsWith('Impl') ? name.substring(0, name.length - 4) : name;
+  }
 
   static Object? _constValueOf(Expression node) => switch (node) {
     IntegerLiteral() => node.value,

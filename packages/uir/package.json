@@ -1,7 +1,6 @@
 {
   "name": "@bridge/uir",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.1.0",
   "description": "UIR schema, node types, NodeId/Anchor, canonical form, NDJSON IO, validators, migrations.",
   "type": "module",
   "exports": {
@@ -27,5 +26,17 @@
     "tsup": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
+  },
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/flutterbridge/flutterbridge.git",
+    "directory": "packages/uir"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=20.0.0"
   }
 }

@@ -10,10 +10,12 @@ FlutterBridge — a Flutter Application Compiler Platform.
 Flutter project → Universal Semantic Compiler → UIR → N generators (React/Next.js first)
 ```
 
-Read [README.md](README.md) for the package layout. **Caveat: the README's milestone status table is
-stale** — it says M1/M2 "not started", but `docs/spec/` carries amendments through v2.5, ADRs run to
-0022, and `packages/generators/react` + `packages/runtimes/react` hold real implementations. Trust
-`docs/` and the code over that table.
+Read [README.md](README.md) for the package layout. It was rewritten at M5-C and its status numbers are
+measured rather than estimated; the stale milestone table this file used to warn about is gone. `docs/spec/`
+carries amendments through v2.5 and ADRs run to 0024.
+
+Milestone reports live in `docs/m0/` … `docs/m5/` and are the best record of *why* things are as they are.
+`docs/m5/m5e-release-candidate.md` is the current state of play.
 
 ## Commands
 
@@ -31,7 +33,9 @@ just dart-analyze   # flutter analyze on fixtures/apps/hello_bridge
 just ci             # the full local gate — mirrors .github/workflows/ci.yml
 ```
 
-`just corpus` (M4) and `just e2e` (M2) are deliberate stubs and exit 1.
+`just corpus` (M4) is still a deliberate stub and exits 1. `just e2e` is real as of M5-D — it generates an
+application, `npm install`s it, runs `next build`, and drives it in Chromium. See also `just determinism`,
+`just measure`, `just package`, `just release-check`, `just analyzer-binary`.
 
 ## Hard rules
 

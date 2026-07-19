@@ -56,6 +56,16 @@ export interface ElevatedButtonProps {
   readonly onPressed?: (() => void) | null | undefined;
   /** The label. Flutter's `child` slot, per `catalog/widgets/material.json`. */
   readonly child?: ReactNode;
+  /**
+   * The leading icon, set by the `.icon` factory — `ElevatedButton.icon(icon:, label:)`.
+   *
+   * A factory on the *same* class, so it is a parameter of this component rather than a second one. M5-A
+   * found the gap by running a real application: the catalog did not declare the slot, so N8 reported
+   * `BRG2112` and the icon would have been dropped.
+   */
+  readonly icon?: ReactNode;
+  /** The label, set by the `.icon` factory. Rendered after {@link ElevatedButtonProps.icon}. */
+  readonly label?: ReactNode;
 }
 
 /**
@@ -90,6 +100,8 @@ export function ElevatedButton(props: ElevatedButtonProps): ReactElement {
       // this component exists to prevent, so it does not rely on either alone.
       onClick: onPressed ?? undefined,
     },
+    props.icon,
     props.child,
+    props.label,
   );
 }

@@ -6,6 +6,9 @@ packages:
   - 'packages/generators/*'
   - 'packages/runtimes/*'
   - 'tools/*'
+  # M5-D: the browser validation suite. Retires the M2 stub tag on `just e2e`, whose text named exactly
+  # this — "bridge build -> next build -> Playwright flows".
+  - 'e2e'
 
 # Explicitly approved postinstall scripts. esbuild is tsup's engine and needs its native binary.
 allowBuilds:

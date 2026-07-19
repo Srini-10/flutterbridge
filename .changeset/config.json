@@ -2,12 +2,20 @@
   "$schema": "https://unpkg.com/@changesets/config@3.0.0/schema.json",
   "changelog": "@changesets/cli/changelog",
   "commit": false,
-  "access": "restricted",
+  "access": "public",
   "baseBranch": "main",
   "updateInternalDependencies": "patch",
-  "___comment": "Spec §1.4: the compiler train is released in lockstep. Runtime kits version independently (LTS policy) and are therefore NOT in this group.",
+  "___comment": "Spec \u00a71.4: the compiler train is released in lockstep. Runtime kits version independently (LTS policy) and are therefore NOT in this group. `@bridge/verification` is absent because it is not published \u2014 its source is `export {}`.",
   "linked": [
-    ["@bridge/core", "@bridge/compiler", "@bridge/plugin-sdk", "@bridge/cli", "@bridge/gen-react", "@bridge/verification"]
+    [
+      "@bridge/core",
+      "@bridge/compiler",
+      "@bridge/plugin-sdk",
+      "@bridge/cli",
+      "@bridge/gen-react",
+      "@bridge/uir",
+      "@bridge/widgets-material"
+    ]
   ],
   "ignore": []
 }

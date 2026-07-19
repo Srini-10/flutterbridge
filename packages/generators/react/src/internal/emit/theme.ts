@@ -75,8 +75,14 @@ function tokenFields(token: Node): string[] {
   const fields = [
     `name: ${stringLiteral(String(token['name'] ?? ''))}`,
     `group: ${stringLiteral(String(token['group'] ?? 'color'))}`,
-    `light: ${jsonValue(token['light'])}`,
   ];
+  // `role` is what a component actually asks for. It was dropped here until M4-B, and the omission was
+  // invisible because N10 sets `name` and `role` to the same string for every role it derives — so a lookup
+  // by name found them and nothing appeared to be missing. The case it loses is the other producer: a theme
+  // that states `ColorScheme(primary: …)` extracts under whatever name the parameter had, carrying `role:
+  // 'primary'`, and a component asking for `primary` would not have found it.
+  if (typeof token['role'] === 'string') fields.push(`role: ${stringLiteral(token['role'])}`);
+  fields.push(`light: ${jsonValue(token['light'])}`);
   // Absent `dark` means the token does not vary by brightness — not that dark is missing. Emitting
   // `dark: undefined` would be the same to the runtime but would say something different to a reader.
   if (token['dark'] !== undefined) fields.push(`dark: ${jsonValue(token['dark'])}`);

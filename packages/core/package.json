@@ -1,7 +1,6 @@
 {
   "name": "@bridge/core",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.1.0",
   "description": "Plugin host, VFS + hash-guard, diagnostics engine, config loader, structured logging.",
   "type": "module",
   "exports": {
@@ -17,7 +16,7 @@
   ],
   "scripts": {
     "build": "tsc -b tsconfig.json && tsup",
-    "test": "vitest run --passWithNoTests",
+    "test": "vitest run",
     "typecheck": "tsc -b tsconfig.json && tsc -p tsconfig.test.json",
     "api-check": "api-extractor run --local"
   },
@@ -31,5 +30,17 @@
     "tsup": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
+  },
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/flutterbridge/flutterbridge.git",
+    "directory": "packages/core"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=20.0.0"
   }
 }

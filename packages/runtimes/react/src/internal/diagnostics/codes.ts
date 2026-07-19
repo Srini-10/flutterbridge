@@ -29,6 +29,31 @@ export const RuntimeDiagnosticCode = {
   UnknownToken: 'BRG4006',
   /** A colour token's value is not a form the runtime can parse. */
   InvalidColor: 'BRG4007',
+  /**
+   * An `Alignment` names a position CSS flexbox cannot express.
+   *
+   * Flutter's alignment is continuous and flexbox has three positions per axis. Snapping to the nearest would
+   * put the child somewhere the author did not write, with nothing on screen to say so; the generator refuses
+   * the same case at build time (`BRG3011`), so this fires only for a hand-written alignment.
+   */
+  UnrepresentableAlignment: 'BRG4008',
+  /**
+   * A token resolved to a value of the wrong shape for the accessor that asked for it.
+   *
+   * Distinct from {@link RuntimeDiagnosticCode.InvalidColor}, which is a colour whose *text* cannot be
+   * parsed. This is a spacing token holding a string, or a typography token holding a number — a theme
+   * assembled from the wrong groups, rather than one with a malformed value in the right group.
+   */
+  InvalidToken: 'BRG4009',
+  /**
+   * An image cannot be resolved: an asset key the manifest does not carry, or bytes in no format a browser
+   * displays.
+   *
+   * A refusal rather than a blank `<img>`, because a broken image looks like a slow network — an app with a
+   * missing asset would be indistinguishable from a working one until somebody looked closely. The generator
+   * refuses the same program at build time (`BRG3012`) when it can see the key.
+   */
+  UnknownAsset: 'BRG4010',
 } as const;
 
 /** A diagnostic code owned by the runtime kit (ADR-20). */

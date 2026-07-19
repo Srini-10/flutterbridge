@@ -10,7 +10,7 @@
 import type { Stmt } from '@bridge/uir';
 
 import { GeneratorDiagnosticCode } from '../diagnostics/codes.js';
-import { emitExpression, type EmitScope } from './expression.js';
+import { emitExpression, setStatementLowering, type EmitScope } from './expression.js';
 import { identifierOf } from './module.js';
 
 type Node = Record<string, unknown>;
@@ -204,3 +204,8 @@ function leaves(lines: readonly string[]): boolean {
 function indent(lines: readonly string[]): string[] {
   return lines.map((line) => (line === '' ? '' : `  ${line}`));
 }
+
+// Hands the statement emitter to the expression emitter, which needs it for a lambda with a statement body
+// and cannot import it without creating a cycle. See `setStatementLowering` for why the dependency runs this
+// way round.
+setStatementLowering((body, scope) => emitStatements(body, scope));

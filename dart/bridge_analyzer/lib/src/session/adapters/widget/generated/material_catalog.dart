@@ -18,6 +18,39 @@ enum WidgetRole {
   async,
 }
 
+/// A constructor whose children come from a builder closure over an index range.
+///
+/// `ListView.builder(itemCount: n, itemBuilder: (context, i) => W)` says what
+/// `for (final x in xs) W(x)` says, in the spelling Flutter chose for large lists. The parameter names
+/// are framework metadata — a package with its own lazy list would use its own — so ADR-18 puts them in
+/// the catalog rather than in an extractor.
+class LazyBuilder {
+  /// Creates a lazy-builder entry.
+  const LazyBuilder({required this.builderProp, required this.countProp});
+
+  /// The parameter holding the `(BuildContext, int) -> Widget` closure.
+  final String builderProp;
+
+  /// The parameter holding the item count.
+  final String countProp;
+}
+
+/// A widget whose only purpose is to scope a rebuild.
+///
+/// Flutter needs these because `setState` rebuilds a whole `State`. Under ADR-4 and ADR-20 a signal read
+/// *is* the subscription, so the scope a Flutter program stated by hand is what the signal graph computes —
+/// and INV-22 requires the wrapper not to survive extraction.
+class RebuildBuilder {
+  /// Creates an entry.
+  const RebuildBuilder({required this.builderProp, this.valueProp});
+
+  /// The parameter holding the builder closure.
+  final String builderProp;
+
+  /// The parameter whose listenable binds the builder's *value* parameter, when it has one.
+  final String? valueProp;
+}
+
 /// One widget's facts.
 class WidgetEntry {
   /// Creates an entry.
@@ -27,6 +60,7 @@ class WidgetEntry {
     this.childrenProp,
     this.transparentWithoutProps,
     this.role,
+    this.positionalProps = const <String, List<String>>{},
   });
 
   /// The widget's name.
@@ -49,6 +83,14 @@ class WidgetEntry {
 
   /// What it fundamentally is, if it is more than a container.
   final WidgetRole? role;
+
+  /// Names for the widget's **positional** arguments, keyed by constructor (`''` is the unnamed one).
+  ///
+  /// A named argument's meaning is its label and a slot's is the catalog's; a positional argument has
+  /// neither, and before ADR-0023 reached UIR as `_positional0` — present, typed, uninterpretable.
+  /// Keyed by constructor because Flutter names them differently per constructor:
+  /// `Image.asset(String name)` against `Image.network(String src)`.
+  final Map<String, List<String>> positionalProps;
 }
 
 /// The material catalog.
@@ -58,8 +100,8 @@ abstract final class MaterialCatalog {
 
   /// Widgets, by name.
   static const Map<String, WidgetEntry> widgets = <String, WidgetEntry>{
-  'Text': WidgetEntry(name: 'Text', role: WidgetRole.text),
-  'SelectableText': WidgetEntry(name: 'SelectableText', role: WidgetRole.text),
+  'Text': WidgetEntry(name: 'Text', role: WidgetRole.text, positionalProps: <String, List<String>>{'': <String>['data']}),
+  'SelectableText': WidgetEntry(name: 'SelectableText', positionalProps: <String, List<String>>{'': <String>['data']}),
   'FutureBuilder': WidgetEntry(name: 'FutureBuilder', role: WidgetRole.async),
   'StreamBuilder': WidgetEntry(name: 'StreamBuilder', role: WidgetRole.async),
   'Column': WidgetEntry(name: 'Column', childrenProp: 'children'),
@@ -82,15 +124,27 @@ abstract final class MaterialCatalog {
   'SliverAppBar': WidgetEntry(name: 'SliverAppBar', slots: <String>{'title', 'leading', 'flexibleSpace', 'bottom'}, childrenProp: 'actions'),
   'Scaffold': WidgetEntry(name: 'Scaffold', slots: <String>{'appBar', 'body', 'bottomNavigationBar', 'bottomSheet', 'drawer', 'endDrawer', 'floatingActionButton'}, childrenProp: 'persistentFooterButtons'),
   'ListTile': WidgetEntry(name: 'ListTile', slots: <String>{'leading', 'title', 'subtitle', 'trailing'}),
+  'Image': WidgetEntry(name: 'Image', positionalProps: <String, List<String>>{'asset': <String>['name'], 'network': <String>['src']}),
+  'Icon': WidgetEntry(name: 'Icon', positionalProps: <String, List<String>>{'': <String>['icon']}),
+  'ConstrainedBox': WidgetEntry(name: 'ConstrainedBox', slots: <String>{'child'}),
+  'FractionallySizedBox': WidgetEntry(name: 'FractionallySizedBox', slots: <String>{'child'}),
+  'ClipRect': WidgetEntry(name: 'ClipRect', slots: <String>{'child'}),
+  'Chip': WidgetEntry(name: 'Chip', slots: <String>{'label', 'avatar', 'deleteIcon'}),
+  'CircleAvatar': WidgetEntry(name: 'CircleAvatar', slots: <String>{'child'}),
+  'Badge': WidgetEntry(name: 'Badge', slots: <String>{'child', 'label'}),
+  'LinearProgressIndicator': WidgetEntry(name: 'LinearProgressIndicator'),
+  'CircularProgressIndicator': WidgetEntry(name: 'CircularProgressIndicator'),
+  'RichText': WidgetEntry(name: 'RichText'),
+  'Tooltip': WidgetEntry(name: 'Tooltip', slots: <String>{'child'}),
   'MaterialApp': WidgetEntry(name: 'MaterialApp', slots: <String>{'home'}),
   'CupertinoApp': WidgetEntry(name: 'CupertinoApp', slots: <String>{'home'}),
   'WidgetsApp': WidgetEntry(name: 'WidgetsApp', slots: <String>{'home'}),
   'Card': WidgetEntry(name: 'Card', slots: <String>{'child'}),
   'Dismissible': WidgetEntry(name: 'Dismissible', slots: <String>{'child', 'background', 'secondaryBackground'}),
   'FloatingActionButton': WidgetEntry(name: 'FloatingActionButton', slots: <String>{'child', 'icon', 'label'}),
-  'ElevatedButton': WidgetEntry(name: 'ElevatedButton', slots: <String>{'child'}),
-  'TextButton': WidgetEntry(name: 'TextButton', slots: <String>{'child'}),
-  'OutlinedButton': WidgetEntry(name: 'OutlinedButton', slots: <String>{'child'}),
+  'ElevatedButton': WidgetEntry(name: 'ElevatedButton', slots: <String>{'child', 'icon', 'label'}),
+  'TextButton': WidgetEntry(name: 'TextButton', slots: <String>{'child', 'icon', 'label'}),
+  'OutlinedButton': WidgetEntry(name: 'OutlinedButton', slots: <String>{'child', 'icon', 'label'}),
   'IconButton': WidgetEntry(name: 'IconButton', slots: <String>{'icon'}),
   'Center': WidgetEntry(name: 'Center', slots: <String>{'child'}),
   'Align': WidgetEntry(name: 'Align', slots: <String>{'child'}),
@@ -108,6 +162,14 @@ abstract final class MaterialCatalog {
   'InkWell': WidgetEntry(name: 'InkWell', slots: <String>{'child'}),
   'Semantics': WidgetEntry(name: 'Semantics', slots: <String>{'child'}),
   'SingleChildScrollView': WidgetEntry(name: 'SingleChildScrollView', slots: <String>{'child'}),
+  'TextField': WidgetEntry(name: 'TextField'),
+  'TextFormField': WidgetEntry(name: 'TextFormField'),
+  'FormField': WidgetEntry(name: 'FormField'),
+  'Checkbox': WidgetEntry(name: 'Checkbox'),
+  'Switch': WidgetEntry(name: 'Switch'),
+  'Radio': WidgetEntry(name: 'Radio'),
+  'Slider': WidgetEntry(name: 'Slider'),
+  'InputDecorator': WidgetEntry(name: 'InputDecorator', slots: <String>{'child'}),
   'Form': WidgetEntry(name: 'Form', slots: <String>{'child'}),
   'PopScope': WidgetEntry(name: 'PopScope', slots: <String>{'child'}),
   'ListenableBuilder': WidgetEntry(name: 'ListenableBuilder', slots: <String>{'child'}),
@@ -117,6 +179,44 @@ abstract final class MaterialCatalog {
   'SizedBox': WidgetEntry(name: 'SizedBox', slots: <String>{'child'}, transparentWithoutProps: <String>{'width', 'height'}),
   'DecoratedBox': WidgetEntry(name: 'DecoratedBox', slots: <String>{'child'}, transparentWithoutProps: <String>{'decoration'}),
   'RepaintBoundary': WidgetEntry(name: 'RepaintBoundary', slots: <String>{'child'}, transparentWithoutProps: <String>{}),
+  'Drawer': WidgetEntry(name: 'Drawer', slots: <String>{'child'}),
+  'NavigationDrawer': WidgetEntry(name: 'NavigationDrawer', childrenProp: 'children'),
+  'NavigationDrawerDestination': WidgetEntry(name: 'NavigationDrawerDestination', slots: <String>{'icon', 'selectedIcon', 'label'}),
+  'DrawerHeader': WidgetEntry(name: 'DrawerHeader', slots: <String>{'child'}),
+  'NavigationBar': WidgetEntry(name: 'NavigationBar', childrenProp: 'destinations'),
+  'NavigationDestination': WidgetEntry(name: 'NavigationDestination', slots: <String>{'icon', 'selectedIcon'}),
+  'NavigationRail': WidgetEntry(name: 'NavigationRail', slots: <String>{'leading', 'trailing'}, childrenProp: 'destinations'),
+  'NavigationRailDestination': WidgetEntry(name: 'NavigationRailDestination', slots: <String>{'icon', 'selectedIcon', 'label'}),
+  'BottomNavigationBar': WidgetEntry(name: 'BottomNavigationBar', childrenProp: 'items'),
+  'BottomNavigationBarItem': WidgetEntry(name: 'BottomNavigationBarItem', slots: <String>{'icon', 'activeIcon'}),
+  'PreferredSize': WidgetEntry(name: 'PreferredSize', slots: <String>{'child'}),
+  'BottomAppBar': WidgetEntry(name: 'BottomAppBar', slots: <String>{'child'}),
+  'MaterialBanner': WidgetEntry(name: 'MaterialBanner', slots: <String>{'content', 'leading'}, childrenProp: 'actions'),
+  'IntrinsicHeight': WidgetEntry(name: 'IntrinsicHeight', slots: <String>{'child'}),
+  'IntrinsicWidth': WidgetEntry(name: 'IntrinsicWidth', slots: <String>{'child'}),
+  'OverflowBox': WidgetEntry(name: 'OverflowBox', slots: <String>{'child'}),
+  'Baseline': WidgetEntry(name: 'Baseline', slots: <String>{'child'}),
+  'SnackBar': WidgetEntry(name: 'SnackBar', slots: <String>{'content', 'action'}),
+  'TabBar': WidgetEntry(name: 'TabBar', childrenProp: 'tabs'),
+  'Tab': WidgetEntry(name: 'Tab', slots: <String>{'icon', 'child'}),
+  'AnimatedOpacity': WidgetEntry(name: 'AnimatedOpacity', slots: <String>{'child'}),
+  'AnimatedContainer': WidgetEntry(name: 'AnimatedContainer', slots: <String>{'child'}),
+  'AnimatedAlign': WidgetEntry(name: 'AnimatedAlign', slots: <String>{'child'}),
+  'AnimatedPadding': WidgetEntry(name: 'AnimatedPadding', slots: <String>{'child'}),
+  'AnimatedSwitcher': WidgetEntry(name: 'AnimatedSwitcher', slots: <String>{'child'}),
+  'Hero': WidgetEntry(name: 'Hero', slots: <String>{'child'}),
+  'ExpansionTile': WidgetEntry(name: 'ExpansionTile', slots: <String>{'title', 'subtitle', 'leading', 'trailing'}, childrenProp: 'children'),
+  'DefaultTabController': WidgetEntry(name: 'DefaultTabController', slots: <String>{'child'}),
+  'ChoiceChip': WidgetEntry(name: 'ChoiceChip', slots: <String>{'label', 'avatar'}),
+  'FilterChip': WidgetEntry(name: 'FilterChip', slots: <String>{'label', 'avatar'}),
+  'ActionChip': WidgetEntry(name: 'ActionChip', slots: <String>{'label', 'avatar'}),
+  'ToggleButtons': WidgetEntry(name: 'ToggleButtons', childrenProp: 'children'),
+  'SegmentedButton': WidgetEntry(name: 'SegmentedButton', childrenProp: 'segments'),
+  'ButtonSegment': WidgetEntry(name: 'ButtonSegment', slots: <String>{'label', 'icon'}),
+  'ReorderableListView': WidgetEntry(name: 'ReorderableListView', childrenProp: 'children'),
+  'DataTable': WidgetEntry(name: 'DataTable'),
+  'FadeInImage': WidgetEntry(name: 'FadeInImage'),
+  'FilledButton': WidgetEntry(name: 'FilledButton', slots: <String>{'child', 'icon', 'label'}),
   };
 
   /// Base classes a component may extend.
@@ -159,6 +259,33 @@ abstract final class MaterialCatalog {
 
   /// The parameter of a route type that builds the destination widget.
   static const String navigationBuilderProp = 'builder';
+
+  /// Widgets whose only purpose is to scope a rebuild. See [RebuildBuilder].
+  static const Map<String, RebuildBuilder> rebuildBuilders = <String, RebuildBuilder>{
+  'Builder': RebuildBuilder(builderProp: 'builder'),
+  'ListenableBuilder': RebuildBuilder(builderProp: 'builder'),
+  'ValueListenableBuilder': RebuildBuilder(builderProp: 'builder', valueProp: 'valueListenable'),
+  };
+
+  /// Constructors whose children come from a builder closure over an index range, keyed
+  /// `Widget.constructor`.
+  ///
+  /// `ListView.builder(itemCount: n, itemBuilder: (c, i) => W)` says what `for (final x in xs) W(x)`
+  /// says, in the spelling Flutter chose for large lists. Extraction expands both into `ui.List`.
+  static const Map<String, LazyBuilder> lazyBuilders = <String, LazyBuilder>{
+  'GridView.builder': LazyBuilder(builderProp: 'itemBuilder', countProp: 'itemCount'),
+  'ListView.builder': LazyBuilder(builderProp: 'itemBuilder', countProp: 'itemCount'),
+  'PageView.builder': LazyBuilder(builderProp: 'itemBuilder', countProp: 'itemCount'),
+  };
+
+  /// Types whose static consts are extracted as their **value**, and the fields to read off it.
+  ///
+  /// `Icons.star` is `IconData(0xe5f9, fontFamily: 'MaterialIcons')`. Referencing it by name would
+  /// oblige every runtime kit to carry Flutter's ~2000-entry `Icons` table; the codepoint is the icon's
+  /// actual identity.
+  static const Map<String, List<String>> constValues = <String, List<String>>{
+  'IconData': <String>['codePoint', 'fontFamily', 'fontPackage'],
+  };
 
   /// Props that carry an accessibility label on any widget.
   static const Set<String> semanticLabelProps = <String>{'semanticLabel'};

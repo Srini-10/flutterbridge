@@ -10,4 +10,4 @@ library;
 /// but the compiler that wrote it.
 ///
 /// It is kept in step with `pubspec.yaml` by a test, not by discipline.
-const String bridgeBuildVersion = '0.0.1';
+const String bridgeBuildVersion = '0.1.0';

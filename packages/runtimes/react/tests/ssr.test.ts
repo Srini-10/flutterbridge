@@ -10,6 +10,13 @@ import {
   useSignal,
   useStore,
   useTheme,
+  useThemeSurface,
+  AssetProvider,
+  Divider,
+  Icon,
+  IconData,
+  Image,
+  type AssetManifest,
   type ThemeDescriptor,
 } from '../src/index.js';
 
@@ -142,5 +149,133 @@ describe('the theme renders on the server', () => {
     // Brightness is mutable state, so it is subject to ADR-15 exactly as a cart is: on a shared module, this
     // would be one user's dark mode on another user's screen.
     expect(light).toContain('#6750A4');
+  });
+});
+
+// ── M4-B: the theme surface renders on the server ─────────────────────────────────────────────────
+//
+// The surface is what every Material component reads a colour through, so if it needed a DOM, every themed
+// widget would be client-only — and the whole App Router shape ADR-16 pins would be unavailable to them.
+// These render with `renderToString` in the Node environment this file runs in: no jsdom, no `window`, no
+// `matchMedia`. A regression that reached for one would fail here rather than in someone's production build.
+
+describe('the theme surface is server-renderable (M4-B)', () => {
+  /** A theme with the roles a Material component paints, in the shape N10 emits. */
+  const material: ThemeDescriptor = {
+    tokens: [
+      { name: 'outlineVariant', group: 'color', role: 'outlineVariant', light: '#FFCAC4D0', dark: '#FF49454F' },
+      { name: 'surface', group: 'color', role: 'surface', light: '#FFFEF7FF', dark: '#FF141218' },
+      { name: 'surfaceTint', group: 'color', role: 'surfaceTint', light: '#FF6750A4', dark: '#FFD0BCFF' },
+      { name: 'elevation1', group: 'shadow', light: 0.05 },
+      { name: 'gap', group: 'space', light: 8 },
+    ],
+  };
+
+  it('resolves a role to a CSS colour with no DOM present', () => {
+    function Rule(): ReactElement {
+      const surface = useThemeSurface();
+      return createElement('hr', { style: { borderColor: surface.color('outlineVariant') } });
+    }
+    const html = renderToString(createElement(ThemeProvider, { descriptor: material }, createElement(Rule)));
+    // The CSS form, never the #AARRGGBB interchange form — a hex in a style attribute would be read by the
+    // browser as #RRGGBBAA and shift every channel by a byte (ADR-21).
+    expect(html).toContain('rgb(202 196 208)');
+    expect(html).not.toContain('#FFCAC4D0');
+  });
+
+  it('renders a real themed widget — Divider — on the server', () => {
+    const html = renderToString(
+      createElement(ThemeProvider, { descriptor: material }, createElement(Divider, { height: 8 })),
+    );
+    expect(html).toContain('rgb(202 196 208)');
+  });
+
+  it('server output matches the brightness the request was created with', () => {
+    const dark = renderToString(
+      createElement(
+        ThemeProvider,
+        { descriptor: material, options: { brightness: 'dark' } },
+        createElement(Divider, {}),
+      ),
+    );
+    expect(dark).toContain('rgb(73 69 79)');
+    // A second request at the default brightness must not see the first one's. Brightness lives in a
+    // provider-scoped signal, so this is ADR-15's guarantee applied to the theme.
+    const light = renderToString(
+      createElement(ThemeProvider, { descriptor: material }, createElement(Divider, {})),
+    );
+    expect(light).toContain('rgb(202 196 208)');
+  });
+
+  it('composes an elevation from tokens rather than a hard-coded overlay table', () => {
+    function Card(): ReactElement {
+      const surface = useThemeSurface();
+      return createElement('div', { style: { background: surface.elevation(1) } });
+    }
+    const html = renderToString(createElement(ThemeProvider, { descriptor: material }, createElement(Card)));
+    // surface #FEF7FF tinted 5% toward surfaceTint #6750A4 — composition on the kit's side of ADR-13's line,
+    // with the opacity coming from a `shadow`-group token rather than a table written into the kit.
+    expect(html).toContain('rgb(');
+    expect(html).not.toContain('#');
+  });
+
+  it('a missing token is a hole, not a default', () => {
+    function Missing(): ReactElement {
+      return createElement('div', { style: { color: useThemeSurface().color('tertiary') } });
+    }
+    expect(() =>
+      renderToString(createElement(ThemeProvider, { descriptor: material }, createElement(Missing))),
+    ).toThrow(/BRG4006/);
+  });
+});
+
+// ── M4-C: assets server-render ────────────────────────────────────────────────────────────────────
+//
+// `resolveImage` is a pure function of the provider and the manifest — no fetch, no cache, no `document` —
+// which is the whole reason an `<img>` can be server-rendered at all. A resolver that reached for a browser
+// API would make every image client-only, and the mismatch would surface as a hydration error rather than as
+// a clear failure. These run in this file's Node environment: no jsdom, no `window`.
+
+describe('the asset layer is server-renderable (M4-C)', () => {
+  const manifest: AssetManifest = { assets: { 'images/logo.png': '/assets/images/logo.png' } };
+
+  it('resolves an asset to its served URL with no DOM present', () => {
+    const html = renderToString(
+      createElement(
+        AssetProvider,
+        { manifest },
+        createElement(Image, { name: 'images/logo.png', width: 40 }),
+      ),
+    );
+    expect(html).toContain('src="/assets/images/logo.png"');
+    expect(html).toContain('width:40px');
+  });
+
+  it('renders an icon glyph on the server', () => {
+    const html = renderToString(createElement(Icon, { icon: new IconData({ codePoint: 0xe5f9 }) }));
+    expect(html).toContain('MaterialIcons');
+    expect(html).toContain(String.fromCodePoint(0xe5f9));
+  });
+
+  it('a missing asset fails loudly on the server rather than rendering a broken img', () => {
+    expect(() =>
+      renderToString(
+        createElement(AssetProvider, { manifest }, createElement(Image, { name: 'images/nope.png' })),
+      ),
+    ).toThrow(/BRG4010/);
+  });
+
+  it('two requests do not share a manifest', () => {
+    // The manifest holds no per-request state, but the kit is a library: a module-scope manifest would mean
+    // one per process, so a host rendering two generated apps would serve one app's assets to the other.
+    const other: AssetManifest = { assets: { 'images/logo.png': '/other/logo.png' } };
+    const first = renderToString(
+      createElement(AssetProvider, { manifest }, createElement(Image, { name: 'images/logo.png' })),
+    );
+    const second = renderToString(
+      createElement(AssetProvider, { manifest: other }, createElement(Image, { name: 'images/logo.png' })),
+    );
+    expect(first).toContain('/assets/images/logo.png');
+    expect(second).toContain('/other/logo.png');
   });
 });

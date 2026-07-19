@@ -47,6 +47,21 @@ export interface TokenDescriptor {
   readonly name: string;
   /** The token family. From `app.Token.group`. */
   readonly group: TokenGroup;
+  /**
+   * The Material role this token fills, when it fills one. From `app.Token.role`.
+   *
+   * For the 46 roles N10 derives from a seed, `role` and `name` are the same string — so a lookup by name
+   * finds them either way, and this field looks redundant. It is not: a theme may *also* state a colour under
+   * a name of its own (`ThemeData(primaryColor: …)` extracts as `name: 'primaryColor'`), and an author-written
+   * `ColorScheme(primary: …)` carries `role: 'primary'` against whatever name it was extracted under. A
+   * component asks for a role; without this field the only tokens it could find are the ones whose name
+   * happened to coincide with it.
+   *
+   * Kept as a plain string rather than a union of the schema's 46: the kit resolves roles and does not
+   * enumerate them (ADR-18 puts that vocabulary in the schema, and ADR-6/ADR-19 keep the kit off the schema's
+   * version). The generator holds `MaterialRole` and checks the name at build time.
+   */
+  readonly role?: string;
   /** The value in the light scheme. For colours, a hex string. From `app.Token.light`. */
   readonly light: unknown;
   /**
@@ -93,6 +108,34 @@ export interface ThemeInstance {
    * @throws RuntimeError - `BRG4006` if undefined, `BRG4007` if its value is not a colour.
    */
   color(name: string): Rgba;
+  /**
+   * Resolves a token at an **explicit** brightness. Not reactive — it reads no signal.
+   *
+   * The non-subscribing counterpart to {@link ThemeInstance.token}, for a caller that already knows which
+   * brightness it is resolving at and owns the subscription itself. `createThemeSurface` is the caller that
+   * matters: reading the brightness signal inside it would subscribe whoever *built* the surface — the
+   * provider — rather than whoever *uses* it, so the components that read a colour would never re-render on a
+   * theme flip while the provider re-rendered on every one.
+   *
+   * @param name - the token name.
+   * @param at - the brightness to resolve at.
+   * @returns the token's value at that brightness.
+   * @throws RuntimeError - `BRG4006` if the theme does not define `name`.
+   */
+  tokenAt(name: string, at: Brightness): unknown;
+  /**
+   * Resolves a colour token at an explicit brightness. Not reactive; see {@link ThemeInstance.tokenAt}.
+   *
+   * Resolves by **role first, then name**. A component asks for `outlineVariant` and means the role; a theme
+   * may carry it under a name of its own (see {@link TokenDescriptor.role}), and a name-only lookup would
+   * miss it and report a hole in a theme that has none.
+   *
+   * @param name - the role or token name.
+   * @param at - the brightness to resolve at.
+   * @returns the parsed colour.
+   * @throws RuntimeError - `BRG4006` if undefined, `BRG4007` if its value is not a colour.
+   */
+  colorAt(name: string, at: Brightness): Rgba;
   /** The group of a token, or `undefined` if the theme does not define it. Not reactive: groups are static. */
   groupOf(name: string): TokenGroup | undefined;
 }
@@ -121,6 +164,16 @@ export interface ThemeInstance {
 export function createTheme(descriptor: ThemeDescriptor, options: ThemeOptions = {}): ThemeInstance {
   const byName = new Map<string, TokenDescriptor>();
   for (const token of descriptor.tokens) byName.set(token.name, token);
+  // Roles resolve separately, and only where a token's `role` differs from its `name` — the common case is
+  // that they coincide (N10 sets both to the role) and this map stays empty. First declaration wins, so two
+  // tokens claiming one role resolve to the earlier in the descriptor rather than to whichever was iterated
+  // last: the token list is already in the compiler's canonical order, so "earlier" is a stable fact.
+  const byRole = new Map<string, TokenDescriptor>();
+  for (const token of descriptor.tokens) {
+    if (token.role !== undefined && token.role !== token.name && !byRole.has(token.role)) {
+      byRole.set(token.role, token);
+    }
+  }
   const names = Object.freeze(descriptor.tokens.map((token) => token.name));
   const brightness = signal<Brightness>(options.brightness ?? 'light');
 
@@ -129,7 +182,7 @@ export function createTheme(descriptor: ThemeDescriptor, options: ThemeOptions =
   const colorCache = new Map<string, Rgba>();
 
   const lookup = (name: string): TokenDescriptor => {
-    const token = byName.get(name);
+    const token = byName.get(name) ?? byRole.get(name);
     if (token === undefined) {
       throw new RuntimeError(
         RuntimeDiagnosticCode.UnknownToken,
@@ -148,31 +201,36 @@ export function createTheme(descriptor: ThemeDescriptor, options: ThemeOptions =
     return token.light;
   };
 
+  const colorAt = (name: string, at: Brightness): Rgba => {
+    const key = `${at}:${name}`;
+    const cached = colorCache.get(key);
+    if (cached !== undefined) return cached;
+    const value = resolve(name, at);
+    if (typeof value !== 'string') {
+      throw new RuntimeError(
+        RuntimeDiagnosticCode.InvalidColor,
+        `token '${name}' resolved to ${typeof value}, not a colour string; ` +
+          `its group is '${lookup(name).group}'`,
+        [name],
+      );
+    }
+    const parsed = parseColor(value);
+    colorCache.set(key, parsed);
+    return parsed;
+  };
+
   return {
     brightness,
     names,
-    has: (name) => byName.has(name),
-    groupOf: (name) => byName.get(name)?.group,
+    has: (name) => byName.has(name) || byRole.has(name),
+    groupOf: (name) => (byName.get(name) ?? byRole.get(name))?.group,
+    tokenAt: resolve,
+    colorAt,
     token(name) {
       return resolve(name, brightness.get());
     },
     color(name) {
-      const at = brightness.get();
-      const key = `${at}:${name}`;
-      const cached = colorCache.get(key);
-      if (cached !== undefined) return cached;
-      const value = resolve(name, at);
-      if (typeof value !== 'string') {
-        throw new RuntimeError(
-          RuntimeDiagnosticCode.InvalidColor,
-          `token '${name}' resolved to ${typeof value}, not a colour string; ` +
-            `its group is '${lookup(name).group}'`,
-          [name],
-        );
-      }
-      const parsed = parseColor(value);
-      colorCache.set(key, parsed);
-      return parsed;
+      return colorAt(name, brightness.get());
     },
   };
 }

@@ -22,6 +22,7 @@ final class ProjectInfo {
     required this.dependencies,
     this.sdkConstraint,
     this.flutterConstraint,
+    this.dartSdkPath,
   });
 
   /// Absolute path to the project root (the directory holding `pubspec.yaml`).
@@ -67,6 +68,14 @@ final class ProjectInfo {
 
   /// The declared Flutter SDK constraint, if any.
   final String? flutterConstraint;
+
+  /// The Dart SDK to analyze against, derived from the resolved package graph.
+  ///
+  /// `null` means "use the ambient SDK", which is correct for a plain Dart package and is what
+  /// `package:analyzer` does by default. For a Flutter project this is
+  /// `<flutter>/bin/cache/dart-sdk` — the SDK `flutter pub get` actually resolved the project with,
+  /// rather than whichever `dart` is running the analyzer. See `PackageConfig.dartSdkPath`.
+  final String? dartSdkPath;
 
   @override
   String toString() => 'ProjectInfo($packageName, ${libraryFiles.length} libraries)';

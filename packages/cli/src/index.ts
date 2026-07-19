@@ -1,6 +1,19 @@
 // @bridge/cli — The `bridge` command surface. Contains no compilation logic (INV-17).
 //
-// BRIDGE-STUB(M2): commands analyze | build | verify, --json output schemas, exit codes 0/1/2/3. See Blueprint §3 M2-T21.
+// ## Two surfaces, one rule
+//
+// **The production surface** (`init`, `doctor`, `analyze`, `generate`, `build`, `validate`, `clean`) takes a
+// Flutter project to an emitted application. It arrived in M5-B and retired the M2 stub tag this file
+// carried from M0 — until then the pipeline had no public entry point at all, and every milestone drove it
+// through tests and one-off harnesses. M5-A's report made the cost concrete.
+//
+// **The debugging surface** (below) looks at what the compiler did.
+//
+// Neither contains compilation logic. The production commands delegate: the analyzer is a separate program
+// in a separate language (ADR-2), normalization is the real `normalizationPipeline()` through the real
+// `PassManager`, and the generator is loaded through `PluginHost` exactly the way a third-party one would be
+// (Spec §1.2 rule 3). Writing files is the CLI's job precisely *because* ADR-22 forbids the generator from
+// touching disk.
 //
 // ## What is here today: the debugging surface
 //
@@ -17,21 +30,38 @@
 // **None of them can change how anything compiles.** No command mutates a document in place, and
 // `normalize` — the only one that writes at all — writes a new file.
 //
-// `analyze`, `build` and `verify` (the *production* surface) remain unimplemented; see the stub above.
+// They are a window, not a second opinion — and they are still the only commands that can tell you *why*
+// a build did what it did.
+
 
 import { LoadError, PluginError } from '@bridge/compiler';
 
 import { parseArgs, UsageError, type Args } from './internal/args.js';
 import { CliError, openDocument } from './internal/document.js';
+import { build, validate } from './internal/commands/build.js';
 import { diagnostics, explain, normalizeCommand, stats } from './internal/commands/pipeline.js';
+import { analyze, clean, doctor, generate, init } from './internal/commands/project.js';
 import { graph, inspect, routeGraph, signalGraph, widgetTree } from './internal/commands/views.js';
 import { bold, dim } from './internal/render.js';
+import { VERSION } from './internal/analyzer.js';
 
-const USAGE = `${bold('bridge')} — inspect what the compiler did.
 
-${bold('usage')}  bridge <command> <document.ndjson> [options]
+const USAGE = `${bold('bridge')} — compile a Flutter application to another target.
 
-${bold('commands')}
+${bold('usage')}  bridge <command> [options]
+
+${bold('getting started')}
+  init           write a bridge.json you can edit
+  doctor         check this machine can build, and say what to fix
+  build          analyze, normalize, generate, typecheck
+  validate       build, then check determinism and the normalization fixed point
+
+${bold('stages')}  ${dim('each one runs on its own, for when a build stops somewhere')}
+  analyze        run the analyzer over the Flutter project and write UIR
+  generate       normalize and emit the target project
+  clean          remove generated output and intermediate documents
+
+${bold('inspect')}  ${dim('what the compiler did — takes a document, changes nothing')}
   inspect        what the document contains: nodes by layer and kind, and its manifest
   graph          the reference graph — every node and every id it points at
   widget-tree    the UI tree of every component, drawn
@@ -43,15 +73,21 @@ ${bold('commands')}
   stats          where the time goes, pass by pass
 
 ${bold('options')}
-  --normalized       run N1..N11 before looking (default: the document as the analyzer emitted it)
   --json             machine-readable output
+  --config <path>    the configuration file (default: the nearest bridge.json)
+  --quiet            no progress reporting (build only)
+  --force            overwrite (init only)
+  --normalized       run N1..N11 before looking (inspection commands)
   --dot              graphviz output (graph only)
   --verbose          list every node a diagnostic fired on (diagnostics only)
   --out <path>       where to write (normalize only; default stdout)
   --manifest <path>  the manifest (default: <document>.manifest.json)
   --plugin <spec>    widget catalogs to load, comma-separated (default: @bridge/widgets-material)
 
-${dim('These tools are for debugging. None of them changes how anything compiles.')}
+${bold('exit codes')}
+  0 success   1 the program is not fit to build   2 the command was wrong   3 an input was refused
+
+${dim('docs  https://github.com/flutterbridge/flutterbridge#readme')}
 `;
 
 /** Runs [argv] (without node and script). Returns the process exit code. */
@@ -69,7 +105,32 @@ export async function main(argv: readonly string[]): Promise<number> {
     return args.command === '' ? 2 : 0;
   }
 
+  const cwd = process.cwd();
   try {
+    // The production surface works on a *project*; the inspection surface works on a *document*. Splitting
+    // here keeps a document from being opened for a command that has none to open.
+    switch (args.command) {
+      case 'version':
+        process.stdout.write(`${VERSION}\n`);
+        return 0;
+      case 'init':
+        return report(init(cwd, args));
+      case 'doctor':
+        return report(await doctor(cwd, args));
+      case 'analyze':
+        return report(await analyze(cwd, args));
+      case 'generate':
+        return report(await generate(cwd, args));
+      case 'build':
+        return report(await build(cwd, args));
+      case 'validate':
+        return report(await validate(cwd, args));
+      case 'clean':
+        return report(clean(cwd, args));
+      default:
+        break;
+    }
+
     const doc = await openDocument(args);
 
     switch (args.command) {
@@ -106,6 +167,15 @@ export async function main(argv: readonly string[]): Promise<number> {
 function say(output: string): number {
   if (output !== '') process.stdout.write(`${output}\n`);
   return 0;
+}
+
+/** Prints a command's output and returns its exit code. */
+function report(result: { output: string; exitCode: number }): number {
+  if (result.output !== '') {
+    const stream = result.exitCode === 0 ? process.stdout : process.stderr;
+    stream.write(`${result.output}\n`);
+  }
+  return result.exitCode;
 }
 
 /**

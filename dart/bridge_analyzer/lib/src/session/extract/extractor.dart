@@ -80,7 +80,7 @@ final class Extractor {
       registry: adapters,
     );
 
-    final ExpressionExtractor expressions = ExpressionExtractor(out);
+    final ExpressionExtractor expressions = ExpressionExtractor(out, adapters);
     // Expressions and statements are mutually recursive — a lambda body holds statements, a statement
     // holds expressions — so one of them must be wired after construction. The alternative is a single
     // class that does both, which is the God extractor this design exists to avoid.
@@ -114,6 +114,12 @@ final class Extractor {
       transitions,
     );
 
+    // Wired after construction, like the expression/statement pair above and for the same reason: the
+    // expression extractor hoists a literal colour into a token (INV-20, M4-E) and the token extractor emits
+    // it, so each needs the other and neither can be built first.
+    final TokenExtractor tokens = TokenExtractor(out, adapters, context);
+    expressions.hoistColour = tokens.hoistColour;
+
     return Extractor._(
       out: out,
       unit: unit,
@@ -121,7 +127,7 @@ final class Extractor {
       components: components,
       declarations: DeclarationExtractor(out, expressions, components, signals),
       routes: RouteExtractor(out, adapters, context),
-      tokens: TokenExtractor(out, adapters, context),
+      tokens: tokens,
     );
   }
 

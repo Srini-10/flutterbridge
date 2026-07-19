@@ -1,8 +1,7 @@
 {
   "name": "@bridge/widgets-material",
-  "version": "0.0.0",
-  "private": true,
-  "description": "Material widget mappers (~28 for MVP, Blueprint §5.2).",
+  "version": "0.1.0",
+  "description": "Material widget mappers (~28 for MVP, Blueprint \u00a75.2).",
   "type": "module",
   "exports": {
     ".": {
@@ -31,5 +30,17 @@
     "tsup": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
-  }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/flutterbridge/flutterbridge.git",
+    "directory": "packages/adapters/widgets-material"
+  },
+  "license": "Apache-2.0"
 }

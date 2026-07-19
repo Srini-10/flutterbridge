@@ -1,0 +1,40 @@
+# Line endings, and why this file is load-bearing rather than housekeeping.
+#
+# M5-F measured it: running the analyzer over the same Flutter source with CRLF line endings produces
+# **different UIR**. Only `span.length` changes — `line` and `column` are unaffected, and node ids are
+# byte-identical, so content addressing (ADR-17) holds — but the document differs:
+#
+#     LF   uir.ndjson  sha256 7dae021ec9c4e694   span.length 297
+#     CRLF uir.ndjson  sha256 1ed8ccf5e0728d0d   span.length 307
+#
+# A source span measured in characters legitimately counts the `\r`. The problem is not the measurement, it
+# is that **a checkout setting would change compiler output**. Git's `core.autocrlf` defaults to `true` on
+# Windows, so a Windows contributor would check out CRLF fixtures, and:
+#
+#   * `dart/bridge_analyzer/test/build_proof_test.dart` byte-compares a committed golden. It would fail.
+#   * `fixtures/uir/*.ndjson` would no longer be what the analyzer produces.
+#   * Cache keys (Spec §7.2 hashes extraction output) would differ per platform, so nothing would hit.
+#
+# The fix is to normalise the repository rather than to change what a span means: a span counting its own
+# line endings is correct, and rewriting that would be changing the compiler to suit a VCS default.
+#
+# `text=auto eol=lf` checks every text file out with LF on every platform. Windows editors have handled LF
+# for a decade; this is the ordinary setting for a project that hashes its own files.
+
+* text=auto eol=lf
+
+# Goldens: `-text` so git performs **no** conversion in either direction, under any user configuration.
+# These are files whose exact bytes are the assertion, and `eol=lf` above would already give them LF —
+# this is belt-and-braces for the one class where being wrong is silent.
+#
+# Fixture Dart *source* is deliberately NOT listed here: it must be normalised to LF like every other
+# source file, because it is the analyzer's input and its line endings are what this file exists about.
+*.ndjson   -text
+
+# Binary, so git neither diffs nor converts them.
+*.png      binary
+*.jpg      binary
+*.ico      binary
+*.woff     binary
+*.woff2    binary
+*.tgz      binary

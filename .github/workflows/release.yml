@@ -1,0 +1,321 @@
+# The release qualification matrix — every supported platform, the same pipeline.
+#
+# ## Why this is separate from ci.yml
+#
+# `ci.yml` is the per-commit gate: fast, Linux-only, and it answers "did this change break anything?".
+# This workflow answers a different question — "would 0.1.0 work on a machine we do not own?" — and it is
+# slower, because it installs a Flutter SDK, packs real tarballs, installs them from a real registry, and
+# drives a browser on three operating systems.
+#
+# M5-E is why it exists. That milestone found the CLI could not run on Windows **at all**: `doctor` shelled
+# out to `/usr/bin/env which`, `spawn` ran without a shell so `dart.bat` failed with `ENOENT`, and the
+# typecheck stage invoked `/usr/bin/env npx`. Three defects, none caught by any test, because every test
+# ran on macOS. The fixes are in; **this workflow is what turns them from "believed" into "observed"**.
+#
+# ## The rule this encodes
+#
+# Every platform runs the *same* release pipeline, and any platform-specific step is a deviation that has
+# to be justified in the step's own comment. There are exactly two, both recorded below: `pnpm` needs a
+# different shell on Windows, and the browser suite runs on one platform because Playwright's browser
+# download dominates its runtime.
+
+name: release-qualification
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+  schedule:
+    # Weekly, so platform rot is found by a cron rather than by a user. Flutter and Node both ship often.
+    - cron: '0 6 * * 1'
+
+env:
+  NODE_VERSION: '24.6.0'
+  # Pinned, and matching what the docs claim validation was performed against. A floating version would
+  # make a red run ambiguous: broken by us, or by an SDK release?
+  FLUTTER_VERSION: '3.44.0'
+
+jobs:
+  # ── 1. the pipeline, on every platform ──
+  pipeline:
+    name: ${{ matrix.os }} · pipeline
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # `fail-fast: false` on purpose: when Windows breaks we want to know whether Linux did too. A
+      # cancelled matrix turns two data points into one.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # `.gitattributes` pins `eol=lf`. This asserts the checkout honoured it, because if it did not,
+      # every span length in this run differs from every other platform's and the goldens below fail with
+      # a diff nobody would read as "line endings".
+      - name: line endings are LF on every platform
+        shell: bash
+        run: |
+          if grep -rlU $'\r' --include='*.dart' --include='*.ndjson' fixtures dart examples | grep -q .; then
+            echo "::error::CRLF found after checkout — .gitattributes is not being honoured"
+            grep -rlU $'\r' --include='*.dart' --include='*.ndjson' fixtures dart examples
+            exit 1
+          fi
+          echo "no CRLF in fixtures, dart or examples"
+
+      - uses: pnpm/action-setup@v4
+        with: { version: 11.11.0 }
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: toolchain versions
+        shell: bash
+        run: |
+          node --version && pnpm --version && dart --version && flutter --version | head -1
+
+      - name: install
+        run: pnpm install --frozen-lockfile
+
+      - name: build
+        run: pnpm run build
+
+      - name: generated code matches its source of truth
+        run: pnpm run codegen:check
+
+      - name: test
+        run: pnpm run test
+
+      - name: typecheck
+        run: pnpm run typecheck
+
+      # Case-exact imports, no CRLF, no literal path separators. Cheap, and it is the check that would have
+      # caught a Linux-only casing bug from a macOS desk.
+      - name: portability
+        run: node tools/check-portability.mjs
+
+      - name: stub tags
+        run: pnpm run lint:stubs
+
+      # ── the Dart domain ──
+      - name: dart analyze + test (bridge_uir)
+        working-directory: dart/bridge_uir
+        run: dart pub get && dart analyze --fatal-infos && dart test --reporter=expanded
+
+      - name: dart analyze + test (bridge_analyzer)
+        working-directory: dart/bridge_analyzer
+        run: dart pub get && dart analyze --fatal-infos && dart test --reporter=expanded
+
+      # ── the whole compiler, through its public entry point, on a real Flutter project ──
+      #
+      # `bridge` is invoked as its own binary rather than by importing anything, because the thing under
+      # test is the CLI a user runs — including how it spawns `dart`, which is exactly what was broken on
+      # Windows.
+      - name: bridge doctor
+        working-directory: examples/counter
+        shell: bash
+        run: |
+          flutter pub get
+          node ../../packages/cli/bin/bridge.mjs init
+          node ../../packages/cli/bin/bridge.mjs doctor
+
+      - name: bridge build
+        working-directory: examples/counter
+        shell: bash
+        run: node ../../packages/cli/bin/bridge.mjs build
+
+      - name: bridge validate — determinism and fixed point
+        working-directory: examples/counter
+        shell: bash
+        run: node ../../packages/cli/bin/bridge.mjs validate
+
+      - name: bridge clean
+        working-directory: examples/counter
+        shell: bash
+        run: node ../../packages/cli/bin/bridge.mjs clean
+
+      # The strongest cross-platform claim available: the same source must produce the same bytes on every
+      # operating system. Uploaded rather than compared in-job, because the comparison is across jobs.
+      - name: emit the UIR fingerprint for cross-platform comparison
+        working-directory: examples/counter
+        shell: bash
+        run: |
+          node ../../packages/cli/bin/bridge.mjs build > /dev/null
+          node -e "
+            const { createHash } = require('node:crypto');
+            const { readFileSync, writeFileSync } = require('node:fs');
+            const hash = (p) => createHash('sha256').update(readFileSync(p)).digest('hex');
+            writeFileSync('fingerprint.json', JSON.stringify({
+              platform: process.platform,
+              uir: hash('.bridge/uir.ndjson'),
+              normalized: hash('.bridge/normalized.ndjson'),
+            }, null, 2));
+          "
+          cat fingerprint.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fingerprint-${{ matrix.os }}
+          path: examples/counter/fingerprint.json
+
+  # ── 2. the same bytes everywhere ──
+  #
+  # A separate job because it can only run once every platform has reported. This is the property that
+  # makes a cache shareable and a golden meaningful, and until this workflow existed nothing checked it
+  # across operating systems — only across runs on one machine.
+  reproducible:
+    name: byte-identical across platforms
+    needs: pipeline
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { pattern: fingerprint-*, merge-multiple: false, path: fingerprints }
+
+      - name: compare
+        run: |
+          node -e "
+            const { readdirSync, readFileSync } = require('node:fs');
+            const runs = readdirSync('fingerprints').map((dir) =>
+              JSON.parse(readFileSync('fingerprints/' + dir + '/fingerprint.json', 'utf8')));
+            for (const run of runs) console.log(run.platform.padEnd(10), run.uir.slice(0, 16), run.normalized.slice(0, 16));
+            const uir = new Set(runs.map((r) => r.uir));
+            const normalized = new Set(runs.map((r) => r.normalized));
+            if (uir.size !== 1 || normalized.size !== 1) {
+              console.error('::error::output is not byte-identical across platforms');
+              process.exit(1);
+            }
+            console.log('byte-identical across ' + runs.length + ' platforms');
+          "
+
+  # ── 3. packaging and a real install, on every platform ──
+  #
+  # M5-C validated this against a local registry on macOS only. Windows is the interesting case: npm's
+  # global prefix is a different shape there, and `bridge` is installed as `bridge.cmd`.
+  install:
+    name: ${{ matrix.os }} · packaged install
+    runs-on: ${{ matrix.os }}
+    needs: pipeline
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 11.11.0 }
+      - uses: actions/setup-node@v4
+        with: { node-version: '${{ env.NODE_VERSION }}', cache: pnpm }
+      - uses: subosito/flutter-action@v2
+        with: { flutter-version: '${{ env.FLUTTER_VERSION }}', channel: stable, cache: true }
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run build
+
+      # Packs every publishable package and asserts the tarballs are installable: no `workspace:` or
+      # `catalog:` protocol survived, declared entry points are present, and the CLI carries the analyzer.
+      - name: pack release artifacts
+        run: node tools/pack-release.mjs
+
+      # ## One step, deliberately
+      #
+      # Starting the registry, publishing to it, and installing from it are one step because a background
+      # process started in an earlier step is not reliably alive in a later one — least of all on the
+      # Windows runner, where each step is a fresh shell. Splitting them reads better and would be a
+      # coin-flip; this is the version that either works or fails for a reason worth reading.
+      - name: publish to a local registry and install from it, as a user would
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          npm install -g verdaccio@6
+          mkdir -p "$RUNNER_TEMP/verdaccio"
+          cat > "$RUNNER_TEMP/verdaccio/config.yaml" <<'EOF'
+          storage: ./storage
+          uplinks:
+            npmjs: { url: https://registry.npmjs.org/ }
+          packages:
+            '@bridge/*': { access: $all, publish: $anonymous }
+            '**': { access: $all, publish: $anonymous, proxy: npmjs }
+          log: { type: stdout, format: pretty, level: warn }
+          EOF
+
+          verdaccio --config "$RUNNER_TEMP/verdaccio/config.yaml" --listen 4873 &
+          REGISTRY_PID=$!
+          trap 'kill $REGISTRY_PID 2>/dev/null || true' EXIT
+
+          for _ in $(seq 1 60); do
+            curl -sf http://localhost:4873/ -o /dev/null && break
+            sleep 1
+          done
+          curl -sf http://localhost:4873/ -o /dev/null
+
+          # The credential belongs to the job, never to the repository — M5-E found an earlier validation
+          # run had written one into the checked-in `.npmrc`, along with deleting two lines of comment.
+          echo "//localhost:4873/:_authToken=ci-validation-only" > "$RUNNER_TEMP/npmrc"
+          for tarball in release/*.tgz; do
+            npm publish "$tarball" --registry=http://localhost:4873 --userconfig="$RUNNER_TEMP/npmrc"
+          done
+
+          npm install -g @bridge/cli --registry=http://localhost:4873
+          bridge version
+
+          # From here nothing may reference the checkout: this is the external-user path. `lib/` and
+          # `pubspec.yaml` are copied out precisely so that a workspace assumption would fail here.
+          mkdir -p "$RUNNER_TEMP/app"
+          cp -r examples/counter/lib "$RUNNER_TEMP/app/"
+          cp examples/counter/pubspec.yaml "$RUNNER_TEMP/app/"
+          cd "$RUNNER_TEMP/app"
+
+          flutter pub get
+          bridge init
+          bridge doctor
+          bridge build
+          bridge validate
+          bridge clean
+
+  # ── 4. the browser ──
+  #
+  # **Deviation, stated rather than hidden**: this runs on Linux only. Playwright's browser download is
+  # ~120 MB and dominates the job; the suite asserts what the *generated application* does, which is a
+  # property of the emitted code rather than of the host. The host-dependent half — that `bridge build`
+  # produces that code at all — is covered on all three platforms by the `pipeline` job above.
+  #
+  # If a browser defect ever turns out to be platform-specific, this matrix is the place to widen.
+  browser:
+    name: browser validation (linux)
+    runs-on: ubuntu-latest
+    needs: pipeline
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 11.11.0 }
+      - uses: actions/setup-node@v4
+        with: { node-version: '${{ env.NODE_VERSION }}', cache: pnpm }
+      - uses: subosito/flutter-action@v2
+        with: { flutter-version: '${{ env.FLUTTER_VERSION }}', channel: stable, cache: true }
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run build
+      - run: pnpm --filter @bridge/e2e exec playwright install --with-deps chromium
+
+      # Generates a real application, `npm install`s it, runs `next build`, then drives production *and*
+      # development servers — React reports hydration mismatches, key warnings and hook-order violations
+      # only in development.
+      - name: browser suite
+        run: pnpm --filter @bridge/e2e run e2e
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: |
+            e2e/test-results
+            e2e/playwright-report

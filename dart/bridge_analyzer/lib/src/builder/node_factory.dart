@@ -48,9 +48,29 @@ final class NodeFactory {
   }
 
   uir.UirNode? _build(RawNode raw, List<String> anchorPath) {
-    final List<String> path = raw.anchorSegment == null
+    // The first segment of an anchor is the **file**, which is what the schema has always specified:
+    //
+    // > A human-stable path to a node, e.g. `lib/screens/checkout.dart#CheckoutScreen/build/Column[0]`.
+    //
+    // The implementation did not do it, and emitted a bare `CheckoutScreen/…`. That is fine until two files
+    // declare a widget of the same name — which is ordinary Dart, because a leading underscore makes a class
+    // private *to its library*, so `_EmptyState` in two screens is two different, correctly-named classes.
+    //
+    // M5-A found it by running a 113-file application: five `BRG1205`s, every one a pair of private helper
+    // widgets (`_EmptyState`, `_SideToolbar`, `_SectionHeader`, `_SendButton`, `_InitialAvatar`). The
+    // diagnostic was right — an anchor is the key an override is stored under and must name one node — and
+    // the anchor was wrong.
+    //
+    // Taken from the span rather than threaded through the builder: the record already knows which file it
+    // came from, and a second copy of that fact is a second thing that can disagree.
+    final String? segment = raw.anchorSegment;
+    final List<String> path = segment == null
         ? anchorPath
-        : <String>[...anchorPath, raw.anchorSegment!];
+        : <String>[
+            ...anchorPath,
+            // The root segment carries the file; every segment below it is just its own name.
+            if (anchorPath.isEmpty) '${raw.span.file}#$segment' else segment,
+          ];
 
     // 1. Fields, canonically: references resolved, children built, maps sorted, list order kept.
     final Map<String, Object?> fields = <String, Object?>{};

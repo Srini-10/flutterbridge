@@ -21,6 +21,7 @@ import 'package:bridge_analyzer/src/session/adapters/adapter.dart';
 import 'package:bridge_analyzer/src/session/adapters/adapter_context.dart';
 import 'package:bridge_analyzer/src/session/adapters/adapter_result.dart';
 import 'package:bridge_analyzer/src/session/adapters/widget/generated/material_catalog.dart';
+import 'package:bridge_analyzer/src/session/colour_constants.dart';
 
 /// Understands Flutter's widget model and its theme.
 final class FlutterWidgetAdapter implements WidgetAdapter, ThemeAdapter {
@@ -76,6 +77,36 @@ final class FlutterWidgetAdapter implements WidgetAdapter, ThemeAdapter {
 
   @override
   String? childrenPropOf(String widget) => MaterialCatalog.widgets[widget]?.childrenProp;
+
+  @override
+  String? positionalPropOf(String widget, String? constructorName, int index) {
+    // `''` keys the unnamed constructor, which is how the catalog spells it too — a constructor with no
+    // name has no name to key by, and inventing one would make the JSON say something Dart does not.
+    final List<String>? names =
+        MaterialCatalog.widgets[widget]?.positionalProps[constructorName ?? ''];
+    if (names == null || index >= names.length) {
+      return null;
+    }
+    return names[index];
+  }
+
+  @override
+  (String builderProp, String? valueProp)? rebuildBuilderOf(String widget) {
+    final RebuildBuilder? entry = MaterialCatalog.rebuildBuilders[widget];
+    return entry == null ? null : (entry.builderProp, entry.valueProp);
+  }
+
+  @override
+  (String builderProp, String countProp)? lazyBuilderOf(String widget, String? constructorName) {
+    // Keyed by `Widget.constructor`, because it is the constructor that differs: `ListView(children:)`
+    // writes its children out and `ListView.builder(itemBuilder:)` does not, and they are the same class.
+    final LazyBuilder? entry =
+        MaterialCatalog.lazyBuilders['$widget.${constructorName ?? ''}'];
+    return entry == null ? null : (entry.builderProp, entry.countProp);
+  }
+
+  @override
+  List<String>? constValueFieldsOf(String typeName) => MaterialCatalog.constValues[typeName];
 
   @override
   bool isStateHolder(DartType? type) => _isOrExtendsAny(type, MaterialCatalog.stateHolders);
@@ -182,7 +213,7 @@ final class FlutterWidgetAdapter implements WidgetAdapter, ThemeAdapter {
               TokenDeclaration(
                 group: 'color',
                 name: 'seed',
-                value: _hex(colour),
+                value: argbHex(colour),
                 at: seed!,
                 isDark: dark,
               ),
@@ -206,7 +237,7 @@ final class FlutterWidgetAdapter implements WidgetAdapter, ThemeAdapter {
         TokenDeclaration(
           group: 'color',
           name: name,
-          value: _hex(colour),
+          value: argbHex(colour),
           at: argument,
           isDark: dark,
           // On a `ColorScheme`, the argument name *is* the Material role. That is not inference — it
@@ -257,32 +288,25 @@ final class FlutterWidgetAdapter implements WidgetAdapter, ThemeAdapter {
   /// colour is not a design token; it is a value, and it stays in the widget tree where it was written.
   static int? _colourOf(Expression node) {
     final DartObject? value = node.computeConstantValue()?.value;
-    if (value == null || value.type?.element?.name != 'Color') {
+    // **By supertype, not by name.** `Colors.deepPurple` is a `MaterialColor`, which extends
+    // `ColorSwatch<int>` (material/colors.dart:104), which extends `Color`
+    // (painting/colors.dart:410) — so an exact `name != 'Color'` test rejected it, and with it every
+    // swatch in Flutter's palette: `Colors.blue`, `Colors.red`, `Colors.teal`, and the rest.
+    //
+    // M5-A found this on the first real application it was pointed at. `ColorScheme.fromSeed(seedColor:
+    // Colors.deepPurple)` yielded **no token at all**, so N10 derived no palette, and nineteen widgets —
+    // 45% of that application's total failures — reported `BRG3010` for roles the program had in fact
+    // asked for. The build proof never caught it because its seed is a `Color(0xFF6750A4)` and its named
+    // colours are `Colors.white` and `Colors.black12`, which genuinely *are* `Color`s rather than swatches.
+    //
+    // This was the last name-based type test in the adapter, and C1's evidence is exactly about the cost of
+    // one: recognition is by resolved supertype, because a name answers a question about spelling and the
+    // compiler needs an answer about types.
+    if (value == null || !isColourType(value.type)) {
       return null;
     }
-
-    // Flutter stored a packed `value` int historically, and since 3.27 stores `a`/`r`/`g`/`b` as
-    // doubles — `value` became a computed getter, which a constant evaluator cannot see. A reader that
-    // knows only `value` finds zero colours on any current Flutter.
-    final int? packed = value.getField('value')?.toIntValue();
-    if (packed != null) {
-      return packed;
-    }
-
-    final double? a = value.getField('a')?.toDoubleValue();
-    final double? r = value.getField('r')?.toDoubleValue();
-    final double? g = value.getField('g')?.toDoubleValue();
-    final double? b = value.getField('b')?.toDoubleValue();
-    if (a == null || r == null || g == null || b == null) {
-      return null;
-    }
-    return (_channel(a) << 24) | (_channel(r) << 16) | (_channel(g) << 8) | _channel(b);
+    return packedArgbOf(value);
   }
-
-  static int _channel(double value) => (value * 255).round().clamp(0, 255);
-
-  static String _hex(int colour) =>
-      '#${(colour & 0xFFFFFFFF).toRadixString(16).padLeft(8, '0').toUpperCase()}';
 
   /// Whether [type] has any of [names] among its **supertypes** — i.e. a class of this type is one of
   /// those things, rather than being one of those things itself.

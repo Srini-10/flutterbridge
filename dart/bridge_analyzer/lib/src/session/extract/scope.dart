@@ -30,6 +30,14 @@ enum Binds {
 
   /// A top-level declaration: a class, function, enum, or variable.
   topLevel,
+
+  /// A method of the enclosing class that writes state, and is therefore a `sig.Action`.
+  ///
+  /// Distinct from [Binds.field] because a reference to it is a reference to a *node* — the action carries a
+  /// symbol, and `logic.Ref.target` resolves to it. That is what makes the tear-off
+  /// `onDestinationSelected: _select` reach the generator as something it can call, rather than as a bare
+  /// name it reports `BRG3006` for.
+  action,
 }
 
 /// One binding in a scope.

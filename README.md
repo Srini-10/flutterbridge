@@ -1,63 +1,94 @@
 # FlutterBridge
 
-Flutter Application Compiler Platform.
+**A Flutter application compiler.** It reads a Flutter project and emits a working application for another
+target — React/Next.js today, other targets by adding a generator.
 
-```
-Flutter project → Universal Semantic Compiler → UIR → N generators (React/Next.js first)
+```text
+Flutter project → Universal Semantic Compiler → UIR → N generators
 ```
 
-**The architecture is frozen at Specification v2.0.** This repository implements it; it does not
-redesign it. New abstractions, package splits, or interface changes require an ADR that documents a
-proven contradiction in the spec — not a preference.
+```bash
+cd your-flutter-app
+bridge init && bridge doctor && bridge build
+```
+
+## What it is
+
+Not a transpiler and not a UI-kit port. The analyzer reads Dart's **resolved element model** — types, not
+text — and produces a layered intermediate representation. Eleven target-neutral passes normalize it. A
+generator lowers it to a target. The emitted code is a normal project you own.
+
+Two properties are contracts rather than aspirations, and `bridge validate` checks them on your project:
+
+- **Deterministic** — the same source produces byte-identical output.
+- **Fixed point** — `normalize(normalize(x)) == normalize(x)`, so incremental and clean builds agree.
+
+## What it refuses to do
+
+**It never invents.** A construct with no faithful lowering is refused with a diagnostic naming the missing
+capability and the subsystem that owns it — never approximated, never silently dropped. A generated app
+that renders and is subtly wrong is worth less than one that says exactly what it could not do.
+
+That is why `bridge build` writes *nothing* when generation reports an error.
 
 ## Status
 
-| Milestone | State |
+Honest numbers, measured rather than estimated:
+
+| | |
 | --- | --- |
-| M0 — De-risk spike | **complete** — [GO WITH CONDITIONS](docs/m0/m0-final-review.md) |
-| M1 — UIR + extraction | not started (unblocked; see the M1 readiness checklist) |
-| M2 — Pipeline + React MVP (walking skeleton / MVP) | not started |
-| M3+ | not started |
+| Widget coverage | **56.8%** of every widget instantiation in two real, unmodified Flutter apps |
+| Largest validated application | 113 files, 47 796 lines — analyzes cleanly |
+| What still blocks a real app from emitting | imperative navigation, the gesture model, and a handful of high-frequency language constructs |
 
-The architecture is **Specification v2.0 + [v2.1 amendments](docs/spec/v2.1-amendments.md)**, the
-latter adopted at the M0-T7 gate. M0 produced six new ADRs (11–16) and **zero UIR schema changes**.
+`examples/counter` compiles end to end with **no diagnostics at all**. A large production app does not yet:
+see [`docs/m5/m5a-large-application-validation.md`](docs/m5/m5a-large-application-validation.md) for exactly
+what stops it, measured on real code.
 
-Packages exist as skeletons from M0 so that the architecture rules (Spec §1.2) are enforced from the
-first commit. Directories marked *reserved* carry no code until their milestone.
+**`0.1.0` is the first installable release.** `0.x` is not a formality — the API can change in a minor
+release, and it stays `0.x` until a real Flutter application compiles end to end.
 
-## Layout
+**Validated end to end on macOS.** Linux and Windows run the same pipeline in
+[CI](docs/guide/ci.md), including a proof that all three produce byte-identical output — but nobody has
+sat at a Windows machine and used it. [Supported platforms](docs/guide/installation.md#supported-platforms)
+keeps those two claims apart.
 
-| Path | Purpose |
-| --- | --- |
-| `packages/uir` | UIR schema, node types, IDs, canonical form, NDJSON IO, migrations |
-| `packages/plugin-sdk` | Every extension interface (SPI) + plugin testkit |
-| `packages/core` | Plugin host, VFS + hash-guard, diagnostics, config, logging |
-| `packages/compiler` | Query engine, pass manager, normalization/analysis, legalization, orchestrator |
-| `packages/verification` | Verifier host + verifiers (static, visual, …) |
-| `packages/cli` | `bridge` command surface |
-| `packages/generators/react` | Target #1: Next.js generator |
-| `packages/adapters/widgets-material` | Material widget mappers |
-| `packages/runtimes/react` | `@bridge/runtime-react` — layout/theme/nav/state engines |
-| `dart/` | `bridge_analyzer` (extraction), `bridge_uir` (generated types), `bridge_lints` — *reserved, M1* |
-| `fixtures/` | Golden corpus: fixture apps, UIR (G1), emit (G2), screens (G3) |
-| `docs/adr/` | Architecture decision records (ADR-1…ADR-10 from Spec §12) |
-
-## Commands
+## Get started
 
 ```bash
-just install        # pnpm install --frozen-lockfile
-just build          # turbo: codegen -> build
-just test           # all package tests
-just lint           # architecture rules (Spec §1.2) + stub-tag discipline
-just lint-negative  # prove the architecture rules reject a forbidden import
-just dart-analyze   # flutter analyze on the fixture app
-just ci             # everything above — mirrors .github/workflows/ci.yml
+npm install -g @bridge/cli
+cd my-flutter-app && bridge doctor
 ```
 
-## Rules of engagement
+You need a Flutter SDK; it bundles the Dart the analyzer runs on. Nothing else.
 
-1. Specification v2.0 and the Implementation Blueprint are the single source of truth.
-2. Deferred work is a stub tagged `// BRIDGE-STUB(M<n>): <what the real impl adds>`; CI rejects
-   untagged stubs.
-3. Nothing on the Blueprint §5.2 blocklist gets implemented before its milestone.
-4. Found a problem? File it as an implementation issue. Do not redesign the interface.
+- [Installation](docs/guide/installation.md) — requirements, platforms, upgrading
+- [Quick start](docs/guide/quick-start.md)
+- [`examples/counter`](examples/counter) — a build that succeeds
+- [CLI reference](docs/guide/cli.md) · [Configuration](docs/guide/configuration.md)
+- [Supported widgets](docs/guide/supported-widgets.md) — 90 today, and what each refusal means
+- [CI and release qualification](docs/guide/ci.md) — the cross-platform matrix
+- [Version compatibility](docs/guide/compatibility.md) · [Plugins and generators](docs/guide/plugins.md)
+- [Troubleshooting](docs/troubleshooting.md) — ordered by how often real apps hit each thing
+- [Architecture](docs/guide/architecture.md) · [ADRs](docs/adr/)
+
+## Packages
+
+| Package | What it is |
+| --- | --- |
+| `@bridge/uir` | the IR vocabulary. Depends on nothing |
+| `@bridge/plugin-sdk` | the contract a generator or catalog implements |
+| `@bridge/core` | configuration, plugin host, diagnostics |
+| `@bridge/compiler` | the passes N1–N11 |
+| `@bridge/cli` | the `bridge` command |
+| `@bridge/gen-react` | the React/Next.js generator |
+| `@bridge/runtime-react` | the runtime kit emitted code imports |
+| `@bridge/widgets-material` | the Material widget catalog |
+| `bridge_analyzer` (Dart) | the Flutter frontend |
+
+A second target is a generator plus a runtime kit. It touches no compiler code — that is what the plugin
+realm's dependency rules exist to guarantee.
+
+## Licence
+
+Apache-2.0. See [LICENSE](LICENSE).
