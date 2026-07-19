@@ -64,6 +64,22 @@ final class Symbols {
   /// A route. Keyed by its path, which is what makes it a route.
   String route(String routePath) => 'route:$path#$routePath';
 
+  /// A navigation edge — an `app.RouteTransition` — keyed by its **ordinal within the file**.
+  ///
+  /// Every other symbol here names a *declaration*, and a declaration has a name to key on. A transition
+  /// has none: it is a call site, and `Navigator.push(...)` is declared nowhere. So the key is the order
+  /// it was extracted in, which is the source order of a deterministic walk.
+  ///
+  /// **This is not span matching and not a heuristic.** Nothing is ever *looked up* by this symbol from
+  /// the outside: the transition extractor mints it and hands it back to the very call site that asked,
+  /// so a `logic.Navigate` and its `app.RouteTransition` are bound by construction rather than by
+  /// searching for one another. The ordinal exists to make the symbol unique, not to make it findable.
+  ///
+  /// Keyed per file, because a file is the unit both extraction and the incremental cache work in.
+  /// Editing one method renumbers the transitions after it in that file and so changes their ids —
+  /// exactly as changing any other content does under ADR-17.
+  String navigation(int ordinal) => 'nav:$path#$ordinal';
+
   /// A design token. **Not** file-scoped: a token is a property of the application, and the same
   /// token declared in two places is the same token.
   static String token(String group, String name) => 'token:$group.$name';

@@ -140,7 +140,7 @@ final class StatementExtractor implements StatementExtractorRef {
           // INV-22 is what makes this mandatory rather than nice: `Navigator.pop` is a framework
           // runtime primitive, and it has been surviving extraction as a call to an unresolvable name
           // in violation of that invariant since the analyzer had a navigation adapter at all.
-          final RawNode? navigate = navigateOf(expression, node);
+          final RawNode? navigate = navigateOf(expression, node, scope);
           if (navigate != null) {
             return navigate;
           }
@@ -403,11 +403,38 @@ final class StatementExtractor implements StatementExtractorRef {
   ///
   /// Returns are also the majority of the corpus: 143 uses against 83 departures (M6-D).
   @override
-  RawNode? navigateOf(MethodInvocation expression, AstNode node) {
+  RawNode? navigateOf(MethodInvocation expression, AstNode node, Scope scope) {
     final NavigateAction? action = registry.navigationActionOf(context, expression);
     if (action == null) {
       return null;
     }
+    // ── a departure ────────────────────────────────────────────────────────────────────────────────
+    //
+    // The edge is asked for here rather than left to the expression walk, because this node *replaces*
+    // the call: if the statement became a `logic.Navigate` and nothing else visited the invocation, the
+    // transition would never be emitted and the departure would name nothing.
+    //
+    // The offer returns the edge's symbol, so the two are bound by construction. Nothing matches a span,
+    // nothing matches a name, and the generator reconstructs nothing — it reads a `NodeId` (M7-B).
+    if (action == NavigateAction.push || action == NavigateAction.replace) {
+      final String? transition = expressions.transitions?.call(expression, scope);
+      if (transition == null) {
+        // No resolvable edge: an inline destination that is not a component this project declares, or a
+        // path that names no route. Both are already reported where they were discovered. A
+        // `logic.Navigate` with no transition would say *depart* without saying where — strictly worse
+        // than the refusal it would replace, because the generator could no longer name what is missing.
+        return null;
+      }
+      return RawNode(
+        kind: 'logic.Navigate',
+        span: out.span(node),
+        fields: <String, RawValue>{
+          'action': RawLiteral(action.name),
+          'transition': RawRef(transition),
+        },
+      );
+    }
+
     if (action != NavigateAction.pop && action != NavigateAction.popUntil) {
       return null;
     }

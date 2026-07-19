@@ -384,7 +384,7 @@ final class ExpressionExtractor {
           //
           // This is where the corpus actually writes navigation. Hooking only the block form left the
           // node unreachable in every real application.
-          final RawNode? navigate = statements.navigateOf(value, body);
+          final RawNode? navigate = statements.navigateOf(value, body, scope);
           if (navigate != null) {
             return <RawValue>[RawChild(navigate)];
           }
@@ -1023,7 +1023,7 @@ abstract interface class StatementExtractorRef {
   /// and `{ Navigator.pop(c); }` are the same function and must extract to the same node. The first
   /// version of ADR-0025's implementation hooked only the statement form, and the whole corpus writes
   /// the arrow — the node reached UIR **zero** times until this existed.
-  RawNode? navigateOf(MethodInvocation node, AstNode at);
+  RawNode? navigateOf(MethodInvocation node, AstNode at, Scope scope);
 }
 
 /// Offers a method invocation to the transition extractor, with the scope its arguments bind against.
@@ -1031,4 +1031,10 @@ abstract interface class StatementExtractorRef {
 /// A function, not an interface, and it breaks a would-be import cycle: the transition extractor builds
 /// argument bindings, which needs this extractor, so it cannot be imported *by* this extractor. The
 /// orchestrator wires the two together by passing a bound method through this hook.
-typedef TransitionHook = void Function(MethodInvocation node, Scope scope);
+/// Returns the **symbol** of the `app.RouteTransition` the offer produced, or null when the call is not
+/// a navigation or carries no resolvable edge.
+///
+/// Returning the symbol is what M7-B added, and it is the whole of transition identity: the statement
+/// extractor asks for an edge and is told what that edge is called, so a `logic.Navigate` can name it
+/// without anything ever searching for it.
+typedef TransitionHook = String? Function(MethodInvocation node, Scope scope);

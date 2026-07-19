@@ -56,13 +56,22 @@ final class TransitionExtractor {
   /// function — which has no component — records no source rather than the previous component's.
   String? enclosingComponent;
 
-  /// Navigation call sites already turned into a transition, by AST identity.
+  /// Navigation call sites already turned into a transition, by AST identity, and the symbol each got.
   ///
   /// One call site is one edge. A method's body can be walked more than once — a `build` that both
   /// renders and (because a callback it creates writes a signal) reads as an action is walked as each —
   /// and the same `Navigator.push` node would then reach here twice. It is the *same* navigation, so it
-  /// is the *same* edge: the second offer is dropped rather than emitting a duplicate node.
-  final Set<MethodInvocation> _seen = Set<MethodInvocation>.identity();
+  /// is the *same* edge: the second offer emits nothing further and returns what the first one minted.
+  ///
+  /// A `Set` sufficed while the answer was "already done"; M7-B made the answer "and here is what that
+  /// edge is called". The value is null for a **path** destination, which gets no symbol — so membership
+  /// and symbol are two different facts and this is read with `containsKey`. Treating a null value as
+  /// absent re-emitted every path transition on the second walk, which is a duplicate edge in the nav
+  /// graph, and five tests caught it.
+  final Map<MethodInvocation, String?> _seen = Map<MethodInvocation, String?>.identity();
+
+  /// How many transitions this file has produced, and so the next one's ordinal.
+  int _ordinal = 0;
 
   /// Emits a transition for [node] if any adapter recognises it as a navigation.
   ///
@@ -70,15 +79,17 @@ final class TransitionExtractor {
   /// navigations, and for them `transitionOf` returns null and this does nothing. A recognised
   /// navigation that carries no edge — a `Navigator.pop()` — also returns null and is not a node
   /// (§A17.3).
-  void maybeExtract(MethodInvocation node, Scope scope) {
-    final TransitionDeclaration? declaration = registry.transitionOf(context, node);
-    if (declaration == null) {
-      return;
+  String? maybeExtract(MethodInvocation node, Scope scope) {
+    // Already extracted on an earlier walk of the same method: one call site is one edge, so this
+    // returns the symbol the first walk minted rather than emitting a second node. Checked with
+    // `containsKey`, because a path destination is recorded with a null symbol and is still extracted.
+    if (_seen.containsKey(node)) {
+      return _seen[node];
     }
 
-    // One call site is one edge, even if the method holding it is walked twice.
-    if (!_seen.add(node)) {
-      return;
+    final TransitionDeclaration? declaration = registry.transitionOf(context, node);
+    if (declaration == null) {
+      return null;
     }
 
     // Exactly one of the two destinations, mirroring the schema (§A17). The adapter's own constructors
@@ -87,14 +98,39 @@ final class TransitionExtractor {
     final RawValue? destination = _destination(declaration);
     if (destination == null) {
       // The inline destination is not a component this project declares (an inline `Container`, a
-      // widget from a package). It was reported where that was discovered; there is no edge to emit.
-      return;
+      // widget from a package). It was reported where that was discovered; there is no edge to emit —
+      // and so no symbol, which is what makes the caller keep its refusal rather than name an edge that
+      // does not exist.
+      return null;
     }
     final bool toRoute = declaration.path != null;
+
+    // ── the edge's identity (M7-B) ────────────────────────────────────────────────────────────────
+    //
+    // Minted here because here is the first place an edge exists — **and only for a destination whose
+    // node is certain to survive the build.**
+    //
+    // A symbol is the builder's word for *a declaration*, and `BRG1207` enforces that every symbol a
+    // pass declares corresponds to a node that survived it. It sweeps all of them, so an unreferenced
+    // one trips it too. A transition is not a declaration, and a **path** destination is not certain: a
+    // `RawRouteRef` resolves against the route table, and a path matching no route drops the edge with
+    // `BRG1308` — a warning by design, because there the program rather than the compiler is at fault.
+    // Minting a symbol for an edge that then drops turns that warning into a build error.
+    //
+    // A **component** destination cannot drop: it is a `RawRef` to a `ui.Component`, a real declaration,
+    // and `_destination` has already returned null for anything that does not resolve to one.
+    //
+    // Closing the path case needs a *conditional declaration* in the builder — a symbol whose node may
+    // legitimately not survive, exempt from the BRG1207 sweep, and whose references drop their owner
+    // instead of dangling. That is a builder amendment, and it is stated in full in
+    // `docs/m7/m7b-transition-identity.md` rather than improvised here.
+    final String? symbol = toRoute ? null : out.symbols.navigation(_ordinal++);
+    _seen[node] = symbol;
 
     out.emit(
       RawNode(
         kind: 'app.RouteTransition',
+        symbol: symbol,
         span: out.span(declaration.at),
         fields: <String, RawValue>{
           if (toRoute) 'target': destination else 'component': destination,
@@ -105,6 +141,7 @@ final class TransitionExtractor {
         },
       ),
     );
+    return symbol;
   }
 
   /// The transition's destination: a route named by path, or a component constructed inline.

@@ -205,6 +205,7 @@ class _HomeState extends State<Home> {
 ''';
 
 void main() {
+  m7bTransitionIdentity();
   group('inline MaterialPageRoute — the destination is a component (§A17)', () {
     test('a push targets the ui.Component it constructs, not a route', () async {
       final Extracted app = await extractNav(
@@ -544,6 +545,111 @@ class _HomeState extends State<Home> {
       final String clean = await build();
       final String incremental = await build(withCache: cacheDir);
       expect(incremental, clean, reason: 'the transition an incremental build writes is the clean one');
+    });
+  });
+}
+
+/// M7-B — transition identity.
+///
+/// A departure's `logic.Navigate` names the `app.RouteTransition` it performs, **by `NodeId`**. What
+/// these pin is that the binding is real: the id in the statement is the id of the edge. Nothing
+/// downstream searches for it, which is the whole point — no span matching, no name matching, and the
+/// generator reads a reference rather than reconstructing one.
+void m7bTransitionIdentity() {
+  group('M7-B — a departure names its edge', () {
+    String app(String navigation) =>
+        '''
+import 'package:flutter/material.dart';
+
+class Settings extends StatelessWidget {
+  const Settings({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('settings');
+}
+
+class Home extends StatefulWidget {
+  const Home({super.key});
+  @override
+  State<Home> createState() => _HomeState();
+}
+
+class _HomeState extends State<Home> {
+  @override
+  Widget build(BuildContext context) => ElevatedButton(
+    onPressed: () {
+      $navigation
+    },
+    child: const Text('go'),
+  );
+}
+
+class App extends StatelessWidget {
+  const App({super.key});
+  @override
+  Widget build(BuildContext context) => MaterialApp(
+    routes: <String, Widget Function(BuildContext)>{
+      '/settings': (BuildContext context) => const Settings(),
+    },
+  );
+}
+''';
+
+    test('an inline push binds logic.Navigate.transition to the edge id', () async {
+      final Extracted extracted = await extractNav(
+        app(
+          'Navigator.push<void>(context, '
+          'MaterialPageRoute<void>(builder: (BuildContext c) => const Settings()));',
+        ),
+      );
+
+      expect(extracted.errors, isEmpty);
+      final Map<String, dynamic> navigate = extracted.ofKind('logic.Navigate').single;
+      final Map<String, dynamic> edge = extracted.ofKind('app.RouteTransition').single;
+
+      expect(navigate['action'], 'push');
+      // The binding, and it is the milestone: not "a transition is present" but *the same id*. An
+      // assertion on presence alone would pass against a node pointing at the wrong edge.
+      expect(navigate['transition'], edge['id']);
+      // The edge still carries the destination, so nothing downstream reconstructs one.
+      expect(edge['component'], isA<String>());
+    });
+
+    test('pushReplacement binds the same way, with the replace action', () async {
+      final Extracted extracted = await extractNav(
+        app(
+          'Navigator.pushReplacement<void, void>(context, '
+          'MaterialPageRoute<void>(builder: (BuildContext c) => const Settings()));',
+        ),
+      );
+
+      final Map<String, dynamic> navigate = extracted.ofKind('logic.Navigate').single;
+      expect(navigate['action'], 'replace');
+      expect(navigate['transition'], extracted.ofKind('app.RouteTransition').single['id']);
+    });
+
+    test('a path destination gets no identity, so the departure keeps refusing', () async {
+      // A path resolves against the route table and its edge is **dropped** when nothing serves it
+      // (BRG1308, a warning by design). A symbol would make the builder require that node to survive —
+      // BRG1207 sweeps every declared symbol — so a path transition is deliberately given none, and the
+      // departure keeps the capability refusal instead of naming an edge that might not be there.
+      final Extracted extracted = await extractNav(
+        app("Navigator.pushNamed(context, '/settings');"),
+      );
+
+      expect(extracted.errors, isEmpty);
+      // The edge exists and resolves.
+      expect(extracted.ofKind('app.RouteTransition').single['target'], isA<String>());
+      // The departure does not.
+      expect(extracted.ofKind('logic.Navigate'), isEmpty);
+    });
+
+    test('a pop carries no transition — §A17.3 says there is no edge to name', () async {
+      final Extracted extracted = await extractNav(app('Navigator.pop(context);'));
+
+      final Map<String, dynamic> navigate = extracted.ofKind('logic.Navigate').single;
+      expect(navigate['action'], 'pop');
+      expect(navigate.keys, isNot(contains('transition')));
+      expect(extracted.ofKind('app.RouteTransition'), isEmpty);
     });
   });
 }
