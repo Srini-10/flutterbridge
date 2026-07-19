@@ -167,14 +167,16 @@ class App extends StatelessWidget {
       // The corpus measurement found this position carries far more arguments than `home:` does
       // (65 sites against 8), and it is the one with no node whatsoever. Recorded here so the M6-C
       // navigation work starts from a checked fact rather than from the schema's intent.
-      final List<Map<String, dynamic>> nodes = await extractNodes('''
+      // Raw: the fixture's own `$id` is Dart source for the *analyzed* program, not an interpolation in
+      // this one.
+      final List<Map<String, dynamic>> nodes = await extractNodes(r'''
 import 'package:flutter/material.dart';
 
 class Detail extends StatelessWidget {
   const Detail({required this.id, super.key});
   final int id;
   @override
-  Widget build(BuildContext context) => Text('\$id');
+  Widget build(BuildContext context) => Text('$id');
 }
 
 class Home extends StatelessWidget {
