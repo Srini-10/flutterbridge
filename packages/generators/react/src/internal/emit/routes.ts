@@ -137,16 +137,50 @@ export function emitRoutes(
 }
 
 /**
+ * The names a route supplies to its component, from `app.Route.arguments` (ADR-0025 D1).
+ *
+ * An argument with no `name` is not a name that can satisfy anything, so it is not counted — the check
+ * below reports a parameter as unsatisfied unless something *nameable* covers it.
+ */
+export function suppliedArgumentNames(route: Node): ReadonlySet<string> {
+  const args = Array.isArray(route['arguments']) ? (route['arguments'] as Node[]) : [];
+  const names = new Set<string>();
+  for (const argument of args) {
+    const name = argument['name'];
+    if (typeof name === 'string' && name !== '') names.add(name);
+  }
+  return names;
+}
+
+/**
+ * The arguments a route passes to its component, in the document's order.
+ *
+ * Order is the construction site's order, which is the author's. Sorting would be a second opinion about
+ * a list the program already stated.
+ */
+export function routeArguments(route: Node): readonly Node[] {
+  return Array.isArray(route['arguments']) ? (route['arguments'] as Node[]) : [];
+}
+
+/**
  * Reports every route whose component cannot be constructed from what the route records.
  *
- * A route renders its component with no arguments — `page.tsx` emits `<Screen />`. If that component
- * declares a required parameter, the emitted project cannot typecheck, and M6-C measured that this is
- * silent today: `bridge build` reports success and the failure appears in `tsc`, one layer below the
- * source the developer wrote.
+ * A route renders its component with the arguments `app.Route.arguments` carries. If the component
+ * declares a **required** parameter that no argument supplies, the emitted project cannot typecheck —
+ * and M6-C measured that this used to be silent: `bridge build` reported success and the failure appeared
+ * in `tsc`, one layer below the source the developer wrote.
  *
- * The arguments are not missing from the *document* — they are on the `ui.Element` in the app root's slot,
- * as `props`. What is missing is a field on `app.Route` linking the two, so this is a gap the compiler
- * owns and names rather than one the generator can close (see `BRG3018`).
+ * Until M7-D the field did not exist, so every required parameter was unsatisfiable and this fired for
+ * all of them. It exists now and the analyzer populates it, so the question narrowed to the one it was
+ * always about: **is there a value for this parameter?** A parameter the construction site passes is no
+ * longer reported, because there is nothing missing about it.
+ *
+ * What still reaches here is a required parameter with no argument at all. In valid Dart that is not a
+ * program the author wrote wrong — `Panel()` against `required this.label` does not compile — so it means
+ * the compiler could not record the value: a **positional** argument, whose parameter name is not stated
+ * at the call site; an argument whose expression has no UIR node, dropped rather than serialized as Dart
+ * source; or a construction no scoped walk reached, whose arguments cannot be bound without inventing a
+ * scope. Each is a compiler gap, and the message says so rather than blaming the program.
  *
  * @param routes - every `app.Route` in the program.
  * @param components - every `ui.Component`, to resolve `route.component` to its parameters.
@@ -175,17 +209,21 @@ export function reportUnsatisfiableRouteComponents(
     const required = params.filter((param) => param['required'] === true).map((param) => String(param['name']));
     if (required.length === 0) continue;
 
+    const supplied = suppliedArgumentNames(route);
+    const missing = required.filter((name) => !supplied.has(name));
+    if (missing.length === 0) continue;
+
     scope.report(
       GeneratorDiagnosticCode.RouteComponentArguments,
       'error',
       `the route \`${String(route['path'] ?? '/')}\` renders \`${String(target['name'] ?? component)}\`, whose ` +
-        `constructor requires ${required.map((name) => `\`${name}\``).join(', ')}. The construction site does ` +
-        'pass them and the analyzer does extract them — they are the `props` of the `ui.Element` in the app ' +
-        "root's slot — but `app.Route` has no field linking a route to that element, so the route emitter " +
-        'cannot reach them and would emit a component call with no arguments. Closing this needs the ' +
-        '`app.Route.arguments` amendment (docs/m6/GAP-route-constructor-arguments.md); it is not something ' +
-        'this generator can infer without re-deriving the route extractor and skipping the ADR-11a ' +
-        'URL-boundary analysis that a live-object argument requires.',
+        `constructor requires ${missing.map((name) => `\`${name}\``).join(', ')}, and the route supplies ` +
+        `${supplied.size === 0 ? 'no arguments at all' : `only ${[...supplied].sort().map((name) => `\`${name}\``).join(', ')}`}. ` +
+        'Missing capability: recording that argument on `app.Route.arguments`. Owner: the analyzer\'s route ' +
+        'extractor. A route argument is recorded only when its parameter is named at the construction site ' +
+        'and its value has a UIR node — a positional argument states no name, and an expression with no node ' +
+        'is dropped rather than carried as Dart source. Emitting the component without it would produce a ' +
+        'call that cannot typecheck, so nothing is emitted instead.',
       idOf(route),
     );
   }

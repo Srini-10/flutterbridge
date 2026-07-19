@@ -102,6 +102,11 @@ final class WidgetExtractor {
         );
 
       case InstanceCreationExpression():
+        // A route's page is usually a widget in a widget tree — `MaterialApp(home: LoginScreen(…))` —
+        // and a widget construction is reached *here*, never by the expression extractor. This is the
+        // scope its arguments bind against, and the route extractor needs it (see `route_extractor.dart`
+        // on why routes cannot be emitted from this walk).
+        expressions.noteConstruction(node, scope);
         return _element(
           node,
           name: node.constructorName.type.name.lexeme,

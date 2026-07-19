@@ -884,7 +884,7 @@ describe('M6-C — a route whose component requires constructor arguments', () =
   // `app.Route` naming it with nothing else. Three tests in this project's history passed against a
   // deliberately broken implementation because the hand-authored graph had the wrong shape.
 
-  /** A route rendering a component that declares `params`. */
+  /** A route rendering a component that declares `params`, and passing it nothing. */
   function appWithRouteParams(params: readonly Record<string, unknown>[]): AnyUirNode[] {
     return [
       { id: 'tk1', kind: 'app.Token', span, group: 'color', name: 'primary', light: '#FF3F51B5' } as unknown as AnyUirNode,
@@ -919,9 +919,11 @@ describe('M6-C — a route whose component requires constructor arguments', () =
     // Names both parameters, so the message says what is missing rather than that something is.
     expect(error?.message).toContain('`label`');
     expect(error?.message).toContain('`step`');
-    // Names the owning layer and the amendment, per §8 — never a generic message.
-    expect(error?.message).toContain('app.Route');
-    expect(error?.message).toContain('GAP-route-constructor-arguments');
+    // Names the owning layer and the capability, per §8 — never a generic message. It no longer names an
+    // amendment that has landed: `app.Route.arguments` exists, so what is missing is the *recording* of
+    // this particular argument, and the message says which layer records one.
+    expect(error?.message).toContain('app.Route.arguments');
+    expect(error?.message).toContain("the analyzer's route extractor");
   });
 
   it('emits nothing, because a project that cannot typecheck is worse than no project', () => {
@@ -948,5 +950,161 @@ describe('M6-C — a route whose component requires constructor arguments', () =
     reactGenerator.generate(context);
 
     expect(reported.find((d) => d.code === 'BRG3018')).toBeUndefined();
+  });
+});
+
+describe('M7-D — a route that records the arguments its construction site passed', () => {
+  // `app.Route.arguments` existed in the schema from ADR-0025 D1 and nothing populated it, so BRG3018
+  // fired for every required parameter of every routed component. The analyzer populates it now, and this
+  // block is the generator half: the field is *used*, so the diagnostic narrows to what is genuinely
+  // missing and the page constructs the component with what is there.
+
+  function appWithRouteParams(
+    params: readonly Record<string, unknown>[],
+    args?: readonly Record<string, unknown>[],
+  ): AnyUirNode[] {
+    return [
+      { id: 'tk1', kind: 'app.Token', span, group: 'color', name: 'primary', light: '#FF3F51B5' } as unknown as AnyUirNode,
+      {
+        id: 'c1',
+        kind: 'ui.Component',
+        span,
+        name: 'CounterPanel',
+        params,
+        render: element('e1', 'Column', {}, [text('t1', 'Hello')]),
+        localSignals: [],
+      } as unknown as AnyUirNode,
+      {
+        id: 'r1',
+        kind: 'app.Route',
+        span,
+        path: '/',
+        component: 'c1',
+        ...(args === undefined ? {} : { arguments: args }),
+      } as unknown as AnyUirNode,
+    ];
+  }
+
+  function constArgument(name: string, value: unknown): Record<string, unknown> {
+    return { name, transport: 'primitive', binding: { id: `b_${name}`, kind: 'bind.Const', span, value } };
+  }
+
+  const required = (name: string, type: string): Record<string, unknown> => ({
+    name,
+    required: true,
+    type: { name: type, library: 'dart:core' },
+  });
+
+  it('BRG3018 does not fire when every required parameter has an argument', () => {
+    // The whole point. `home: CounterPanel(label: 'Taps', step: 2)` satisfies both parameters, so there is
+    // nothing missing and nothing to report — and, because BRG3018 was the only error, a project is
+    // emitted where before there was none.
+    const { context, reported } = harness(
+      appWithRouteParams(
+        [required('label', 'String'), required('step', 'int')],
+        [constArgument('label', 'Taps'), constArgument('step', 2)],
+      ),
+    );
+    const files = reactGenerator.generate(context).files;
+
+    expect(reported.find((d) => d.code === 'BRG3018')).toBeUndefined();
+    expect(files.length).toBeGreaterThan(0);
+  });
+
+  it('BRG3018 still fires for the required parameter that has none, and names only that one', () => {
+    // Partial coverage is the case that would be easiest to get wrong in either direction: reporting all
+    // of them again (so the field bought nothing), or reporting none (so a component that cannot be
+    // constructed is emitted anyway). The message must name `step` and must not name `label`.
+    const { context, reported } = harness(
+      appWithRouteParams(
+        [required('label', 'String'), required('step', 'int')],
+        [constArgument('label', 'Taps')],
+      ),
+    );
+    reactGenerator.generate(context);
+
+    const error = reported.find((d) => d.code === 'BRG3018');
+    expect(error).toBeDefined();
+    expect(error?.message).toContain('requires `step`');
+    expect(error?.message).not.toContain('requires `label`');
+    // And says what *was* supplied, so the reader can see the difference rather than infer it.
+    expect(error?.message).toContain('supplies only `label`');
+  });
+
+  it('the page constructs the component with those arguments, as props', () => {
+    const { context } = harness(
+      appWithRouteParams([required('label', 'String')], [constArgument('label', 'Taps')]),
+    );
+    const page = fileAt(reactGenerator.generate(context).files, 'app/page.tsx') ?? '';
+
+    expect(page).toContain("<CounterPanel label={'Taps'} />");
+  });
+
+  it('the wrapper is a module-scope function, never an arrow in the outlet map', () => {
+    // `RouterOutlet` takes a `ComponentType`, so an argument-carrying route has to be passed as something
+    // that supplies them. An arrow written into the map literal would be a **new component identity on
+    // every render of `Page`** — and `Page` re-renders on every navigation — so React would unmount and
+    // remount the screen, discarding its state. A module-scope function has one identity for the life of
+    // the module. This is the assertion that keeps it there.
+    const { context } = harness(
+      appWithRouteParams([required('label', 'String')], [constArgument('label', 'Taps')]),
+    );
+    const page = fileAt(reactGenerator.generate(context).files, 'app/page.tsx') ?? '';
+
+    expect(page).toMatch(/^function CounterPanelRoute\(\) \{$/m);
+    expect(page).toContain('routes={{ "root": CounterPanelRoute }}');
+    // No inline component in the map — the defect this pins.
+    expect(page).not.toMatch(/routes=\{\{[^}]*=>/);
+  });
+
+  it('an argument whose value the page cannot reach is named as a capability, not as a hash', () => {
+    // `hello_bridge` is exactly this: `home: LoginScreen(isDark: _isDark, onToggleTheme: _toggleTheme)`
+    // where both read state the **application root** declares — and an app root is consumed, not emitted,
+    // so its signals have no home in the project. The analyzer records the argument correctly; nothing has
+    // promoted the state it reads.
+    //
+    // The failure mode this pins is a *message*: lowered naively, `emitBinding` reports
+    // "a bind.Signal names `36d5792cf2325285`, which is not a signal in scope" — a content hash, no owner,
+    // and no capability. This project's own rule (routes.ts) is that a diagnostic names the capability and
+    // the layer that owns it, so the low-level report is replaced by one that does.
+    const { context, reported } = harness(
+      appWithRouteParams(
+        [required('isDark', 'bool')],
+        [
+          {
+            name: 'isDark',
+            transport: 'primitive',
+            binding: { id: 'b_isDark', kind: 'bind.Signal', span, signal: 'sig_nowhere' },
+          },
+        ],
+      ),
+    );
+    reactGenerator.generate(context);
+
+    // No hash reaches the reader.
+    expect(reported.map((d) => d.message).join('\n')).not.toContain('sig_nowhere');
+
+    const error = reported.find((d) => d.code === 'BRG3013');
+    expect(error).toBeDefined();
+    expect(error?.severity).toBe('error');
+    expect(error?.message).toContain('`isDark`');
+    // The capability and its owner, per §8.
+    expect(error?.message).toContain('Missing capability');
+    expect(error?.message).toContain('promote-cross-route-state');
+    expect(error?.message).toContain('app.Route.arguments');
+
+    // And BRG3018 stays silent: the parameter *has* an argument, so nothing is missing from the route.
+    // What is missing is a pass, and that is a different diagnostic with a different owner.
+    expect(reported.find((d) => d.code === 'BRG3018')).toBeUndefined();
+  });
+
+  it('a route with no arguments is still passed as its bare component', () => {
+    // The common case must emit the bytes it always did: no wrapper, no indirection, no diff for every
+    // existing program.
+    const { context } = harness(appWithRouteParams([]));
+    const page = fileAt(reactGenerator.generate(context).files, 'app/page.tsx') ?? '';
+
+    expect(page).toContain('routes={{ "root": CounterPanel }}');
+    expect(page).not.toContain('CounterPanelRoute');
   });
 });

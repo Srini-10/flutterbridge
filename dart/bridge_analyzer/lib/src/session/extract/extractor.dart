@@ -120,13 +120,20 @@ final class Extractor {
     final TokenExtractor tokens = TokenExtractor(out, adapters, context);
     expressions.hoistColour = tokens.hoistColour;
 
+    // A route is emitted from the standalone walk below, which has no scope — but a route's *arguments*
+    // must be bound in one. So the route extractor is offered every construction the scoped walks reach,
+    // banks the scope, and binds against it when the standalone walk emits. `route_extractor.dart`'s
+    // header states why the emission cannot simply move onto the scoped walk as a transition's does.
+    final RouteExtractor routes = RouteExtractor(out, adapters, context, bindings);
+    expressions.constructions = routes.noteScope;
+
     return Extractor._(
       out: out,
       unit: unit,
       context: context,
       components: components,
       declarations: DeclarationExtractor(out, expressions, components, signals),
-      routes: RouteExtractor(out, adapters, context),
+      routes: routes,
       tokens: tokens,
     );
   }
@@ -194,6 +201,10 @@ final class Extractor {
     // Routes and tokens are declared *inside* expressions — `MaterialApp(routes: …)` sits in a build
     // method, and a `ColorScheme` in a theme. They are collected on the same walk rather than a second
     // one: two passes over a large application's AST is a cost with no benefit.
+    //
+    // **After** the declaration loop above, and that order is load-bearing rather than incidental: the
+    // scopes a route binds its arguments in are banked by those scoped walks, and this walk spends them.
+    // Running it first would emit every route with its arguments unrecorded.
     unit.accept(_ConstructionVisitor(routes, tokens));
 
     // Tokens are merged, not emitted on sight: `theme:` and `darkTheme:` state the same token twice,
@@ -268,6 +279,13 @@ final class Extractor {
 /// `ColorScheme` inside a `ThemeData` inside a `MaterialApp` inside a `build`. They are collected on
 /// the same walk as everything else rather than a second one: two passes over a large application's
 /// AST is a cost with no benefit.
+///
+/// **This visitor has no scope, and it is not given one.** It reaches every construction in the file,
+/// including those no scoped walk goes near, and that reach is exactly why routes are emitted from here:
+/// a route declared in a helper method of a component — whose body is not walked as Dart, because the
+/// class is extracted semantically — is still found. Reconstructing scopes here would mean
+/// reimplementing scoping for a second walk, and the two would drift. So the scope travels the other
+/// way: the scoped walks bank it (`RouteExtractor.noteScope`) and this walk spends it.
 final class _ConstructionVisitor extends RecursiveAstVisitor<void> {
   _ConstructionVisitor(this._routes, this._tokens);
 

@@ -113,22 +113,58 @@ export interface ScaffoldInput {
   readonly assetsName: string;
   /** Store definitions to provide: `{ module, name }`. */
   readonly stores: readonly { readonly module: string; readonly name: string }[];
-  /** The component the root route renders: `{ module, name }`, if there is one. */
-  readonly root: { readonly module: string; readonly name: string } | undefined;
+  /** Everything `app/page.tsx` needs. Built by the pipeline, because lowering a value needs the emit scope. */
+  readonly page: PageInput;
+}
+
+/** One screen `app/page.tsx` can show. */
+export interface PageScreen {
+  /** The identity the outlet looks it up by — a route-table name, or a `ui.Component` node id. */
+  readonly key: string;
   /**
-   * Every screen the router can show, keyed by the identity a navigation names it with.
+   * The identifier the page renders.
    *
-   * `routes` is keyed by route-table name, `components` by `ui.Component` node id — the two namespaces
-   * `RouterOutlet` keeps apart, because a route called `detail` and a component whose id is `detail`
-   * must not collide into one key and silently render the wrong screen.
+   * Usually the imported component. When the route carries arguments (ADR-0025 D1) it is a **wrapper**
+   * the page declares, which constructs that component with them — see {@link PageInput.declarations}.
+   */
+  readonly name: string;
+}
+
+/**
+ * `app/page.tsx`: what it imports, what it declares, and what it renders.
+ *
+ * The scaffolder writes fixed text and holds no emit scope, but this one file's content depends on
+ * values that must be *lowered* — a route's arguments are `bind.*` nodes, and turning one into an
+ * expression needs resolution and reporting. So the pipeline lowers them and hands the result over as
+ * text, and the split stays where it has always been: the pipeline knows the program, the scaffolder
+ * knows the file.
+ */
+export interface PageInput {
+  /**
+   * What the page renders when it renders the root route directly — the component, or its wrapper.
    *
-   * Empty when the program never navigates. Then the page renders the root component directly and no
+   * `undefined` when the program declares no route at `/`.
+   */
+  readonly root: string | undefined;
+  /**
+   * Every screen reachable as a **declared route**, keyed by its name in the route table.
+   *
+   * Empty when the program declares no routes at all. Then the page renders {@link root} directly and no
    * outlet is emitted: a screen that cannot be navigated away from does not need a stack.
    */
-  readonly screens: {
-    readonly routes: readonly { readonly key: string; readonly module: string; readonly name: string }[];
-    readonly components: readonly { readonly key: string; readonly module: string; readonly name: string }[];
-  };
+  readonly routes: readonly PageScreen[];
+  /**
+   * Every screen reachable as an **inline destination**, keyed by its `ui.Component` node id.
+   *
+   * A separate namespace from {@link routes}, exactly as `RouterOutlet` keeps them apart: a route called
+   * `detail` and a component whose id is `detail` must not collide into one key and silently render the
+   * wrong screen.
+   */
+  readonly components: readonly PageScreen[];
+  /** The rendered import block, ordered by the one rule every emitted file's imports follow. */
+  readonly imports: readonly string[];
+  /** Module-scope declarations the page needs — the route wrappers, rendered. */
+  readonly declarations: readonly string[];
 }
 
 /** The header every generated file carries. */
@@ -300,9 +336,17 @@ function providers(input: ScaffoldInput): string {
   return lines.join('\n');
 }
 
-/** The root route's page. */
+/**
+ * The root route's page.
+ *
+ * Renders names, and lowers nothing. Every identifier here — the screens, and the wrappers that supply a
+ * route's arguments — was decided by the pipeline, which is the layer that can resolve a value. See
+ * {@link PageInput}.
+ */
 function page(input: ScaffoldInput): string {
-  if (input.root === undefined) {
+  const { root, routes, components, imports, declarations } = input.page;
+
+  if (root === undefined) {
     return [
       banner('the program'),
       '',
@@ -315,17 +359,17 @@ function page(input: ScaffoldInput): string {
   }
   // A program that never navigates renders its root component directly. Emitting an outlet for it would
   // add a stack, a subscription and two empty maps to an application that has one screen.
-  if (input.screens.routes.length === 0 && input.screens.components.length === 0) {
+  if (routes.length === 0 && components.length === 0) {
     return [
       "'use client';",
       '',
       banner('the program'),
       '',
-      `import { ${input.root.name} } from '${input.root.module}';`,
-      '',
+      ...imports,
+      ...declarations,
       '/** The root route. */',
       'export default function Page() {',
-      `  return <${input.root.name} />;`,
+      `  return <${root} />;`,
       '}',
       '',
     ].join('\n');
@@ -334,37 +378,24 @@ function page(input: ScaffoldInput): string {
   // Otherwise the page *is* the navigation stack's window. `RouterOutlet` renders whichever entry is on
   // top, so a `push` in a callback changes what is on screen — which is what the stack could not do
   // before the kit had a consumer for it (M7-C).
-  const imported = new Map<string, Set<string>>();
-  const add = (module: string, name: string): void => {
-    const names = imported.get(module) ?? new Set<string>();
-    names.add(name);
-    imported.set(module, names);
-  };
-  for (const screen of [...input.screens.routes, ...input.screens.components]) add(screen.module, screen.name);
-
-  const entries = (
-    list: readonly { readonly key: string; readonly name: string }[],
-  ): string => list.map((s) => `${JSON.stringify(s.key)}: ${s.name}`).join(', ');
+  const entries = (list: readonly PageScreen[]): string =>
+    list.map((s) => `${JSON.stringify(s.key)}: ${s.name}`).join(', ');
 
   const lines = [
     "'use client';",
     '',
     banner('the program'),
     '',
-    "import { RouterOutlet } from '@bridge/runtime-react';",
-    // Sorted, so the import block does not reorder when the emitter's traversal does.
-    ...[...imported.keys()]
-      .sort()
-      .map((module) => `import { ${[...imported.get(module)!].sort().join(', ')} } from '${module}';`),
-    '',
+    ...imports,
+    ...declarations,
     '/** The navigation stack, rendered. The entry on top is what the user sees. */',
     'export default function Page() {',
     '  return (',
     '    <RouterOutlet',
-    `      routes={{ ${entries(input.screens.routes)} }}`,
+    `      routes={{ ${entries(routes)} }}`,
   ];
-  if (input.screens.components.length > 0) {
-    lines.push(`      components={{ ${entries(input.screens.components)} }}`);
+  if (components.length > 0) {
+    lines.push(`      components={{ ${entries(components)} }}`);
   }
   lines.push('    />', '  );', '}', '');
   return lines.join('\n');
