@@ -67,7 +67,11 @@ void main() {
       final List<String> files = const ProjectLoader().load(project).info.libraryFiles;
 
       expect(files, orderedEquals(List<String>.of(files)..sort()));
-      expect(files.first, p.join('lib', 'a.dart'));
+      // `'lib/a.dart'`, not `p.join('lib', 'a.dart')`. A project-relative path in UIR is a **logical**
+      // path, POSIX-separated on every platform (M5-F): it becomes `span.file`, which becomes an anchor,
+      // which is hashed into the node id — so a host separator here would give Windows a different id for
+      // every node. `p.join` would assert the host's spelling and pass only where it happens to match.
+      expect(files.first, 'lib/a.dart');
     });
 
     test('two loads of the same project produce identical file lists', () {

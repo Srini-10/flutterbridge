@@ -141,9 +141,25 @@ final class DigestComputer {
   ///
   /// SDK and third-party imports are excluded: they cannot change during a build, and what pins them
   /// is the version context, not the dependency graph.
+  /// **`p.url`, not `p.`** — these are logical project paths, not host paths.
+  ///
+  /// A project-relative path is a key. `libraryFiles` produces them POSIX-separated (M5-F, so that
+  /// `span.file` and therefore every anchor and node id is identical on every platform), and the digest
+  /// map is keyed by them. This function produces the *other* end of the same key: the import edges the
+  /// dependency graph looks up with `digests.containsKey`.
+  ///
+  /// Built with the platform context, `p.join('lib', 'base.dart')` is `lib\base.dart` on Windows, no key
+  /// matches, and **every edge is silently dropped** — `transitiveDependentsOf` returns nothing, so an
+  /// incremental build rebuilds only the edited file and emits stale output for everything that imports
+  /// it. No error, no diagnostic; the wrong answer, quietly.
+  ///
+  /// That is a defect M5-F introduced: it normalised the keys and not this, and the two halves had
+  /// matched before only because both were platform-separated. CI caught it as
+  /// `incremental_test.dart` expecting three dependents and receiving one.
   List<String> _imports(CompilationUnit unit, String path) {
     final Set<String> imports = <String>{};
-    final String directory = p.dirname(path);
+    // `p.url.dirname` on a POSIX-separated path, which is what `path` now is.
+    final String directory = p.url.dirname(path);
 
     for (final Directive directive in unit.directives) {
       final String? uri = switch (directive) {
@@ -157,9 +173,9 @@ final class DigestComputer {
       }
 
       if (uri.startsWith('package:$packageName/')) {
-        imports.add(p.normalize(p.join('lib', uri.substring('package:$packageName/'.length))));
+        imports.add(p.url.normalize(p.url.join('lib', uri.substring('package:$packageName/'.length))));
       } else if (!uri.startsWith('package:')) {
-        imports.add(p.normalize(p.join(directory, uri)));
+        imports.add(p.url.normalize(p.url.join(directory, uri)));
       }
     }
 

@@ -144,7 +144,9 @@ void main() {
         expect(result.exitCode, ExitCodes.environmentFailure);
         expect(result.output, isNull);
         expect(result.diagnostics.single.code, Codes.unresolvedImport);
-        expect(result.diagnostics.single.span?.file, p.join('lib', '_preflight_probe.dart'));
+        // POSIX-separated, on every platform — `span.file` becomes an anchor and anchors are hashed
+        // into node ids (M5-F). `p.join` would assert the host's spelling.
+        expect(result.diagnostics.single.span?.file, 'lib/_preflight_probe.dart');
       });
     },
     skip: isPubGot

@@ -20,6 +20,8 @@ import 'package:bridge_analyzer/src/incremental/change_set.dart';
 import 'package:bridge_analyzer/src/incremental/dependency_graph.dart';
 import 'package:bridge_analyzer/src/incremental/incremental_analyzer.dart';
 import 'package:bridge_analyzer/src/model/raw_node.dart';
+import 'package:bridge_analyzer/src/session/source_parser.dart';
+import 'package:bridge_analyzer/src/session/unit_digest.dart';
 import 'package:bridge_uir/bridge_uir.dart' as uir;
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
@@ -481,6 +483,57 @@ void main() {
       expect(second.stats.digestMisses, 0, reason: 'no file is parsed twice');
       expect(second.stats.extracted, 0, reason: 'no file is extracted twice');
       expect(second.stats.moduleHits, files.length);
+    });
+  });
+
+  group('path keys are logical, not host (W-5)', () {
+    // The dependency graph joins two halves that must agree: `digests` is keyed by the project-relative
+    // path `ProjectLoader` produces, and the edges come from `FileDigest.imports`. `DependencyGraph`
+    // keeps an edge only `where(digests.containsKey)`.
+    //
+    // M5-F made the keys POSIX-separated so `span.file` — and therefore every anchor and node id — is
+    // identical on every platform. It did **not** normalise the imports, and the two halves had matched
+    // before only because both were platform-separated. On Windows every edge was then silently dropped:
+    // `transitiveDependentsOf` returned nothing, so an incremental build rebuilt only the edited file and
+    // emitted stale output for everything importing it. No error, no diagnostic.
+    //
+    // CI reported it as this file expecting three dependents and receiving one. These assertions hold on
+    // any platform; on POSIX they are close to tautologies, and on Windows they are the defect.
+
+    test('an import edge never carries a host separator', () {
+      final FileDigest digest = const DigestComputer(packageName: 'app').compute(
+        path: 'lib/leaf.dart',
+        unit: const SourceParser()
+            .parse(
+              path: 'lib/leaf.dart',
+              source: """
+import 'package:app/base.dart';
+import '../lib/middle.dart';
+import 'sibling.dart';
+""",
+            )
+            .unit,
+        source: '',
+      );
+
+      expect(digest.imports, isNotEmpty);
+      for (final String import in digest.imports) {
+        expect(import, isNot(contains(r'\')), reason: '$import carries a host separator');
+      }
+    });
+
+    test('an import resolves to the same key ProjectLoader produces', () {
+      // The property that actually matters: the two halves must agree, because a mismatch is not an
+      // error — it is a dropped edge.
+      final FileDigest digest = const DigestComputer(packageName: 'app').compute(
+        path: 'lib/screens/home.dart',
+        unit: const SourceParser()
+            .parse(path: 'lib/screens/home.dart', source: "import '../models/item.dart';")
+            .unit,
+        source: '',
+      );
+
+      expect(digest.imports, contains('lib/models/item.dart'));
     });
   });
 }
