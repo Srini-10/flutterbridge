@@ -159,17 +159,21 @@ describe('the emitted project compiles against the real runtime (M3-D build-proo
 
     const root = materialise(files);
     const tsconfig = writeCheckTsconfig(root);
-    // `.bin/tsc` is a shell shim on Windows and `execFileSync` cannot run it — `CreateProcess` executes
-    // `.exe` and refuses the extensionless script, so the spawn fails before tsc starts. The Windows
-    // executable npm writes beside it is `tsc.cmd`.
+    // **`node typescript/lib/tsc.js`, not the `.bin/tsc` shim.**
     //
-    // This is the same defect class as the CLI's `dart.bat` problem (M5-E), in a test harness rather than
-    // in shipped code — and it hid behind it: the CLI was fixed, this was not, and only a Windows runner
-    // could tell them apart. The symptom is a typecheck failure with **empty** tsc output.
-    const tscName = process.platform === 'win32' ? 'tsc.cmd' : 'tsc';
-    const tsc = join(packageRoot, 'node_modules', '.bin', tscName);
+    // The shim is a shell script on Windows, and the executable npm writes beside it is `tsc.cmd` —
+    // which `execFileSync` also refuses, because Node blocks `.bat`/`.cmd` without `shell: true`
+    // (the CVE-2024-27980 mitigation). Both spellings failed the same way: the spawn threw before tsc
+    // started, the error carried no stdout, and the test reported "does not typecheck" with **empty**
+    // compiler output — which reads as a type error and is not one.
+    //
+    // `tsc.js` is a plain JavaScript entry point. Running it with the Node already executing this test
+    // needs no shim, no shell and no quoting, and behaves identically on every platform. Two Windows
+    // rounds went into learning that; the lesson is that a launcher is the wrong thing to depend on when
+    // the thing you want is a script.
+    const tsc = join(packageRoot, 'node_modules', 'typescript', 'lib', 'tsc.js');
     try {
-      execFileSync(tsc, ['-p', tsconfig], { stdio: 'pipe', cwd: root });
+      execFileSync(process.execPath, [tsc, '-p', tsconfig], { stdio: 'pipe', cwd: root });
     } catch (error) {
       const failure = error as { stdout?: Buffer; stderr?: Buffer };
       const output = `${failure.stdout?.toString() ?? ''}${failure.stderr?.toString() ?? ''}`;
