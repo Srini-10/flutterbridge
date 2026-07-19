@@ -47,15 +47,33 @@ const PACKAGES = [
 rmSync(out, { recursive: true, force: true });
 mkdirSync(out, { recursive: true });
 
+
+/**
+ * `pnpm` is `pnpm.cmd` on Windows, and `execFileSync` refuses a `.cmd` without a shell — Node blocks
+ * batch files outright (the CVE-2024-27980 mitigation), so the spawn fails with `ENOENT` on a program
+ * plainly on `PATH`.
+ *
+ * The same defect the CLI had with `dart.bat` (M5-E) and the build proof had with `tsc` — third time,
+ * third file. The pattern worth remembering: **anything invoked by name that is a launcher rather than
+ * an executable needs a shell on Windows**, and Node will not tell you until it fails.
+ *
+ * A shell means the command line is re-parsed, so the one argument that can contain a space — the
+ * destination directory — is quoted. `"` is a reserved character in a Windows path, so simple quoting is
+ * sufficient here and there is no escaping to get wrong.
+ */
+const WINDOWS = process.platform === 'win32';
+const shellArg = (value) => (WINDOWS && /\s/.test(value) ? `"${value}"` : value);
+
 const problems = [];
 const packed = [];
 
 for (const dir of PACKAGES) {
   const manifest = JSON.parse(readFileSync(join(root, dir, 'package.json'), 'utf8'));
 
-  execFileSync('pnpm', ['pack', '--pack-destination', out], {
+  execFileSync(WINDOWS ? 'pnpm.cmd' : 'pnpm', ['pack', '--pack-destination', shellArg(out)], {
     cwd: join(root, dir),
     stdio: ['ignore', 'ignore', 'inherit'],
+    shell: WINDOWS,
   });
 
   const tarball = readdirSync(out).find(
