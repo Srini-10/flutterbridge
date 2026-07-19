@@ -120,10 +120,20 @@ final class TransitionExtractor {
     // A **component** destination cannot drop: it is a `RawRef` to a `ui.Component`, a real declaration,
     // and `_destination` has already returned null for anything that does not resolve to one.
     //
-    // Closing the path case needs a *conditional declaration* in the builder — a symbol whose node may
-    // legitimately not survive, exempt from the BRG1207 sweep, and whose references drop their owner
-    // instead of dangling. That is a builder amendment, and it is stated in full in
-    // `docs/m7/m7b-transition-identity.md` rather than improvised here.
+    // Closing the path case looks like it needs a *conditional declaration* in the builder — a symbol
+    // whose node may legitimately not survive, exempt from the BRG1207 sweep, and whose references drop
+    // their owner instead of dangling. **That was built and measured, and it is not enough** (M7-C §8).
+    //
+    // It works: the exemption removes the transition's own BRG1207 and the drop prevents a dangling
+    // NodeId. But dropping the departure is not a local operation — `node_factory._value` propagates
+    // `_unresolved` to the owner, transitively, so the departure takes its element and its **component**
+    // with it. The screen is then an ordinary declaration with no surviving node, which is BRG1207 all
+    // over again, and the warning has become a build failure with an empty program.
+    //
+    // Exempting *that* would mean declaring a `ui.Component` may legitimately vanish, which is a far
+    // larger weakening of BRG1207 than the case deserves. The real decision is upstream: either an
+    // unresolved path is an error rather than a warning, or a departure gains a representable form for
+    // a path it could not resolve. Both are spec decisions and neither is improvised here.
     final String? symbol = toRoute ? null : out.symbols.navigation(_ordinal++);
     _seen[node] = symbol;
 
