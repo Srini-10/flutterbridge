@@ -355,6 +355,25 @@ class App extends StatelessWidget {
       expect(extracted.ofKind('app.RouteTransition'), isEmpty);
       expect(extracted.codes(Severity.warning), contains('BRG1308'));
       expect(extracted.errors, isEmpty, reason: 'an unresolved route is a warning, not a build failure');
+
+      // **The screen the navigation sits in survives.** This is the assertion that makes BRG1308 a
+      // warning in fact rather than only in name, and it is the one a fix for the path departure keeps
+      // breaking (M7-C §8).
+      //
+      // Dropping the edge must cost exactly the edge. The moment a `logic.Navigate` names the edge by
+      // symbol, dropping the edge drops the departure too — and `node_factory._value` propagates that
+      // upward through the statement list, the lambda, the element and the component, so the whole
+      // screen goes with it. `Home` is then an ordinary declaration with no surviving node, which is
+      // BRG1207, an **error**: the warning has become a build failure and the program is empty.
+      //
+      // Measured, not predicted: with the edge given a symbol this expectation fails with
+      // `ui.Component: []` and `BRG1207 The declaration "comp:lib/main.dart#Home" is referenced, but
+      // no node with its id survived the build`.
+      expect(
+        extracted.ofKind('ui.Component').map((Map<String, dynamic> c) => c['name']),
+        containsAll(<String>['Home', 'Settings', 'App']),
+        reason: 'an unresolved path must cost the edge, not the screen that navigates from it',
+      );
     });
 
     test('a runtime route name is refused (BRG1304), never guessed', () async {
