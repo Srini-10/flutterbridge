@@ -121,6 +121,91 @@ Before writing it, two things to settle:
 
 Item 1 decides whether this is a node or a field, and it is a measurement rather than a judgement.
 
+
+## Measured — the data that settles the design question
+
+Priority 2 of the M6-F brief. Counted across every real Flutter application available on this machine,
+including the two M5-A used:
+
+| Application | Files | Lines | `mounted` |
+| --- | --- | --- | --- |
+| `examples/counter` | 1 | 82 | 0 |
+| `fixtures/apps/hello_bridge` | 7 | 369 | 1 |
+| **continuum** (`apps/macos/mac`) | 7 | 2 489 | **42** |
+| **unichat** (`mobile`) | 113 | 47 796 | **306** |
+
+**348 occurrences in two real applications** — roughly 6.4 per thousand lines in unichat and 16.9 in
+continuum. This is not a rare construct, and it is not an artefact of one codebase's style.
+
+### The patterns, and why they rule out a statement-level fix
+
+| Shape | continuum | unichat | Erasable? |
+| --- | --- | --- | --- |
+| `if (!mounted) return;` | 13 | 133 | only by assuming what follows |
+| `if (mounted) { … }` | 20 | 94 | **no** — erasing means *always* running the block |
+| compound condition | 4 | 54 | **no** — `mounted` is one boolean operand among several |
+| `if (!mounted) { … }` | 5 | 10 | no |
+| `context.mounted` | 0 | 11 | **a different API** |
+
+The compound cases are the ones that decide it:
+
+```dart
+if (result == null || !result.updateRequired || !mounted) return;
+if (event.state == CallState.CALL_STATE_RINGING && mounted) {
+```
+
+**`mounted` appears as an ordinary boolean operand inside a larger expression.** There is no statement
+pattern to match and nothing to erase — 58 of the 348 occurrences are simply a value being read. That
+settles the question this document previously left open: any representation must be **expression-level**,
+because a statement-level erasure cannot express these at all.
+
+It also revises what this document originally guessed. The open question was framed as *"how large is the
+vocabulary — is a node kind heavy for one value?"*. The data answers a different question: the vocabulary
+needs at least **two** members, because `context.mounted` (`BuildContext.mounted`, Flutter 3.7+) is a
+distinct API with distinct semantics — it asks whether the *element* is still mounted, not the `State` —
+and 11 real uses of it exist. A representation that conflated them would be wrong in both directions.
+
+### Are the existing diagnostics sufficient?
+
+**Yes, and they should be retained until the amendment lands.** BRG3006 names the symbol, the file and the
+line, and refuses the program rather than emitting something that compiles and misbehaves. For a construct
+that gates side effects on component liveness, refusing is the correct failure: an application that ran the
+guarded block unconditionally would be wrong in a way no type checker would catch.
+
+What the diagnostic does *not* say is that this is a known architectural limitation rather than a defect in
+the user's program. That is worth fixing independently of the schema work — see "Recommendation" below.
+
+## Recommendation — the data justifies the amendment
+
+`logic.Intrinsic`, expression-level, with a two-member vocabulary:
+
+```json
+"Intrinsic": {
+  "description": "A value the host framework provides, which the program does not declare.",
+  "x-uir-kind": "logic.Intrinsic",
+  "properties": {
+    "kind":      { "const": "logic.Intrinsic" },
+    "intrinsic": { "enum": ["component.mounted", "context.mounted"] },
+    "type":      { "$ref": "shared.json#/$defs/TypeRef" }
+  }
+}
+```
+
+Additive and optional, so every existing document stays valid; the schema hash moves and the loader's
+refusal handles the rest.
+
+Expression-level rather than statement-level, because 58 measured uses cannot be expressed any other way.
+Target-neutral names rather than Flutter's, because "is this component still alive" is a question a Vue or
+Svelte generator can also answer.
+
+Still to settle before writing it, and now the *only* open question: **what the runtime kit provides.** The
+obvious lowering is a `useMounted()` returning a ref the component owns, readable from an action closure
+because the closure is emitted inside the component. That is a kit API addition and belongs in the same
+ADR as the schema change.
+
+**This is where the M6 rule applies**: the amendment is now justified by evidence, but writing it is a
+schema change, so it stops here and is documented rather than implemented.
+
 ## Consequence today
 
 `hello_bridge` cannot emit, and this is one of its remaining blockers — but **not the largest**. Its 28
