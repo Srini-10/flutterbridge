@@ -303,15 +303,16 @@ describe('M7-A — logic.Navigate is lowered (ADR-0025 D2)', () => {
     for (const file of files) expect(file.contents).not.toContain('useRouter');
   });
 
-  it('an action ADR-0025 models but the generator cannot lower yet names the capability', () => {
-    // `push` needs its transition resolved to a destination. Refused specifically — never the generic
-    // statement refusal, which is the M6-E rule and which a new node kind does not suspend.
+  it('a push whose transition resolves to nothing is refused specifically, not generically', () => {
+    // A departure carries the `app.RouteTransition` it performs (M7-B). This fixture's `push` names no
+    // transition at all, which is a compiler gap — and it must be reported as one, never as the generic
+    // statement refusal. That is the M6-E rule, and a new node kind does not suspend it.
     const { context, reported } = harness(appPopping('push'));
     reactGenerator.generate(context);
 
     expect(reported.find((d) => d.code === 'BRG3003')).toBeUndefined();
     const capability = reported.find((d) => d.code === 'BRG3013');
-    expect(capability?.message).toContain('ADR-0025');
-    expect(capability?.message).toContain('belongs to this generator');
+    expect(capability?.message).toContain('names no destination this generator can resolve');
+    expect(capability?.message).toContain('not a defect in your program');
   });
 });

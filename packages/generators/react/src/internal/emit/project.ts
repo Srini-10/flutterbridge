@@ -115,6 +115,20 @@ export interface ScaffoldInput {
   readonly stores: readonly { readonly module: string; readonly name: string }[];
   /** The component the root route renders: `{ module, name }`, if there is one. */
   readonly root: { readonly module: string; readonly name: string } | undefined;
+  /**
+   * Every screen the router can show, keyed by the identity a navigation names it with.
+   *
+   * `routes` is keyed by route-table name, `components` by `ui.Component` node id — the two namespaces
+   * `RouterOutlet` keeps apart, because a route called `detail` and a component whose id is `detail`
+   * must not collide into one key and silently render the wrong screen.
+   *
+   * Empty when the program never navigates. Then the page renders the root component directly and no
+   * outlet is emitted: a screen that cannot be navigated away from does not need a stack.
+   */
+  readonly screens: {
+    readonly routes: readonly { readonly key: string; readonly module: string; readonly name: string }[];
+    readonly components: readonly { readonly key: string; readonly module: string; readonly name: string }[];
+  };
 }
 
 /** The header every generated file carries. */
@@ -299,17 +313,59 @@ function page(input: ScaffoldInput): string {
       '',
     ].join('\n');
   }
-  return [
+  // A program that never navigates renders its root component directly. Emitting an outlet for it would
+  // add a stack, a subscription and two empty maps to an application that has one screen.
+  if (input.screens.routes.length === 0 && input.screens.components.length === 0) {
+    return [
+      "'use client';",
+      '',
+      banner('the program'),
+      '',
+      `import { ${input.root.name} } from '${input.root.module}';`,
+      '',
+      '/** The root route. */',
+      'export default function Page() {',
+      `  return <${input.root.name} />;`,
+      '}',
+      '',
+    ].join('\n');
+  }
+
+  // Otherwise the page *is* the navigation stack's window. `RouterOutlet` renders whichever entry is on
+  // top, so a `push` in a callback changes what is on screen — which is what the stack could not do
+  // before the kit had a consumer for it (M7-C).
+  const imported = new Map<string, Set<string>>();
+  const add = (module: string, name: string): void => {
+    const names = imported.get(module) ?? new Set<string>();
+    names.add(name);
+    imported.set(module, names);
+  };
+  for (const screen of [...input.screens.routes, ...input.screens.components]) add(screen.module, screen.name);
+
+  const entries = (
+    list: readonly { readonly key: string; readonly name: string }[],
+  ): string => list.map((s) => `${JSON.stringify(s.key)}: ${s.name}`).join(', ');
+
+  const lines = [
     "'use client';",
     '',
     banner('the program'),
     '',
-    `import { ${input.root.name} } from '${input.root.module}';`,
+    "import { RouterOutlet } from '@bridge/runtime-react';",
+    // Sorted, so the import block does not reorder when the emitter's traversal does.
+    ...[...imported.keys()]
+      .sort()
+      .map((module) => `import { ${[...imported.get(module)!].sort().join(', ')} } from '${module}';`),
     '',
-    '/** The root route. */',
+    '/** The navigation stack, rendered. The entry on top is what the user sees. */',
     'export default function Page() {',
-    `  return <${input.root.name} />;`,
-    '}',
-    '',
-  ].join('\n');
+    '  return (',
+    '    <RouterOutlet',
+    `      routes={{ ${entries(input.screens.routes)} }}`,
+  ];
+  if (input.screens.components.length > 0) {
+    lines.push(`      components={{ ${entries(input.screens.components)} }}`);
+  }
+  lines.push('    />', '  );', '}', '');
+  return lines.join('\n');
 }

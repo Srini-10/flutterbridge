@@ -12,6 +12,7 @@ import type { Stmt } from '@bridge/uir';
 import { GeneratorDiagnosticCode } from '../diagnostics/codes.js';
 import { emitExpression, setStatementLowering, type EmitScope } from './expression.js';
 import { identifierOf } from './module.js';
+import { routeNameOf } from './routes.js';
 
 type Node = Record<string, unknown>;
 
@@ -209,6 +210,30 @@ export function emitStatement(statement: Stmt | Node | undefined, scope: EmitSco
       switch (action) {
         case 'pop':
           return [`${router}.pop();`];
+        case 'push':
+        case 'replace': {
+          // The edge this performs, named by `NodeId` (M7-B). Resolved, never searched for: the analyzer
+          // minted the transition's identity and put it here, so this is a lookup of a reference the
+          // document already carries rather than a reconstruction of one.
+          const transitionId = node['transition'];
+          const transition =
+            typeof transitionId === 'string' ? (scope.node(transitionId) as unknown as Node | undefined) : undefined;
+          const destination = transition === undefined ? undefined : destinationOf(transition, scope);
+          if (destination === undefined) {
+            scope.report(
+              GeneratorDiagnosticCode.UnsupportedCapability,
+              'error',
+              `a \`${action}\` navigation names no destination this generator can resolve. A departure ` +
+                'carries the `app.RouteTransition` it performs, and that edge names either a route or a ' +
+                'component; this one names neither, or names one that was dropped. That is a compiler ' +
+                'gap, not a defect in your program.',
+              idOf(node),
+            );
+            return [];
+          }
+          const method = action === 'push' ? 'push' : 'replace';
+          return [`${router}.${method}(${destination});`];
+        }
         default:
           // `push`, `replace` and `popUntil` are modelled by the schema and not lowered yet — a push
           // needs its `transition` resolved to a destination, and `popUntil` carries no predicate
@@ -254,3 +279,33 @@ function indent(lines: readonly string[]): string[] {
 // and cannot import it without creating a cycle. See `setStatementLowering` for why the dependency runs this
 // way round.
 setStatementLowering((body, scope) => emitStatements(body, scope));
+
+/**
+ * The `Destination` literal for a transition — the kit's own vocabulary, not the compiler's.
+ *
+ * Two shapes, exactly as `Destination` declares them (Spec v2.4 §A17):
+ *
+ *   * a **route** destination names an `app.Route`, and is keyed by the same name the route table gives
+ *     it, so a descriptor and a push cannot disagree about what a route is called;
+ *   * a **component** destination is an inline push. It has **no path and none is invented** (§A17.6) —
+ *     the identity is the `ui.Component` node id, which is what `RouterOutlet`'s `components` map is
+ *     keyed by.
+ *
+ * Route arguments are deliberately not passed. `RouteArgument`s exist on the edge, but ADR-0025 D1 is
+ * schema-only and nothing populates them yet; emitting a `params` object from an unpopulated field would
+ * put an empty object where the developer wrote values.
+ */
+function destinationOf(transition: Node, scope: EmitScope): string | undefined {
+  const target = transition['target'];
+  if (typeof target === 'string') {
+    const route = scope.node(target) as unknown as Node | undefined;
+    if (route === undefined) return undefined;
+    return `{ kind: 'route', route: ${JSON.stringify(routeNameOf(route))} }`;
+  }
+
+  const component = transition['component'];
+  if (typeof component === 'string') {
+    return `{ kind: 'component', component: ${JSON.stringify(component)} }`;
+  }
+  return undefined;
+}

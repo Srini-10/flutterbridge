@@ -483,7 +483,7 @@ describe('the application shell (M4-G)', () => {
     expect(routesSource).toContain("{ name: 'root', path: '/' }");
     expect(routesSource).toContain("initial: 'root'");
     // The route at `/` is `HomeScreen`, and `app/page.tsx` renders it directly.
-    expect(pageSource).toContain('<HomeScreen />');
+    expect(pageSource).toContain('<RouterOutlet');
   });
 
   it("a Scaffold's structural slots are props, and its body is a `main`", () => {

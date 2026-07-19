@@ -59,6 +59,7 @@ export function emitRoutes(
   transitions: readonly Node[],
   module: ModuleBuilder,
   scope: EmitScope,
+  performed: ReadonlySet<string> = new Set<string>(),
 ): RouteTable {
   const typeName = module.use(RUNTIME, 'RouterDescriptor', { typeOnly: true });
   const exported = module.declare('routes', 'routes');
@@ -69,16 +70,27 @@ export function emitRoutes(
   const sorted = [...routes].sort((a, b) => (String(a['path']) < String(b['path']) ? -1 : 1));
 
   for (const transition of transitions) {
+    // A transition a `logic.Navigate` performs is **no longer unroutable**. M7-C found BRG3008's stated
+    // blocker — the missing URL — was never the real one: the kit's `Destination` has always modelled a
+    // path-less component push and §A17.6 says none is invented. What was missing was a node saying
+    // *perform this here* (ADR-0025 D2) and something that renders the stack (`RouterOutlet`). With both,
+    // an inline push compiles and shows a screen.
+    //
+    // So this now fires for exactly what it was always about: an edge nothing performs, because the
+    // analyzer could not lower the call that would have.
+    const performedId = idOf(transition);
+    if (performedId !== undefined && performed.has(performedId)) {
+      continue;
+    }
     if (typeof transition['component'] === 'string' && transition['target'] === undefined) {
       scope.report(
         GeneratorDiagnosticCode.UnroutableDestination,
         'error',
         'this navigation constructs its destination inline (`Navigator.push(MaterialPageRoute(...))`), so it ' +
-          'names no route and has no path (Spec v2.4 §A17). Two things are missing and both are owned by the ' +
-          'compiler, not by your program: no UIR node says *perform this transition here* (ADR-0025 D2, ' +
-          '`logic.Navigate`), and a destination with no path needs a URL that only this generator can choose ' +
-          '— which it will not invent, because a URL the developer never wrote is what §A17.2 refused. ' +
-          'The route table and the runtime router are already emitted and are waiting on those two.',
+          'names no route and has no path (Spec v2.4 §A17). The edge is in the nav graph and **nothing ' +
+          'performs it** — no `logic.Navigate` names this transition, which means the analyzer could not ' +
+          'lower the call that would have. An inline push whose call *is* lowered renders through the ' +
+          'runtime stack and needs no URL (§A17.6). That is a compiler gap, not a defect in your program.',
         idOf(transition),
       );
     }
@@ -186,7 +198,7 @@ export function reportUnsatisfiableRouteComponents(
  * and the path is what the program actually stated. Deriving the name from the path keeps the two consistent
  * and is deterministic: `/product/:id` → `product-id`.
  */
-function routeNameOf(route: Node): string {
+export function routeNameOf(route: Node): string {
   const path = String(route['path'] ?? '/');
   const segments = path.split('/').filter(Boolean).map((segment) => segment.replace(/^:/, ''));
   return segments.length === 0 ? 'root' : identifierOf(segments.join('-')).replace(/_/g, '-');
