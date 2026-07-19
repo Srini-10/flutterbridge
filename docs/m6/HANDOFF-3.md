@@ -17,14 +17,40 @@ Each round moved the failure later in the job, which is the shape of real progre
 | 1 | `toolchain versions` | `flutter --version \| head -1` — `head` closes the pipe, the batch script hangs | `d44d9f1` |
 | 2 | `test` (portability) | a shell was used for **every** program, re-parsing every argument | `aded765` |
 | 3 | `test` (build proof) | `.bin/tsc` is a shim; `tsc.cmd` is refused by `execFileSync` without a shell | `8637cd5` |
-| 4 | `stub tags` | the linter's own exemption used a `/` separator, so it flagged itself | `dd17d96` ⏳ |
+| 4 | `stub tags` | the linter's own exemption used a `/` separator, so it flagged itself | `dd17d96` ✅ |
+| 5 | `dart analyze + test (bridge_analyzer)` | **~88 Dart tests fail** — open, see below | — |
 
 **Ubuntu and macOS have been green throughout.** `line endings are LF` passes on Windows, so
 `.gitattributes` works.
 
-If round 4 is green, the remaining jobs (`reproducible`, `install`, `browser`) run for the first time —
-they have been `skipped` every round because `pipeline` gates them. Expect more findings there, especially
-`install` on Windows (global npm prefix, `bridge.cmd` shim).
+Round 4's fix worked — `stub tags` passes and the failure moved further into the job. The downstream jobs
+(`reproducible`, `install`, `browser`) have been `skipped` every round because `pipeline` gates them, so
+they have **still never run**. Expect findings there too, especially `install` on Windows (global npm
+prefix, `bridge.cmd` shim).
+
+### W-5 — open: ~88 analyzer tests fail on Windows
+
+Run 29681765951. Failures span `canonical_builder_test.dart` and `incremental_test.dart`, including
+*"the order files are discovered in cannot reach the output"* and *"the store key parts cannot be confused
+with one another"*. Ubuntu and macOS pass all 214.
+
+**Hypothesis, not a diagnosis** — the next session should verify before acting:
+
+M5-F normalised project-relative paths to POSIX separators (`p.url.joinAll(p.split(…))` in
+`project_loader.dart`) because `span.file` becomes an anchor and anchors are hashed into node ids. That fix
+is right and is why the pipeline's `bridge build` steps pass. But the *tests* were written on POSIX hosts,
+where normalising is a no-op — so any test that builds an expected path with the platform separator, or
+that round-trips a path through the cache key, would now disagree with the code on Windows only.
+
+If that is the cause, **the tests are what need updating, not the normalisation** — the normalisation is
+what makes UIR byte-identical across platforms, which the `reproducible` job exists to prove. Confirm by
+reading one failure's expected-vs-actual before changing anything.
+
+Fetch with:
+
+```bash
+gh run view 29681765951 --log-failed | sed 's/\x1b\[[0-9;]*m//g' | grep -B 5 -A 15 "Expected:"
+```
 
 ### The two fixes worth understanding
 
