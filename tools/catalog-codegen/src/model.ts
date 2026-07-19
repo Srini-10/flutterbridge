@@ -82,6 +82,8 @@ export interface NavigationMeta {
   readonly pushPath: readonly string[];
   /** Methods that return along an existing edge. Not transitions at all (Spec v2.4 §A17.3). */
   readonly pop: readonly string[];
+  /** Top-level functions that open a route overlay — each pushes a `Route` (ADR-0024). */
+  readonly overlayOpeners: readonly string[];
   /** The `Route` implementations whose `builder` produces the destination. */
   readonly routeTypes: readonly string[];
   /** The parameter of a route type that builds the destination widget. */

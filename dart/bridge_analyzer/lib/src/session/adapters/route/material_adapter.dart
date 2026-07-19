@@ -306,6 +306,18 @@ final class MaterialRouteAdapter implements RouteAdapter, TransitionAdapter {
   @override
   bool claimsTransition(AdapterContext context, MethodInvocation node) {
     final String method = node.methodName.name;
+
+    // A route overlay — `showDialog`, `showModalBottomSheet`, `showMenu`. Each pushes a `Route`
+    // (ADR-0024 verified this against the SDK), so an overlay is a navigation to an inline destination.
+    //
+    // Checked separately from the navigator methods because these are **top-level functions**: the block
+    // below keys on the enclosing type being `Navigator`, which could never match one. That is why
+    // `showDialog` fell through to a generic refusal for as long as it did (M6-E).
+    if (MaterialCatalog.navigationOverlayOpeners.contains(method)) {
+      final String? library = node.methodName.element?.library?.identifier;
+      return library != null && library.startsWith(_package);
+    }
+
     if (!MaterialCatalog.navigationPushRoute.contains(method) &&
         !MaterialCatalog.navigationPushPath.contains(method) &&
         !MaterialCatalog.navigationPop.contains(method)) {
@@ -333,6 +345,11 @@ final class MaterialRouteAdapter implements RouteAdapter, TransitionAdapter {
     // Flutter fact, and `session/extract/` may not contain the word — nor may this file invent a second
     // list that can drift from the one extraction already uses.
     final String method = node.methodName.name;
+    // An overlay opens a new entry on the stack: a `push`, and nothing more specific. What makes a
+    // dialog a dialog is presentation, which the target decides.
+    if (MaterialCatalog.navigationOverlayOpeners.contains(method)) {
+      return NavigateAction.push;
+    }
     if (MaterialCatalog.navigationPop.contains(method)) {
       return method == 'popUntil' ? NavigateAction.popUntil : NavigateAction.pop;
     }
@@ -355,6 +372,32 @@ final class MaterialRouteAdapter implements RouteAdapter, TransitionAdapter {
   @override
   TransitionDeclaration? transitionOf(AdapterContext context, MethodInvocation node) {
     final String method = node.methodName.name;
+
+    // An overlay's destination is its `builder:`, exactly as a page route's is. Read straight off the
+    // argument list — `WrapperResolver` maps a *constructor*'s parameters through a wrapper class, and an
+    // overlay opener is a top-level function with no wrapper to see through.
+    if (MaterialCatalog.navigationOverlayOpeners.contains(method)) {
+      final Expression? builder = node.argumentList.arguments
+          .whereType<NamedArgument>()
+          .where((NamedArgument a) => a.name.lexeme == MaterialCatalog.navigationBuilderProp)
+          .map((NamedArgument a) => a.argumentExpression)
+          .firstOrNull;
+      final Expression? destination = builder is FunctionExpression ? _returned(builder) : null;
+      if (destination == null) {
+        context.report(
+          Codes.unsupportedWrapper,
+          'This overlay builds its content in a way the adapter cannot read — a builder that does more '
+          'than return a widget. The edge will be missing from the route graph rather than guessed at.',
+          node,
+        );
+        return null;
+      }
+      return TransitionDeclaration.toWidget(
+        widget: destination,
+        at: node,
+        arguments: _argumentsOf(destination),
+      );
+    }
 
     // A pop is not an edge. It returns along one that already exists, and the nav graph gains nothing
     // from a node for it (§A17.3).
