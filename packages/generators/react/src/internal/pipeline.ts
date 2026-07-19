@@ -34,7 +34,7 @@ import type { EmitScope } from './emit/expression.js';
 import { ModuleBuilder, fileNameOf } from './emit/module.js';
 import { RUNTIME_MODULE } from './emit/runtime.js';
 import { banner, scaffold } from './emit/project.js';
-import { emitRoutes, reportUnsatisfiableRouteComponents } from './emit/routes.js';
+import { emitRoutes, reportUnsatisfiableRouteComponents, type RouteTable } from './emit/routes.js';
 import { emitStore } from './emit/store.js';
 import { emitTheme } from './emit/theme.js';
 
@@ -99,6 +99,7 @@ export function generateProject(context: GeneratorContext): GeneratorOutput {
     context.program.ofKind('app.RouteTransition') as unknown as Node[],
     routesModule,
     { ...scope, module: routesModule },
+    performedTransitions(context.program.nodes as unknown as Node[]),
   );
   files.push({ path: routesModule.path, contents: routesModule.toSource() });
 
@@ -160,6 +161,7 @@ export function generateProject(context: GeneratorContext): GeneratorOutput {
       assetsName: 'assetManifest',
       stores,
       root: rootComponentId === undefined ? undefined : componentModules.get(rootComponentId),
+      screens: screensOf(table, context.program.ofKind('app.RouteTransition') as unknown as Node[], componentModules),
     }),
   );
 
@@ -278,4 +280,69 @@ function nameIndex(nodes: readonly AnyUirNode[]): Map<NodeId, string> {
   };
   for (const node of nodes) visit(node);
   return names;
+}
+
+/**
+ * Every screen the router can show, keyed by the identity a navigation names it with.
+ *
+ * Two namespaces, kept apart exactly as `RouterOutlet` keeps them apart. A **route** is named by its
+ * entry in the route table; an **inline destination** by its `ui.Component` node id, because it has no
+ * route-table entry to be named by — §A17.6 says an inline push has no path and none is invented.
+ *
+ * A component reachable both ways appears in both maps, pointing at the same import. That is not
+ * duplication to be optimised away: the two keys mean different things, and collapsing them is the
+ * silent-wrong-screen collision the outlet's namespace separation exists to prevent.
+ */
+function screensOf(
+  table: RouteTable,
+  transitions: readonly Node[],
+  modules: ReadonlyMap<string, { readonly module: string; readonly name: string }>,
+): {
+  routes: { key: string; module: string; name: string }[];
+  components: { key: string; module: string; name: string }[];
+} {
+  const routes: { key: string; module: string; name: string }[] = [];
+  for (const [routeName, componentId] of table.components) {
+    const emitted = modules.get(componentId);
+    if (emitted !== undefined) routes.push({ key: routeName, ...emitted });
+  }
+
+  const components: { key: string; module: string; name: string }[] = [];
+  const seen = new Set<string>();
+  for (const transition of transitions) {
+    const componentId = transition['component'];
+    if (typeof componentId !== 'string' || seen.has(componentId)) continue;
+    const emitted = modules.get(componentId);
+    if (emitted === undefined) continue;
+    seen.add(componentId);
+    components.push({ key: componentId, ...emitted });
+  }
+
+  // Sorted by key: a map's order is not a fact about the program, and an emitter's traversal order must
+  // not reach the output (D1).
+  routes.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+  components.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+  return { routes, components };
+}
+
+/**
+ * Every `app.RouteTransition` some `logic.Navigate` performs.
+ *
+ * The nav graph and the statements that walk it are separate by design (ADR-0025 D2: an edge is
+ * declarative; performing one is a statement), so the only way to know an edge is reachable at runtime is
+ * to look for the departure that names it.
+ */
+function performedTransitions(nodes: readonly Node[]): ReadonlySet<string> {
+  const performed = new Set<string>();
+  const walk = (value: unknown): void => {
+    if (Array.isArray(value)) return void value.forEach(walk);
+    if (value === null || typeof value !== 'object') return;
+    const node = value as Node;
+    if (node['kind'] === 'logic.Navigate' && typeof node['transition'] === 'string') {
+      performed.add(node['transition']);
+    }
+    Object.values(node).forEach(walk);
+  };
+  nodes.forEach(walk);
+  return performed;
 }

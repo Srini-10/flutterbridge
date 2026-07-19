@@ -461,11 +461,16 @@ describe('it refuses rather than invents', () => {
     // re-measured to stay true is one nobody re-measures.
     const finding = reported.find((d) => d.code === 'BRG3008');
     expect(finding?.severity).toBe('error');
-    // Names the missing construct and the layer that owns it, per §8 — never a generic refusal.
+    // BRG3008 now means what it was always about: an edge in the nav graph that **nothing performs**.
+    // An inline push whose call *is* lowered renders through the runtime stack and needs no URL — the
+    // missing URL was never the blocker, which is what M7-C established and `RouterOutlet` closed.
+    expect(finding?.message).toContain('nothing performs it');
     expect(finding?.message).toContain('logic.Navigate');
-    expect(finding?.message).toContain('owned by the compiler, not by your program');
-    // Still refuses to invent the URL, which is the half of this that §A17.6 genuinely leaves here.
-    expect(finding?.message).toContain('§A17.2');
+    expect(finding?.message).toContain('not a defect in your program');
+    // §A17.6, not §A17.2. The URL-invention refusal used to be this diagnostic's whole justification;
+    // M7-C established the kit never wanted a URL, so what it cites now is the section saying an inline
+    // push legitimately has none.
+    expect(finding?.message).toContain('§A17.6');
 
     // The stale claim, pinned so it cannot return. Any count of programs, pushes or fixtures in a
     // diagnostic is a defect by construction — it describes implementation history, not a capability.
