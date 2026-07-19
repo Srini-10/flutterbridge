@@ -271,6 +271,10 @@ export {
   type RouterInstance,
 } from './internal/nav/router.js';
 
+// The consumer of that stack. Without it a `push` moved state nothing rendered — an application that
+// compiled, ran, and did nothing visible when the button was pressed (M7-C).
+export { RouterOutlet, type RouterOutletProps } from './internal/nav/outlet.js';
+
 // ── The state facade (ADR-4) ──────────────────────────────────────────────────────────────────────
 export { useDerived, useSignal, useSignalEffect } from './internal/react/hooks.js';
 
