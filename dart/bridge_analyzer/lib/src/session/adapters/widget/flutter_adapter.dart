@@ -187,6 +187,54 @@ final class FlutterWidgetAdapter implements WidgetAdapter, ThemeAdapter {
     return argument is FunctionExpression ? argument : null;
   }
 
+  @override
+  bool isChangeNotification(MethodInvocation node) {
+    if (!MaterialCatalog.changeNotificationCalls.contains(node.methodName.name)) {
+      return false;
+    }
+
+    // **Resolved, not named** — the rule C1 established after 18 widgets were misclassified by name. A
+    // user's own `notifyListeners()` on their own class is not `ChangeNotifier`'s, and erasing it would
+    // delete a call the program actually makes. The element's library is the only thing that can tell
+    // them apart.
+    final String? library = node.methodName.element?.library?.identifier;
+    if (library == null || !library.startsWith(_package)) {
+      return false;
+    }
+
+    // No arguments. `ChangeNotifier.notifyListeners()` takes none, so anything that does is a different
+    // method that happens to share the name, and we do not guess at it.
+    return node.argumentList.arguments.isEmpty;
+  }
+
+  @override
+  bool isComponentPropsGetter(Expression node) {
+    if (MaterialCatalog.componentPropsGetter.isEmpty) {
+      return false;
+    }
+
+    final SimpleIdentifier? identifier = switch (node) {
+      SimpleIdentifier() => node,
+      // `this.widget.isDark` — the same getter, written explicitly.
+      PropertyAccess(propertyName: final SimpleIdentifier name) => name,
+      _ => null,
+    };
+    if (identifier == null || identifier.name != MaterialCatalog.componentPropsGetter) {
+      return false;
+    }
+
+    // **Resolved, not named** (C1). A user's own field called `widget` is their data, and rewriting a read
+    // of it into a prop reference would silently change what the program means. The getter must be the one
+    // Flutter declares on `State`.
+    // The same shape `route/material_adapter.dart` uses: the declaring class and its library are what
+    // identify a framework member, and asking for those needs no element-subtype test.
+    final String? library = identifier.element?.library?.identifier;
+    if (library == null || !library.startsWith(_package)) {
+      return false;
+    }
+    return identifier.element?.enclosingElement?.name == MaterialCatalog.stateBase;
+  }
+
   // ── theme ─────────────────────────────────────────────────────────────────────────────────────
 
   @override

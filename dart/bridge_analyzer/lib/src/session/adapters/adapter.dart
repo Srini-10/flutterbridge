@@ -190,6 +190,33 @@ abstract interface class WidgetAdapter implements PackageAdapter {
   /// Returns the inner closure, whose statements are spliced in where the call was. Returns `null` for
   /// anything else, which is almost everything.
   FunctionExpression? unwrapStateBatch(MethodInvocation node);
+
+  /// Whether [node] is a **change notification** that must be erased (INV-22).
+  ///
+  /// `notifyListeners()` is a `ChangeNotifier`'s way of saying *something changed, rebuild*. ADR-4/ADR-20
+  /// answer that with *a signal write **is** the notification*: the announcement is already implied by the
+  /// write the UIR records, so the call carries no meaning UIR does not have — and it carries one UIR must
+  /// never have, which is the framework's word for it.
+  ///
+  /// Erased rather than modelled. There is no `sig.Notify` to lower it to, and there should not be: an
+  /// action that wrote no signal would announce nothing, so nothing observable is lost. Modelling it would
+  /// mean every generator re-deciding what a listener is, which is precisely what ADR-4 exists to prevent.
+  ///
+  /// Returns `false` for almost everything, including a user's own method named `notifyListeners` — that is
+  /// a call the program actually makes, and deleting it would be deleting the user's code.
+  bool isChangeNotification(MethodInvocation node);
+
+  /// Whether [node] is the framework getter a `State` uses to reach its own props (INV-22).
+  ///
+  /// `widget.isDark` is a read of the **component's parameter** `isDark`. Extraction already lifts a
+  /// `StatefulWidget`'s fields onto `ui.Component.params`, so the receiver carries no information the UIR
+  /// lacks — it is the framework's word for "my own props", and the name `widget` is one no downstream
+  /// pass may know.
+  ///
+  /// Recognised so the *property* can be emitted as a parameter reference and the receiver dropped.
+  /// Without it the receiver reached the generator as an undeclared name and every component that reads a
+  /// prop was refused with BRG3006.
+  bool isComponentPropsGetter(Expression node);
 }
 
 /// An adapter that recognises design tokens.

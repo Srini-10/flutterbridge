@@ -151,6 +151,10 @@ final class ExpressionExtractor {
         );
 
       case PrefixedIdentifier():
+        // `widget.isDark` — a read of this component's own parameter. See `_componentProp`.
+        if (_componentProp(node.prefix, node.identifier.name, node) case final RawNode prop) {
+          return prop;
+        }
         return RawNode(
           kind: 'logic.PropertyAccess',
           span: out.span(node),
@@ -168,6 +172,9 @@ final class ExpressionExtractor {
             return folded;
           }
           return _reference(node, '${target.name}.${node.propertyName.name}', scope);
+        }
+        if (_componentProp(target, node.propertyName.name, node) case final RawNode prop) {
+          return prop;
         }
         return RawNode(
           kind: 'logic.PropertyAccess',
@@ -457,6 +464,10 @@ final class ExpressionExtractor {
           type: writeType,
         );
       case PrefixedIdentifier():
+        // `widget.isDark` — a read of this component's own parameter. See `_componentProp`.
+        if (_componentProp(node.prefix, node.identifier.name, node) case final RawNode prop) {
+          return prop;
+        }
         return RawNode(
           kind: 'logic.PropertyAccess',
           span: out.span(node),
@@ -511,6 +522,37 @@ final class ExpressionExtractor {
 
   static bool _isIncrement(Token operator) =>
       operator.lexeme == '++' || operator.lexeme == '--';
+
+  /// A read of the component's own parameter, when [receiver] is the framework's props getter (INV-22).
+  ///
+  /// `widget.isDark` inside a `State` is a read of the **component's parameter** `isDark`. Extraction
+  /// already lifts a `StatefulWidget`'s fields onto `ui.Component.params`, so the receiver carries no
+  /// information the UIR lacks — it is the framework's word for "my own props", and `widget` is a name no
+  /// downstream pass may know.
+  ///
+  /// Emitted as a `logic.Ref` with a `name` and **no `target`**, which is exactly how a parameter
+  /// reference is spelled (Spec v2.5 §A18.3): resolution is by name, within the enclosing scope. The React
+  /// component emitter already turns that into `props.isDark`, so nothing downstream changes.
+  ///
+  /// Before this, the receiver reached the generator as an undeclared name and every component reading a
+  /// prop was refused with BRG3006 — a diagnostic right about the symbol and wrong about whose problem it
+  /// was.
+  RawNode? _componentProp(Expression receiver, String property, Expression at) {
+    if (!registry.isComponentPropsGetter(receiver)) {
+      return null;
+    }
+    return RawNode(
+      kind: 'logic.Ref',
+      span: out.span(at),
+      fields: <String, RawValue>{
+        'name': RawLiteral(property),
+        // The schema requires it, and the read's static type is the parameter's type — the same type the
+        // component's `params` entry carries. Omitting it produced BRG1204 on the first run, which is the
+        // validator doing exactly its job: "a bug in extraction, not in the analyzed project".
+        'type': out.typeRef(at.staticType, at: at),
+      },
+    );
+  }
 
   /// Whether [node] names a type or an import prefix rather than a value.
   ///

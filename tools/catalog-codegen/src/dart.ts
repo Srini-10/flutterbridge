@@ -172,6 +172,12 @@ ${widgets}
   /// The base class of the \`State\` half of a stateful pair.
   static const String stateBase = ${q(catalog.stateBase ?? '')};
 
+  /// The getter a \`State\` uses to reach its \`StatefulWidget\`'s fields (INV-22).
+  ///
+  /// \`widget.isDark\` is a read of the component's own parameter \`isDark\`; \`widget\` is the framework's
+  /// word for "my own props" and must not survive extraction.
+  static const String componentPropsGetter = ${q(catalog.componentPropsGetter?.name ?? '')};
+
   /// Types whose *value* is state even when the field holding them is \`final\`.
   static const Set<String> stateHolders = ${list(catalog.stateHolders ?? [])};
 
@@ -185,6 +191,12 @@ ${lifecycle}
 
   /// Calls that batch state mutations and mean nothing else — \`setState\` (INV-22).
   static const Set<String> stateBatchCalls = ${list(catalog.stateBatchCalls ?? [])};
+
+  /// Framework calls that announce a change and carry no other meaning (INV-22).
+  ///
+  /// ADR-4/ADR-20: *a signal write **is** the notification*. The announcement is already implied by the
+  /// write the UIR records, and the name is one no downstream pass may know.
+  static const Set<String> changeNotificationCalls = ${list(catalog.changeNotificationCalls?.calls ?? [])};
 
   /// The classes that own the navigation methods.
   static const Set<String> navigationTypes = ${list(catalog.navigation?.types ?? [])};

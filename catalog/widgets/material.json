@@ -14,6 +14,10 @@
     "StatefulHookConsumerWidget"
   ],
   "stateBase": "State",
+  "componentPropsGetter": {
+    "$comment": "The getter a `State` uses to reach its `StatefulWidget`'s fields. `widget.isDark` is a read of the *component's* parameter `isDark` — extraction already lifts those fields onto `ui.Component.params`, so the read is a parameter reference and `widget` is the framework's word for 'my own props' (INV-22). Without this the receiver reached the generator as an undeclared name and every component that reads a prop was refused with BRG3006. flutter/widgets.dart:State.widget.",
+    "name": "widget"
+  },
   "stateHolders": [
     "AnimationController",
     "ChangeNotifier",
@@ -35,6 +39,12 @@
   "stateBatchCalls": [
     "setState"
   ],
+  "changeNotificationCalls": {
+    "$comment": "Framework calls that announce a change and carry no other meaning (INV-22). ADR-4/ADR-20: *a signal write IS the notification*, so the announcement is already implied by the write the UIR records — and the name is one no downstream pass may know. `notifyListeners()` in a ChangeNotifier action is erased, exactly as `setState`'s wrapper is spliced open. Erased rather than modelled: a `sig.Action` that wrote nothing would still announce nothing, so there is no information here to keep. flutter/foundation.dart:ChangeNotifier.",
+    "calls": [
+      "notifyListeners"
+    ]
+  },
   "navigation": {
     "$comment": "Navigator 1 vocabulary (Spec v2.4 §A17). `pushRoute` takes a Route OBJECT whose destination is built inline -> RouteTransition.component. `pushPath` takes a PATH string -> RouteTransition.target. `pop` is not an edge at all: it returns along one that already exists.",
     "types": [

@@ -86,7 +86,7 @@ export function emitComponent(component: Node, module: ModuleBuilder, scope: Emi
   module.block(() => {
     const signals = declareLocalSignals(component, module, scope);
     // Actions the tree calls, declared before the tree that calls them. See `declareLocalActions`.
-    const actions = declareLocalActions(component, module, scope, signals);
+    const actions = declareLocalActions(component, module, scope, signals, params);
     const inner = childScope(scope, signals, params, actions);
     const tree = component['render'];
     if (tree === undefined) {
@@ -205,6 +205,7 @@ function declareLocalActions(
   module: ModuleBuilder,
   scope: EmitScope,
   signals: ReadonlyMap<NodeId, string>,
+  componentParams: readonly Node[],
 ): Map<NodeId, string> {
   const names = new Map<NodeId, string>();
   const referenced = referencedActions(component['render'], scope);
@@ -232,7 +233,9 @@ function declareLocalActions(
 
     module.line(`const ${names.get(id)!} = (${actionParams}) => {`);
     module.block(() => {
-      module.lineAll(emitActionBody(action, actionScope(scope, signals, declared, names)));
+      module.lineAll(
+        emitActionBody(action, actionScope(scope, signals, declared, names, componentParams)),
+      );
     });
     module.line('};');
   }
@@ -254,8 +257,21 @@ function actionScope(
   signals: ReadonlyMap<NodeId, string>,
   params: readonly Node[],
   actions: ReadonlyMap<NodeId, string>,
+  componentParams: readonly Node[] = [],
 ): EmitScope {
   const names = new Set(params.map((param) => String(param['name'] ?? '')));
+  // The enclosing component's parameters, which an action body can read because its closure is emitted
+  // *inside* the component function — `props` is lexically in scope there.
+  //
+  // Without this, `widget.step` read from inside an action resolved to nothing and the generator refused
+  // the program with BRG3006. The render tree worked, because `childScope` already knew about props; an
+  // action was handed the *program* scope, which has no parameters at all. Same read, two scopes, one of
+  // them wrong.
+  const componentNames = new Map<string, string>();
+  for (const param of componentParams) {
+    const name = String(param['name'] ?? '');
+    if (name !== '') componentNames.set(name, identifierOf(name));
+  }
   return {
     ...parent,
     report: parent.report.bind(parent),
@@ -271,8 +287,13 @@ function actionScope(
     },
     signalLocal: (id) => signals.get(id) ?? parent.signalLocal(id),
     localName: (id) => actions.get(id) ?? parent.localName(id),
-    // A bare name, not `props.x`. Innermost-first, so a parameter shadows an outer name of the same spelling.
-    paramInScope: (name) => (names.has(name) ? identifierOf(name) : parent.paramInScope(name)),
+    // Innermost-first, exactly as Dart resolves: the action's own parameter shadows a component
+    // parameter of the same spelling, and a bare name is never `props.x`.
+    paramInScope: (name) => {
+      if (names.has(name)) return identifierOf(name);
+      const prop = componentNames.get(name);
+      return prop === undefined ? parent.paramInScope(name) : `props.${prop}`;
+    },
   };
 }
 
@@ -825,8 +846,27 @@ export function emitBinding(
     case 'bind.Expr':
       return emitExpression(binding['expr'] as Node, scope);
 
-    case 'bind.Param':
-      return `props.${identifierOf(String(binding['name'] ?? '_'))}`;
+    case 'bind.Param': {
+      // **`param`, not `name`.** `l2.json` names the field `param` and marks it required, and the
+      // generated model has `readonly param: string`. Reading `name` always found `undefined` and fell
+      // through to the placeholder, so every direct prop binding emitted `props._` — a valid identifier
+      // that compiles, refers to nothing, and renders empty.
+      //
+      // It survived because no *emitting* application had a `StatefulWidget` that read its own props:
+      // until M6-B lowered `widget.foo`, such a program was refused at extraction and never reached here.
+      // Unblocking one capability exposed the defect in the next.
+      const name = binding['param'];
+      if (typeof name !== 'string' || name === '') {
+        scope.report(
+          GeneratorDiagnosticCode.UnresolvedReference,
+          'error',
+          'a bind.Param carries no parameter name, so there is nothing to read',
+          idOf(binding),
+        );
+        return 'undefined';
+      }
+      return `props.${identifierOf(name)}`;
+    }
 
     default:
       scope.report(
