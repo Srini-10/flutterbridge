@@ -267,8 +267,16 @@ jobs:
           # The credential belongs to the job, never to the repository — M5-E found an earlier validation
           # run had written one into the checked-in `.npmrc`, along with deleting two lines of comment.
           echo "//localhost:4873/:_authToken=ci-validation-only" > "$RUNNER_TEMP/npmrc"
+          # `./release/…`, never `release/…`. npm parses a bare `a/b` argument as a **GitHub shorthand**
+          # (`owner/repo`) rather than a path, and tries to clone it:
+          #
+          #     npm error command git ls-remote ssh://git@github.com/release/bridge-cli-0.1.0.tgz.git
+          #     npm error git@github.com: Permission denied (publickey).
+          #
+          # A leading `./` makes it unambiguously a file. Local validation missed this because it ran
+          # `cd release && npm publish *.tgz`, where the argument has no slash in it at all.
           for tarball in release/*.tgz; do
-            npm publish "$tarball" --registry=http://localhost:4873 --userconfig="$RUNNER_TEMP/npmrc"
+            npm publish "./$tarball" --registry=http://localhost:4873 --userconfig="$RUNNER_TEMP/npmrc"
           done
 
           npm install -g @bridge/cli --registry=http://localhost:4873
