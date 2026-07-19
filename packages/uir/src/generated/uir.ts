@@ -1,7 +1,7 @@
 // GENERATED CODE — DO NOT EDIT
 //
 // Produced by tools/schema-codegen from packages/uir/schema/*.json.
-// UIR schema version: 1.4.0
+// UIR schema version: 1.5.0
 //
 // Edit the schema and re-run `pnpm codegen`. Hand-edits to this file are lost on the next run,
 // and CI fails if this file does not match the schema (drift check).
@@ -11,10 +11,10 @@
 import { createHash } from 'node:crypto';
 
 /** The UIR schema version this module was generated from. */
-export const UIR_VERSION = '1.4.0' as const;
+export const UIR_VERSION = '1.5.0' as const;
 
 /** A hash of the schema sources this module was generated from. */
-export const UIR_SCHEMA_HASH = 'fc4e4eb130c9f948' as const;
+export const UIR_SCHEMA_HASH = '9b5c1183b869601f' as const;
 
 /** Node kind -> the fields of that node which hold `NodeId` references. */
 export const UIR_REFERENCE_FIELDS: Readonly<Record<string, readonly string[]>> = {
@@ -46,6 +46,7 @@ export const UIR_REFERENCE_FIELDS: Readonly<Record<string, readonly string[]>> =
   'logic.Lit': ['id'],
   'logic.MapLit': ['id'],
   'logic.MethodCall': ['id'],
+  'logic.Navigate': ['id', 'transition'],
   'logic.New': ['id'],
   'logic.NullCheck': ['id'],
   'logic.OpaqueDecl': ['id'],
@@ -537,6 +538,32 @@ const materialRoleValues = Object.values(MaterialRole) as readonly MaterialRole[
 /** Parses a {@link MaterialRole}. Rejects any value outside the enum. */
 export function parseMaterialRole(value: unknown, path = 'MaterialRole'): MaterialRole {
   return asEnum(value, path, materialRoleValues);
+}
+
+/// What a `logic.Navigate` does.
+///
+/// Named for the **effect on the navigation stack**, not for the Flutter API that produced it: a `go_router` `context.go` and a `Navigator.pushNamed` are both `push`, and a generator lowers the effect rather than recognising a package. ADR-0025 §5 is why — the M6-D corpus found zero `go_router` in two production applications after C1 recorded it as dominant, so which package is popular is not something to build a vocabulary on.
+export const NavigateAction = {
+  /// A new entry on the stack. `Navigator.push`, `pushNamed`, and every route overlay — a dialog, modal sheet or menu pushes a `Route` (ADR-0024 cites the SDK).
+  push: 'push',
+  /// The current entry is replaced. `pushReplacement`, `pushReplacementNamed`.
+  replace: 'replace',
+  /// The top entry is removed. `pop`, `maybePop`.
+  pop: 'pop',
+  /// Entries are removed until a predicate holds. The predicate is **not** modelled; a generator that cannot express one must refuse rather than approximate.
+  popUntil: 'popUntil',
+} as const;
+
+/// What a `logic.Navigate` does.
+///
+/// Named for the **effect on the navigation stack**, not for the Flutter API that produced it: a `go_router` `context.go` and a `Navigator.pushNamed` are both `push`, and a generator lowers the effect rather than recognising a package. ADR-0025 §5 is why — the M6-D corpus found zero `go_router` in two production applications after C1 recorded it as dominant, so which package is popular is not something to build a vocabulary on.
+export type NavigateAction = (typeof NavigateAction)[keyof typeof NavigateAction];
+
+const navigateActionValues = Object.values(NavigateAction) as readonly NavigateAction[];
+
+/** Parses a {@link NavigateAction}. Rejects any value outside the enum. */
+export function parseNavigateAction(value: unknown, path = 'NavigateAction'): NavigateAction {
+  return asEnum(value, path, navigateActionValues);
 }
 
 /// How a route argument survives — or fails to survive — a URL boundary (ADR-11, ADR-11a).
@@ -1375,6 +1402,32 @@ export interface MethodCall {
   readonly type: TypeRef;
 }
 
+/// Performing a navigation — a push, a pop, or the opening of a route overlay (ADR-0025 D2).
+///
+/// `app.RouteTransition` is a *declarative edge in the navigation graph*; it is the input to N11 (ADR-11) and says where an application **can** go. It does not say where it **does** go, and nothing else did either: a `Navigator.pushNamed` survived extraction as an ordinary call to an unresolvable name, in violation of INV-22, and the generator had a route table, a live router and a call it could not connect to either.
+///
+/// This is that connection, and it is a **statement** rather than a field on the edge for one measured reason: a pop has no edge. Spec v2.4 §A17.3 rules that a pop returns along an edge that already exists rather than creating one, and the M6-D corpus measured pops as the most frequent navigation verb in real Flutter — 143 uses against 83 pushes. A `site` field on `app.RouteTransition` could not have expressed one.
+///
+/// **Scope.** The result of a navigation is not modelled: this node is evaluated for effect. `final ok = await showDialog<bool>(...)` — 19 measured sites — is still refused, because a statement carries no value. See `docs/m7/m7a-navigation-implementation.md`.
+export interface Navigate {
+  /// What the navigation does.
+  readonly action: NavigateAction;
+  /// The override key, when the node is addressable by a human.
+  readonly anchor?: Anchor;
+  /// Plugin extension data, namespaced `x-<plugin>`. Core passes round-trip it untouched (Spec §2.6).
+  readonly ext?: Readonly<Record<string, unknown>>;
+  /// The node's stable, content-addressed identity.
+  readonly id: NodeId;
+  /// Discriminant.
+  readonly kind: 'logic.Navigate';
+  /// Where the node came from.
+  readonly span: SourceSpan;
+  /// The `app.RouteTransition` this performs, for a departure.
+  ///
+  /// **Absent for a return** (`pop`, `popUntil`, `maybePop`): §A17.3 rules that a pop is not a transition, so there is no edge to name. A reader must not treat its absence as an incomplete document — `action` says which case it is.
+  readonly transition?: NodeId;
+}
+
 /// A constructor invocation.
 export interface New {
   /// The override key, when the node is addressable by a human.
@@ -1557,6 +1610,12 @@ export interface Return {
 export interface Route {
   /// The override key, when the node is addressable by a human.
   readonly anchor?: Anchor;
+  /// Arguments the construction site passed to the component, in order (ADR-0025 D1).
+  ///
+  /// **Distinct from `params`**, which are the route's *path* parameters — the `:id` in `/user/:id`, supplied by the router at navigation time. These are supplied by the author at the construction site: `home: CounterPanel(label: 'Taps')`. The two differ in who provides them and when, which is why reusing `params` for both would have conflated them.
+  ///
+  /// The same `RouteArgument` an `app.RouteTransition` carries, deliberately: a declarative route and an imperative navigation are the same question asked twice, and before this field only one of them could answer. It is what makes `transport` — and so ADR-11a's live-object refusal (BRG2301) — reachable for a declarative route, which it was not.
+  readonly arguments?: readonly RouteArgument[];
   /// The component rendered.
   readonly component: NodeId;
   /// Plugin extension data, namespaced `x-<plugin>`. Core passes round-trip it untouched (Spec §2.6).
@@ -2101,6 +2160,7 @@ export type Stmt =
   | ExprStmt
   | For
   | If
+  | Navigate
   | OpaqueStmt
   | Return
   | Switch
@@ -3306,6 +3366,38 @@ export function copyWithMethodCall(node: MethodCall, patch: Partial<MethodCall>)
   return { ...node, ...patch };
 }
 
+/** Parses a {@link Navigate}, validating as it goes. Throws {@link UirParseError} on bad input. */
+export function parseNavigate(value: unknown, path = 'Navigate'): Navigate {
+  const o = asObject(value, path);
+  const kind = asString(req(o, 'kind', path), `${path}.kind`);
+  if (kind !== 'logic.Navigate') throw new UirParseError(`${path}.kind`, `expected "logic.Navigate", got "${kind}"`);
+
+  return {
+    action: parseNavigateAction(req(o, 'action', path), `${path}.action`),
+    ...(own(o, 'anchor') === undefined || own(o, 'anchor') === null ? {} : { anchor: parseAnchor(own(o, 'anchor'), `${path}.anchor`) }),
+    ...(own(o, 'ext') === undefined || own(o, 'ext') === null ? {} : { ext: asMap(own(o, 'ext'), `${path}.ext`, (v) => v) }),
+    id: parseNodeId(req(o, 'id', path), `${path}.id`),
+    kind: 'logic.Navigate',
+    span: parseSourceSpan(req(o, 'span', path), `${path}.span`),
+    ...(own(o, 'transition') === undefined || own(o, 'transition') === null ? {} : { transition: parseNodeId(own(o, 'transition'), `${path}.transition`) }),
+  };
+}
+
+/** Serializes a {@link Navigate} to canonical JSON. */
+export function serializeNavigate(node: Navigate): Record<string, unknown> {
+  return canonicalJson(node) as Record<string, unknown>;
+}
+
+/** Structural equality. List order is significant: UIR children are ordered (Spec §2.3). */
+export function equalsNavigate(a: Navigate, b: Navigate): boolean {
+  return deepEquals(canonicalJson(a), canonicalJson(b));
+}
+
+/** Returns a copy of [node] with [patch] applied. The original is never mutated. */
+export function copyWithNavigate(node: Navigate, patch: Partial<Navigate>): Navigate {
+  return { ...node, ...patch };
+}
+
 /** Parses a {@link New}, validating as it goes. Throws {@link UirParseError} on bad input. */
 export function parseNew(value: unknown, path = 'New'): New {
   const o = asObject(value, path);
@@ -3608,6 +3700,7 @@ export function parseRoute(value: unknown, path = 'Route'): Route {
 
   return {
     ...(own(o, 'anchor') === undefined || own(o, 'anchor') === null ? {} : { anchor: parseAnchor(own(o, 'anchor'), `${path}.anchor`) }),
+    ...(own(o, 'arguments') === undefined || own(o, 'arguments') === null ? {} : { arguments: asList(own(o, 'arguments'), `${path}.arguments`, (v, p) => parseRouteArgument(v, p)) }),
     component: parseNodeId(req(o, 'component', path), `${path}.component`),
     ...(own(o, 'ext') === undefined || own(o, 'ext') === null ? {} : { ext: asMap(own(o, 'ext'), `${path}.ext`, (v) => v) }),
     ...(own(o, 'guards') === undefined || own(o, 'guards') === null ? {} : { guards: asList(own(o, 'guards'), `${path}.guards`, (v, p) => parseNodeId(v, p)) }),
@@ -4612,6 +4705,8 @@ export function parseStmt(value: unknown, path = 'Stmt'): Stmt {
       return parseFor(o, path);
     case 'logic.If':
       return parseIf(o, path);
+    case 'logic.Navigate':
+      return parseNavigate(o, path);
     case 'logic.OpaqueStmt':
       return parseOpaqueStmt(o, path);
     case 'logic.Return':
@@ -4644,6 +4739,7 @@ export interface StmtVisitor<R> {
   visitExprStmt(node: ExprStmt): R;
   visitFor(node: For): R;
   visitIf(node: If): R;
+  visitNavigate(node: Navigate): R;
   visitOpaqueStmt(node: OpaqueStmt): R;
   visitReturn(node: Return): R;
   visitSwitch(node: Switch): R;
@@ -4668,6 +4764,8 @@ export function acceptStmt<R>(node: Stmt, visitor: StmtVisitor<R>): R {
       return visitor.visitFor(node as For);
     case 'logic.If':
       return visitor.visitIf(node as If);
+    case 'logic.Navigate':
+      return visitor.visitNavigate(node as Navigate);
     case 'logic.OpaqueStmt':
       return visitor.visitOpaqueStmt(node as OpaqueStmt);
     case 'logic.Return':
@@ -4759,7 +4857,7 @@ export function acceptUiNode<R>(node: UiNode, visitor: UiNodeVisitor<R>): R {
 }
 
 /** Any UIR node. */
-export type AnyUirNode = Action | Assign | Await | Binary | Block | Break | Call | Cast | ClassDecl | Component | Conditional | ConstBinding | Continue | Derived | Effect | Endpoint | EnumDecl | ExprBinding | ExprStmt | FieldDecl | For | FunctionDecl | If | Lambda | ListLit | Lit | MapLit | MethodCall | New | NullCheck | OpaqueDecl | OpaqueExpr | OpaqueStmt | ParamBinding | PropertyAccess | Ref | Return | Route | RouteTransition | Signal | SignalBinding | SourceFile | Store | StringInterp | Switch | Throw | Token | TryCatch | TypeAliasDecl | UiAsync | UiCond | UiElement | UiList | UiOpaque | UiOverrideRef | UiSlotRef | UiText | Unary | VarDecl | While;
+export type AnyUirNode = Action | Assign | Await | Binary | Block | Break | Call | Cast | ClassDecl | Component | Conditional | ConstBinding | Continue | Derived | Effect | Endpoint | EnumDecl | ExprBinding | ExprStmt | FieldDecl | For | FunctionDecl | If | Lambda | ListLit | Lit | MapLit | MethodCall | Navigate | New | NullCheck | OpaqueDecl | OpaqueExpr | OpaqueStmt | ParamBinding | PropertyAccess | Ref | Return | Route | RouteTransition | Signal | SignalBinding | SourceFile | Store | StringInterp | Switch | Throw | Token | TryCatch | TypeAliasDecl | UiAsync | UiCond | UiElement | UiList | UiOpaque | UiOverrideRef | UiSlotRef | UiText | Unary | VarDecl | While;
 
 /** Parses any UIR node, dispatching on `kind` across every node kind in the schema. */
 export function parseUirNode(value: unknown, path = 'UirNode'): AnyUirNode {
@@ -4822,6 +4920,8 @@ export function parseUirNode(value: unknown, path = 'UirNode'): AnyUirNode {
       return parseMapLit(o, path);
     case 'logic.MethodCall':
       return parseMethodCall(o, path);
+    case 'logic.Navigate':
+      return parseNavigate(o, path);
     case 'logic.New':
       return parseNew(o, path);
     case 'logic.NullCheck':

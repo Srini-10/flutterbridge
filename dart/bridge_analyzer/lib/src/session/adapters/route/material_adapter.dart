@@ -118,6 +118,31 @@ final class MaterialRouteAdapter implements RouteAdapter, TransitionAdapter {
   }
 
   @override
+  NavigateAction? navigationActionOf(AdapterContext context, MethodInvocation node) {
+    // Read off the catalog's own vocabulary (ADR-18), never a literal here: `pushReplacement` is a
+    // Flutter fact, and `session/extract/` may not contain the word — nor may this file invent a second
+    // list that can drift from the one extraction already uses.
+    final String method = node.methodName.name;
+    if (MaterialCatalog.navigationPop.contains(method)) {
+      return method == 'popUntil' ? NavigateAction.popUntil : NavigateAction.pop;
+    }
+    if (MaterialCatalog.navigationPushRoute.contains(method) ||
+        MaterialCatalog.navigationPushPath.contains(method)) {
+      if (method.startsWith('pushReplacement')) {
+        return NavigateAction.replace;
+      }
+      // `pushAndRemoveUntil`, `pushNamedAndRemoveUntil` and `popAndPushNamed` compose two stack
+      // effects. ADR-0025 models neither composition, and all three measure zero in the corpus, so
+      // they are left to the refusal that already covers them rather than lowered to the nearer half.
+      if (method.contains('RemoveUntil') || method == 'popAndPushNamed') {
+        return null;
+      }
+      return NavigateAction.push;
+    }
+    return null;
+  }
+
+  @override
   TransitionDeclaration? transitionOf(AdapterContext context, MethodInvocation node) {
     final String method = node.methodName.name;
 

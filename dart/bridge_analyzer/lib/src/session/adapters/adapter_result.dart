@@ -14,6 +14,34 @@ library;
 import 'package:analyzer/dart/ast/ast.dart';
 import 'package:meta/meta.dart';
 
+/// What a navigation does to the navigation stack (ADR-0025 D2).
+///
+/// The vocabulary a `logic.Navigate` carries, named for the **effect** rather than for the Flutter API
+/// that produced it. `Navigator.pushNamed` and a `go_router` `context.go` are both [push]; a generator
+/// lowers the effect and never learns which package was written. ADR-0025 §5 has the evidence for
+/// insisting on that: M6-D measured **zero** `go_router` across two production applications after C1
+/// recorded it as the dominant shape, so which package is popular is not a thing to build a vocabulary
+/// on.
+///
+/// Deliberately smaller than Flutter's navigation surface. `pushAndRemoveUntil`,
+/// `pushNamedAndRemoveUntil` and `popAndPushNamed` have **no member here** — they compose two stack
+/// effects, ADR-0025 does not model them, and all three measure **zero** in the corpus. An adapter
+/// returns `null` for them, which leaves the existing refusal in place. That is the rule the M7-A brief
+/// states: anything outside the ADR keeps producing the correct refusal.
+enum NavigateAction {
+  /// A new entry on the stack — `push`, `pushNamed`, and every route overlay.
+  push,
+
+  /// The current entry is replaced — `pushReplacement`, `pushReplacementNamed`.
+  replace,
+
+  /// The top entry is removed — `pop`, `maybePop`.
+  pop,
+
+  /// Entries are removed until a predicate holds — `popUntil`. The predicate is not modelled.
+  popUntil,
+}
+
 /// A navigation an adapter recognised at a call site.
 ///
 /// **The adapter states intent; it does not resolve it.** It says "this call goes to the path

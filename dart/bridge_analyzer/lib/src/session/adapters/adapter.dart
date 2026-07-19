@@ -77,6 +77,17 @@ abstract interface class TransitionAdapter implements PackageAdapter {
   /// edge*: a `Navigator.pop()` returns along a path that already exists rather than creating one, and
   /// the nav graph gains nothing from a node for it (Spec v2.4 §A17.3).
   TransitionDeclaration? transitionOf(AdapterContext context, MethodInvocation node);
+
+  /// What [node] does to the navigation stack, or `null` when this adapter does not model it.
+  ///
+  /// The second half of the same recognition, and the reason it is a separate question: [transitionOf]
+  /// answers *where does this go*, which a pop has no answer to. This answers *what does it do*, which
+  /// a pop does — and a pop is the most frequent navigation verb in real Flutter (143 uses against 83
+  /// pushes, M6-D). Before ADR-0025 the analyzer had no way to say it happened at all.
+  ///
+  /// `null` means the effect is outside the vocabulary [NavigateAction] models — `pushAndRemoveUntil`
+  /// composes two — and the call keeps its existing refusal rather than being lowered approximately.
+  NavigateAction? navigationActionOf(AdapterContext context, MethodInvocation node);
 }
 
 /// An adapter that recognises widgets.

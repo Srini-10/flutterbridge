@@ -1,6 +1,8 @@
 # ADR-0025 — The navigation model
 
-- **Status:** Proposed — **not implemented**. M6-D is architecture validation only.
+- **Status:** **Accepted** — partially implemented in M7-A. D1 is schema-only; D2 ships for returns
+  (`pop`); **D3 is withdrawn as incorrect**. See
+  [`docs/m7/m7a-navigation-implementation.md`](../m7/m7a-navigation-implementation.md).
 - **Date:** 2026-07-19
 - **Confirms and extends:** [ADR-0024](./0024-performing-a-navigation.md) (its Option B, now with the
   evidence that decides it).
@@ -47,7 +49,14 @@ extraction today in violation of that invariant.
 is not a transition, so there is no edge on which to hang a `site`. A pop is the single most frequent
 navigation verb in the corpus, at 143 uses including `popUntil`/`maybePop`. That settles it.
 
-### D3 — `app.RouteTransition.arguments` must be populated for `pushNamed`
+### D3 — ~~`app.RouteTransition.arguments` must be populated for `pushNamed`~~ — **WITHDRAWN (M7-A)**
+
+> **This decision was wrong and is withdrawn.** It called a deliberate refusal an extraction defect.
+> Flutter's `arguments:` is a single untyped `Object?` with **no parameter names**, and `RouteArgument`
+> requires a name because a generator must pass it to something. The adapter reports it rather than
+> inventing names, which is INV-4 working as intended — and in the corpus the names exist only inside
+> `onGenerateRoute`, as `args['id'] as String`, in a function the analyzer does not read. **No work is
+> required; the existing behaviour is correct.** The original text follows for the record.
 
 **Not a schema change** — the field already exists and is already populated for inline destinations. It is
 simply not extracted for the named form:

@@ -84,6 +84,21 @@
         }
       }
     },
+    "NavigateAction": {
+      "description": "What a `logic.Navigate` does.\n\nNamed for the **effect on the navigation stack**, not for the Flutter API that produced it: a `go_router` `context.go` and a `Navigator.pushNamed` are both `push`, and a generator lowers the effect rather than recognising a package. ADR-0025 §5 is why — the M6-D corpus found zero `go_router` in two production applications after C1 recorded it as dominant, so which package is popular is not something to build a vocabulary on.",
+      "enum": [
+        "push",
+        "replace",
+        "pop",
+        "popUntil"
+      ],
+      "x-uir-enum-docs": {
+        "push": "A new entry on the stack. `Navigator.push`, `pushNamed`, and every route overlay — a dialog, modal sheet or menu pushes a `Route` (ADR-0024 cites the SDK).",
+        "replace": "The current entry is replaced. `pushReplacement`, `pushReplacementNamed`.",
+        "pop": "The top entry is removed. `pop`, `maybePop`.",
+        "popUntil": "Entries are removed until a predicate holds. The predicate is **not** modelled; a generator that cannot express one must refuse rather than approximate."
+      }
+    },
     "AssignmentOperator": {
       "description": "How an assignment combines its target with its value (Spec v2.2 §A10).\n\nAn enum, not a free-form string: a generator that receives an operator it does not know must fail to compile rather than silently emit the wrong arithmetic. `Binary.operator` is a string because a binary operator is pure — the worst a wrong one does is compute the wrong number. A wrong assignment operator writes the wrong value to state.",
       "enum": [
@@ -1310,6 +1325,38 @@
         }
       ]
     },
+    "Navigate": {
+      "description": "Performing a navigation — a push, a pop, or the opening of a route overlay (ADR-0025 D2).\n\n`app.RouteTransition` is a *declarative edge in the navigation graph*; it is the input to N11 (ADR-11) and says where an application **can** go. It does not say where it **does** go, and nothing else did either: a `Navigator.pushNamed` survived extraction as an ordinary call to an unresolvable name, in violation of INV-22, and the generator had a route table, a live router and a call it could not connect to either.\n\nThis is that connection, and it is a **statement** rather than a field on the edge for one measured reason: a pop has no edge. Spec v2.4 §A17.3 rules that a pop returns along an edge that already exists rather than creating one, and the M6-D corpus measured pops as the most frequent navigation verb in real Flutter — 143 uses against 83 pushes. A `site` field on `app.RouteTransition` could not have expressed one.\n\n**Scope.** The result of a navigation is not modelled: this node is evaluated for effect. `final ok = await showDialog<bool>(...)` — 19 measured sites — is still refused, because a statement carries no value. See `docs/m7/m7a-navigation-implementation.md`.",
+      "x-uir-kind": "logic.Navigate",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "action"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "logic.Navigate",
+              "description": "Discriminant."
+            },
+            "action": {
+              "$ref": "#/$defs/NavigateAction",
+              "description": "What the navigation does."
+            },
+            "transition": {
+              "$ref": "shared.json#/$defs/NodeId",
+              "description": "The `app.RouteTransition` this performs, for a departure.\n\n**Absent for a return** (`pop`, `popUntil`, `maybePop`): §A17.3 rules that a pop is not a transition, so there is no edge to name. A reader must not treat its absence as an incomplete document — `action` says which case it is."
+            }
+          }
+        }
+      ]
+    },
     "ClassDecl": {
       "description": "A class declaration.",
       "x-uir-kind": "logic.ClassDecl",
@@ -1655,6 +1702,9 @@
         },
         {
           "$ref": "#/$defs/ExprStmt"
+        },
+        {
+          "$ref": "#/$defs/Navigate"
         },
         {
           "$ref": "#/$defs/Break"

@@ -378,6 +378,16 @@ final class ExpressionExtractor {
           if (batched != null) {
             return bodyOf(batched.body, scope);
           }
+          // `() => Navigator.pop(context)` — a navigation in the arrow form (ADR-0025 D2). It becomes
+          // the statement, not a `Return` of it: the node models the *effect*, and the value an arrow
+          // yields here is discarded by the callback that holds it.
+          //
+          // This is where the corpus actually writes navigation. Hooking only the block form left the
+          // node unreachable in every real application.
+          final RawNode? navigate = statements.navigateOf(value, body);
+          if (navigate != null) {
+            return <RawValue>[RawChild(navigate)];
+          }
         }
         return <RawValue>[
           RawChild(
@@ -1006,6 +1016,14 @@ abstract interface class StatementExtractorRef {
 
   /// The closure a framework state-batching call wraps, if [node] is one.
   FunctionExpression? unwrapStateBatch(MethodInvocation node);
+
+  /// A `logic.Navigate` for [node] if it is a navigation this models, spanning [at].
+  ///
+  /// Asked from the arrow-body path as well as the statement path, because `() => Navigator.pop(c)`
+  /// and `{ Navigator.pop(c); }` are the same function and must extract to the same node. The first
+  /// version of ADR-0025's implementation hooked only the statement form, and the whole corpus writes
+  /// the arrow — the node reached UIR **zero** times until this existed.
+  RawNode? navigateOf(MethodInvocation node, AstNode at);
 }
 
 /// Offers a method invocation to the transition extractor, with the scope its arguments bind against.

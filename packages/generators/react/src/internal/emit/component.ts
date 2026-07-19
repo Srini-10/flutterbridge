@@ -84,10 +84,14 @@ export function emitComponent(component: Node, module: ModuleBuilder, scope: Emi
   module.line(`/** \`${component['name']}\`, from ${spanOf(component)}. */`);
   module.line(`export function ${name}(${propsType}) {`);
   module.block(() => {
-    const signals = declareLocalSignals(component, module, scope);
+    // The router, before anything that could use it — an action body is emitted by
+    // `declareLocalActions` below, and a navigation inside one reads this name.
+    const routerLocal = declareRouter(component, module);
+    const outer: EmitScope = routerLocal === undefined ? scope : { ...scope, routerLocal };
+    const signals = declareLocalSignals(component, module, outer);
     // Actions the tree calls, declared before the tree that calls them. See `declareLocalActions`.
-    const actions = declareLocalActions(component, module, scope, signals, params);
-    const inner = childScope(scope, signals, params, actions);
+    const actions = declareLocalActions(component, module, outer, signals, params);
+    const inner = childScope(outer, signals, params, actions);
     const tree = component['render'];
     if (tree === undefined) {
       module.line('return null;');
@@ -99,6 +103,43 @@ export function emitComponent(component: Node, module: ModuleBuilder, scope: Emi
   module.line('}');
   module.line();
   return name;
+}
+
+/**
+ * Declares the component's router, if its tree performs a navigation.
+ *
+ * ADR-0025 D2 makes a navigation a `logic.Navigate` statement, and lowering one needs `useRouter()`.
+ * That is a hook, and the navigation itself is almost always inside a callback — `onPressed: () =>
+ * Navigator.pop(context)` is how the corpus writes it — so calling the hook where the navigation is
+ * would be a rules-of-hooks violation that React throws on at runtime rather than a compile error.
+ *
+ * Hoisted for the same reason `useSignal` is, and the reason is worth repeating rather than
+ * cross-referencing: a hook inside a conditional or a callback runs a different number of times per
+ * render than React's hook order allows.
+ *
+ * Declared **only when needed**, so a component that never navigates emits no `useRouter` and imports
+ * nothing for one — the emitted file says what the component does.
+ *
+ * @param component - the `ui.Component` node.
+ * @param module - the file to write into.
+ * @returns the identifier holding the router, or undefined when the component does not navigate.
+ */
+function declareRouter(component: Node, module: ModuleBuilder): string | undefined {
+  if (!containsNavigate(component)) return undefined;
+  const useRouter = useRuntime(module, 'useRouter');
+  const local = 'router';
+  module.line(`const ${local} = ${useRouter}();`);
+  module.line();
+  return local;
+}
+
+/** Whether anything in `value` is a `logic.Navigate`. */
+function containsNavigate(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some(containsNavigate);
+  if (value === null || typeof value !== 'object') return false;
+  const node = value as Node;
+  if (node['kind'] === 'logic.Navigate') return true;
+  return Object.values(node).some(containsNavigate);
 }
 
 /**
@@ -383,6 +424,11 @@ function childScope(
   return {
     module: parent.module,
     report: parent.report.bind(parent),
+    // Forwarded, not rebuilt: the router is declared once per component and every nested scope inside it
+    // refers to that one declaration. Spread rather than assigned, because `exactOptionalPropertyTypes`
+    // distinguishes "absent" from "present and undefined" — and absent is what a component that does not
+    // navigate must have.
+    ...(parent.routerLocal === undefined ? {} : { routerLocal: parent.routerLocal }),
     // Program-wide, so a child scope forwards it unchanged rather than rebuilding it per component.
     themeRoles: parent.themeRoles,
     node: parent.node.bind(parent),

@@ -240,3 +240,78 @@ describe('M6-E — the capability registry is well formed (Phase 3)', () => {
     expect(missingCapabilityOf('ScaffoldMessenger.of', undefined)).toBeDefined();
   });
 });
+
+describe('M7-A — logic.Navigate is lowered (ADR-0025 D2)', () => {
+  /** A component whose button pops. The `logic.Navigate` shape is the analyzer's, read from a real run. */
+  function appPopping(action: string): AnyUirNode[] {
+    return [
+      { id: 'tk1', kind: 'app.Token', span, group: 'color', name: 'primary', light: '#FF3F51B5' } as unknown as AnyUirNode,
+      {
+        id: 'c1',
+        kind: 'ui.Component',
+        span,
+        name: 'HomeScreen',
+        localSignals: [],
+        render: {
+          id: 'e1',
+          kind: 'ui.Element',
+          span,
+          component: { name: 'ElevatedButton', userDefined: false },
+          props: {
+            onPressed: {
+              id: 'b1',
+              kind: 'bind.Expr',
+              span,
+              expr: {
+                id: 'lam1',
+                kind: 'logic.Lambda',
+                span,
+                params: [],
+                body: [{ id: 'nav1', kind: 'logic.Navigate', span, action }],
+              },
+            },
+          },
+          children: [],
+        },
+      } as unknown as AnyUirNode,
+      { id: 'r1', kind: 'app.Route', span, path: '/', component: 'c1' } as unknown as AnyUirNode,
+    ];
+  }
+
+  it('a pop becomes router.pop(), with useRouter hoisted to the component body', () => {
+    const { context, reported } = harness(appPopping('pop'));
+    const files = reactGenerator.generate(context).files;
+
+    expect(reported.filter((d) => d.severity === 'error')).toEqual([]);
+    const component = files.find((f) => f.path.endsWith('home-screen.tsx'));
+    expect(component).toBeDefined();
+
+    // The lowering.
+    expect(component?.contents).toContain('router.pop();');
+    // Hoisted — a hook inside the callback would be a rules-of-hooks violation React throws on at
+    // runtime, which `tsc` would not catch and a unit test asserting only `router.pop()` would miss.
+    expect(component?.contents).toMatch(/const router = useRouter\(\);[\s\S]*router\.pop\(\)/);
+    expect(component?.contents).toContain("from '@bridge/runtime-react'");
+  });
+
+  it('a component that does not navigate declares no router', () => {
+    // The emitted file should say what the component does. An unconditional `useRouter()` would also
+    // make every component require a RouterProvider, which is a runtime failure (BRG4005) for a screen
+    // that never navigates.
+    const { context } = harness(appCalling('doNothing'));
+    const files = reactGenerator.generate(context).files;
+    for (const file of files) expect(file.contents).not.toContain('useRouter');
+  });
+
+  it('an action ADR-0025 models but the generator cannot lower yet names the capability', () => {
+    // `push` needs its transition resolved to a destination. Refused specifically — never the generic
+    // statement refusal, which is the M6-E rule and which a new node kind does not suspend.
+    const { context, reported } = harness(appPopping('push'));
+    reactGenerator.generate(context);
+
+    expect(reported.find((d) => d.code === 'BRG3003')).toBeUndefined();
+    const capability = reported.find((d) => d.code === 'BRG3013');
+    expect(capability?.message).toContain('ADR-0025');
+    expect(capability?.message).toContain('belongs to this generator');
+  });
+});
