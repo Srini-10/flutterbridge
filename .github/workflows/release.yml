@@ -77,10 +77,17 @@ jobs:
           channel: stable
           cache: true
 
+      # No pipes. `flutter --version | head -1` **hung the Windows runner indefinitely**: `head` closes the
+      # pipe after one line, and `flutter` is a batch script that does not handle the broken pipe — the job
+      # sat on this step until it was cancelled. The first execution of this matrix found it, which is what
+      # the matrix is for.
       - name: toolchain versions
         shell: bash
         run: |
-          node --version && pnpm --version && dart --version && flutter --version | head -1
+          node --version
+          pnpm --version
+          dart --version
+          flutter --version
 
       - name: install
         run: pnpm install --frozen-lockfile
