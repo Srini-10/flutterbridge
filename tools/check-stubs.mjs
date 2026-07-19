@@ -7,13 +7,21 @@
  * is the input to the weekly stub triage (Blueprint §10, step 18).
  */
 import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const SKIP_DIRS = new Set(['node_modules', 'dist', '.git', '.turbo', 'build', '.dart_tool', 'coverage', '.next']);
 const SCAN_EXT = /\.(ts|tsx|mjs|cjs|js|dart|json|yaml|yml)$|^justfile$/;
+// Compared against a **separator-normalised** relative path. `relative()` returns `tools\check-stubs.mjs`
+// on Windows, so a POSIX-spelled constant never matched there and this file flagged *itself* — the census
+// printed correctly and the step still exited 1.
+//
+// The portability checker did not catch it: it looks for backslashes inside `join()`/`resolve()` calls,
+// and this is the mirror image — a forward slash inside a comparison constant. Worth remembering that a
+// hardcoded separator is a bug in both directions.
 const EXEMPT_FILES = new Set(['tools/check-stubs.mjs']);
+const posix = (path) => path.split(sep).join('/');
 
 /** Any casing/spacing variant we must catch, so a malformed tag cannot hide from the check. */
 const LOOSE = /BRIDGE[-_ ]?STUB/gi;
@@ -73,7 +81,7 @@ const violations = [];
 
 for (const file of walk(ROOT)) {
   const rel = relative(ROOT, file);
-  if (EXEMPT_FILES.has(rel)) continue;
+  if (EXEMPT_FILES.has(posix(rel))) continue;
   const lines = readFileSync(file, 'utf8').split('\n');
   lines.forEach((text, i) => {
     LOOSE.lastIndex = 0;
@@ -83,8 +91,8 @@ for (const file of walk(ROOT)) {
     // entry nor a violation. A *malformed* mention still fails, wherever it appears: that check exists
     // so a typo'd tag cannot hide, and prose is no excuse for one.
     if (match && !declaresStub(text)) return;
-    if (match) stubs.push({ file: rel, line: i + 1, milestone: Number(match[1]), text: text.trim() });
-    else violations.push({ file: rel, line: i + 1, text: text.trim() });
+    if (match) stubs.push({ file: posix(rel), line: i + 1, milestone: Number(match[1]), text: text.trim() });
+    else violations.push({ file: posix(rel), line: i + 1, text: text.trim() });
   });
 }
 
