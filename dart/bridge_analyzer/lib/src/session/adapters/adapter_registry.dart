@@ -278,6 +278,10 @@ final class AdapterRegistry {
     return null;
   }
 
+  /// Whether [node] is a framework change notification that must be erased (INV-22).
+  bool isChangeNotification(MethodInvocation node) =>
+      widgetAdapters.any((WidgetAdapter a) => a.isChangeNotification(node));
+
   /// Whether [library] is a framework, rather than the application being compiled.
   bool isFrameworkLibrary(String library) =>
       widgetAdapters.any((WidgetAdapter a) => a.isFrameworkLibrary(library));

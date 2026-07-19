@@ -242,6 +242,12 @@ abstract final class MaterialCatalog {
   /// Calls that batch state mutations and mean nothing else — `setState` (INV-22).
   static const Set<String> stateBatchCalls = <String>{'setState'};
 
+  /// Framework calls that announce a change and carry no other meaning (INV-22).
+  ///
+  /// ADR-4/ADR-20: *a signal write **is** the notification*. The announcement is already implied by the
+  /// write the UIR records, and the name is one no downstream pass may know.
+  static const Set<String> changeNotificationCalls = <String>{'notifyListeners'};
+
   /// The classes that own the navigation methods.
   static const Set<String> navigationTypes = <String>{'Navigator', 'NavigatorState'};
 

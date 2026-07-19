@@ -190,6 +190,21 @@ abstract interface class WidgetAdapter implements PackageAdapter {
   /// Returns the inner closure, whose statements are spliced in where the call was. Returns `null` for
   /// anything else, which is almost everything.
   FunctionExpression? unwrapStateBatch(MethodInvocation node);
+
+  /// Whether [node] is a **change notification** that must be erased (INV-22).
+  ///
+  /// `notifyListeners()` is a `ChangeNotifier`'s way of saying *something changed, rebuild*. ADR-4/ADR-20
+  /// answer that with *a signal write **is** the notification*: the announcement is already implied by the
+  /// write the UIR records, so the call carries no meaning UIR does not have — and it carries one UIR must
+  /// never have, which is the framework's word for it.
+  ///
+  /// Erased rather than modelled. There is no `sig.Notify` to lower it to, and there should not be: an
+  /// action that wrote no signal would announce nothing, so nothing observable is lost. Modelling it would
+  /// mean every generator re-deciding what a listener is, which is precisely what ADR-4 exists to prevent.
+  ///
+  /// Returns `false` for almost everything, including a user's own method named `notifyListeners` — that is
+  /// a call the program actually makes, and deleting it would be deleting the user's code.
+  bool isChangeNotification(MethodInvocation node);
 }
 
 /// An adapter that recognises design tokens.

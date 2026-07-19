@@ -69,6 +69,18 @@ final class StatementExtractor implements StatementExtractorRef {
         if (batched != null) {
           return expressions.bodyOf(batched.body, scope);
         }
+        // A **change notification** is erased outright — the one case where a statement expands to
+        // nothing. ADR-4/ADR-20: *a signal write IS the notification*, so `notifyListeners()` announces
+        // something the UIR has already recorded, and its name is one no downstream pass may know.
+        //
+        // Erasing rather than modelling is the same judgement `setState` gets one branch above: an action
+        // that wrote no signal would announce nothing, so there is no observable behaviour to preserve.
+        // Before this, the call survived as a reference to an undeclared name and the React generator
+        // refused the whole program with BRG3006 — a diagnostic that was correct about the symbol and
+        // wrong about whose problem it was.
+        if (registry.isChangeNotification(expression)) {
+          return const <RawValue>[];
+        }
       }
     }
     return <RawValue>[RawChild(extract(statement, scope))];
@@ -98,6 +110,17 @@ final class StatementExtractor implements StatementExtractorRef {
               fields: <String, RawValue>{
                 'statements': RawList(expressions.bodyOf(batched.body, scope)),
               },
+            );
+          }
+          // The same erasure, in the same non-block position — `if (changed) notifyListeners();`. An
+          // empty Block rather than nothing, because this path must return a statement: the `if` still
+          // has a branch, and the branch now does nothing, which is exactly what the source meant once
+          // the notification is implied by the write.
+          if (registry.isChangeNotification(expression)) {
+            return RawNode(
+              kind: 'logic.Block',
+              span: out.span(node),
+              fields: const <String, RawValue>{'statements': RawList(<RawValue>[])},
             );
           }
         }

@@ -35,6 +35,12 @@
   "stateBatchCalls": [
     "setState"
   ],
+  "changeNotificationCalls": {
+    "$comment": "Framework calls that announce a change and carry no other meaning (INV-22). ADR-4/ADR-20: *a signal write IS the notification*, so the announcement is already implied by the write the UIR records — and the name is one no downstream pass may know. `notifyListeners()` in a ChangeNotifier action is erased, exactly as `setState`'s wrapper is spliced open. Erased rather than modelled: a `sig.Action` that wrote nothing would still announce nothing, so there is no information here to keep. flutter/foundation.dart:ChangeNotifier.",
+    "calls": [
+      "notifyListeners"
+    ]
+  },
   "navigation": {
     "$comment": "Navigator 1 vocabulary (Spec v2.4 §A17). `pushRoute` takes a Route OBJECT whose destination is built inline -> RouteTransition.component. `pushPath` takes a PATH string -> RouteTransition.target. `pop` is not an edge at all: it returns along one that already exists.",
     "types": [

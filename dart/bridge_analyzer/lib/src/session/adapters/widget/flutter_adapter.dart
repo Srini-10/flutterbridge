@@ -187,6 +187,26 @@ final class FlutterWidgetAdapter implements WidgetAdapter, ThemeAdapter {
     return argument is FunctionExpression ? argument : null;
   }
 
+  @override
+  bool isChangeNotification(MethodInvocation node) {
+    if (!MaterialCatalog.changeNotificationCalls.contains(node.methodName.name)) {
+      return false;
+    }
+
+    // **Resolved, not named** — the rule C1 established after 18 widgets were misclassified by name. A
+    // user's own `notifyListeners()` on their own class is not `ChangeNotifier`'s, and erasing it would
+    // delete a call the program actually makes. The element's library is the only thing that can tell
+    // them apart.
+    final String? library = node.methodName.element?.library?.identifier;
+    if (library == null || !library.startsWith(_package)) {
+      return false;
+    }
+
+    // No arguments. `ChangeNotifier.notifyListeners()` takes none, so anything that does is a different
+    // method that happens to share the name, and we do not guess at it.
+    return node.argumentList.arguments.isEmpty;
+  }
+
   // ── theme ─────────────────────────────────────────────────────────────────────────────────────
 
   @override

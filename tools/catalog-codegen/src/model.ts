@@ -137,6 +137,13 @@ export interface Catalog {
   readonly storeBases?: readonly string[];
   readonly lifecycle?: Readonly<Record<string, string>>;
   readonly stateBatchCalls?: readonly string[];
+  /**
+   * Framework calls that announce a change and carry no other meaning (INV-22).
+   *
+   * A nested object rather than a bare list, so the catalog can carry the `$comment` that explains why
+   * erasing is correct — the reasoning is the load-bearing part, and a bare array has nowhere to put it.
+   */
+  readonly changeNotificationCalls?: { readonly calls?: readonly string[] };
   readonly navigation?: NavigationMeta;
   readonly semantics?: SemanticsMeta;
   readonly theme?: ThemeMeta;

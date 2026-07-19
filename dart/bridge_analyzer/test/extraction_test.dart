@@ -340,6 +340,82 @@ class _ScreenState extends State<Screen> {
       expect(signals.every((Map<String, dynamic> s) => s['scope'] == 'component'), isTrue);
     });
 
+    test('notifyListeners is erased — the write IS the notification (INV-22, M6)', () async {
+      // ADR-4/ADR-20: *a signal write **is** the notification*. `notifyListeners()` announces something
+      // the UIR has already recorded in the action's write set, so it carries no meaning UIR lacks — and
+      // it carries one UIR must never have, which is the framework's word for it.
+      //
+      // Before M6 it survived extraction as a reference to an undeclared name, and the React generator
+      // refused the whole program with BRG3006: correct about the symbol, wrong about whose problem it
+      // was. `fixtures/apps/hello_bridge`'s store has said "No generator ever sees notifyListeners" in a
+      // doc comment since M0, and nothing enforced it.
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+
+class FavoritesStore extends ChangeNotifier {
+  final Set<int> _ids = <int>{};
+
+  void toggle(int id) {
+    _ids.add(id);
+    notifyListeners();
+  }
+}
+''');
+
+      expect(app.bytes, isNot(contains('notifyListeners')));
+
+      // Erased, not swallowed: the mutation it accompanied must still be there, and the action must
+      // still declare the write. An erasure that took the statement with it would be worse than the
+      // diagnostic it replaced.
+      final Map<String, dynamic> action = app.only('sig.Action');
+      expect(action['writes'], isNotEmpty, reason: 'the write survives the erasure');
+    });
+
+    test("a user's own notifyListeners is NOT erased", () async {
+      // Recognition is by resolved element, never by name — the rule C1 established after 18 widgets
+      // were misclassified by name. A method of that name on the application's own class is a call the
+      // program actually makes, and erasing it would delete the user's code.
+      //
+      // The assertion is on the **call site**, not on the document's bytes. The first version of this
+      // test checked `app.bytes` for the string, which the class's own *declaration* satisfies — so it
+      // passed with the library guard deliberately removed, and proved nothing. A mutation test is what
+      // found that, and it is why this now walks the action body.
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+
+class Telemetry {
+  void notifyListeners() {}
+}
+
+class CounterScreen extends StatefulWidget {
+  const CounterScreen({super.key});
+  @override
+  State<CounterScreen> createState() => _CounterScreenState();
+}
+
+class _CounterScreenState extends State<CounterScreen> {
+  int _count = 0;
+  final Telemetry _telemetry = Telemetry();
+
+  void bump() {
+    _count = _count + 1;
+    _telemetry.notifyListeners();
+  }
+
+  @override
+  Widget build(BuildContext context) => const Text('count');
+}
+''');
+
+      final Map<String, dynamic> action = app.only('sig.Action');
+      final String body = jsonEncode(action['body']);
+      expect(
+        body,
+        contains('notifyListeners'),
+        reason: "the user's own call must survive; only ChangeNotifier's is erased",
+      );
+    });
+
     test('a final field the class MUTATES is a signal — the C1 bug, pinned', () async {
       // `final Set<String> _ids = {}` mutated through `add`/`remove` is state. An assignment-only
       // analysis returns an empty write set, and the generated React state never updates. This is the

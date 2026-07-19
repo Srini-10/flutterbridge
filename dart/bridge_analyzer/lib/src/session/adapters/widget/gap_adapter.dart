@@ -128,4 +128,8 @@ final class GapWidgetAdapter implements WidgetAdapter {
 
   @override
   FunctionExpression? unwrapStateBatch(MethodInvocation node) => null;
+
+  /// `gap` has no notifier of its own; nothing in it announces a change.
+  @override
+  bool isChangeNotification(MethodInvocation node) => false;
 }
