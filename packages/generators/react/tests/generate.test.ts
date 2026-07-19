@@ -528,6 +528,11 @@ describe('the real hello_bridge document', () => {
       'BRG3013',
       // `MaterialApp.themeMode` — switching brightness after mount
       'BRG3016',
+      // M6-C: `home: LoginScreen(isDark: …, onToggleTheme: …)` — the route renders a component requiring
+      // both, and `app.Route` has no field linking it to the `ui.Element` whose `props` carry them. This
+      // fixture *does* hit the gap, which the M6 gap document had recorded the other way round; the
+      // emitted `<LoginScreen />` could never have typechecked, and nothing said so until BRG3018.
+      'BRG3018',
       // the roll-up: nothing is emitted from a program carrying an error
       'BRG3005',
     ].sort());
@@ -855,5 +860,78 @@ describe('M4-E colour resolution', () => {
     // Names the subsystem that owns the work, per §8 — never a generic message.
     expect(error?.message).toContain('belongs to the analyzer');
     expect(error?.message).toContain('INV-20');
+  });
+});
+
+describe('M6-C — a route whose component requires constructor arguments', () => {
+  // The node shapes here are copied from a real `bridge_analyzer` run over the reproduction in
+  // `docs/m6/GAP-route-constructor-arguments.md`, not invented: a `ui.Component` with `params`, and an
+  // `app.Route` naming it with nothing else. Three tests in this project's history passed against a
+  // deliberately broken implementation because the hand-authored graph had the wrong shape.
+
+  /** A route rendering a component that declares `params`. */
+  function appWithRouteParams(params: readonly Record<string, unknown>[]): AnyUirNode[] {
+    return [
+      { id: 'tk1', kind: 'app.Token', span, group: 'color', name: 'primary', light: '#FF3F51B5' } as unknown as AnyUirNode,
+      {
+        id: 'c1',
+        kind: 'ui.Component',
+        span,
+        name: 'CounterPanel',
+        params,
+        render: element('e1', 'Column', {}, [text('t1', 'Hello')]),
+        localSignals: [],
+      } as unknown as AnyUirNode,
+      { id: 'r1', kind: 'app.Route', span, path: '/', component: 'c1' } as unknown as AnyUirNode,
+    ];
+  }
+
+  it('is refused rather than emitted as a call with no arguments (BRG3018)', () => {
+    // The defect this closes was *silence*: `bridge build` reported success and emitted
+    // `<CounterPanel />` against a `CounterPanelProps` requiring `label` and `step`, so the failure
+    // surfaced as `TS2739` in generated code the developer is told not to edit.
+    const { context, reported } = harness(
+      appWithRouteParams([
+        { name: 'label', required: true, type: { name: 'String', library: 'dart:core' } },
+        { name: 'step', required: true, type: { name: 'int', library: 'dart:core' } },
+      ]),
+    );
+    reactGenerator.generate(context);
+
+    const error = reported.find((d) => d.code === 'BRG3018');
+    expect(error).toBeDefined();
+    expect(error?.severity).toBe('error');
+    // Names both parameters, so the message says what is missing rather than that something is.
+    expect(error?.message).toContain('`label`');
+    expect(error?.message).toContain('`step`');
+    // Names the owning layer and the amendment, per §8 — never a generic message.
+    expect(error?.message).toContain('app.Route');
+    expect(error?.message).toContain('GAP-route-constructor-arguments');
+  });
+
+  it('emits nothing, because a project that cannot typecheck is worse than no project', () => {
+    const { context } = harness(
+      appWithRouteParams([{ name: 'label', required: true, type: { name: 'String', library: 'dart:core' } }]),
+    );
+    expect(reactGenerator.generate(context).files).toHaveLength(0);
+  });
+
+  it('does not fire for a component whose parameters are all optional', () => {
+    // An optional parameter is satisfied by its own default, so a route that omits it renders exactly what
+    // the Flutter program renders. Firing here would refuse programs that are complete.
+    const { context, reported } = harness(
+      appWithRouteParams([{ name: 'label', required: false, type: { name: 'String', library: 'dart:core' } }]),
+    );
+    reactGenerator.generate(context);
+
+    expect(reported.find((d) => d.code === 'BRG3018')).toBeUndefined();
+  });
+
+  it('does not fire for a route whose component takes no parameters', () => {
+    // hello_bridge is this case, which is why it never hit the gap and why the corpus test above still passes.
+    const { context, reported } = harness(appWithRouteParams([]));
+    reactGenerator.generate(context);
+
+    expect(reported.find((d) => d.code === 'BRG3018')).toBeUndefined();
   });
 });

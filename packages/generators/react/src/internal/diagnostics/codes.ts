@@ -111,6 +111,42 @@ export const GeneratorDiagnosticCode = {
    * nothing on screen to say so, so the parameter is named rather than dropped.
    */
   UnsupportedParameter: 'BRG3017',
+  /**
+   * A route renders a component whose constructor requires arguments, and `app.Route` has nowhere to
+   * record what the construction site passed.
+   *
+   * ## Why this is an error rather than a lowering
+   *
+   * `home: CounterPanel(label: 'Taps', step: 2)` becomes an `app.Route` whose `component` names
+   * `CounterPanel` — and the analyzer *does* extract the arguments: they are on the `ui.Element` in the app
+   * root's `home` slot, as `props`, with their values and spans intact. What the schema has no field for is
+   * the **link** from the route to that element, so the route emitter cannot reach them (M6-C, measured).
+   *
+   * The emitted page is therefore `<CounterPanel />` against a `CounterPanelProps` that requires `label` and
+   * `step`, and the project fails to compile:
+   *
+   * ```text
+   * app/page.tsx(14,11): error TS2739: Type '{}' is missing the following properties from type
+   *                      'CounterPanelProps': label, step
+   * ```
+   *
+   * Before this code existed the build **reported success** and emitted that project. A compiler that says
+   * "build succeeded" and hands over source that does not compile is worse than one that refuses: the
+   * failure surfaces one layer down, in generated code the developer did not write and is told not to edit.
+   *
+   * ## Why the generator does not simply read the props
+   *
+   * It could find the app root's element and match it to the route by slot. That would re-derive, in every
+   * generator, the correspondence the analyzer already computed — and it would skip the URL-boundary
+   * analysis that `RouteArgument.transport` exists to record. `home: HomePage(db: db)` passes a live object;
+   * ADR-11a says a URL carries an identifier, not an object graph, and that case is `BRG2301`. Copying props
+   * across would emit it silently.
+   *
+   * So this names the gap and stops. The amendment that closes it is `app.Route.arguments`, symmetric with
+   * `app.RouteTransition.arguments` and reusing the same `RouteArgument` vocabulary — see
+   * `docs/m6/GAP-route-constructor-arguments.md`.
+   */
+  RouteComponentArguments: 'BRG3018',
 } as const;
 
 /** A diagnostic code owned by the React generator. */
