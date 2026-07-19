@@ -163,7 +163,7 @@ final class MaterialRouteAdapter implements RouteAdapter, TransitionAdapter {
         );
         continue;
       }
-      final Expression? destination = _caseDestination(member);
+      final Expression? destination = _caseDestination(context, member);
       if (destination == null) {
         context.report(
           Codes.unsupportedWrapper,
@@ -267,38 +267,36 @@ final class MaterialRouteAdapter implements RouteAdapter, TransitionAdapter {
   /// The widget a case returns, reached through the page route it builds.
   ///
   /// `case '/chat': return MaterialPageRoute(builder: (_) => ChatScreen(...));` — the route object is
-  /// framework machinery and the widget is the destination, which is the same shape
-  /// `TransitionDeclaration.toWidget` already reads for an imperative push.
-  Expression? _caseDestination(SwitchMember member) {
+  /// framework machinery and the widget is the destination, which is the **same shape**
+  /// `TransitionDeclaration.toWidget` reads for an imperative push. So it is read with the same three
+  /// helpers: the route recognised by its **resolved type**, the builder found through the wrapper-aware
+  /// argument mapping, and [_returned] unwrapping the closure.
+  ///
+  /// The first version of this reimplemented all three by hand and matched the constructor's *lexeme*.
+  /// That is name matching — a class called `MaterialPageRoute` that extends nothing is not one — and it
+  /// also simply did not work: it read no destination at all. Reusing what already worked fixed the rule
+  /// violation and the bug in one edit, which is the usual relationship between those two.
+  Expression? _caseDestination(AdapterContext context, SwitchMember member) {
     for (final Statement statement in member.statements) {
       if (statement is! ReturnStatement) {
         continue;
       }
-      final Expression? value = statement.expression;
-      if (value is! InstanceCreationExpression) {
+      final Expression? route = statement.expression;
+      if (route is! InstanceCreationExpression) {
         return null;
       }
-      final String routeType = value.constructorName.type.name.lexeme;
-      if (!MaterialCatalog.navigationRouteTypes.contains(routeType)) {
+      if (!MaterialCatalog.navigationRouteTypes.any(
+        (String type) => AdapterContext.isA(route.staticType, type, package: _package),
+      )) {
         return null;
       }
-      final Expression? builder = value.argumentList.arguments
-          .whereType<NamedArgument>()
-          .where((NamedArgument a) => a.name.lexeme == MaterialCatalog.navigationBuilderProp)
-          .map((NamedArgument a) => a.argumentExpression)
-          .firstOrNull;
-      if (builder is! FunctionExpression) {
-        return null;
-      }
-      final FunctionBody body = builder.body;
-      return switch (body) {
-        ExpressionFunctionBody() => body.expression,
-        BlockFunctionBody() when body.block.statements.length == 1 =>
-          (body.block.statements.single is ReturnStatement)
-              ? (body.block.statements.single as ReturnStatement).expression
-              : null,
-        _ => null,
-      };
+
+      final ArgumentMapping mapping = WrapperResolver.mappingFor(route, context.unit);
+      final Expression? builder = mapping.argumentFor(
+        MaterialCatalog.navigationBuilderProp,
+        route.argumentList,
+      );
+      return builder is FunctionExpression ? _returned(builder) : null;
     }
     return null;
   }

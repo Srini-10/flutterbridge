@@ -56,10 +56,17 @@ const UNMODELLED: Readonly<Record<string, { readonly capability: string; readonl
     capability: 'a root builder — a widget wrapping every route, below the navigator',
     owner: 'the generator (it would become a nested layout in `app/layout.tsx`)',
   },
-  onGenerateRoute: {
-    capability: 'routes computed at runtime from a name',
-    owner: 'the analyzer (a route whose path is not a literal has nothing to put in `app.Route.path`)',
-  },
+  // `onGenerateRoute` is deliberately **absent**, and it used to be here.
+  //
+  // The analyzer reads the callback now (M7-C): a body that is a literal `switch` on `settings.name`
+  // becomes ordinary `app.Route` nodes, which is how the corpus's dominant router is written. When it
+  // *cannot* read one it says so itself, and in three distinct messages — declared in another file,
+  // computes its routes, or this case is not a constant.
+  //
+  // Keeping an entry here would report a second time, less precisely, and would refuse programs whose
+  // routes were read perfectly well: `onGenerateRoute` stays in the element's props exactly as `theme:`
+  // does after N10 consumes it, and a consumed prop is not a missing capability. One capability, one
+  // owner, one diagnostic — the rule M6-E's registry audit set.
   onUnknownRoute: {
     capability: 'a fallback route',
     owner: 'the generator (it would become `app/[...slug]/page.tsx`)',
