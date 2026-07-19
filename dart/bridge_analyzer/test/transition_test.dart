@@ -38,9 +38,38 @@ class Route<T> {
   Route();
 }
 
+class RouteSettings {
+  const RouteSettings({this.name, this.arguments});
+  final String? name;
+  final Object? arguments;
+}
+
 class MaterialPageRoute<T> extends Route<T> {
-  MaterialPageRoute({required this.builder});
+  MaterialPageRoute({required this.builder, this.settings});
   final Widget Function(BuildContext) builder;
+  final RouteSettings? settings;
+}
+
+/// A page route under a different name — an application's own subclass, which is ordinary Flutter.
+///
+/// Recognition must be by **resolved supertype** (C1), so this has to read exactly as `MaterialPageRoute`
+/// does. It is the fixture that makes a lexeme comparison fail: with only the SDK's own spelling present,
+/// name matching and type matching are indistinguishable and a mutation to the wrong one survives.
+class BrandedPageRoute<T> extends MaterialPageRoute<T> {
+  BrandedPageRoute({required super.builder, super.settings});
+}
+
+/// A `MaterialApp` that also takes `onGenerateRoute`, so the router-as-a-function form is testable.
+///
+/// The base stand-in's `MaterialApp` has only `home`/`routes`/`theme`. Two real defects in the
+/// onGenerateRoute reader reached a live Flutter project before anything caught them, precisely because
+/// no fixture could express the shape — the harness gap was the root cause, not the missing test.
+///
+/// **Extends `MaterialApp`**, so the adapter claims it by resolved supertype exactly as it claims the
+/// real thing. A stand-in that had to be recognised by its own name would be testing the wrong rule.
+class RoutingApp extends MaterialApp {
+  const RoutingApp({super.home, this.onGenerateRoute, super.theme, super.key});
+  final Route<Object?>? Function(RouteSettings)? onGenerateRoute;
 }
 
 class Navigator {
@@ -205,6 +234,7 @@ class _HomeState extends State<Home> {
 ''';
 
 void main() {
+  m7cGeneratedRoutes();
   m7bTransitionIdentity();
   group('inline MaterialPageRoute — the destination is a component (§A17)', () {
     test('a push targets the ui.Component it constructs, not a route', () async {
@@ -650,6 +680,117 @@ class App extends StatelessWidget {
       expect(navigate['action'], 'pop');
       expect(navigate.keys, isNot(contains('transition')));
       expect(extracted.ofKind('app.RouteTransition'), isEmpty);
+    });
+  });
+}
+
+/// M7-C — a router written as an `onGenerateRoute` switch.
+///
+/// Both defects these pin reached a live Flutter project before anything caught them, because no fixture
+/// could express the shape. That is why the stand-in gained `RouteSettings` and `RoutingApp`: the harness
+/// gap was the root cause, and a test that could not have been written is not a test that was forgotten.
+void m7cGeneratedRoutes() {
+  group('M7-C — onGenerateRoute is read when it is a literal switch', () {
+    String app(String body) =>
+        '''
+import 'package:flutter/material.dart';
+
+class Settings extends StatelessWidget {
+  const Settings({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('settings');
+}
+
+class Home extends StatelessWidget {
+  const Home({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('home');
+}
+
+class App extends StatelessWidget {
+  const App({super.key});
+
+  static Route<Object?>? generate(RouteSettings settings) {
+    $body
+  }
+
+  @override
+  Widget build(BuildContext context) => RoutingApp(onGenerateRoute: generate);
+}
+''';
+
+    test('every literal case becomes an app.Route', () async {
+      // Dart 3 parses `case '/settings':` as a **SwitchPatternCase** holding a constant pattern; the
+      // legacy `SwitchCase` node is what a pre-patterns switch produced. Matching only the legacy one
+      // skipped every case *silently*, because that branch is the one handling `default:` — two labels
+      // became zero routes and zero diagnostics, indistinguishable from the feature doing nothing.
+      final Extracted extracted = await extractNav(
+        app('''
+    switch (settings.name) {
+      case '/settings':
+        return MaterialPageRoute<Object?>(builder: (BuildContext c) => const Settings());
+      default:
+        return MaterialPageRoute<Object?>(builder: (BuildContext c) => const Home());
+    }
+'''),
+      );
+
+      expect(extracted.errors, isEmpty);
+      final List<Map<String, dynamic>> routes = extracted.ofKind('app.Route');
+      // The labelled case only. `default:` serves every unmatched name and is not a path — inventing one
+      // for it is the guess §A17.2 refused.
+      expect(routes.map((Map<String, dynamic> r) => r['path']), <String>['/settings']);
+      // And it points at a real component, not merely at *something*.
+      expect(routes.single['component'], isA<String>());
+    });
+
+    test('a page-route subclass under another name is still a page route', () async {
+      // The first implementation matched the constructor's *lexeme*. A subclass named anything else is
+      // what separates that from resolved-type recognition — and it is ordinary Flutter, not a corner.
+      final Extracted extracted = await extractNav(
+        app('''
+    switch (settings.name) {
+      case '/settings':
+        return BrandedPageRoute<Object?>(builder: (BuildContext c) => const Settings());
+      default:
+        return null;
+    }
+'''),
+      );
+
+      expect(extracted.ofKind('app.Route').single['path'], '/settings');
+    });
+
+    test('a non-constant case is reported, not guessed at', () async {
+      final Extracted extracted = await extractNav(
+        app('''
+    const String dynamicPath = 'x';
+    switch (settings.name) {
+      case dynamicPath + '/y':
+        return MaterialPageRoute<Object?>(builder: (BuildContext c) => const Settings());
+      default:
+        return null;
+    }
+'''),
+      );
+
+      expect(extracted.ofKind('app.Route'), isEmpty);
+    });
+
+    test('a body that is not a single switch keeps the refusal', () async {
+      // A callback that computes its routes is what BRG1304 is genuinely true of. The diagnostic was
+      // narrowed to that case rather than weakened.
+      final Extracted extracted = await extractNav(
+        app('''
+    if (settings.name == null) {
+      return null;
+    }
+    return MaterialPageRoute<Object?>(builder: (BuildContext c) => const Home());
+'''),
+      );
+
+      expect(extracted.ofKind('app.Route'), isEmpty);
+      expect(extracted.codes(Severity.warning), contains('BRG1304'));
     });
   });
 }
