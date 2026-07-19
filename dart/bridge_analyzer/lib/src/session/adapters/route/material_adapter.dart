@@ -10,6 +10,7 @@
 library;
 
 import 'package:analyzer/dart/ast/ast.dart';
+import 'package:analyzer/dart/element/element.dart';
 import 'package:bridge_analyzer/src/diagnostics/codes.dart';
 import 'package:bridge_analyzer/src/session/adapters/adapter.dart';
 import 'package:bridge_analyzer/src/session/adapters/adapter_context.dart';
@@ -77,18 +78,229 @@ final class MaterialRouteAdapter implements RouteAdapter, TransitionAdapter {
       }
     }
 
-    // `onGenerateRoute:` builds routes at runtime, from a settings object. There is no static route
-    // table to read — that is the whole point of the callback — so it is named, never guessed at.
-    if (mapping.argumentFor('onGenerateRoute', node.argumentList) != null) {
-      context.report(
-        Codes.unsupportedWrapper,
-        'onGenerateRoute builds routes at runtime, so they cannot be read into a static route graph. '
-        'The routes it generates will be invisible to cross-route state promotion (N11).',
-        node,
-      );
+    final Expression? generate = mapping.argumentFor('onGenerateRoute', node.argumentList);
+    if (generate != null) {
+      found.addAll(_generatedRoutes(context, generate));
     }
 
     return found;
+  }
+
+  /// Routes read out of an `onGenerateRoute:` callback, when its body is a literal switch.
+  ///
+  /// ## Why this is reading and not guessing
+  ///
+  /// `onGenerateRoute` is documented as building routes *at runtime*, and for an arbitrary function that
+  /// is true — a path computed from a string, a table held in a variable, a redirect chain. This adapter
+  /// used to stop there and report `BRG1304` for every one.
+  ///
+  /// M6-D measured what that costs: the corpus's dominant router is an `onGenerateRoute` whose body is a
+  /// `switch` on `settings.name` where **every case label is a string literal and every destination is a
+  /// named component**. That is a route table written as a switch, and refusing to read it left the
+  /// largest application's entire routing surface invisible — `routes:` appears zero times in the corpus.
+  ///
+  /// Nothing here is inferred. A case label is read only when it is a compile-time constant, the
+  /// destination only when it is a `MaterialPageRoute`-family construction whose builder returns a widget
+  /// construction, and the switch only when its subject is the `name` of the callback's own
+  /// `RouteSettings` parameter, **resolved to that parameter's element** rather than matched by spelling.
+  /// Anything that does not fit keeps the diagnostic, which is now narrowed to the callbacks it is
+  /// actually true of.
+  List<RouteDeclaration> _generatedRoutes(AdapterContext context, Expression generate) {
+    final ({FunctionBody body, FormalParameterList? params})? function = _functionOf(context, generate);
+    if (function == null) {
+      context.report(
+        Codes.unsupportedWrapper,
+        'This `onGenerateRoute` names a callback whose body this analyzer cannot see from here — it is '
+        'declared in another file, or is not a function it can resolve. Its routes are not read into '
+        'the static route graph, so cross-route state promotion (N11) will not see them.',
+        generate,
+      );
+      return const <RouteDeclaration>[];
+    }
+
+    // The parameter the switch must be asking about. A callback takes exactly one `RouteSettings`, and
+    // resolving it is what separates *this* settings object from any other value called `settings`.
+    final FormalParameter? settings = function.params?.parameters.firstOrNull;
+    final SwitchStatement? switchOn = _switchOn(function.body, settings);
+    if (switchOn == null) {
+      context.report(
+        Codes.unsupportedWrapper,
+        'This `onGenerateRoute` computes its routes rather than selecting them from a literal switch on '
+        '`settings.name`, so they cannot be read into a static route graph. The routes it generates will '
+        'be invisible to cross-route state promotion (N11).',
+        generate,
+      );
+      return const <RouteDeclaration>[];
+    }
+
+    final List<RouteDeclaration> found = <RouteDeclaration>[];
+    for (final SwitchMember member in switchOn.members) {
+      // **`SwitchPatternCase`, not `SwitchCase`.** Dart 3 parses `case '/settings':` as a constant
+      // *pattern*; the legacy `SwitchCase` node is what a pre-patterns switch produced. Matching only the
+      // legacy one skipped every case in a modern file — silently, because the skip branch is the one
+      // that handles `default:`. Two case labels became zero routes and zero diagnostics, which is the
+      // worst shape a compiler bug can take: it looked exactly like the feature doing nothing.
+      final Expression? label = switch (member) {
+        SwitchPatternCase() =>
+          member.guardedPattern.pattern is ConstantPattern
+              ? (member.guardedPattern.pattern as ConstantPattern).expression
+              : null,
+        SwitchCase() => member.expression,
+        // `default:` serves every unmatched name. That is not a path, and inventing one for it would be
+        // the guess §A17.2 refused. It is left out silently: a fallback is not a missing route.
+        _ => null,
+      };
+      if (label == null) {
+        continue;
+      }
+      final String? path = _constantString(label);
+      if (path == null) {
+        context.report(
+          Codes.unsupportedWrapper,
+          'This route case is not a compile-time constant, so it cannot be placed in a static route '
+          'graph.',
+          label,
+        );
+        continue;
+      }
+      final Expression? destination = _caseDestination(member);
+      if (destination == null) {
+        context.report(
+          Codes.unsupportedWrapper,
+          'This route case does not return a page route whose builder constructs a widget, so the '
+          'component it renders cannot be read. The route is left out rather than pointed at a guess.',
+          member,
+        );
+        continue;
+      }
+      found.add(RouteDeclaration(path: path, at: member, component: destination));
+    }
+    return found;
+  }
+
+  /// The body and parameters of the callback [generate] names, when this unit can see them.
+  ///
+  /// Two forms, and both are fully present in the file being walked:
+  ///
+  ///   * an **inline closure** — `onGenerateRoute: (settings) { … }`;
+  ///   * a **reference to a function declared in this unit** — resolved through the element model and
+  ///     then located in this unit's own declarations, never by matching a name.
+  ///
+  /// A reference into another file returns null. `AdapterContext` carries one `CompilationUnit`, so
+  /// there is no AST to read there, and reading it would need an async session lookup that the adapter
+  /// interface is deliberately not shaped for.
+  ({FunctionBody body, FormalParameterList? params})? _functionOf(
+    AdapterContext context,
+    Expression generate,
+  ) {
+    if (generate is FunctionExpression) {
+      return (body: generate.body, params: generate.parameters);
+    }
+
+    final Element? element = switch (generate) {
+      Identifier() => generate.element,
+      PropertyAccess() => generate.propertyName.element,
+      _ => null,
+    };
+    if (element == null) {
+      return null;
+    }
+
+    // Located by **element identity** in this unit's own declarations. A same-named function in another
+    // class is a different element and does not match, which is the whole reason this is not a name
+    // lookup.
+    for (final CompilationUnitMember member in context.unit.declarations) {
+      switch (member) {
+        case FunctionDeclaration() when member.declaredFragment?.element == element:
+          return (
+            body: member.functionExpression.body,
+            params: member.functionExpression.parameters,
+          );
+        case ClassDeclaration():
+          for (final ClassMember classMember in member.body.members) {
+            if (classMember is MethodDeclaration &&
+                classMember.declaredFragment?.element == element) {
+              return (body: classMember.body, params: classMember.parameters);
+            }
+          }
+        default:
+          continue;
+      }
+    }
+    return null;
+  }
+
+  /// The `switch` [body] is, when it switches on [settings]`.name` and nothing else.
+  ///
+  /// The subject is checked against the parameter's **element**, so a local variable that happens to be
+  /// called `settings` is not mistaken for the callback's own. A body that does anything before the
+  /// switch is refused rather than read past: a guard that returns early changes which routes exist.
+  SwitchStatement? _switchOn(FunctionBody body, FormalParameter? settings) {
+    final Element? parameter = settings?.declaredFragment?.element;
+    if (parameter == null) {
+      return null;
+    }
+
+    final Statement? only = switch (body) {
+      BlockFunctionBody() when body.block.statements.length == 1 => body.block.statements.single,
+      _ => null,
+    };
+    if (only is! SwitchStatement) {
+      return null;
+    }
+
+    final Expression subject = only.expression;
+    if (subject is! PropertyAccess && subject is! PrefixedIdentifier) {
+      return null;
+    }
+    final (Expression target, String property) = switch (subject) {
+      PropertyAccess() => (subject.target!, subject.propertyName.name),
+      PrefixedIdentifier() => (subject.prefix, subject.identifier.name),
+      _ => throw StateError('unreachable'),
+    };
+    if (property != MaterialCatalog.navigationSettingsNameProp) {
+      return null;
+    }
+    return target is Identifier && target.element == parameter ? only : null;
+  }
+
+  /// The widget a case returns, reached through the page route it builds.
+  ///
+  /// `case '/chat': return MaterialPageRoute(builder: (_) => ChatScreen(...));` — the route object is
+  /// framework machinery and the widget is the destination, which is the same shape
+  /// `TransitionDeclaration.toWidget` already reads for an imperative push.
+  Expression? _caseDestination(SwitchMember member) {
+    for (final Statement statement in member.statements) {
+      if (statement is! ReturnStatement) {
+        continue;
+      }
+      final Expression? value = statement.expression;
+      if (value is! InstanceCreationExpression) {
+        return null;
+      }
+      final String routeType = value.constructorName.type.name.lexeme;
+      if (!MaterialCatalog.navigationRouteTypes.contains(routeType)) {
+        return null;
+      }
+      final Expression? builder = value.argumentList.arguments
+          .whereType<NamedArgument>()
+          .where((NamedArgument a) => a.name.lexeme == MaterialCatalog.navigationBuilderProp)
+          .map((NamedArgument a) => a.argumentExpression)
+          .firstOrNull;
+      if (builder is! FunctionExpression) {
+        return null;
+      }
+      final FunctionBody body = builder.body;
+      return switch (body) {
+        ExpressionFunctionBody() => body.expression,
+        BlockFunctionBody() when body.block.statements.length == 1 =>
+          (body.block.statements.single is ReturnStatement)
+              ? (body.block.statements.single as ReturnStatement).expression
+              : null,
+        _ => null,
+      };
+    }
+    return null;
   }
 
   // ── transitions (Spec v2.4 §A17) ───────────────────────────────────────────────────────────────

@@ -46,7 +46,7 @@
     ]
   },
   "navigation": {
-    "$comment": "Navigator 1 vocabulary (Spec v2.4 §A17). `pushRoute` takes a Route OBJECT whose destination is built inline -> RouteTransition.component. `pushPath` takes a PATH string -> RouteTransition.target. `pop` is not an edge at all: it returns along one that already exists.",
+    "$comment": "Navigator 1 vocabulary (Spec v2.4 §A17). `pushRoute` takes a Route OBJECT whose destination is built inline -> RouteTransition.component. `pushPath` takes a PATH string -> RouteTransition.target. `pop` is not an edge at all: it returns along one that already exists. `settingsNameProp` is the property an onGenerateRoute switch selects on — reading that switch is what makes a router written as a function visible to the static route graph (M7-C/M6-D: the corpus declares zero `routes:` maps and routes entirely through onGenerateRoute).",
     "types": [
       "Navigator",
       "NavigatorState"
@@ -72,7 +72,8 @@
       "CupertinoPageRoute",
       "PageRouteBuilder"
     ],
-    "builderProp": "builder"
+    "builderProp": "builder",
+    "settingsNameProp": "name"
   },
   "semantics": {
     "labelProps": [

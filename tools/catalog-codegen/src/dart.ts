@@ -216,6 +216,9 @@ ${lifecycle}
   /// The parameter of a route type that builds the destination widget.
   static const String navigationBuilderProp = '${catalog.navigation?.builderProp ?? ''}';
 
+  /// The \`RouteSettings\` property an \`onGenerateRoute\` switch selects on.
+  static const String navigationSettingsNameProp = '${catalog.navigation?.settingsNameProp ?? ''}';
+
   /// Widgets whose only purpose is to scope a rebuild. See [RebuildBuilder].
   static const Map<String, RebuildBuilder> rebuildBuilders = <String, RebuildBuilder>{
 ${rebuildBuilders}

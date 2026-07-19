@@ -272,6 +272,9 @@ abstract final class MaterialCatalog {
   /// The parameter of a route type that builds the destination widget.
   static const String navigationBuilderProp = 'builder';
 
+  /// The `RouteSettings` property an `onGenerateRoute` switch selects on.
+  static const String navigationSettingsNameProp = 'name';
+
   /// Widgets whose only purpose is to scope a rebuild. See [RebuildBuilder].
   static const Map<String, RebuildBuilder> rebuildBuilders = <String, RebuildBuilder>{
   'Builder': RebuildBuilder(builderProp: 'builder'),
