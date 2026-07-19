@@ -84,8 +84,13 @@ for (const dir of PACKAGES) {
     continue;
   }
 
+  // `.trim()` per entry: `tar` on Windows emits CRLF, so splitting on `\n` leaves a trailing `\r` on
+  // every line and `listing.includes('dist/index.js')` is false for a tarball that plainly contains it.
+  // Reported as 18 packaging problems on the first Windows run of this job — the checker was wrong, not
+  // the tarballs.
   const listing = execFileSync('tar', ['-tzf', join(out, tarball)], { encoding: 'utf8' })
     .split('\n')
+    .map((entry) => entry.trim())
     .filter(Boolean)
     .map((entry) => entry.replace(/^package\//, ''));
 
