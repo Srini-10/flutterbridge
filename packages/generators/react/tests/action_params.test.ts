@@ -313,9 +313,10 @@ describe('the real hello_bridge document', () => {
     expect(unresolved.some((m) => m.includes('`id`'))).toBe(false);
     expect(unresolved.some((m) => m.includes('`value`'))).toBe(false);
 
-    // `notifyListeners` is a different finding and is still correctly refused: a ChangeNotifier API with no
-    // referent in the emitted program. §A18 removes the false negatives, not the check.
-    expect(unresolved.some((m) => m.includes('notifyListeners'))).toBe(true);
+    // `notifyListeners` is erased before the generator ever sees it (M6-1, INV-22): a signal write already
+    // *is* the notification (ADR-4/ADR-20), so there is no reference left to resolve or refuse. This golden
+    // was regenerated from the current analyzer to prove that — see docs/m7/m7d-reality-audit.md.
+    expect(unresolved.some((m) => m.includes('notifyListeners'))).toBe(false);
   });
 });
 

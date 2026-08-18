@@ -490,6 +490,12 @@ describe('the real hello_bridge document', () => {
     // `layout_proof.ndjson` has one (`build_proof_test.dart`), this does not, because regenerating it needs
     // the real Flutter SDK and the Dart suite runs against stubs. So the drift was silent. Every added node
     // is an `app.Token`; every other count below is unchanged.
+    //
+    // Regenerated again at M7-D (docs/m7/m7d-reality-audit.md) against the real Flutter SDK: it had also
+    // gone stale by M6-1 (`notifyListeners` erasure) and by the analyzer change that populates
+    // `app.Route.arguments`. The node count held at 38 through that regeneration — neither change adds or
+    // removes a top-level record — but the *content* of several nodes did, which is why this file's
+    // `notifyListeners` and `BRG3018` assertions changed alongside it.
     expect(nodes.length).toBe(38);
     expect(nodes.filter((n) => n.kind === 'ui.Component')).toHaveLength(3);
     expect(nodes.filter((n) => n.kind === 'app.Store')).toHaveLength(1);
@@ -531,7 +537,8 @@ describe('the real hello_bridge document', () => {
     expect(codes).toEqual([
       // a call with Dart named arguments, whose callee signature the program does not carry
       'BRG3002',
-      // `notifyListeners`, `mounted`, `widget` — framework primitives INV-22 should have erased
+      // `mounted`, `widget` — framework primitives INV-22 should have erased. `notifyListeners` itself is
+      // now erased (M6-1), so it no longer contributes to this code — see docs/m7/m7d-reality-audit.md.
       'BRG3006',
       // a `FutureBuilder` whose loading and error branches are inside the builder (BRG2104 upstream)
       'BRG3007',
@@ -543,11 +550,6 @@ describe('the real hello_bridge document', () => {
       'BRG3013',
       // `MaterialApp.themeMode` — switching brightness after mount
       'BRG3016',
-      // M6-C: `home: LoginScreen(isDark: …, onToggleTheme: …)` — the route renders a component requiring
-      // both, and `app.Route` has no field linking it to the `ui.Element` whose `props` carry them. This
-      // fixture *does* hit the gap, which the M6 gap document had recorded the other way round; the
-      // emitted `<LoginScreen />` could never have typechecked, and nothing said so until BRG3018.
-      'BRG3018',
       // the roll-up: nothing is emitted from a program carrying an error
       'BRG3005',
     ].sort());
