@@ -30,7 +30,7 @@ import { GeneratorDiagnosticCode } from './diagnostics/codes.js';
 import { isAppRoot, reportAppRoot } from './emit/app_root.js';
 import { assetManifestLines, collectAssets } from './emit/assets.js';
 import { emitBinding, emitComponent } from './emit/component.js';
-import type { EmitScope } from './emit/expression.js';
+import type { EmitScope, StoreMemberInfo } from './emit/expression.js';
 import { ModuleBuilder, fileNameOf, identifierOf } from './emit/module.js';
 import { RUNTIME_MODULE } from './emit/runtime.js';
 import { banner, scaffold, type PageInput, type PageScreen } from './emit/project.js';
@@ -118,14 +118,38 @@ export function generateProject(context: GeneratorContext): GeneratorOutput {
   );
 
   // ── stores ──
+  //
+  // `scope.storeMembers` is mutated in place, here, before any component is emitted — components are the
+  // next loop, never this one, so nothing reads it before every store has contributed. A component needing
+  // a member a *later* store declares would be exactly the write-after-read bug this ordering avoids.
   const stores: { readonly module: string; readonly name: string }[] = [];
   for (const store of context.program.ofKind('app.Store') as unknown as Node[]) {
     const path = `src/stores/${fileNameOf(String(store['name'] ?? 'store'))}.ts`;
+    const storeModule = `@/stores/${fileNameOf(String(store['name'] ?? 'store'))}`;
     const module = new ModuleBuilder(path);
     module.setBanner(banner(`\`${String(store['name'])}\``));
-    const name = emitStore(store, module, { ...scope, module });
+    const emitted = emitStore(store, module, { ...scope, module });
     files.push({ path, contents: module.toSource() });
-    stores.push({ module: `@/stores/${fileNameOf(String(store['name'] ?? 'store'))}`, name });
+    stores.push({ module: storeModule, name: emitted.name });
+
+    const storeId = String(store['id'] ?? '') as NodeId;
+    const record = (
+      kind: 'signal' | 'derived' | 'action',
+      members: ReadonlyMap<NodeId, string>,
+    ): void => {
+      for (const [id, property] of members) {
+        (scope.storeMembers as Map<NodeId, StoreMemberInfo>).set(id, {
+          kind,
+          storeId,
+          storeModule,
+          storeExport: emitted.name,
+          property,
+        });
+      }
+    };
+    record('signal', emitted.signals);
+    record('derived', emitted.derived);
+    record('action', emitted.actions);
   }
 
   // ── components ──
@@ -402,15 +426,10 @@ function rootScope(
   report: (code: string, severity: 'error' | 'warning' | 'info', message: string, nodeId?: string) => void,
 ): EmitScope {
   // Store members resolve program-wide: a component reading `favorites.count` names a signal the store owns,
-  // and the component emitter must resolve it to a read even though it did not declare it. Built once,
-  // because it is the same for every file.
-  const storeMembers = new Map<NodeId, string>();
-  for (const store of context.program.ofKind('app.Store') as unknown as Node[]) {
-    for (const key of ['signals', 'derived', 'actions'] as const) {
-      const ids = Array.isArray(store[key]) ? (store[key] as string[]) : [];
-      for (const id of ids) storeMembers.set(id, id);
-    }
-  }
+  // and the component emitter must resolve it to a read even though it did not declare it. Populated by the
+  // stores loop in `generate`, before any component is emitted — this map is created here, empty, and handed
+  // out by reference so every scope in the chain sees the same, eventually-complete map (M7-F).
+  const storeMemberInfo = new Map<NodeId, StoreMemberInfo>();
   const names = nameIndex(context.program.nodes);
 
   // Every role the theme can resolve. Both keys, because the two producers differ: N10 sets `name` and `role`
@@ -428,14 +447,15 @@ function rootScope(
     module: new ModuleBuilder('<none>'),
     report,
     themeRoles,
+    storeMembers: storeMemberInfo,
     node: (id: NodeId) => context.program.get(id) as AnyUirNode | undefined,
-    // A store member read from outside its store needs `useStore(...)` in scope, which M3-B's component
-    // emitter does not yet establish — so it resolves to nothing here and the reader reports BRG3006 rather
-    // than emitting a name that does not exist.
+    // A bare reference at the root resolves nothing — every store member reachable here is resolved
+    // explicitly, per component, by `declareStoreConsumption` (M7-F), which is the only thing that knows
+    // whether *this* component actually needs a `useStore(...)` hook for it.
     signalRead: () => undefined,
     signalLocal: () => undefined,
     localName: () => undefined,
-    isStoreOwned: (id) => storeMembers.has(id),
+    isStoreOwned: (id) => storeMemberInfo.has(id),
     // Nothing is inside an action at the top level; the store and component emitters layer their own.
     paramInScope: () => undefined,
     declaredName: (id) => names.get(id),

@@ -1,15 +1,22 @@
 // Browser validation configuration.
 //
-// Two projects, because "it works" has two different meanings that have historically diverged:
+// Two projects per application, because "it works" has two different meanings that have historically
+// diverged:
 //
 //   * **production** — `next build` + `next start`. What a user deploys. Server-rendered HTML, hydration,
 //     minified React (whose warnings are *shortened*, not removed).
 //   * **development** — `next dev`. What a user iterates in. React's development build is where hydration
 //     mismatches and key warnings are reported in full, and several classes of defect are only ever
-//     visible here.
+//     visible here — including a conditional/reordered hook, which is exactly the failure mode M7-F's
+//     store consumption must not reintroduce (Phase 9's own requirement: prove it where a violation would
+//     actually be visible).
 //
 // Running only production would miss the diagnostics; running only development would miss build-time and
-// prerender failures. The suite asserts on both.
+// prerender failures. The suite asserts on both, per application.
+//
+// `promotion.spec.ts` gets its own pair of projects/ports (3313/3314) rather than sharing `counter`'s —
+// each spec file must resolve to exactly one `baseURL`, and `promoted_counter` (M7-F) is a different
+// generated application from `counter`, at a different `.fixtures/` path.
 
 import { defineConfig, devices } from '@playwright/test';
 
@@ -36,12 +43,24 @@ export default defineConfig({
     {
       name: 'production',
       use: { ...devices['Desktop Chrome'], baseURL: 'http://127.0.0.1:3311' },
-      testIgnore: /dev-only/,
+      testMatch: /app\.spec/,
     },
     {
       name: 'development',
       use: { ...devices['Desktop Chrome'], baseURL: 'http://127.0.0.1:3312' },
-      testMatch: /(console|dev-only)/,
+      // Precisely `console.dev-only.spec.ts` — a bare `/dev-only/` would also match
+      // `promotion.dev-only.spec.ts` below, which needs the *other* app's port.
+      testMatch: /console\.dev-only\.spec/,
+    },
+    {
+      name: 'promotion-production',
+      use: { ...devices['Desktop Chrome'], baseURL: 'http://127.0.0.1:3313' },
+      testMatch: /promotion\.spec/,
+    },
+    {
+      name: 'promotion-development',
+      use: { ...devices['Desktop Chrome'], baseURL: 'http://127.0.0.1:3314' },
+      testMatch: /promotion\.dev-only\.spec/,
     },
   ],
 
@@ -61,6 +80,24 @@ export default defineConfig({
       // A separate copy: `next dev` and `next start` both own `.next` and cannot share a directory.
       cwd: './.fixtures/counter-dev',
       port: 3312,
+      reuseExistingServer: false,
+      timeout: 120_000,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    },
+    {
+      command: 'npx next start --port 3313',
+      cwd: './.fixtures/promoted-counter/build/bridge',
+      port: 3313,
+      reuseExistingServer: false,
+      timeout: 120_000,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    },
+    {
+      command: 'npx next dev --port 3314',
+      cwd: './.fixtures/promoted-counter-dev',
+      port: 3314,
       reuseExistingServer: false,
       timeout: 120_000,
       stdout: 'pipe',

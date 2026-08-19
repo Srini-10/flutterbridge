@@ -544,6 +544,22 @@ function rewriteParamReads(value: unknown, paramName: string, verdict: PromotedV
       return { ...built, id: nodeIdOfContent(built) };
     }
 
+    // The same read, the other shape it takes. `bind.Param` is a *binding* — the position a widget prop
+    // or a `ui.Text.value` expects. Inside an ordinary expression (a string interpolation part, one side
+    // of a comparison) a component's own parameter is an untargeted `logic.Ref{name}` instead — `Expr`
+    // there, not `Binding`, and `bind.Param` is not one (Spec v2.5 §A18.3's own resolution order:
+    // `signalRead` and `localName` are tried *before* `paramInScope`, which is exactly what makes adding
+    // a `target` here — rather than replacing the node — the correct fix: the same node, now resolvable
+    // through the promoted declaration instead of through scope). Matching by name is not the inference
+    // this pass otherwise refuses: this walk is already scoped to the one component whose parameter was
+    // just proven removable, so an untargeted `Ref` to that exact name, found only here, cannot mean
+    // anything else.
+    if (record['kind'] === 'logic.Ref' && record['name'] === paramName && record['target'] === undefined) {
+      const target = verdict.kind === 'signal' ? verdict.signal : verdict.action;
+      const built = { ...record, target };
+      return { ...built, id: nodeIdOfContent(built) };
+    }
+
     let changed = false;
     const out: Record<string, unknown> = {};
     for (const [key, v] of Object.entries(record)) {
@@ -573,17 +589,11 @@ function paramReplacement(verdict: PromotedVerdict, span: unknown): Record<strin
   // a `logic.Ref` at the action's (unchanged) id — reusing the matched reference's own `type` rather
   // than inventing one, so nothing here guesses at a signature the program never stated.
   const ref = verdict.ref;
-  return {
-    kind: 'bind.Expr',
-    span,
-    expr: {
-      kind: 'logic.Ref',
-      name: ref['name'],
-      target: verdict.action,
-      type: ref['type'],
-      span,
-    },
-  };
+  const expr = { kind: 'logic.Ref', name: ref['name'], target: verdict.action, type: ref['type'], span };
+  // A tree node embedded inside another needs its own id too — every `logic.*`/`bind.*` node does,
+  // schema-required, and the outer `bind.Expr`'s own id (set by the caller) is a hash of its *whole*
+  // content, `expr` included, so this cannot be deferred to that one recomputation.
+  return { kind: 'bind.Expr', span, expr: { ...expr, id: nodeIdOfContent(expr) } };
 }
 
 function strip(into: Map<NodeId, Set<string>>, boundary: NodeId, name: string): void {

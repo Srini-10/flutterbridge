@@ -35,11 +35,19 @@ const workspace = join(here, '../.fixtures');
  * The applications the suite runs against.
  *
  * `hello_bridge` is deliberately absent, and that absence is a finding rather than an omission: it reports
- * 30 generator errors and emits nothing, so there is no application to load. `docs/m5/m5d-*.md` §2 lists
- * every one of them by owner. Adding it here with its assertions skipped would turn a refusal the compiler
- * makes correctly into a suite that looks like it covers more than it does.
+ * 30 generator errors and emits nothing, so there is no application to load. `docs/m7/m7d-reality-audit.md`
+ * lists every one of them by owner. Adding it here with its assertions skipped would turn a refusal the
+ * compiler makes correctly into a suite that looks like it covers more than it does.
+ *
+ * `promoted_counter` (M7-F) exists for the same reason `hello_bridge` cannot stand in for it: proving a
+ * promoted store's signal/action actually reacts in a browser needs an app whose promotion *succeeds* —
+ * `hello_bridge`'s own route is entangled with multi-hop forwarding N11 correctly declines (M7-E3). See
+ * `docs/m7/m7f-promoted-store-consumption.md`.
  */
-export const APPS = [{ name: 'counter', source: 'examples/counter' }];
+export const APPS = [
+  { name: 'counter', source: 'examples/counter' },
+  { name: 'promoted-counter', source: 'fixtures/apps/promoted_counter' },
+];
 
 const run = (program, args, cwd, env = {}) =>
   execFileSync(program, args, {

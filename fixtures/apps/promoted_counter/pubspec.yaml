@@ -1,0 +1,17 @@
+name: promoted_counter
+description: >-
+  M7-F fixture: a component-scoped signal and its action, passed as declarative route constructor
+  arguments and read by the destination component itself — the single-hop shape N11's interface
+  rewrite promotes, isolated from hello_bridge's multi-hop forwarding (docs/m7/m7f-promoted-store-consumption.md).
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

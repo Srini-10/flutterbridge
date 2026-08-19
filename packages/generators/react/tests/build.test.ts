@@ -1,6 +1,4 @@
-import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -8,7 +6,7 @@ import { parseUirNode, type AnyUirNode } from '@bridge/uir';
 import { afterAll, describe, expect, it } from 'vitest';
 
 import { reactGenerator } from '../src/index.js';
-import { harness } from './support.js';
+import { cleanupBuildProofTemporaries, compiledFrom, harness, typecheckEmitted } from './support.js';
 
 // The build-proof (M3-D) — the whole pipeline, over a program the analyzer really produced.
 //
@@ -32,16 +30,10 @@ import { harness } from './support.js';
 // covers every module the generator wrote. The App Router at runtime is `just e2e` (M4-T3, Playwright).
 
 const here = dirname(fileURLToPath(import.meta.url));
-const packageRoot = join(here, '..');
-const repoRoot = join(packageRoot, '..', '..', '..');
-const runtimeSrc = join(packageRoot, '..', '..', 'runtimes', 'react', 'src', 'index.ts');
+const repoRoot = join(here, '..', '..', '..', '..');
 const goldenPath = join(repoRoot, 'fixtures', 'uir', 'layout_proof.ndjson');
-const cli = join(repoRoot, 'packages', 'cli', 'bin', 'bridge.mjs');
 
-const temporaries: string[] = [];
-afterAll(() => {
-  for (const dir of temporaries) rmSync(dir, { recursive: true, force: true });
-});
+afterAll(cleanupBuildProofTemporaries);
 
 /** Parses an NDJSON document the way the loader does — validating every line, never casting. */
 function parse(document: string, label: string): AnyUirNode[] {
@@ -51,77 +43,8 @@ function parse(document: string, label: string): AnyUirNode[] {
     .map((line, index) => parseUirNode(JSON.parse(line), `${label}:${index + 1}`));
 }
 
-/**
- * The golden run through the **real compiler** (N1–N11), via the `bridge` CLI.
- *
- * Shelled, not imported: the generator does not depend on the compiler and must not start now, even in a
- * test — `bridge normalize` is the same entrypoint an author uses, so this exercises the contract as shipped.
- */
-function compiled(): AnyUirNode[] {
-  const dir = mkdtempSync(join(tmpdir(), 'bridge-compile-'));
-  temporaries.push(dir);
-  const raw = join(dir, 'raw.ndjson');
-  const out = join(dir, 'normalized.ndjson');
-  writeFileSync(raw, readFileSync(goldenPath));
-  execFileSync('node', [cli, 'normalize', raw, '--out', out], { stdio: 'pipe' });
-  return parse(readFileSync(out, 'utf8'), 'normalized');
-}
-
-/** Writes the emitted project to a temp directory and returns its root. */
-function materialise(files: readonly { path: string; contents: string }[]): string {
-  const root = mkdtempSync(join(tmpdir(), 'bridge-emit-'));
-  temporaries.push(root);
-  for (const file of files) {
-    const full = join(root, file.path);
-    mkdirSync(dirname(full), { recursive: true });
-    writeFileSync(full, file.contents);
-  }
-  return root;
-}
-
-/**
- * A tsconfig for the check — not the one the app ships with.
- *
- * It maps the workspace packages by path so `tsc` resolves the *real* kit source rather than a stub, and
- * drops the `next` plugin, which is a language-server concern `tsc` ignores anyway.
- */
-function writeCheckTsconfig(root: string): string {
-  const path = join(root, 'tsconfig.check.json');
-  writeFileSync(
-    path,
-    `${JSON.stringify(
-      {
-        compilerOptions: {
-          target: 'ES2022',
-          lib: ['ES2023', 'DOM', 'DOM.Iterable'],
-          jsx: 'react-jsx',
-          module: 'ESNext',
-          moduleResolution: 'Bundler',
-          strict: true,
-          noEmit: true,
-          skipLibCheck: true,
-          esModuleInterop: true,
-          baseUrl: '.',
-          paths: {
-            '@/*': ['./src/*'],
-            '@bridge/runtime-react': [runtimeSrc.replace(/\.ts$/, '')],
-            react: [join(packageRoot, 'node_modules', '@types', 'react', 'index.d.ts').replace(/\.d\.ts$/, '')],
-            'react/jsx-runtime': [
-              join(packageRoot, 'node_modules', '@types', 'react', 'jsx-runtime.d.ts').replace(/\.d\.ts$/, ''),
-            ],
-          },
-        },
-        include: ['app/**/*.ts', 'app/**/*.tsx', 'src/**/*.ts', 'src/**/*.tsx'],
-      },
-      null,
-      2,
-    )}\n`,
-  );
-  return path;
-}
-
 // One pass through the whole pipeline, shared by every assertion below.
-const nodes = compiled();
+const nodes = compiledFrom(readFileSync(goldenPath, 'utf8'));
 const generated = reactGenerator.generate(harness(nodes).context);
 const componentSource =
   generated.files.find((file) => file.path === 'src/components/home-screen.tsx')?.contents ?? '';
@@ -157,29 +80,10 @@ describe('the emitted project compiles against the real runtime (M3-D build-proo
     // generator is rejecting something it claims to support — or the analyzer drifted into a shape it cannot.
     expect(reported.filter((diagnostic) => diagnostic.severity === 'error')).toEqual([]);
 
-    const root = materialise(files);
-    const tsconfig = writeCheckTsconfig(root);
-    // **`node typescript/lib/tsc.js`, not the `.bin/tsc` shim.**
-    //
-    // The shim is a shell script on Windows, and the executable npm writes beside it is `tsc.cmd` —
-    // which `execFileSync` also refuses, because Node blocks `.bat`/`.cmd` without `shell: true`
-    // (the CVE-2024-27980 mitigation). Both spellings failed the same way: the spawn threw before tsc
-    // started, the error carried no stdout, and the test reported "does not typecheck" with **empty**
-    // compiler output — which reads as a type error and is not one.
-    //
-    // `tsc.js` is a plain JavaScript entry point. Running it with the Node already executing this test
-    // needs no shim, no shell and no quoting, and behaves identically on every platform. Two Windows
-    // rounds went into learning that; the lesson is that a launcher is the wrong thing to depend on when
-    // the thing you want is a script.
-    const tsc = join(packageRoot, 'node_modules', 'typescript', 'lib', 'tsc.js');
-    try {
-      execFileSync(process.execPath, [tsc, '-p', tsconfig], { stdio: 'pipe', cwd: root });
-    } catch (error) {
-      const failure = error as { stdout?: Buffer; stderr?: Buffer };
-      const output = `${failure.stdout?.toString() ?? ''}${failure.stderr?.toString() ?? ''}`;
-      const dump = files.map((file) => `\n──── ${file.path}\n${file.contents}`).join('');
-      expect.unreachable(`the emitted project does not typecheck:\n${output}\n${dump}`);
-    }
+    // `typecheckEmitted` (support.ts) materialises the files, points a check-only tsconfig at the real
+    // kit source, and runs `node typescript/lib/tsc.js` directly — not the `.bin/tsc` shim, which is a
+    // shell script on Windows and fails silently under `execFileSync`'s `.cmd` refusal (CVE-2024-27980).
+    typecheckEmitted(files);
   }, 120_000);
 
   // ── regressions on the real output — the three defects M3-D fixed, asserted where they lived ──

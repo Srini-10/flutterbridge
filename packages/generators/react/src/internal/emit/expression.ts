@@ -121,6 +121,34 @@ export interface EmitScope {
    * Program-wide and computed once, because the token set is the same for every file.
    */
   readonly themeRoles: ReadonlySet<string>;
+  /**
+   * Every `app.Store` member (signal, derived value, or action) reachable in the program, by id — the
+   * ownership a component needs to consume one through `useStore` (M7-F).
+   *
+   * Built once, from exactly the name each member was actually given when its owning store was emitted
+   * (`store.ts`'s `emitStore` returns these maps; nothing here recomputes a name independently, which
+   * would risk a second naming rule drifting from the first). Ownership is `target`/id-derived — this
+   * map is keyed by the member's own `NodeId` — never inferred from a signal's or action's human name,
+   * a store name coincidence, or declaration order.
+   */
+  readonly storeMembers: ReadonlyMap<NodeId, StoreMemberInfo>;
+}
+
+/**
+ * Where a promoted or declared `app.Store` member lives, and what a consumer outside the store calls it
+ * (M7-F).
+ */
+export interface StoreMemberInfo {
+  /** Which kind of member — a `useSignal`-subscribable read (`signal`/`derived`) or a direct call (`action`). */
+  readonly kind: 'signal' | 'derived' | 'action';
+  /** The `app.Store` node id this member belongs to. */
+  readonly storeId: NodeId;
+  /** The store's own module, to import from — e.g. `@/stores/favorites-store`. */
+  readonly storeModule: string;
+  /** The store's exported `defineStore` identifier — e.g. `favoritesStoreStore`. */
+  readonly storeExport: string;
+  /** This member's property on what the store's setup function returned — e.g. `value_d18f644e`. */
+  readonly property: string;
 }
 
 /** A `logic.*` node, loosely typed: the generated union does not expose nested nodes as `AnyUirNode`. */

@@ -36,15 +36,28 @@ type Node = Record<string, unknown>;
 
 const idOf = (node: Node): string | undefined => (typeof node['id'] === 'string' ? node['id'] : undefined);
 
+/** What emitting a store established: its own exported name, and each member's, by id (M7-F). */
+export interface EmittedStore {
+  /** The exported `defineStore` identifier. */
+  readonly name: string;
+  /** Signal id → its property on the store's returned state. */
+  readonly signals: ReadonlyMap<NodeId, string>;
+  /** Derived-value id → its property on the store's returned state. */
+  readonly derived: ReadonlyMap<NodeId, string>;
+  /** Action id → its property on the store's returned state. */
+  readonly actions: ReadonlyMap<NodeId, string>;
+}
+
 /**
  * Emits an `app.Store` into `module`.
  *
  * @param store - the `app.Store` node.
  * @param module - the file to write into.
  * @param scope - resolution and reporting.
- * @returns the exported definition's name.
+ * @returns the exported definition's name, and every member's property name — the one place these names
+ *   are decided, so a consumer outside the store (M7-F) never recomputes them and risks drifting.
  */
-export function emitStore(store: Node, module: ModuleBuilder, scope: EmitScope): string {
+export function emitStore(store: Node, module: ModuleBuilder, scope: EmitScope): EmittedStore {
   const storeName = String(store['name'] ?? 'Store');
   const exported = module.declare(`${lowerFirst(identifierOf(storeName))}Store`, idOf(store) ?? '');
   const defineStore = module.use(RUNTIME, 'defineStore');
@@ -117,7 +130,7 @@ export function emitStore(store: Node, module: ModuleBuilder, scope: EmitScope):
   });
   module.line('});');
   module.line();
-  return exported;
+  return { name: exported, signals, derived, actions };
 }
 
 /**
@@ -169,6 +182,7 @@ function storeScope(
     report: parent.report.bind(parent),
     // Program-wide, so a child scope forwards it unchanged rather than rebuilding it per component.
     themeRoles: parent.themeRoles,
+    storeMembers: parent.storeMembers,
     node: parent.node.bind(parent),
     isStoreOwned: (id) => parent.isStoreOwned(id),
     signalRead: (id) => {

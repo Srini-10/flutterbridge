@@ -1,4 +1,7 @@
-import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import type { Diagnostic, GeneratorContext, ProgramView, WidgetCatalog } from '@bridge/plugin-sdk';
@@ -86,4 +89,125 @@ export function counter(): AnyUirNode[] {
 /** The file at `path` in an emitted project, or `undefined`. */
 export function fileAt(files: readonly { path: string; contents: string }[], path: string): string | undefined {
   return files.find((file) => file.path === path)?.contents;
+}
+
+// ── the real build-proof pipeline (M3-D, extended M7-F) ─────────────────────────────────────────────
+//
+// Shared by every test that needs the whole chain — Flutter source → analyzer → `bridge normalize` →
+// generator → `tsc` — over a committed, analyzer-produced golden. One copy, so a fixture beyond
+// `layout_proof.ndjson` (M7-F's `promoted_counter.normalized.ndjson`) does not re-derive the tricky half
+// of this: the check-only tsconfig that resolves the kit's real source and `tsc.js` directly, not the
+// shell-script shim that fails silently on Windows (see `build.test.ts`'s own comment on that, kept
+// there rather than duplicated here).
+
+const here = fileURLToPath(new URL('.', import.meta.url));
+const packageRoot = join(here, '..');
+const repoRoot = join(packageRoot, '..', '..', '..');
+const runtimeSrc = join(packageRoot, '..', '..', 'runtimes', 'react', 'src', 'index.ts');
+const cli = join(repoRoot, 'packages', 'cli', 'bin', 'bridge.mjs');
+
+const temporaries: string[] = [];
+
+/** Removes every temporary directory this module created. Call once, from the caller's own `afterAll`. */
+export function cleanupBuildProofTemporaries(): void {
+  for (const dir of temporaries) rmSync(dir, { recursive: true, force: true });
+  temporaries.length = 0;
+}
+
+/**
+ * Runs `golden` — a raw, analyzer-produced NDJSON document — through the real compiler (N1–N11), via the
+ * `bridge` CLI. Shelled, not imported: the generator does not depend on the compiler and must not start
+ * now, even in a test — `bridge normalize` is the same entry point an author uses.
+ */
+export function compiledFrom(golden: string): AnyUirNode[] {
+  const dir = mkdtempSync(join(tmpdir(), 'bridge-compile-'));
+  temporaries.push(dir);
+  const raw = join(dir, 'raw.ndjson');
+  const out = join(dir, 'normalized.ndjson');
+  writeFileSync(raw, golden);
+  execFileSync('node', [cli, 'normalize', raw, '--out', out], { stdio: 'pipe' });
+  return parseNdjson(readFileSync(out, 'utf8'));
+}
+
+/** Writes the emitted project to a temp directory and returns its root. */
+export function materialise(files: readonly { path: string; contents: string }[]): string {
+  const root = mkdtempSync(join(tmpdir(), 'bridge-emit-'));
+  temporaries.push(root);
+  for (const file of files) {
+    const full = join(root, file.path);
+    mkdirSync(dirname(full), { recursive: true });
+    writeFileSync(full, file.contents);
+  }
+  return root;
+}
+
+/**
+ * A tsconfig for the check — not the one the app ships with.
+ *
+ * It maps the workspace packages by path so `tsc` resolves the *real* kit source rather than a stub, and
+ * drops the `next` plugin, which is a language-server concern `tsc` ignores anyway.
+ */
+export function writeCheckTsconfig(root: string): string {
+  const path = join(root, 'tsconfig.check.json');
+  writeFileSync(
+    path,
+    `${JSON.stringify(
+      {
+        compilerOptions: {
+          target: 'ES2022',
+          lib: ['ES2023', 'DOM', 'DOM.Iterable'],
+          jsx: 'react-jsx',
+          module: 'ESNext',
+          moduleResolution: 'Bundler',
+          strict: true,
+          noEmit: true,
+          skipLibCheck: true,
+          esModuleInterop: true,
+          baseUrl: '.',
+          paths: {
+            '@/*': ['./src/*'],
+            '@bridge/runtime-react': [runtimeSrc.replace(/\.ts$/, '')],
+            react: [join(packageRoot, 'node_modules', '@types', 'react', 'index.d.ts').replace(/\.d\.ts$/, '')],
+            'react/jsx-runtime': [
+              join(packageRoot, 'node_modules', '@types', 'react', 'jsx-runtime.d.ts').replace(/\.d\.ts$/, ''),
+            ],
+          },
+        },
+        include: ['app/**/*.ts', 'app/**/*.tsx', 'src/**/*.ts', 'src/**/*.tsx'],
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  return path;
+}
+
+/**
+ * Type-checks the emitted `files` against the real runtime kit. Throws (via `expect.unreachable`,
+ * imported by the caller) with the compiler's own output and a dump of every file, on failure.
+ *
+ * **`node typescript/lib/tsc.js`, not the `.bin/tsc` shim.** The shim is a shell script on Windows, and
+ * the executable npm writes beside it is `tsc.cmd` — which `execFileSync` also refuses, because Node
+ * blocks `.bat`/`.cmd` without `shell: true` (the CVE-2024-27980 mitigation). `tsc.js` is a plain
+ * JavaScript entry point; running it with the Node already executing the test needs no shim, no shell
+ * and no quoting, and behaves identically on every platform.
+ */
+export function typecheckEmitted(files: readonly { path: string; contents: string }[]): void {
+  const root = materialise(files);
+  const tsconfig = writeCheckTsconfig(root);
+  const tsc = join(packageRoot, 'node_modules', 'typescript', 'lib', 'tsc.js');
+  try {
+    execFileSync(process.execPath, [tsc, '-p', tsconfig], { stdio: 'pipe', cwd: root });
+  } catch (error) {
+    const failure = error as { stdout?: Buffer; stderr?: Buffer };
+    const output = `${failure.stdout?.toString() ?? ''}${failure.stderr?.toString() ?? ''}`;
+    const dump = files.map((file) => `\n──── ${file.path}\n${file.contents}`).join('');
+    throw new Error(`the emitted project does not typecheck:\n${output}\n${dump}`);
+  }
+}
+
+/** The real `fixtures/apps/promoted_counter` document, raw analyzer output (M7-F) — not yet normalized. */
+export function promotedCounterRaw(): string {
+  const path = fileURLToPath(new URL('../../../../fixtures/uir/promoted_counter.ndjson', import.meta.url));
+  return readFileSync(path, 'utf8');
 }
