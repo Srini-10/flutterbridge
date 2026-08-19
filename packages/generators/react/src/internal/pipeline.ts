@@ -36,15 +36,24 @@ import { RUNTIME_MODULE } from './emit/runtime.js';
 import { banner, scaffold, type PageInput, type PageScreen } from './emit/project.js';
 import {
   emitRoutes,
-  reportUnsatisfiableRouteComponents,
+  reportUnsatisfiableConstructions,
   routeArguments,
   routeNameOf,
+  screenKeyFor,
   type RouteTable,
 } from './emit/routes.js';
 import { emitStore } from './emit/store.js';
 import { emitTheme } from './emit/theme.js';
 
 type Node = Record<string, unknown>;
+
+const idOf = (node: Node): string | undefined => (typeof node['id'] === 'string' ? node['id'] : undefined);
+
+function spanOf(node: Node): string {
+  const span = node['span'] as Node | undefined;
+  if (span === undefined) return 'an unknown location';
+  return `${String(span['file'])}:${String(span['line'])}`;
+}
 
 /** Runs the generator. */
 export function generateProject(context: GeneratorContext): GeneratorOutput {
@@ -110,9 +119,14 @@ export function generateProject(context: GeneratorContext): GeneratorOutput {
   files.push({ path: routesModule.path, contents: routesModule.toSource() });
 
   // Checked here rather than inside `emitRoutes`, because it needs the `ui.Component` nodes to resolve a
-  // route's component to its parameters, and the route emitter's input is deliberately the route table.
-  reportUnsatisfiableRouteComponents(
-    context.program.ofKind('app.Route') as unknown as Node[],
+  // construction's component to its parameters, and the route emitter's input is deliberately the route
+  // table. Routes and inline-push transitions together (M7-G) — BRG3018 previously covered only the
+  // former, which let a push to a component missing a required argument reach `tsc` silently.
+  reportUnsatisfiableConstructions(
+    [
+      ...(context.program.ofKind('app.Route') as unknown as Node[]),
+      ...(context.program.ofKind('app.RouteTransition') as unknown as Node[]),
+    ],
     context.program.ofKind('ui.Component') as unknown as Node[],
     scope,
   );
@@ -287,12 +301,24 @@ function pageOf(
     return emitted;
   };
 
-  /** The identifier the page renders for `componentId`, declaring a wrapper when `route` carries arguments. */
-  const rendered = (componentId: string, route: Node | undefined): string | undefined => {
-    const emitted = reserve(componentId);
-    if (emitted === undefined) return undefined;
-
-    const args = route === undefined ? [] : routeArguments(route);
+  /**
+   * The identifier the page renders for a construction site's `args`, declaring a wrapper (keyed by
+   * `boundaryId`) only when there is something to inject. Shared by every construction site that
+   * resolves a component's arguments — a declarative `app.Route` and an imperative `app.RouteTransition`
+   * are the same question asked twice (Spec ADR-0025 D1) — so there is one implementation, not one per
+   * boundary kind (M7-G).
+   *
+   * `boundaryId` is what a second construction reaching the same component must differ by: two pushes to
+   * one component with different constant arguments are two screens, and keying the wrapper's own
+   * `module.declare` collision-tracking by the *boundary* (a route's or a transition's own id) — never
+   * by the destination component alone — is what keeps them from colliding into one.
+   */
+  const screenFor = (
+    args: readonly Node[],
+    emitted: { readonly module: string; readonly name: string },
+    boundaryId: string,
+    describeBoundary: () => string,
+  ): string => {
     const props: string[] = [];
     const unreachable: string[] = [];
     for (const argument of args) {
@@ -328,33 +354,31 @@ function pageOf(
     }
 
     if (unreachable.length > 0) {
-      // The value is real, the analyzer recorded it, and the page cannot reach it. In every case measured
-      // this is the same shape: the argument reads a signal or an action declared by the **application
-      // root**, which `app_root.ts` consumes rather than emits — so the state it names has no home in the
-      // generated project. ADR-11 is the answer and N11 is the pass, but N11 walks
-      // `app.RouteTransition.arguments` only (see the compiler's `nav-graph` analysis); a declarative
-      // route's arguments are not promoted, so nothing has moved that state into a store.
+      // The value is real, the analyzer recorded it, and the page cannot reach it. Measured shape: the
+      // argument reads a signal or an action declared by the **application root**, which `app_root.ts`
+      // consumes rather than emits — so the state it names has no home in the generated project unless
+      // every boundary reaching this component agreed to promote it (N11's reaching-caller consensus,
+      // ADR-11 amendment) and this one still could not.
       scope.report(
         GeneratorDiagnosticCode.UnsupportedCapability,
         'error',
-        `the route \`${String(route?.['path'] ?? '/')}\` passes ` +
-          `${unreachable.map((name) => `\`${name}\``).join(', ')} to \`${emitted.name}\`, and the value is ` +
-          'state declared outside any component the project emits — typically the application root, which ' +
-          'is consumed into the route table and the theme rather than rendered. Missing capability: ' +
-          "promoting a **declarative route's** arguments into a store. " +
-          'Owner: N11 (`promote-cross-route-state`, ADR-11), which promotes the arguments an ' +
-          '`app.RouteTransition` carries and does not yet walk `app.Route.arguments`. The analyzer records ' +
-          'the argument correctly; nothing downstream has moved the state it reads anywhere the page can ' +
-          'read it, and passing `undefined` would render a screen that is silently wrong.',
-        typeof route?.['id'] === 'string' ? (route['id'] as string) : undefined,
+        `${describeBoundary()} passes ${unreachable.map((name) => `\`${name}\``).join(', ')} to ` +
+          `\`${emitted.name}\`, and the value is state declared outside any component the project emits — ` +
+          'typically the application root, which is consumed into the route table and the theme rather ' +
+          "than rendered. Missing capability: promoting this boundary's arguments into a store. Owner: " +
+          'N11 (`promote-cross-route-state`, ADR-11), which promotes what a boundary carries once every ' +
+          'reaching caller agrees. The analyzer records the argument correctly; nothing downstream has ' +
+          'moved the state it reads anywhere the page can read it, and passing `undefined` would render a ' +
+          'screen that is silently wrong.',
+        boundaryId,
       );
     }
 
     if (props.length === 0) return emitted.name;
 
-    const wrapper = module.declare(`${emitted.name}Route`, `route:${componentId}`);
+    const wrapper = module.declare(`${emitted.name}Route`, `construction:${boundaryId}`);
     declarations.push(
-      `/** \`${String(route?.['path'] ?? '/')}\` — \`${emitted.name}\`, with the arguments the route records. */`,
+      `/** ${describeBoundary()} — \`${emitted.name}\`, with the arguments this boundary records. */`,
       `function ${wrapper}() {`,
       `  return <${emitted.name} ${props.join(' ')} />;`,
       '}',
@@ -363,24 +387,51 @@ function pageOf(
     return wrapper;
   };
 
+  /** The identifier a declarative route renders. */
+  const rendered = (componentId: string, route: Node | undefined): string | undefined => {
+    const emitted = reserve(componentId);
+    if (emitted === undefined) return undefined;
+    if (route === undefined) return emitted.name;
+    const routeId = idOf(route) ?? componentId;
+    return screenFor(routeArguments(route), emitted, routeId, () => `the route \`${String(route['path'] ?? '/')}\``);
+  };
+
   const routeScreens: PageScreen[] = [];
   for (const [routeName, componentId] of table.components) {
     const name = rendered(componentId, byRouteName.get(routeName));
     if (name !== undefined) routeScreens.push({ key: routeName, name });
   }
 
-  // An inline destination is reached by a push, not by a route, so it has no `app.Route` and no arguments
-  // to construct it with — §A17.6 says a push carries no path, and `app.RouteTransition.arguments` is
-  // N11's business rather than the page's. It renders as its bare component.
+  // An inline destination is reached by a push, not by a route — §A17.6 says it carries no path — but
+  // its arguments are the same `RouteArgument` shape `app.Route.arguments` is, resolved by the same
+  // `screenFor` above (M7-G).
+  //
+  // **Destination identity is per-transition, not per-component.** Two pushes to the same component with
+  // different constant arguments must remain two screens: a component that declares any parameter is
+  // keyed by *its own transition's* id, so `RouterOutlet`'s `components` map — and the `component` field
+  // `statement.ts`'s `destinationOf` emits at the push call site, via the same `screenKeyFor` — never
+  // collide two distinct constructions into one entry. A parameter-less component has nothing that could
+  // differ between pushes, so it is still deduped by the bare component id: `<X />` is the same screen
+  // regardless of which transition reached it, and giving it a second identity would only bloat the
+  // output for nothing semantics distinguishes.
   const componentScreens: PageScreen[] = [];
-  const seen = new Set<string>();
+  const seenBare = new Set<string>();
   for (const transition of transitions) {
     const componentId = transition['component'];
-    if (typeof componentId !== 'string' || seen.has(componentId)) continue;
+    if (typeof componentId !== 'string') continue;
     const emitted = reserve(componentId);
     if (emitted === undefined) continue;
-    seen.add(componentId);
-    componentScreens.push({ key: componentId, name: emitted.name });
+
+    const key = screenKeyFor(componentId, transition, scope);
+    if (key === componentId) {
+      if (seenBare.has(componentId)) continue;
+      seenBare.add(componentId);
+      componentScreens.push({ key: componentId, name: emitted.name });
+      continue;
+    }
+
+    const name = screenFor(routeArguments(transition), emitted, key, () => `the push at ${spanOf(transition)}`);
+    componentScreens.push({ key, name });
   }
 
   // Sorted by key: a map's order is not a fact about the program, and an emitter's traversal order must

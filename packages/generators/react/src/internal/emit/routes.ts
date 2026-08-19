@@ -137,6 +137,28 @@ export function emitRoutes(
 }
 
 /**
+ * The identity a construction site's destination is keyed by (M7-G).
+ *
+ * A component with no declared parameters renders identically no matter which transition reached it —
+ * `<X />` is `<X />` — so its bare id is enough, and sharing one entry across every push to it is
+ * correct, not a shortcut. A component that declares any parameter may be constructed differently by
+ * different transitions (two pushes with different constant arguments are the ordinary case this exists
+ * for, not an edge one it merely tolerates), so it is keyed by *that transition's own id* instead — the
+ * one identity the analyzer already mints per push, deliberately never a name, a span, or whichever
+ * caller happened to be found first.
+ *
+ * `pipeline.ts`'s `componentScreens` and `statement.ts`'s `destinationOf` both call this, so the map a
+ * push looks itself up in at runtime and the map the page registers a screen under are provably the same
+ * key — computed once, here, rather than agreed on by two independent implementations.
+ */
+export function screenKeyFor(componentId: string, transition: Node, scope: EmitScope): string {
+  const destination = scope.node(componentId) as unknown as Node | undefined;
+  const params = Array.isArray(destination?.['params']) ? (destination['params'] as unknown[]) : [];
+  if (params.length === 0) return componentId;
+  return idOf(transition) ?? componentId;
+}
+
+/**
  * The names a route supplies to its component, from `app.Route.arguments` (ADR-0025 D1).
  *
  * An argument with no `name` is not a name that can satisfy anything, so it is not counted — the check
@@ -186,8 +208,8 @@ export function routeArguments(route: Node): readonly Node[] {
  * @param components - every `ui.Component`, to resolve `route.component` to its parameters.
  * @param scope - reporting.
  */
-export function reportUnsatisfiableRouteComponents(
-  routes: readonly Node[],
+export function reportUnsatisfiableConstructions(
+  constructions: readonly Node[],
   components: readonly Node[],
   scope: EmitScope,
 ): void {
@@ -197,36 +219,47 @@ export function reportUnsatisfiableRouteComponents(
     if (id !== undefined) byId.set(id, component);
   }
 
-  for (const route of routes) {
-    const component = route['component'];
+  for (const construction of constructions) {
+    const component = construction['component'];
     if (typeof component !== 'string') continue;
     const target = byId.get(component);
     if (target === undefined) continue;
 
     const params = Array.isArray(target['params']) ? (target['params'] as Node[]) : [];
-    // Only *required* parameters. An optional one is satisfied by its own default, so a route that omits it
-    // renders exactly what the Flutter program renders.
+    // Only *required* parameters. An optional one is satisfied by its own default, so a construction that
+    // omits it renders exactly what the Flutter program renders.
     const required = params.filter((param) => param['required'] === true).map((param) => String(param['name']));
     if (required.length === 0) continue;
 
-    const supplied = suppliedArgumentNames(route);
+    const supplied = suppliedArgumentNames(construction);
     const missing = required.filter((name) => !supplied.has(name));
     if (missing.length === 0) continue;
+
+    const describe =
+      construction['kind'] === 'app.Route'
+        ? `the route \`${String(construction['path'] ?? '/')}\``
+        : `the push at ${spanOf(construction)}`;
 
     scope.report(
       GeneratorDiagnosticCode.RouteComponentArguments,
       'error',
-      `the route \`${String(route['path'] ?? '/')}\` renders \`${String(target['name'] ?? component)}\`, whose ` +
-        `constructor requires ${missing.map((name) => `\`${name}\``).join(', ')}, and the route supplies ` +
+      `${describe} renders \`${String(target['name'] ?? component)}\`, whose constructor requires ` +
+        `${missing.map((name) => `\`${name}\``).join(', ')}, and it supplies ` +
         `${supplied.size === 0 ? 'no arguments at all' : `only ${[...supplied].sort().map((name) => `\`${name}\``).join(', ')}`}. ` +
-        'Missing capability: recording that argument on `app.Route.arguments`. Owner: the analyzer\'s route ' +
-        'extractor. A route argument is recorded only when its parameter is named at the construction site ' +
-        'and its value has a UIR node — a positional argument states no name, and an expression with no node ' +
-        'is dropped rather than carried as Dart source. Emitting the component without it would produce a ' +
-        'call that cannot typecheck, so nothing is emitted instead.',
-      idOf(route),
+        "Missing capability: recording that argument. Owner: the analyzer's extractor. An argument is " +
+        'recorded only when its parameter is named at the construction site and its value has a UIR node ' +
+        '— a positional argument states no name, and an expression with no node is dropped rather than ' +
+        'carried as Dart source. Emitting the component without it would produce a call that cannot ' +
+        'typecheck, so nothing is emitted instead.',
+      idOf(construction),
     );
   }
+}
+
+function spanOf(node: Node): string {
+  const span = node['span'] as Node | undefined;
+  if (span === undefined) return 'an unknown location';
+  return `${String(span['file'])}:${String(span['line'])}`;
 }
 
 /**

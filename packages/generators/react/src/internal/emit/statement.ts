@@ -12,7 +12,7 @@ import type { Stmt } from '@bridge/uir';
 import { GeneratorDiagnosticCode } from '../diagnostics/codes.js';
 import { emitExpression, setStatementLowering, type EmitScope } from './expression.js';
 import { identifierOf } from './module.js';
-import { routeNameOf } from './routes.js';
+import { routeNameOf, screenKeyFor } from './routes.js';
 
 type Node = Record<string, unknown>;
 
@@ -305,7 +305,12 @@ function destinationOf(transition: Node, scope: EmitScope): string | undefined {
 
   const component = transition['component'];
   if (typeof component === 'string') {
-    return `{ kind: 'component', component: ${JSON.stringify(component)} }`;
+    // The same key `pipeline.ts`'s `componentScreens` registers this destination under — computed once,
+    // by `screenKeyFor`, so the two never independently decide differently (M7-G). A component with a
+    // declared parameter is keyed by *this transition's own id*, because a second push to it may supply
+    // different constant arguments and must resolve to a different screen at runtime, not the first one
+    // found.
+    return `{ kind: 'component', component: ${JSON.stringify(screenKeyFor(component, transition, scope))} }`;
   }
   return undefined;
 }

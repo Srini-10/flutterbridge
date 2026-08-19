@@ -43,10 +43,19 @@ const workspace = join(here, '../.fixtures');
  * promoted store's signal/action actually reacts in a browser needs an app whose promotion *succeeds* —
  * `hello_bridge`'s own route is entangled with multi-hop forwarding N11 correctly declines (M7-E3). See
  * `docs/m7/m7f-promoted-store-consumption.md`.
+ *
+ * `inline_push_props` (M7-G) exists for the same reason again, one layer over: `hello_bridge`'s own
+ * `Navigator.push` never becomes a `logic.Navigate` at all (an unrelated async/`mounted` extraction gap),
+ * so it cannot prove an inline push's destination *renders* with its arguments — only `promoted_counter`'s
+ * declarative route does that. This fixture pushes the same component from two different buttons with
+ * different constant arguments, which is the shape that needs a browser: `build.test.ts`-style tsc proof
+ * cannot tell a first-caller-wins collapse from correct per-transition resolution, because both typecheck.
+ * See `docs/m7/m7g-inline-push-prop-resolution.md`.
  */
 export const APPS = [
   { name: 'counter', source: 'examples/counter' },
   { name: 'promoted-counter', source: 'fixtures/apps/promoted_counter' },
+  { name: 'inline-push-props', source: 'fixtures/apps/inline_push_props' },
 ];
 
 const run = (program, args, cwd, env = {}) =>

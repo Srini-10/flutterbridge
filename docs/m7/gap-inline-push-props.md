@@ -1,9 +1,22 @@
 # Gap — a component reached by an inline `Navigator.push` gets no prop resolution at all
 
-**Status:** open, unimplemented. Found during M7-D (`docs/m7/m7d-reality-audit.md` §3), restated as an
-open question in the M7-E2 ADR amendment (`docs/adr/0011-amendment-route-argument-promotion.md`), and
-confirmed still current during M7-E3 implementation. Not part of M7-E3's scope — see "Why this is
-distinct" below.
+**Status:** resolved by M7-G (`docs/m7/m7g-inline-push-prop-resolution.md`). Found during M7-D
+(`docs/m7/m7d-reality-audit.md` §3), restated as an open question in the M7-E2 ADR amendment
+(`docs/adr/0011-amendment-route-argument-promotion.md`), confirmed still current during M7-E3
+implementation (not part of M7-E3's scope — see "Why this is distinct" below), and implemented in
+M7-G by extracting `rendered()`'s per-argument resolution loop into a shared `screenFor` closure and
+adding `screenKeyFor` for per-transition destination identity, rather than writing a second resolver.
+The rest of this document is kept as the original problem statement; it is no longer current behavior.
+
+**Correction to this document's original framing (found during M7-G's Phase 2 reproduction):** `BRG3008`
+was not, and never has been, a blanket refusal of every inline-push `component` destination — it fires
+only for a transition no `logic.Navigate` performs (i.e., one the analyzer failed to lower the call
+site for at all). `hello_bridge`'s own push hits it for exactly that reason (an unrelated
+async/`await`/`mounted` extraction gap, `login_screen.dart:45-62`), which is why it looked, from
+`hello_bridge` alone, as though inline pushes were categorically blocked. `inline_push_props`'s two
+pushes are both `performed` (lowered to real `logic.Navigate` nodes) and were never refused by
+`BRG3008` at any point — `componentScreens` rendering them bare was a **separate**, silent defect in
+the generator's own argument resolution, unrelated to routability.
 
 ## Reproducer
 

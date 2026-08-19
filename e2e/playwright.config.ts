@@ -17,6 +17,9 @@
 // `promotion.spec.ts` gets its own pair of projects/ports (3313/3314) rather than sharing `counter`'s —
 // each spec file must resolve to exactly one `baseURL`, and `promoted_counter` (M7-F) is a different
 // generated application from `counter`, at a different `.fixtures/` path.
+//
+// `inline-push.spec.ts` gets its own pair (3315/3316) for the same reason: `inline_push_props` (M7-G) is
+// a third, distinct generated application.
 
 import { defineConfig, devices } from '@playwright/test';
 
@@ -62,6 +65,16 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'], baseURL: 'http://127.0.0.1:3314' },
       testMatch: /promotion\.dev-only\.spec/,
     },
+    {
+      name: 'inline-push-production',
+      use: { ...devices['Desktop Chrome'], baseURL: 'http://127.0.0.1:3315' },
+      testMatch: /inline-push\.spec/,
+    },
+    {
+      name: 'inline-push-development',
+      use: { ...devices['Desktop Chrome'], baseURL: 'http://127.0.0.1:3316' },
+      testMatch: /inline-push\.dev-only\.spec/,
+    },
   ],
 
   webServer: [
@@ -98,6 +111,24 @@ export default defineConfig({
       command: 'npx next dev --port 3314',
       cwd: './.fixtures/promoted-counter-dev',
       port: 3314,
+      reuseExistingServer: false,
+      timeout: 120_000,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    },
+    {
+      command: 'npx next start --port 3315',
+      cwd: './.fixtures/inline-push-props/build/bridge',
+      port: 3315,
+      reuseExistingServer: false,
+      timeout: 120_000,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    },
+    {
+      command: 'npx next dev --port 3316',
+      cwd: './.fixtures/inline-push-props-dev',
+      port: 3316,
       reuseExistingServer: false,
       timeout: 120_000,
       stdout: 'pipe',

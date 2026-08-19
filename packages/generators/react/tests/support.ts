@@ -211,3 +211,9 @@ export function promotedCounterRaw(): string {
   const path = fileURLToPath(new URL('../../../../fixtures/uir/promoted_counter.ndjson', import.meta.url));
   return readFileSync(path, 'utf8');
 }
+
+/** The real `fixtures/apps/inline_push_props` document, raw analyzer output (M7-G) — not yet normalized. */
+export function inlinePushPropsRaw(): string {
+  const path = fileURLToPath(new URL('../../../../fixtures/uir/inline_push_props.ndjson', import.meta.url));
+  return readFileSync(path, 'utf8');
+}

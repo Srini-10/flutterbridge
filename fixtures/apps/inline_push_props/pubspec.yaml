@@ -1,0 +1,19 @@
+name: inline_push_props
+description: >-
+  M7-G fixture: an inline Navigator.push carrying constant, component-local-signal, and
+  component-local-action constructor arguments to its destination — the gap
+  docs/m7/gap-inline-push-props.md found in componentScreens. Two separate pushes to the same
+  destination component, with different constant arguments, prove per-transition identity rather
+  than a shared/first-caller-wins cache (docs/m7/m7g-inline-push-prop-resolution.md).
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

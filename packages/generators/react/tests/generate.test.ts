@@ -921,11 +921,12 @@ describe('M6-C — a route whose component requires constructor arguments', () =
     // Names both parameters, so the message says what is missing rather than that something is.
     expect(error?.message).toContain('`label`');
     expect(error?.message).toContain('`step`');
-    // Names the owning layer and the capability, per §8 — never a generic message. It no longer names an
-    // amendment that has landed: `app.Route.arguments` exists, so what is missing is the *recording* of
-    // this particular argument, and the message says which layer records one.
-    expect(error?.message).toContain('app.Route.arguments');
-    expect(error?.message).toContain("the analyzer's route extractor");
+    // Names the owning layer and the capability, per §8 — never a generic message. M7-G generalized this
+    // check to cover an inline push's construction too (`reportUnsatisfiableConstructions`), so the
+    // message names the construct-recording capability and the analyzer's extractor generically, rather
+    // than the route-specific field an inline push does not have.
+    expect(error?.message).toContain('recording that argument');
+    expect(error?.message).toContain("the analyzer's extractor");
   });
 
   it('emits nothing, because a project that cannot typecheck is worse than no project', () => {
@@ -1090,10 +1091,12 @@ describe('M7-D — a route that records the arguments its construction site pass
     expect(error).toBeDefined();
     expect(error?.severity).toBe('error');
     expect(error?.message).toContain('`isDark`');
-    // The capability and its owner, per §8.
+    // The capability and its owner, per §8. M7-G's `screenFor` (pipeline.ts) generalized this message to
+    // cover an inline push's boundary too, so it names the consensus mechanism rather than the
+    // route-specific field an inline push does not have.
     expect(error?.message).toContain('Missing capability');
     expect(error?.message).toContain('promote-cross-route-state');
-    expect(error?.message).toContain('app.Route.arguments');
+    expect(error?.message).toContain('reaching caller agrees');
 
     // And BRG3018 stays silent: the parameter *has* an argument, so nothing is missing from the route.
     // What is missing is a pass, and that is a different diagnostic with a different owner.
