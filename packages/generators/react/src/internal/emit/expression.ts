@@ -69,6 +69,16 @@ export interface EmitScope {
   /** The local name a declaration was bound to, if it is in scope (a param, a local, a lifted action). */
   localName(id: NodeId): string | undefined;
   /**
+   * Whether `id` is a member (`signals`/`derived`/`actions`) of some `app.Store` in the program.
+   *
+   * A component's own emitter has no working path to consume a store member it was not already
+   * wired to — `useStore(...)` is not yet established for an arbitrary component (M7-E3 finding).
+   * This exists so a caller can refuse an unreachable store reference explicitly, through the same
+   * "not declared in this program" diagnostic an ordinary unresolved reference already gets, rather
+   * than silently emitting a bare identifier no import ever declares.
+   */
+  isStoreOwned(id: NodeId): boolean;
+  /**
    * The parameter of this name, if one is in scope.
    *
    * A `ParamDecl` has no `id` — it is a value, not a node — so a `logic.Ref` to a parameter carries a `name`

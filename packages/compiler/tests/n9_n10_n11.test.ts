@@ -166,6 +166,45 @@ function arg(name: string, binding: Record<string, unknown>): Record<string, unk
   return { name, transport: 'primitive', binding };
 }
 
+/** A route that also carries constructor arguments (M7-E3: `app.Route.arguments`). */
+function routeWithArgs(id: string, path: string, component: string, args: Record<string, unknown>[]): AnyUirNode {
+  return { id, kind: 'app.Route', span, path, component, arguments: args } as unknown as AnyUirNode;
+}
+
+/** An imperative transition constructing its destination inline (`component`, not `target`). */
+function inlineTransition(
+  id: string,
+  source: string,
+  component: string,
+  args: Record<string, unknown>[],
+): AnyUirNode {
+  return { id, kind: 'app.RouteTransition', span, source, component, arguments: args } as unknown as AnyUirNode;
+}
+
+/** A `ui.Component` with the given required params and render tree. */
+function component(id: string, name: string, paramNames: readonly string[], render: unknown): AnyUirNode {
+  return {
+    id,
+    kind: 'ui.Component',
+    span,
+    name,
+    ...(paramNames.length > 0
+      ? { params: paramNames.map((n) => ({ name: n, required: true, type: { name: 'Object' } })) }
+      : {}),
+    render,
+  } as unknown as AnyUirNode;
+}
+
+/** A direct read of the component's own constructor parameter, at `where` in its render tree. */
+function bindParam(id: string, name: string): Record<string, unknown> {
+  return { id, kind: 'bind.Param', span, param: name };
+}
+
+/** A minimal widget-tree leaf embedding one binding, so `bindParam` sits inside something realistic. */
+function leaf(id: string, binding: Record<string, unknown>): Record<string, unknown> {
+  return { id, kind: 'ui.Element', span, component: { name: 'Text', userDefined: false }, props: { data: binding } };
+}
+
 describe('N11 — promote cross-route state (ADR-11)', () => {
   const manager = () => new PassManager([new N5LiftClosures(), new N11PromoteCrossRouteState()]);
 
@@ -322,5 +361,347 @@ describe('the nav-graph analysis', () => {
     expect(graph.hasRoutes).toBe(true);
     expect(graph.componentOf.get('r1')).toBe('c1');
     expect(graph.transitions.map((t) => t.id)).toEqual(['ta', 'tz']);
+  });
+
+  it('unifies a declarative route and an imperative transition as boundaries (M7-E3)', () => {
+    const graph = navGraph(
+      Program.of([
+        routeWithArgs('r1', '/a', 'c1', [arg('x', { id: 'b', kind: 'bind.Const', span, value: 1 })]),
+        transition('t1', 'r1', [arg('y', { id: 'b2', kind: 'bind.Const', span, value: 2 })]),
+      ]),
+    );
+
+    expect(graph.boundaries.map((b) => b.id)).toEqual(['r1', 't1']);
+    const routeBoundary = graph.boundaries.find((b) => b.id === 'r1')!;
+    expect(routeBoundary.kind).toBe('route');
+    expect(routeBoundary.component).toBe('c1');
+    expect(routeBoundary.source).toBeUndefined();
+    expect(routeBoundary.arguments.map((a) => a.name)).toEqual(['x']);
+
+    const transitionBoundary = graph.boundaries.find((b) => b.id === 't1')!;
+    expect(transitionBoundary.kind).toBe('transition');
+    // `t1` names route `r1` as `target`, resolved through `componentOf` to `c1` — the same destination.
+    expect(transitionBoundary.component).toBe('c1');
+
+    expect(graph.boundariesByComponent.get('c1')!.map((b) => b.id)).toEqual(['r1', 't1']);
+  });
+
+  it('resolves an inline-pushed destination by its own `component` field, not `target`', () => {
+    const graph = navGraph(
+      Program.of([
+        inlineTransition('t1', 'src', 'compInline', [arg('x', { id: 'b', kind: 'bind.Const', span, value: 1 })]),
+      ]),
+    );
+
+    const boundary = graph.boundaries[0]!;
+    expect(boundary.component).toBe('compInline');
+    expect(boundary.source).toBe('src');
+  });
+
+  it('includes an argument-free route or transition too — a reaching caller that supplies nothing is still a reaching caller', () => {
+    const graph = navGraph(Program.of([route('r1', '/a', 'c1'), transition('t1', 'r1', [])]));
+    expect(graph.boundaries.map((b) => b.id)).toEqual(['r1', 't1']);
+    expect(graph.boundaries.every((b) => b.arguments.length === 0)).toBe(true);
+    expect(graph.boundariesByComponent.get('c1')!.map((b) => b.id)).toEqual(['r1', 't1']);
+  });
+});
+
+// ── N11 — component-interface promotion (M7-E3, ADR-11 amendment) ──────────────────────────────────
+
+describe('N11 — component-interface promotion (M7-E3, ADR-11 amendment)', () => {
+  const manager = () => new PassManager([new N5LiftClosures(), new N11PromoteCrossRouteState()]);
+
+  it('promotes a declarative route argument, removes the param, and rewrites the internal read — the signal case', () => {
+    const comp = component('compHome', 'Home', ['isDark'], leaf('leaf1', bindParam('bp1', 'isDark')));
+    const program = Program.of([
+      signal('sigDark'),
+      comp,
+      routeWithArgs('r1', '/home', 'compHome', [arg('isDark', { id: 'b', kind: 'bind.Signal', span, signal: 'sigDark' })]),
+    ]);
+
+    const result = manager().run(program, options);
+
+    // The route argument is gone.
+    const r = result.program.get('r1') as unknown as Record<string, unknown>;
+    expect(r['arguments']).toBeUndefined();
+
+    // The param is gone from the component's declared interface.
+    const rewritten = result.program.get('compHome') as unknown as Record<string, unknown>;
+    expect(rewritten['params']).toBeUndefined();
+
+    // The component's id is unchanged — it is a declaration, not content-addressed (ADR-17 ISSUE-6).
+    expect(rewritten['id']).toBe(comp.id);
+
+    // The internal read now points at the promoted store directly.
+    const render = rewritten['render'] as Record<string, unknown>;
+    const binding = (render['props'] as Record<string, unknown>)['data'] as Record<string, unknown>;
+    expect(binding['kind']).toBe('bind.Signal');
+    expect(binding['signal']).toBe('sigDark');
+    expect(result.program.ofKind('app.Store')).toHaveLength(1);
+
+    expect(result.diagnostics.map((d) => d.code).sort()).toEqual(['BRG2302', 'BRG2304']);
+  });
+
+  it('promotes a declarative route argument, removes the param, and rewrites the internal read — the action/callback case', () => {
+    const comp = component('compHome', 'Home', ['onTap'], leaf('leaf1', bindParam('bp1', 'onTap')));
+    const program = Program.of([
+      signal('sigDark'),
+      action('actToggle', ['sigDark']),
+      comp,
+      routeWithArgs('r1', '/home', 'compHome', [
+        arg('onTap', {
+          id: 'b',
+          kind: 'bind.Expr',
+          span,
+          expr: { id: 'e', kind: 'logic.Ref', span, name: 'toggle', target: 'actToggle', type: { name: 'void Function()' } },
+        }),
+      ]),
+    ]);
+
+    const result = manager().run(program, options);
+
+    const rewritten = result.program.get('compHome') as unknown as Record<string, unknown>;
+    expect(rewritten['id']).toBe(comp.id);
+    expect(rewritten['params']).toBeUndefined();
+
+    const render = rewritten['render'] as Record<string, unknown>;
+    const binding = (render['props'] as Record<string, unknown>)['data'] as Record<string, unknown>;
+    expect(binding['kind']).toBe('bind.Expr');
+    const ref = binding['expr'] as Record<string, unknown>;
+    expect(ref['kind']).toBe('logic.Ref');
+    expect(ref['target']).toBe('actToggle');
+    // The reused reference keeps the type the program actually stated — nothing here invents one.
+    expect(ref['type']).toEqual({ name: 'void Function()' });
+
+    expect(result.diagnostics.map((d) => d.code).sort()).toEqual(['BRG2302', 'BRG2304']);
+  });
+
+  it('two callers promoting the same signal reach consensus and both are stripped', () => {
+    const comp = component('compScreen', 'Screen', ['count'], leaf('leaf1', bindParam('bp1', 'count')));
+    const program = Program.of([
+      signal('sigCount'),
+      comp,
+      routeWithArgs('r1', '/a', 'compScreen', [arg('count', { id: 'b1', kind: 'bind.Signal', span, signal: 'sigCount' })]),
+      routeWithArgs('r2', '/b', 'compScreen', [arg('count', { id: 'b2', kind: 'bind.Signal', span, signal: 'sigCount' })]),
+    ]);
+
+    const result = manager().run(program, options);
+
+    expect((result.program.get('r1') as unknown as Record<string, unknown>)['arguments']).toBeUndefined();
+    expect((result.program.get('r2') as unknown as Record<string, unknown>)['arguments']).toBeUndefined();
+    expect((result.program.get('compScreen') as unknown as Record<string, unknown>)['params']).toBeUndefined();
+    expect(result.program.ofKind('app.Store')).toHaveLength(1);
+  });
+
+  it('one caller supplying a plain primitive blocks removal — consensus, not first-caller-wins', () => {
+    const comp = component('compScreen', 'Screen', ['count'], leaf('leaf1', bindParam('bp1', 'count')));
+    const program = Program.of([
+      signal('sigCount'),
+      comp,
+      routeWithArgs('r1', '/a', 'compScreen', [arg('count', { id: 'b1', kind: 'bind.Signal', span, signal: 'sigCount' })]),
+      routeWithArgs('r2', '/b', 'compScreen', [arg('count', { id: 'b2', kind: 'bind.Const', span, value: 3 })]),
+    ]);
+
+    const result = manager().run(program, options);
+
+    // Neither boundary's argument is touched — not even `r1`'s, which was individually promotable.
+    expect((result.program.get('r1') as unknown as Record<string, unknown>)['arguments']).toEqual([
+      arg('count', { id: 'b1', kind: 'bind.Signal', span, signal: 'sigCount' }),
+    ]);
+    expect((result.program.get('r2') as unknown as Record<string, unknown>)['arguments']).toEqual([
+      arg('count', { id: 'b2', kind: 'bind.Const', span, value: 3 }),
+    ]);
+    expect((result.program.get('compScreen') as unknown as Record<string, unknown>)['params']).toEqual(
+      (comp as unknown as Record<string, unknown>)['params'],
+    );
+    expect(result.program.ofKind('app.Store')).toEqual([]);
+    expect(result.diagnostics.map((d) => d.code)).toEqual(['BRG2306']);
+  });
+
+  it('a caller that omits the argument entirely blocks removal', () => {
+    const comp = component('compScreen', 'Screen', ['count'], leaf('leaf1', bindParam('bp1', 'count')));
+    const program = Program.of([
+      signal('sigCount'),
+      comp,
+      routeWithArgs('r1', '/a', 'compScreen', [arg('count', { id: 'b1', kind: 'bind.Signal', span, signal: 'sigCount' })]),
+      routeWithArgs('r2', '/b', 'compScreen', []),
+    ]);
+
+    const result = manager().run(program, options);
+
+    expect((result.program.get('r1') as unknown as Record<string, unknown>)['arguments']).toEqual([
+      arg('count', { id: 'b1', kind: 'bind.Signal', span, signal: 'sigCount' }),
+    ]);
+    expect((result.program.get('compScreen') as unknown as Record<string, unknown>)['params']).toEqual(
+      (comp as unknown as Record<string, unknown>)['params'],
+    );
+    expect(result.diagnostics.map((d) => d.code)).toEqual(['BRG2306']);
+  });
+
+  it('two callers promoting two different signals blocks removal', () => {
+    const comp = component('compScreen', 'Screen', ['count'], leaf('leaf1', bindParam('bp1', 'count')));
+    const program = Program.of([
+      signal('sigA'),
+      signal('sigB'),
+      comp,
+      routeWithArgs('r1', '/a', 'compScreen', [arg('count', { id: 'b1', kind: 'bind.Signal', span, signal: 'sigA' })]),
+      routeWithArgs('r2', '/b', 'compScreen', [arg('count', { id: 'b2', kind: 'bind.Signal', span, signal: 'sigB' })]),
+    ]);
+
+    const result = manager().run(program, options);
+
+    expect((result.program.get('compScreen') as unknown as Record<string, unknown>)['params']).toEqual(
+      (comp as unknown as Record<string, unknown>)['params'],
+    );
+    expect(result.diagnostics.map((d) => d.code)).toEqual(['BRG2306']);
+  });
+
+  it('a component that only forwards the value onward is not rewritten — the LoginScreen/HomeScreen shape', () => {
+    // `Middle` receives a promotable signal from exactly one route (unanimous consensus), but forwards
+    // it — by an untargeted reference, since a `ParamDecl` has no id — into a further push it cannot
+    // promote. Removing `Middle`'s param would orphan that forward.
+    const comp = component('compMiddle', 'Middle', ['count'], leaf('leaf1', bindParam('bp1', 'count')));
+    const program = Program.of([
+      signal('sigCount'),
+      comp,
+      routeWithArgs('r1', '/a', 'compMiddle', [arg('count', { id: 'b1', kind: 'bind.Signal', span, signal: 'sigCount' })]),
+      inlineTransition('t1', 'compMiddle', 'compNext', [
+        arg('count', { id: 'b2', kind: 'bind.Expr', span, expr: { id: 'e', kind: 'logic.Ref', span, name: 'count' } }),
+      ]),
+    ]);
+
+    const result = manager().run(program, options);
+
+    expect((result.program.get('r1') as unknown as Record<string, unknown>)['arguments']).toEqual([
+      arg('count', { id: 'b1', kind: 'bind.Signal', span, signal: 'sigCount' }),
+    ]);
+    expect((result.program.get('compMiddle') as unknown as Record<string, unknown>)['params']).toEqual(
+      (comp as unknown as Record<string, unknown>)['params'],
+    );
+    expect(result.program.ofKind('app.Store')).toEqual([]);
+    // Once for the transition's own unprovable forward, once for the component blocked from removing it.
+    expect(result.diagnostics.map((d) => d.code)).toEqual(['BRG2305', 'BRG2305']);
+  });
+
+  it('a `bind.Param` argument binding is the same forwarded shape as an untargeted `logic.Ref`', () => {
+    const program = Program.of([
+      route('r1', '/home', 'compHome'),
+      transition('t1', 'r1', [arg('x', bindParam('b1', 'x'))]),
+    ]);
+
+    const result = manager().run(program, options);
+
+    expect(result.diagnostics.map((d) => d.code)).toEqual(['BRG2305']);
+    expect(result.program.ofKind('app.Store')).toEqual([]);
+  });
+
+  it('a route/transition naming a component this program does not declare promotes on its own evidence — no interface to protect', () => {
+    const program = Program.of([
+      signal('sigDark'),
+      route('r1', '/home', 'compHome'), // no `ui.Component` for `compHome`
+      transition('t1', 'r1', [arg('isDark', { id: 'b', kind: 'bind.Signal', span, signal: 'sigDark' })]),
+    ]);
+
+    const result = manager().run(program, options);
+
+    expect((result.program.get('t1') as unknown as Record<string, unknown>)['arguments']).toBeUndefined();
+    expect(result.program.ofKind('app.Store')).toHaveLength(1);
+    // No BRG2304: nothing was rewritten, because there was no component to rewrite.
+    expect(result.diagnostics.map((d) => d.code)).toEqual(['BRG2302']);
+  });
+
+  it('an unrelated param on the same component survives untouched', () => {
+    const comp = component('compScreen', 'Screen', ['count', 'label'], leaf('leaf1', bindParam('bp1', 'count')));
+    const program = Program.of([
+      signal('sigCount'),
+      comp,
+      routeWithArgs('r1', '/a', 'compScreen', [
+        arg('count', { id: 'b1', kind: 'bind.Signal', span, signal: 'sigCount' }),
+        arg('label', { id: 'b2', kind: 'bind.Const', span, value: 'hi' }),
+      ]),
+    ]);
+
+    const result = manager().run(program, options);
+
+    const rewrittenComp = result.program.get('compScreen') as unknown as Record<string, unknown>;
+    const params = rewrittenComp['params'] as Record<string, unknown>[];
+    expect(params.map((p) => p['name'])).toEqual(['label']);
+
+    const rewrittenRoute = result.program.get('r1') as unknown as Record<string, unknown>;
+    expect((rewrittenRoute['arguments'] as Record<string, unknown>[]).map((a) => a['name'])).toEqual(['label']);
+  });
+
+  it('a live object is refused (BRG2301) even with a real destination component in scope', () => {
+    const comp = component('compDetail', 'Detail', ['product'], leaf('leaf1', bindParam('bp1', 'product')));
+    const program = Program.of([
+      comp,
+      routeWithArgs('r1', '/detail', 'compDetail', [
+        arg('product', { id: 'b', kind: 'bind.Expr', span, expr: { id: 'e', kind: 'logic.New', span, typeName: 'Product', type: { name: 'Product' } } }),
+      ]),
+    ]);
+
+    const result = manager().run(program, options);
+
+    expect(result.diagnostics.map((d) => d.code)).toEqual(['BRG2301']);
+    expect((result.program.get('compDetail') as unknown as Record<string, unknown>)['params']).toEqual(
+      (comp as unknown as Record<string, unknown>)['params'],
+    );
+  });
+
+  it('an unpromotable callback is refused (BRG2303) even with a real destination component in scope', () => {
+    const comp = component('compHome', 'Home', ['onTap'], leaf('leaf1', bindParam('bp1', 'onTap')));
+    const program = Program.of([
+      comp,
+      routeWithArgs('r1', '/home', 'compHome', [
+        arg('onTap', { id: 'b', kind: 'bind.Expr', span, expr: { id: 'e', kind: 'logic.Lambda', span, body: [], type: { name: 'Function' } } }),
+      ]),
+    ]);
+
+    const result = manager().run(program, options);
+
+    expect(result.diagnostics.map((d) => d.code)).toEqual(['BRG2303']);
+    expect((result.program.get('compHome') as unknown as Record<string, unknown>)['params']).toEqual(
+      (comp as unknown as Record<string, unknown>)['params'],
+    );
+  });
+
+  it("the component's own id is stable across the rewrite — declarations are symbol-addressed, not content-addressed (ADR-17)", () => {
+    const comp = component('compHome', 'Home', ['isDark'], leaf('leaf1', bindParam('bp1', 'isDark')));
+    const program = Program.of([
+      signal('sigDark'),
+      comp,
+      routeWithArgs('r1', '/home', 'compHome', [arg('isDark', { id: 'b', kind: 'bind.Signal', span, signal: 'sigDark' })]),
+    ]);
+
+    const result = manager().run(program, options);
+    const rewritten = result.program.get('compHome')!;
+
+    expect(rewritten.id).toBe(comp.id);
+    expect(rewritten.id).toBe('compHome');
+  });
+
+  it('is deterministic and a fixed point for interface promotion, and caller order does not affect the result', () => {
+    const comp = component('compScreen', 'Screen', ['count'], leaf('leaf1', bindParam('bp1', 'count')));
+    const forward = () =>
+      Program.of([
+        signal('sigCount'),
+        comp,
+        routeWithArgs('r1', '/a', 'compScreen', [arg('count', { id: 'b1', kind: 'bind.Signal', span, signal: 'sigCount' })]),
+        routeWithArgs('r2', '/b', 'compScreen', [arg('count', { id: 'b2', kind: 'bind.Signal', span, signal: 'sigCount' })]),
+      ]);
+    const backward = () =>
+      Program.of(
+        [...forward().nodes].reverse(),
+      );
+
+    const a = manager().run(forward(), options);
+    const b = manager().run(backward(), options);
+    expect(a.program.toNdjson()).toBe(b.program.toNdjson());
+
+    const twice = manager().run(a.program, options);
+    expect(twice.program.toNdjson()).toBe(a.program.toNdjson());
+    // A fixed point promotes nothing a second time: one store, not two; no repeated BRG2302/BRG2304.
+    expect(twice.program.ofKind('app.Store')).toHaveLength(1);
+    expect(twice.diagnostics).toEqual([]);
   });
 });

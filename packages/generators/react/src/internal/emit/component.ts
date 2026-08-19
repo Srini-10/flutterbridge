@@ -233,13 +233,21 @@ function subscribedName(local: string): string {
  * expression emitter as an unresolvable reference and became `BRG3006`.
  *
  * It had gone unnoticed because no earlier fixture put a state-mutating callback *in the widget tree*: the
- * corpus app's `onPressed` called a **store** action, which `rootScope` already resolved. A form is the first
- * screen where the pattern is unavoidable, which is why a milestone about inputs is where it surfaced.
+ * corpus app's `onPressed` called a **store** action. A form is the first screen where the pattern is
+ * unavoidable, which is why a milestone about inputs is where it surfaced.
  *
  * A closure per action, declared before the tree, so the tree's `onChanged={handler}` is a reference to a
  * stable local rather than an inline lambda re-created on every render. Only the actions the tree actually
- * reaches are emitted — an action owned by a store is resolved by `rootScope` and must not be duplicated
- * here, and a lifted action nothing calls is dead code.
+ * reaches are emitted, and a lifted action nothing calls is dead code.
+ *
+ * **A store-owned action is deliberately excluded here** (M7-E3 finding), rather than declared as a local
+ * closure the way this used to. `useStore(...)` is not yet established for an arbitrary component — there
+ * is no working way to lower that closure's body, which reads and writes the store's signals by an id this
+ * scope cannot resolve. Declaring one anyway does not fail: it silently emits a bare, unimported identifier
+ * (`sigDark = true`) that only `tsc` would catch, far from here. Leaving the id out of `names` instead lets
+ * the render tree's own reference to it fall through to the ordinary unresolved-reference diagnostic
+ * (`expression.ts`'s `logic.Ref` fallback) — the same explicit refusal a signal in this position already
+ * gets, rather than a plausible-looking miscompile.
  */
 function declareLocalActions(
   component: Node,
@@ -249,7 +257,7 @@ function declareLocalActions(
   componentParams: readonly Node[],
 ): Map<NodeId, string> {
   const names = new Map<NodeId, string>();
-  const referenced = referencedActions(component['render'], scope);
+  const referenced = referencedActions(component['render'], scope).filter((id) => !scope.isStoreOwned(id));
   if (referenced.length === 0) return names;
 
   // Named from the id, and sorted by it, so two runs emit the same names in the same order. A lifted action
@@ -441,6 +449,7 @@ function childScope(
     signalLocal: (id) => signals.get(id) ?? parent.signalLocal(id),
     // An action this component declared resolves to its local closure; anything else is the parent's.
     localName: (id) => actions.get(id) ?? parent.localName(id),
+    isStoreOwned: (id) => parent.isStoreOwned(id),
     declaredName: (id) => parent.declaredName(id),
     declaresClass: (name) => parent.declaresClass(name),
     // A component's parameters are props, so a reference to one reads `props.x` rather than a bare name.

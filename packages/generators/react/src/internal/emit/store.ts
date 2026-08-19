@@ -170,6 +170,7 @@ function storeScope(
     // Program-wide, so a child scope forwards it unchanged rather than rebuilding it per component.
     themeRoles: parent.themeRoles,
     node: parent.node.bind(parent),
+    isStoreOwned: (id) => parent.isStoreOwned(id),
     signalRead: (id) => {
       const signal = signals.get(id);
       if (signal !== undefined) return `${signal}.get()`;

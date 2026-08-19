@@ -435,6 +435,7 @@ function rootScope(
     signalRead: () => undefined,
     signalLocal: () => undefined,
     localName: () => undefined,
+    isStoreOwned: (id) => storeMembers.has(id),
     // Nothing is inside an action at the top level; the store and component emitters layer their own.
     paramInScope: () => undefined,
     declaredName: (id) => names.get(id),
