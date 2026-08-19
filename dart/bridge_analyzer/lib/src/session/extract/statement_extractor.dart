@@ -144,6 +144,34 @@ final class StatementExtractor implements StatementExtractorRef {
           if (navigate != null) {
             return navigate;
           }
+        } else if (expression is AwaitExpression && expression.expression is MethodInvocation) {
+          // `await Navigator.push(context, ...);` (M7-H) — the same navigation, awaited. Recognition
+          // already worked before this branch existed: `app.RouteTransition` is minted from the
+          // expression walk regardless of which statement shape wraps the call (`transitions?.call`
+          // fires for every `MethodInvocation`, per `TransitionExtractor`'s own header). What did not
+          // work is *this* lowering — `expression is MethodInvocation` above is false for an
+          // `AwaitExpression`, so the call fell through to a generic `logic.ExprStmt` and the departure
+          // stayed unperformed (`BRG3008`) even though the edge existed.
+          //
+          // Only lowered when nothing in the function runs after it. The runtime kit's `push`/`replace`
+          // are synchronous (`RouterInstance.push(destination): void`) — there is no way to await the
+          // eventual pop — so the only thing `await` adds here is *pausing this function* until the
+          // pushed screen is later popped. Dropping the `await` is unobservable when nothing follows it;
+          // dropping it when something does would silently run that continuation immediately instead of
+          // waiting for the user to navigate back, which is exactly the ordering guarantee this file's
+          // own header comment protects. So the unsafe shape is left exactly as it was: a generic
+          // `logic.ExprStmt`, refused downstream by the same `BRG3013` this always reported, never
+          // silently reordered.
+          if (_isLastStatementOfFunctionBody(node)) {
+            final RawNode? navigate = navigateOf(
+              expression.expression as MethodInvocation,
+              node,
+              scope,
+            );
+            if (navigate != null) {
+              return navigate;
+            }
+          }
         }
         return RawNode(
           kind: 'logic.ExprStmt',
@@ -370,6 +398,22 @@ final class StatementExtractor implements StatementExtractorRef {
       case ForLoopParts():
         return out.opaqueStmt(node, 'for loop');
     }
+  }
+
+  /// Whether [statement] is the last statement reachable in its own function's top-level body —
+  /// nothing in the function executes after it, at any nesting depth.
+  ///
+  /// Deliberately narrow: `statement` must sit directly in the block that *is* the enclosing function's
+  /// body (`BlockFunctionBody`), as its last entry. A statement last in a nested `if`/`while`/`try`
+  /// block is not covered — something can still run after that block ends — and is left to the existing,
+  /// safe refusal rather than a recursive walk up every enclosing construct this milestone found no
+  /// evidence it needs (M7-H's task: do not broaden past what execution evidence demands).
+  bool _isLastStatementOfFunctionBody(Statement statement) {
+    final AstNode? block = statement.parent;
+    if (block is! Block || block.statements.last != statement) {
+      return false;
+    }
+    return block.parent is BlockFunctionBody;
   }
 
   /// The scope after [statement] — which differs from the scope before it only if it declared a name.

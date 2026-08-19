@@ -1113,3 +1113,71 @@ describe('M7-D — a route that records the arguments its construction site pass
     expect(page).not.toContain('CounterPanelRoute');
   });
 });
+
+describe('M7-H — a navigation inside a referenced action, not the component’s own render tree', () => {
+  // `hello_bridge/lib/screens/login_screen.dart`'s own shape: `Navigator.push` sits inside a named
+  // `_submit()` method, reached from `onPressed: _submit` (a tear-off), not written inline in the JSX
+  // the button's `onPressed` prop carries. `containsNavigate(component)` alone missed this — it walked
+  // only `component['render']`, and the `logic.Navigate` here is inside a separate `sig.Action` node the
+  // tree names only by id — so `declareRouter` never called `useRouter()`, and the navigation reached
+  // `statement.ts`'s `logic.Navigate` case with no router in scope: `BRG3006`, not the push this
+  // document already represents correctly.
+  function appWithActionNavigation(): AnyUirNode[] {
+    return [
+      {
+        id: 'detail',
+        kind: 'ui.Component',
+        span,
+        name: 'DetailScreen',
+        render: text('dt1', 'Detail'),
+      } as unknown as AnyUirNode,
+      {
+        id: 'trans1',
+        kind: 'app.RouteTransition',
+        span,
+        source: 'home',
+        component: 'detail',
+      } as unknown as AnyUirNode,
+      {
+        id: 'act-open',
+        kind: 'sig.Action',
+        span,
+        anchor: 'lib/home_screen.dart#_open',
+        body: [
+          {
+            id: 'nav1',
+            kind: 'logic.Navigate',
+            span,
+            action: 'push',
+            transition: 'trans1',
+          },
+        ],
+      } as unknown as AnyUirNode,
+      component(
+        'home',
+        'HomeScreen',
+        element('btn1', 'ElevatedButton', {
+          onPressed: {
+            id: 'oe1',
+            kind: 'bind.Expr',
+            span,
+            expr: { id: 'ref1', kind: 'logic.Ref', span, type: { name: 'void Function()' }, name: '_open', target: 'act-open' },
+          },
+        }),
+      ),
+      { id: 'r1', kind: 'app.Route', span, path: '/', component: 'home' } as unknown as AnyUirNode,
+    ];
+  }
+
+  it('declares the router, and the action calls it — no BRG3006', () => {
+    const { context, reported } = harness(appWithActionNavigation());
+    const { files } = reactGenerator.generate(context);
+
+    expect(reported.filter((d) => d.severity === 'error')).toEqual([]);
+
+    const source = fileAt(files, 'src/components/home-screen.tsx') ?? '';
+    expect(source).not.toBe('');
+    expect(source).toContain('const router = useRouter();');
+    expect(source).toMatch(/router\.push\(/);
+  });
+});

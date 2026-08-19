@@ -86,7 +86,7 @@ export function emitComponent(component: Node, module: ModuleBuilder, scope: Emi
   module.block(() => {
     // The router, before anything that could use it — an action body is emitted by
     // `declareLocalActions` below, and a navigation inside one reads this name.
-    const routerLocal = declareRouter(component, module);
+    const routerLocal = declareRouter(component, module, scope);
     const withRouter: EmitScope = routerLocal === undefined ? scope : { ...scope, routerLocal };
     // Store consumption next, before this component's own signals/actions — a `useStore`/`useSignal` pair
     // is exactly the same kind of hoisted hook `declareLocalSignals` emits next, and both must run before
@@ -126,15 +126,39 @@ export function emitComponent(component: Node, module: ModuleBuilder, scope: Emi
  *
  * @param component - the `ui.Component` node.
  * @param module - the file to write into.
+ * @param scope - resolution, to reach a `sig.Action` the tree references by id (below).
  * @returns the identifier holding the router, or undefined when the component does not navigate.
  */
-function declareRouter(component: Node, module: ModuleBuilder): string | undefined {
-  if (!containsNavigate(component)) return undefined;
+function declareRouter(component: Node, module: ModuleBuilder, scope: EmitScope): string | undefined {
+  if (!navigatesSomewhere(component, scope)) return undefined;
   const useRouter = useRuntime(module, 'useRouter');
   const local = 'router';
   module.line(`const ${local} = ${useRouter}();`);
   module.line();
   return local;
+}
+
+/**
+ * Whether `component` performs a navigation — in its own render tree, or inside a `sig.Action` that
+ * tree references (M7-H).
+ *
+ * `containsNavigate(component)` alone missed exactly this: a `logic.Navigate` inside a named action
+ * (`Future<void> _submit() async { ...; await Navigator.push(...); }`, referenced by tear-off rather
+ * than written inline) is not a descendant of `component['render']` in the document — the action is
+ * its own top-level `sig.Action` node, and the tree names it only by id. `declareLocalActions` below
+ * already resolves that id to the action's body and emits it *inside* this function (so `router` would
+ * be lexically reachable there); the only thing missing was checking that body here too, before
+ * deciding whether to declare `router` at all. Without this, the action's own `logic.Navigate` reached
+ * `statement.ts`'s `logic.Navigate` case with no router in scope, refused as `BRG3006`, and the
+ * navigation this document already represents correctly (M7-H) still could not be emitted.
+ */
+function navigatesSomewhere(component: Node, scope: EmitScope): boolean {
+  if (containsNavigate(component)) return true;
+  for (const id of referencedActions(component['render'], scope)) {
+    const action = scope.node(id) as unknown as Node | undefined;
+    if (action !== undefined && containsNavigate(action)) return true;
+  }
+  return false;
 }
 
 /** Whether anything in `value` is a `logic.Navigate`. */

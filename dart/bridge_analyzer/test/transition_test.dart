@@ -245,6 +245,7 @@ void main() {
   overlayNavigation();
   m7cGeneratedRoutes();
   m7bTransitionIdentity();
+  m7hAsyncNavigation();
   group('inline MaterialPageRoute — the destination is a component (§A17)', () {
     test('a push targets the ui.Component it constructs, not a route', () async {
       final Extracted app = await extractNav(
@@ -948,6 +949,301 @@ class App extends StatelessWidget {
 
       expect(extracted.ofKind('app.Route'), isEmpty);
       expect(extracted.codes(Severity.warning), contains('BRG1304'));
+    });
+  });
+}
+
+/// M7-H — a navigation the push call itself is awaited (`await Navigator.push(...)`), reached only
+/// after `await`/`mounted` control flow. `hello_bridge/lib/screens/login_screen.dart:45-62`'s own
+/// shape, reduced.
+///
+/// The reduction ladder (A synchronous push; B async callback, no await; C async + await before an
+/// un-awaited push; D/E await + a mounted guard before an un-awaited push; F await the push itself)
+/// found every one of A-E already lowered correctly before this milestone — async, `await`, and both
+/// spellings of `mounted` were already faithfully represented and already reachable to the navigation
+/// recognizer. Only F failed: `ExpressionStatement()`'s `expression is MethodInvocation` check in
+/// `statement_extractor.dart` is false when `expression` is an `AwaitExpression`, so an awaited push
+/// fell through to a generic `logic.ExprStmt` and its `app.RouteTransition` (minted regardless, from
+/// the ordinary expression walk) stayed unperformed. These tests are F, and the guard around it.
+void m7hAsyncNavigation() {
+  // `navFlutter`'s `State`/`BuildContext` (inherited from `flutterPackage`) declare no `mounted` —
+  // nothing before this milestone needed it resolvable. Adding it by string surgery on the base
+  // library, rather than appending a second declaration, because Dart cannot reopen a class across two
+  // chunks of the same library file the way the `Navigator`/`MaterialPageRoute` addition appends new,
+  // distinct declarations.
+  final String widgetsWithMounted = navFlutter['widgets.dart']!
+      .replaceFirst(
+        'abstract class State<T extends StatefulWidget> {\n  late T widget;',
+        'abstract class State<T extends StatefulWidget> {\n  late T widget;\n  bool mounted = true;',
+      )
+      .replaceFirst('abstract class BuildContext {}', 'abstract class BuildContext {\n  bool get mounted => true;\n}');
+  final Map<String, String> asyncNavFlutter = <String, String>{...navFlutter, 'widgets.dart': widgetsWithMounted};
+
+  /// [extractNav], with `mounted`/`context.mounted` genuinely resolvable — this group's whole subject.
+  Future<Extracted> extractAsyncNav(String source) async {
+    final String project = createProject(
+      name: 'app',
+      libraries: <String, String>{'main.dart': source},
+      dependencies: <String, Map<String, String>>{'flutter': asyncNavFlutter},
+    );
+    final Directory out = Directory.systemTemp.createTempSync('extract_');
+    addTearDown(() => out.deleteSync(recursive: true));
+
+    final AnalyzerResult result = await const BridgeAnalyzer().run(
+      AnalyzerRequest(projectRoot: project, outputPath: '${out.path}/uir.ndjson'),
+    );
+
+    final File document = File('${out.path}/uir.ndjson');
+    return Extracted(
+      result: result,
+      nodes: document.existsSync()
+          ? document
+                .readAsLinesSync()
+                .where((String l) => l.isNotEmpty)
+                .map((String l) => jsonDecode(l) as Map<String, dynamic>)
+                .toList()
+          : <Map<String, dynamic>>[],
+      bytes: document.existsSync() ? document.readAsStringSync() : '',
+    );
+  }
+
+  // An async `onPressed` with a `State` (so `mounted` resolves), a helper `Future` to await, and a
+  // slot for the navigation body — everything before it fixed, so only the tests below vary.
+  String asyncApp(String body) =>
+      '''
+import 'package:flutter/material.dart';
+
+class Settings extends StatelessWidget {
+  const Settings({this.title = '', super.key});
+  final String title;
+  @override
+  Widget build(BuildContext context) => const Text('settings');
+}
+
+Future<void> doSomething() async {}
+
+class Home extends StatefulWidget {
+  const Home({super.key});
+  @override
+  State<Home> createState() => _HomeState();
+}
+
+class _HomeState extends State<Home> {
+  int _count = 0;
+
+  @override
+  Widget build(BuildContext context) => ElevatedButton(
+    onPressed: () async {
+      $body
+    },
+    child: const Text('go'),
+  );
+}
+''';
+
+  group('M7-H — the push call itself is awaited', () {
+    test('await Navigator.push(...) as the only statement lowers to logic.Navigate', () async {
+      final Extracted extracted = await extractAsyncNav(
+        asyncApp(
+          'await Navigator.push<void>(context, '
+          'MaterialPageRoute<void>(builder: (BuildContext c) => const Settings()));',
+        ),
+      );
+
+      expect(extracted.errors, isEmpty);
+      final Map<String, dynamic> navigate = extracted.ofKind('logic.Navigate').single;
+      final Map<String, dynamic> edge = extracted.ofKind('app.RouteTransition').single;
+      // Transition identity (M7-B/M7-G's own requirement, re-proven here): equality, not presence.
+      expect(navigate['action'], 'push');
+      expect(navigate['transition'], edge['id']);
+      expect(edge['component'], isA<String>());
+    });
+
+    test('the real hello_bridge shape: await, then a mounted guard, then the awaited push', () async {
+      final Extracted extracted = await extractAsyncNav(
+        asyncApp('''
+      await doSomething();
+
+      if (!mounted) {
+        return;
+      }
+
+      await Navigator.push<void>(context, MaterialPageRoute<void>(builder: (BuildContext c) => const Settings()));
+'''),
+      );
+
+      expect(extracted.errors, isEmpty);
+      final Map<String, dynamic> navigate = extracted.ofKind('logic.Navigate').single;
+      final Map<String, dynamic> edge = extracted.ofKind('app.RouteTransition').single;
+      expect(navigate['transition'], edge['id']);
+
+      // Ordering survives: the callback's body is [Await(doSomething), If(!mounted, Return), Navigate]
+      // — the await and the guard are still there, in order, ahead of the departure. A fix that erased
+      // the guard to reach the push, or reordered the push ahead of it, would fail this.
+      final Map<String, dynamic> action = extracted.ofKind('logic.Lambda').firstWhere(
+        (Map<String, dynamic> a) => (a['body'] as List<dynamic>).length == 3,
+      );
+      final List<dynamic> body = action['body'] as List<dynamic>;
+      expect((body[0] as Map<String, dynamic>)['kind'], 'logic.ExprStmt', reason: 'the await stays first');
+      expect((body[1] as Map<String, dynamic>)['kind'], 'logic.If', reason: 'the mounted guard stays second');
+      expect((body[2] as Map<String, dynamic>)['kind'], 'logic.Navigate', reason: 'the push is last');
+
+      // The guard's own test is a plain boolean expression — `!mounted` — never a special construct
+      // that could not also compose in `if (a || !mounted)`.
+      final Map<String, dynamic> guard = body[1] as Map<String, dynamic>;
+      final Map<String, dynamic> test = guard['test'] as Map<String, dynamic>;
+      expect(test['kind'], 'logic.Unary');
+      expect(test['operator'], '!');
+      expect((test['operand'] as Map<String, dynamic>)['kind'], 'logic.Ref');
+      expect((test['operand'] as Map<String, dynamic>)['name'], 'mounted');
+    });
+
+    test('context.mounted guards the awaited push exactly as State.mounted does', () async {
+      final Extracted extracted = await extractAsyncNav(
+        asyncApp('''
+      await doSomething();
+
+      if (!context.mounted) {
+        return;
+      }
+
+      await Navigator.push<void>(context, MaterialPageRoute<void>(builder: (BuildContext c) => const Settings()));
+'''),
+      );
+
+      expect(extracted.errors, isEmpty);
+      expect(extracted.ofKind('logic.Navigate'), hasLength(1));
+      final Map<String, dynamic> action = extracted.ofKind('logic.Lambda').firstWhere(
+        (Map<String, dynamic> a) => (a['body'] as List<dynamic>).length == 3,
+      );
+      final Map<String, dynamic> guard = (action['body'] as List<dynamic>)[1] as Map<String, dynamic>;
+      final Map<String, dynamic> operand = (guard['test'] as Map<String, dynamic>)['operand'] as Map<String, dynamic>;
+      // `context.mounted` is a PropertyAccess on a Ref to `context` — distinct from bare `mounted`,
+      // never conflated with it.
+      expect(operand['kind'], 'logic.PropertyAccess');
+      expect(operand['property'], 'mounted');
+      expect((operand['receiver'] as Map<String, dynamic>)['name'], 'context');
+    });
+
+    test('destination arguments survive the await — M7-G still receives them', () async {
+      final Extracted extracted = await extractAsyncNav(
+        asyncApp('''
+      await doSomething();
+      if (!mounted) return;
+      await Navigator.push<void>(context, MaterialPageRoute<void>(builder: (BuildContext c) => Settings(title: 'Authenticated')));
+'''),
+      );
+
+      expect(extracted.errors, isEmpty);
+      expect(extracted.argumentBindings, <String, String>{'title': 'bind.Const'});
+    });
+
+    test('a component-scoped signal argument still binds as bind.Signal after the await', () async {
+      final Extracted extracted = await extractAsyncNav(
+        asyncApp(r'''
+      await doSomething();
+      if (!mounted) return;
+      await Navigator.push<void>(context, MaterialPageRoute<void>(builder: (BuildContext c) => Settings(title: '$_count')));
+'''),
+      );
+
+      expect(extracted.errors, isEmpty);
+      // Interpolated into `title`, so the argument is a bind.Expr wrapping the interpolation, not a
+      // bare bind.Signal — but the signal it reads must still resolve as component-scoped underneath.
+      final Map<String, dynamic> argument =
+          (extracted.transition['arguments'] as List<dynamic>).single as Map<String, dynamic>;
+      expect((argument['binding'] as Map<String, dynamic>)['kind'], 'bind.Expr');
+    });
+
+    test('an application-defined push, awaited, is not claimed by spelling alone', () async {
+      // Phase 12's negative control: this milestone's new branch must still gate on the resolved
+      // element the same way the un-awaited path already does (`registry.navigationActionOf`), not on
+      // the token `push`.
+      final Extracted extracted = await extractNav('''
+import 'package:flutter/material.dart';
+
+class MyNavigator {
+  Future<void> push(Widget page) async {}
+}
+
+class Settings extends StatelessWidget {
+  const Settings({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('settings');
+}
+
+class Home extends StatefulWidget {
+  const Home({super.key});
+  @override
+  State<Home> createState() => _HomeState();
+}
+
+class _HomeState extends State<Home> {
+  final MyNavigator myNavigator = MyNavigator();
+
+  @override
+  Widget build(BuildContext context) => ElevatedButton(
+    onPressed: () async {
+      await myNavigator.push(const Settings());
+    },
+    child: const Text('go'),
+  );
+}
+''');
+
+      expect(extracted.ofKind('app.RouteTransition'), isEmpty);
+      expect(extracted.ofKind('logic.Navigate'), isEmpty);
+    });
+
+    test('an awaited push with code still to run after it is refused, never silently lowered', () async {
+      // Phase 13's own concern: dropping the `await` would be safe only because nothing depends on its
+      // timing. Here something does — `doSomething()` must still run only after the pushed screen is
+      // popped, which the runtime kit's synchronous `push(): void` cannot represent. Lowering this
+      // unconditionally would silently start running `doSomething()` immediately instead, which is
+      // exactly the ordering guarantee this file's header comment protects. So it stays refused
+      // (BRG3013, downstream in the generator), exactly as it was before this milestone — never
+      // reordered, never silently correct-looking.
+      final Extracted extracted = await extractAsyncNav(
+        asyncApp('''
+      await Navigator.push<void>(context, MaterialPageRoute<void>(builder: (BuildContext c) => const Settings()));
+
+      await doSomething();
+'''),
+      );
+
+      expect(extracted.errors, isEmpty);
+      // The edge is still recognized — recognition never depended on this milestone's fix.
+      expect(extracted.ofKind('app.RouteTransition'), hasLength(1));
+      // But it is not performed: no logic.Navigate, so the generator's BRG3013 keeps refusing it
+      // rather than emitting navigation that runs at the wrong time.
+      expect(extracted.ofKind('logic.Navigate'), isEmpty);
+    });
+
+    test('a bare (un-awaited) push after other statements is unaffected by this milestone', () async {
+      // Regression guard: the pre-existing, always-safe path (no await on the push itself) must still
+      // lower exactly as it did before — this milestone only adds a case, it does not change this one.
+      final Extracted extracted = await extractAsyncNav(
+        asyncApp('''
+      await doSomething();
+      if (!mounted) return;
+      Navigator.push<void>(context, MaterialPageRoute<void>(builder: (BuildContext c) => const Settings()));
+'''),
+      );
+
+      expect(extracted.errors, isEmpty);
+      expect(extracted.ofKind('logic.Navigate'), hasLength(1));
+    });
+
+    test('the same source extracts to the same bytes — determinism holds for the new shape', () async {
+      const String source = '''
+      await doSomething();
+      if (!mounted) return;
+      await Navigator.push<void>(context, MaterialPageRoute<void>(builder: (BuildContext c) => const Settings()));
+''';
+      final Extracted first = await extractAsyncNav(asyncApp(source));
+      final Extracted second = await extractAsyncNav(asyncApp(source));
+      expect(first.bytes, second.bytes);
+      expect(first.ofKind('logic.Navigate'), hasLength(1));
     });
   });
 }
