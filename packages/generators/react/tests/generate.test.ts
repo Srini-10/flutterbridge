@@ -503,6 +503,11 @@ describe('the real hello_bridge document', () => {
     // scheme. The analyzer now emits that baseline's 46 roles as `app.Token`s (INV-20; read verbatim from
     // the SDK, not invented), which is 46 new top-level records — one `logic.Ref`, `_favoriteIds`, does not
     // change; every other count below is unchanged.
+    //
+    // Regenerated again at M7-N (ADR-27): `_favorites`'s own field became `app.StoreInstance` in place of
+    // `sig.Signal`, and `.favoriteCount` gained a `target` — both changes to *content* nested inside
+    // already-counted top-level records (the field, the property access), not new top-level records. The
+    // count holds at 84.
     expect(nodes.length).toBe(84);
     expect(nodes.filter((n) => n.kind === 'ui.Component')).toHaveLength(3);
     expect(nodes.filter((n) => n.kind === 'app.Store')).toHaveLength(1);
@@ -542,13 +547,6 @@ describe('the real hello_bridge document', () => {
     reactGenerator.generate(context);
     const codes = [...new Set(reported.filter((d) => d.severity === 'error').map((d) => d.code))].sort();
     expect(codes).toEqual([
-      // `new FavoritesStore()` — one of the application's own classes, which this generator does not emit
-      // a declaration for. `Duration`/`Future.delayed` no longer contribute to this code: M7-L taught the
-      // generator both are SDK types the kit already mirrors (`Duration`) or has a direct lowering for
-      // (`Future.delayed(Duration(...))` → `delay(Duration)`), recognized by resolved library and
-      // constructor name, never by matching `Future.delayed` as a source string. See
-      // docs/m7/m7l-async-duration-future-lowering.md.
-      'BRG3002',
       // a `FutureBuilder` whose loading and error branches are inside the builder (BRG2104 upstream)
       'BRG3007',
       // `isDark`/`onToggleTheme` cross a route boundary but `LoginScreen` only forwards them, never
@@ -558,8 +556,13 @@ describe('the real hello_bridge document', () => {
       // reaching here as an unresolved reference. `notifyListeners` is erased outright (M6-1). `BRG3010`
       // no longer contributes either: the theme states `primaryColor:`/`scaffoldBackgroundColor:` with no
       // `colorScheme:`/`colorSchemeSeed:`, and the analyzer now emits Flutter's own M3 baseline role set
-      // for exactly that case (INV-20; M7-K). See docs/m7/m7d-reality-audit.md,
-      // docs/m7/m7j-mounted-lifecycle-implementation.md, docs/m7/m7k-material-theme-token-completeness.md.
+      // for exactly that case (INV-20; M7-K). `BRG3002` no longer contributes either: `Duration`/
+      // `Future.delayed` are SDK types the generator now resolves (M7-L), and `new FavoritesStore()` is no
+      // longer a construction the generator ever sees — `_favorites` lowers to `app.StoreInstance`
+      // (ADR-27), and `.favoriteCount`/the erased `addListener`/`removeListener`/`dispose` lifecycle calls
+      // resolve or vanish before the generator is reached (M7-N). See docs/m7/m7d-reality-audit.md,
+      // docs/m7/m7j-mounted-lifecycle-implementation.md, docs/m7/m7k-material-theme-token-completeness.md,
+      // docs/adr/0027-local-store-instances-and-member-identity.md.
       'BRG3013',
       // `MaterialApp.themeMode` — switching brightness after mount
       'BRG3016',

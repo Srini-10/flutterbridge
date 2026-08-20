@@ -473,6 +473,48 @@
         }
       ]
     },
+    "StoreInstance": {
+      "description": "A component-owned instance of a declared store (ADR-27).\n\n`final CartStore cartStore = CartStore();` inside a `State` — not a value the component holds, a live store handle it owns. Symbol-addressed like `sig.Signal`, so two fields of the same store type on one class each get their own, distinct identity (`logic.New`, the construction expression itself, is content-addressed and would collapse them). `logic.PropertyAccess`/`logic.MethodCall` on a `logic.Ref` to this node resolve their `target` against the store's own `signals`/`derived`/`actions`, never against this node.",
+      "x-uir-kind": "app.StoreInstance",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "store",
+            "scope"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "app.StoreInstance",
+              "description": "Discriminant."
+            },
+            "store": {
+              "$ref": "shared.json#/$defs/NodeId",
+              "description": "The declared app.Store this instantiates."
+            },
+            "scope": {
+              "$ref": "#/$defs/StoreInstanceScope",
+              "description": "The instance's lifetime."
+            }
+          }
+        }
+      ]
+    },
+    "StoreInstanceScope": {
+      "description": "Where a locally-owned store instance's lifetime is anchored.\n\nOnly `component` is supported today (ADR-27): a class's own field, constructed inline, used only within that class's own body. An instance passed as a parameter, returned from a function, or held in a collection has no identity-preserving representation yet and remains an ordinary (unsupported) construction.",
+      "enum": [
+        "component"
+      ],
+      "x-uir-enum-docs": {
+        "component": "Owned by one component instance — a Flutter State field, constructed inline."
+      }
+    },
     "Route": {
       "description": "One route of the application.",
       "x-uir-kind": "app.Route",

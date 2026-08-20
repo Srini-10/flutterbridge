@@ -1,7 +1,7 @@
 // GENERATED CODE — DO NOT EDIT
 //
 // Produced by tools/schema-codegen from packages/uir/schema/*.json.
-// UIR schema version: 1.6.0
+// UIR schema version: 1.7.0
 //
 // Edit the schema and re-run `pnpm codegen`. Hand-edits to this file are lost on the next run,
 // and CI fails if this file does not match the schema (drift check).
@@ -26,12 +26,12 @@ import 'package:crypto/crypto.dart';
 import 'package:meta/meta.dart';
 
 /// The UIR schema version this library was generated from.
-const String uirVersion = '1.6.0';
+const String uirVersion = '1.7.0';
 
 /// A hash of the schema sources this library was generated from.
 ///
 /// Stamped into every emitted manifest: a UIR document always says which schema produced it.
-const String uirSchemaHash = '388886b7e06ac0bb';
+const String uirSchemaHash = 'd65d81e51738858e';
 
 /// Node kind -> the fields of that node which hold `NodeId` references.
 ///
@@ -66,7 +66,7 @@ const Map<String, List<String>> uirReferenceFields = <String, List<String>>{
   'logic.ListLit': <String>['id'],
   'logic.Lit': <String>['id'],
   'logic.MapLit': <String>['id'],
-  'logic.MethodCall': <String>['id'],
+  'logic.MethodCall': <String>['id', 'target'],
   'logic.Navigate': <String>['id', 'transition'],
   'logic.New': <String>['id'],
   'logic.NullCheck': <String>['id'],
@@ -74,7 +74,7 @@ const Map<String, List<String>> uirReferenceFields = <String, List<String>>{
   'logic.OpaqueExpr': <String>['id'],
   'logic.OpaqueStmt': <String>['id'],
   'bind.Param': <String>['id'],
-  'logic.PropertyAccess': <String>['id'],
+  'logic.PropertyAccess': <String>['id', 'target'],
   'logic.Ref': <String>['id', 'target'],
   'logic.Return': <String>['id'],
   'app.Route': <String>['component', 'guards', 'id', 'layout'],
@@ -83,6 +83,7 @@ const Map<String, List<String>> uirReferenceFields = <String, List<String>>{
   'bind.Signal': <String>['id', 'signal'],
   'l0.SourceFile': <String>['id'],
   'app.Store': <String>['actions', 'derived', 'id', 'signals'],
+  'app.StoreInstance': <String>['id', 'store'],
   'logic.StringInterp': <String>['id'],
   'logic.Switch': <String>['id'],
   'logic.Throw': <String>['id'],
@@ -712,6 +713,27 @@ enum SizeIntent {
       if (candidate.name == raw) return candidate;
     }
     throw UirParseError(path, 'unknown SizeIntent "$raw"');
+  }
+
+  /// The wire value.
+  String toJson() => name;
+}
+
+/// Where a locally-owned store instance's lifetime is anchored.
+///
+/// Only `component` is supported today (ADR-27): a class's own field, constructed inline, used only within that class's own body. An instance passed as a parameter, returned from a function, or held in a collection has no identity-preserving representation yet and remains an ordinary (unsupported) construction.
+enum StoreInstanceScope {
+  /// Owned by one component instance — a Flutter State field, constructed inline.
+  component,
+  ;
+
+  /// Parses a [StoreInstanceScope] from its wire value. Rejects anything outside the enum.
+  static StoreInstanceScope fromJson(Object? value, [String path = 'StoreInstanceScope']) {
+    final String raw = _asString(value, path);
+    for (final StoreInstanceScope candidate in StoreInstanceScope.values) {
+      if (candidate.name == raw) return candidate;
+    }
+    throw UirParseError(path, 'unknown StoreInstanceScope "$raw"');
   }
 
   /// The wire value.
@@ -2902,7 +2924,7 @@ final class Component extends UirNode {
   /// The node's stable, content-addressed identity.
   final NodeId id;
 
-  /// Component-scoped signals — the State fields (Spec §2.3).
+  /// Component-scoped state — the State fields (Spec §2.3): plain reactive values (sig.Signal) and locally-owned store instances (app.StoreInstance, ADR-27).
   final List<NodeId>? localSignals;
 
   /// The component name, e.g. `LoginScreen`.
@@ -5220,6 +5242,7 @@ final class MethodCall extends Expr {
     this.args,
     this.ext,
     this.namedArgs,
+    this.target,
   });
 
   /// Parses a [MethodCall] from JSON, validating as it goes.
@@ -5238,6 +5261,7 @@ final class MethodCall extends Expr {
       namedArgs: json['namedArgs'] == null ? null : _asMap<Expr>(json['namedArgs'], '$path.namedArgs', Expr.fromJson),
       receiver: Expr.fromJson(_req(json, 'receiver', path), '$path.receiver'),
       span: SourceSpan.fromJson(_req(json, 'span', path), '$path.span'),
+      target: json['target'] == null ? null : _asString(json['target'], '$path.target'),
       type: TypeRef.fromJson(_req(json, 'type', path), '$path.type'),
     );
   }
@@ -5266,6 +5290,9 @@ final class MethodCall extends Expr {
   /// Where the node came from.
   final SourceSpan span;
 
+  /// The store member (sig.Action) this resolves to, when the receiver's resolved type is a declared store (ADR-27). Absent for an ordinary method call.
+  final NodeId? target;
+
   /// Resolved return type.
   final TypeRef type;
 
@@ -5285,6 +5312,7 @@ final class MethodCall extends Expr {
     'namedArgs': namedArgs?.map((String k, Expr v) => MapEntry<String, Object?>(k, v.toJson())),
     'receiver': receiver.toJson(),
     'span': span.toJson(),
+    'target': target,
     'type': type.toJson(),
   })! as Map<String, Object?>;
 
@@ -5301,6 +5329,7 @@ final class MethodCall extends Expr {
     Map<String, Expr>? namedArgs,
     Expr? receiver,
     SourceSpan? span,
+    NodeId? target,
     TypeRef? type,
   }) {
     return MethodCall(
@@ -5312,6 +5341,7 @@ final class MethodCall extends Expr {
       namedArgs: namedArgs ?? this.namedArgs,
       receiver: receiver ?? this.receiver,
       span: span ?? this.span,
+      target: target ?? this.target,
       type: type ?? this.type,
     );
   }
@@ -5331,6 +5361,7 @@ final class MethodCall extends Expr {
         _equality.equals(other.namedArgs, namedArgs) &&
         _equality.equals(other.receiver, receiver) &&
         _equality.equals(other.span, span) &&
+        _equality.equals(other.target, target) &&
         _equality.equals(other.type, type);
   }
 
@@ -5345,6 +5376,7 @@ final class MethodCall extends Expr {
     _equality.hash(namedArgs),
     _equality.hash(receiver),
     _equality.hash(span),
+    _equality.hash(target),
     _equality.hash(type),
   ]);
 }
@@ -6214,6 +6246,7 @@ final class PropertyAccess extends Expr {
     required this.type,
     this.anchor,
     this.ext,
+    this.target,
   });
 
   /// Parses a [PropertyAccess] from JSON, validating as it goes.
@@ -6230,6 +6263,7 @@ final class PropertyAccess extends Expr {
       property: _asString(_req(json, 'property', path), '$path.property'),
       receiver: Expr.fromJson(_req(json, 'receiver', path), '$path.receiver'),
       span: SourceSpan.fromJson(_req(json, 'span', path), '$path.span'),
+      target: json['target'] == null ? null : _asString(json['target'], '$path.target'),
       type: TypeRef.fromJson(_req(json, 'type', path), '$path.type'),
     );
   }
@@ -6252,6 +6286,9 @@ final class PropertyAccess extends Expr {
   /// Where the node came from.
   final SourceSpan span;
 
+  /// The store member (sig.Signal/sig.Derived) this resolves to, when the receiver's resolved type is a declared store (ADR-27). Absent for an ordinary property access.
+  final NodeId? target;
+
   /// Resolved type.
   final TypeRef type;
 
@@ -6269,6 +6306,7 @@ final class PropertyAccess extends Expr {
     'property': property,
     'receiver': receiver.toJson(),
     'span': span.toJson(),
+    'target': target,
     'type': type.toJson(),
   })! as Map<String, Object?>;
 
@@ -6283,6 +6321,7 @@ final class PropertyAccess extends Expr {
     String? property,
     Expr? receiver,
     SourceSpan? span,
+    NodeId? target,
     TypeRef? type,
   }) {
     return PropertyAccess(
@@ -6292,6 +6331,7 @@ final class PropertyAccess extends Expr {
       property: property ?? this.property,
       receiver: receiver ?? this.receiver,
       span: span ?? this.span,
+      target: target ?? this.target,
       type: type ?? this.type,
     );
   }
@@ -6309,6 +6349,7 @@ final class PropertyAccess extends Expr {
         _equality.equals(other.property, property) &&
         _equality.equals(other.receiver, receiver) &&
         _equality.equals(other.span, span) &&
+        _equality.equals(other.target, target) &&
         _equality.equals(other.type, type);
   }
 
@@ -6321,6 +6362,7 @@ final class PropertyAccess extends Expr {
     _equality.hash(property),
     _equality.hash(receiver),
     _equality.hash(span),
+    _equality.hash(target),
     _equality.hash(type),
   ]);
 }
@@ -7371,6 +7413,118 @@ final class Store extends UirNode {
     _equality.hash(origin),
     _equality.hash(signals),
     _equality.hash(span),
+  ]);
+}
+
+/// A component-owned instance of a declared store (ADR-27).
+///
+/// `final CartStore cartStore = CartStore();` inside a `State` — not a value the component holds, a live store handle it owns. Symbol-addressed like `sig.Signal`, so two fields of the same store type on one class each get their own, distinct identity (`logic.New`, the construction expression itself, is content-addressed and would collapse them). `logic.PropertyAccess`/`logic.MethodCall` on a `logic.Ref` to this node resolve their `target` against the store's own `signals`/`derived`/`actions`, never against this node.
+@immutable
+final class StoreInstance extends UirNode {
+  /// Creates a [StoreInstance].
+  const StoreInstance({
+    required this.id,
+    required this.scope,
+    required this.span,
+    required this.store,
+    this.anchor,
+    this.ext,
+  });
+
+  /// Parses a [StoreInstance] from JSON, validating as it goes.
+  factory StoreInstance.fromJson(Object? value, [String path = 'StoreInstance']) {
+    final Map<String, Object?> json = _asObject(value, path);
+    final String kind = _asString(_req(json, 'kind', path), '$path.kind');
+    if (kind != 'app.StoreInstance') {
+      throw UirParseError('$path.kind', 'expected "app.StoreInstance", got "$kind"');
+    }
+    return StoreInstance(
+      anchor: json['anchor'] == null ? null : _asString(json['anchor'], '$path.anchor'),
+      ext: json['ext'] == null ? null : _asMap<Object?>(json['ext'], '$path.ext', (Object? v, String p) => v),
+      id: _asString(_req(json, 'id', path), '$path.id'),
+      scope: StoreInstanceScope.fromJson(_req(json, 'scope', path), '$path.scope'),
+      span: SourceSpan.fromJson(_req(json, 'span', path), '$path.span'),
+      store: _asString(_req(json, 'store', path), '$path.store'),
+    );
+  }
+
+  /// The override key, when the node is addressable by a human.
+  final Anchor? anchor;
+
+  /// Plugin extension data, namespaced `x-<plugin>`. Core passes round-trip it untouched (Spec §2.6).
+  final Map<String, Object?>? ext;
+
+  /// The node's stable, content-addressed identity.
+  final NodeId id;
+
+  /// The instance's lifetime.
+  final StoreInstanceScope scope;
+
+  /// Where the node came from.
+  final SourceSpan span;
+
+  /// The declared app.Store this instantiates.
+  final NodeId store;
+
+  /// The node's discriminant.
+  @override
+  String get kind => 'app.StoreInstance';
+
+  /// Serializes to canonical JSON: keys sorted, nulls omitted.
+  @override
+  Map<String, Object?> toJson() => canonicalJson(<String, Object?>{
+    'anchor': anchor,
+    'ext': ext,
+    'id': id,
+    'kind': 'app.StoreInstance',
+    'scope': scope.toJson(),
+    'span': span.toJson(),
+    'store': store,
+  })! as Map<String, Object?>;
+
+  /// Returns a copy with the given fields replaced. The original is never mutated.
+  ///
+  /// An omitted argument keeps its current value; `copyWith` cannot set a field back to
+  /// null. Construct a new node when that is what you mean.
+  StoreInstance copyWith({
+    Anchor? anchor,
+    Map<String, Object?>? ext,
+    NodeId? id,
+    StoreInstanceScope? scope,
+    SourceSpan? span,
+    NodeId? store,
+  }) {
+    return StoreInstance(
+      anchor: anchor ?? this.anchor,
+      ext: ext ?? this.ext,
+      id: id ?? this.id,
+      scope: scope ?? this.scope,
+      span: span ?? this.span,
+      store: store ?? this.store,
+    );
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is StoreInstance &&
+        _equality.equals(other.anchor, anchor) &&
+        _equality.equals(other.ext, ext) &&
+        _equality.equals(other.id, id) &&
+        _equality.equals(other.scope, scope) &&
+        _equality.equals(other.span, span) &&
+        _equality.equals(other.store, store);
+  }
+
+  @override
+  int get hashCode => Object.hashAll(<Object?>[
+    'StoreInstance',
+    _equality.hash(anchor),
+    _equality.hash(ext),
+    _equality.hash(id),
+    _equality.hash(scope),
+    _equality.hash(span),
+    _equality.hash(store),
   ]);
 }
 
@@ -9769,6 +9923,8 @@ UirNode uirNodeFromJson(Object? value, [String path = 'UirNode']) {
       return SourceFile.fromJson(json, path);
     case 'app.Store':
       return Store.fromJson(json, path);
+    case 'app.StoreInstance':
+      return StoreInstance.fromJson(json, path);
     case 'logic.StringInterp':
       return StringInterp.fromJson(json, path);
     case 'logic.Switch':

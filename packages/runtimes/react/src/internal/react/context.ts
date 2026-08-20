@@ -164,6 +164,32 @@ export function useStore<T extends object>(definition: StoreDefinition<T>): T {
   return instance.state as T;
 }
 
+/**
+ * Creates and owns a store instance directly, without a `<StoreProvider>` (ADR-27).
+ *
+ * `final FavoritesStore _favorites = FavoritesStore();` inside a Flutter `State` — a store the class
+ * constructs and keeps to itself, never shared with descendants through context. `useLocalStore` is
+ * exactly {@link useStoreInstance} (the same primitive `StoreProvider` builds on: one instance per
+ * mount, StrictMode-safe, disposed on unmount) with no context/registry half, because there is only ever
+ * one consumer — the component that owns the field. Returns the same shape {@link useStore} does, so a
+ * generated component's own render tree and actions read `favorites.count`/`favorites.toggle(...)`
+ * identically whichever way the instance was acquired.
+ *
+ * @param definition - the store to instantiate, from `app.Store`.
+ * @param options - observability hooks, passed to {@link instantiateStore}.
+ * @returns what the store's setup function returned: its signals, derived values and actions.
+ *
+ * @example
+ * ```ts
+ * const favorites = useLocalStore(favoritesStoreStore);
+ * const count = useSignal(favorites.favoriteCount);
+ * favorites.toggle(id);
+ * ```
+ */
+export function useLocalStore<T extends object>(definition: StoreDefinition<T>, options?: StoreOptions): T {
+  return useStoreInstance(definition, options).state as T;
+}
+
 /** Props for {@link ThemeProvider}. */
 export interface ThemeProviderProps {
   /** The token set. */

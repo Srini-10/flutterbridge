@@ -1179,6 +1179,311 @@ class LightDarkApp extends StatelessWidget {
     });
   });
 
+  group('a locally-owned store instance resolves declaration and member identity (ADR-27)', () {
+    const String counterStoreSource = '''
+class CounterStore extends ChangeNotifier {
+  int _count = 0;
+  int get count => _count;
+  int get doubled => _count * 2;
+  void increment() {
+    _count += 1;
+    notifyListeners();
+  }
+  void add(int n) {
+    _count += n;
+    notifyListeners();
+  }
+}
+''';
+
+    Map<String, String> withCounterStore() =>
+        <String, String>{'counter_store.dart': "import 'package:flutter/material.dart';\n\n$counterStoreSource"};
+
+    test('the field is an app.StoreInstance, not a sig.Signal — the field type is a declared store', () async {
+      final Extracted app = await extract(
+        r'''
+import 'package:flutter/material.dart';
+import 'package:app/counter_store.dart';
+
+class Screen extends StatefulWidget {
+  const Screen({super.key});
+  @override
+  State<Screen> createState() => _ScreenState();
+}
+
+class _ScreenState extends State<Screen> {
+  final CounterStore store = CounterStore();
+  @override
+  Widget build(BuildContext context) => Text('${store.count}');
+}
+''',
+        extra: withCounterStore(),
+      );
+
+      expect(app.errors, isEmpty);
+      expect(app.ofKind('app.StoreInstance'), hasLength(1), reason: 'the field, not a sig.Signal');
+      final Map<String, dynamic> instance = app.only('app.StoreInstance');
+      expect(instance['scope'], 'component');
+      final Map<String, dynamic> store = app.only('app.Store');
+      expect(instance['store'], store['id'], reason: 'declaration identity — which store class this instantiates');
+      expect(
+        app.ofKind('sig.Signal').where((Map<String, dynamic> s) => s['scope'] == 'component'),
+        isEmpty,
+        reason: 'no ordinary component signal was minted for a store-typed field',
+      );
+    });
+
+    test('a signal/derived/action read on the field resolves target by the real resolved element', () async {
+      final Extracted app = await extract(
+        r'''
+import 'package:flutter/material.dart';
+import 'package:app/counter_store.dart';
+
+class Screen extends StatefulWidget {
+  const Screen({super.key});
+  @override
+  State<Screen> createState() => _ScreenState();
+}
+
+class _ScreenState extends State<Screen> {
+  final CounterStore store = CounterStore();
+  @override
+  Widget build(BuildContext context) => Column(
+    children: <Widget>[
+      Text('${store.count}'),
+      Text('${store.doubled}'),
+      ElevatedButton(onPressed: store.increment, child: const Text('inc')),
+      ElevatedButton(onPressed: () => store.add(2), child: const Text('add')),
+    ],
+  );
+}
+''',
+        extra: withCounterStore(),
+      );
+
+      expect(app.errors, isEmpty);
+      final Map<String, dynamic> storeNode = app.only('app.Store');
+      final List<dynamic> derivedIds = storeNode['derived'] as List<dynamic>;
+      final List<dynamic> actionIds = storeNode['actions'] as List<dynamic>;
+      expect(derivedIds, hasLength(2), reason: 'count, doubled');
+      expect(actionIds, hasLength(2), reason: 'increment, add');
+
+      final List<Map<String, dynamic>> propertyAccesses = app.ofKind('logic.PropertyAccess');
+      final List<Map<String, dynamic>> methodCalls = app.ofKind('logic.MethodCall');
+      final Set<Object?> propertyTargets = propertyAccesses.map((Map<String, dynamic> n) => n['target']).toSet();
+      final Set<Object?> methodTargets = methodCalls.map((Map<String, dynamic> n) => n['target']).toSet();
+
+      // `count`/`doubled` resolve as PropertyAccess targets; `add(2)` as a MethodCall target; the
+      // tear-off `store.increment` has no parens, so it is a PropertyAccess whose target is the action.
+      for (final Object? id in derivedIds) {
+        expect(propertyTargets, contains(id), reason: 'a derived member resolves through PropertyAccess');
+      }
+      final Map<String, dynamic> tearOff = propertyAccesses.firstWhere((Map<String, dynamic> n) => n['property'] == 'increment');
+      expect(actionIds, contains(tearOff['target']), reason: 'the tear-off (no parens) still resolves to the action');
+      expect(methodTargets.where(actionIds.contains), isNotEmpty, reason: 'add(2) resolves through MethodCall');
+    });
+
+    test('two instances of the same store share member identity but have distinct receivers', () async {
+      final Extracted app = await extract(
+        r'''
+import 'package:flutter/material.dart';
+import 'package:app/counter_store.dart';
+
+class Screen extends StatefulWidget {
+  const Screen({super.key});
+  @override
+  State<Screen> createState() => _ScreenState();
+}
+
+class _ScreenState extends State<Screen> {
+  final CounterStore left = CounterStore();
+  final CounterStore right = CounterStore();
+  @override
+  Widget build(BuildContext context) => Column(
+    children: <Widget>[
+      Text('${left.count}'),
+      Text('${right.count}'),
+    ],
+  );
+}
+''',
+        extra: withCounterStore(),
+      );
+
+      expect(app.errors, isEmpty);
+      expect(app.ofKind('app.StoreInstance'), hasLength(2), reason: 'left and right are distinct declarations');
+      final List<String> instanceIds = app
+          .ofKind('app.StoreInstance')
+          .map((Map<String, dynamic> n) => n['id'] as String)
+          .toList();
+      expect(instanceIds.toSet(), hasLength(2), reason: 'two distinct instance ids');
+
+      final List<Map<String, dynamic>> reads = app.ofKind('logic.PropertyAccess');
+      final Set<Object?> targets = reads.map((Map<String, dynamic> n) => n['target']).where((Object? t) => t != null).toSet();
+      expect(targets, hasLength(1), reason: 'left.count and right.count name the same declared member');
+
+      final Set<Object?> receiverTargets = reads
+          .map((Map<String, dynamic> n) => (n['receiver'] as Map<String, dynamic>?)?['target'])
+          .where((Object? t) => t != null)
+          .toSet();
+      expect(receiverTargets, hasLength(2), reason: 'left and right resolve to two distinct receivers');
+    });
+
+    test('two different store classes with the same member name never collide', () async {
+      final Extracted app = await extract(r'''
+import 'package:flutter/material.dart';
+
+class AStore extends ChangeNotifier {
+  int _count = 0;
+  int get count => _count;
+  void increment() {
+    _count += 1;
+    notifyListeners();
+  }
+}
+
+class BStore extends ChangeNotifier {
+  int _count = 0;
+  int get count => _count;
+  void increment() {
+    _count += 1;
+    notifyListeners();
+  }
+}
+
+class Screen extends StatefulWidget {
+  const Screen({super.key});
+  @override
+  State<Screen> createState() => _ScreenState();
+}
+
+class _ScreenState extends State<Screen> {
+  final AStore a = AStore();
+  final BStore b = BStore();
+  @override
+  Widget build(BuildContext context) => Column(
+    children: <Widget>[
+      Text('${a.count}'),
+      Text('${b.count}'),
+    ],
+  );
+}
+''');
+
+      expect(app.errors, isEmpty);
+      final List<Map<String, dynamic>> stores = app.ofKind('app.Store');
+      expect(stores, hasLength(2));
+
+      final List<Map<String, dynamic>> reads = app.ofKind('logic.PropertyAccess');
+      final Set<Object?> targets = reads.map((Map<String, dynamic> n) => n['target']).where((Object? t) => t != null).toSet();
+      expect(targets, hasLength(2), reason: 'AStore.count and BStore.count are two distinct declarations');
+    });
+
+    test('an ordinary (non-store) class never gets a target — Point stays honestly unsupported', () async {
+      final Extracted app = await extract(r'''
+import 'package:flutter/material.dart';
+
+class Point {
+  Point(this.x, this.y);
+  final int x;
+  final int y;
+}
+
+class Screen extends StatelessWidget {
+  const Screen({super.key});
+  @override
+  Widget build(BuildContext context) {
+    return const _PointText();
+  }
+}
+
+class _PointText extends StatelessWidget {
+  const _PointText();
+  @override
+  Widget build(BuildContext context) => Text('${Point(1, 2).x}');
+}
+''');
+
+      expect(app.errors, isEmpty);
+      expect(app.ofKind('app.StoreInstance'), isEmpty);
+      expect(app.ofKind('app.Store'), isEmpty);
+      final List<Map<String, dynamic>> reads = app.ofKind('logic.PropertyAccess');
+      final Map<String, dynamic> xRead = reads.firstWhere((Map<String, dynamic> n) => n['property'] == 'x');
+      expect(xRead.containsKey('target'), isFalse, reason: 'Point.x is not a store member');
+    });
+
+    test('a cross-file store instance resolves identically to a same-file one', () async {
+      final Extracted app = await extract(
+        r'''
+import 'package:flutter/material.dart';
+import 'package:app/counter_store.dart';
+
+class Screen extends StatefulWidget {
+  const Screen({super.key});
+  @override
+  State<Screen> createState() => _ScreenState();
+}
+
+class _ScreenState extends State<Screen> {
+  final CounterStore store = CounterStore();
+  @override
+  Widget build(BuildContext context) => Text('${store.count}');
+}
+''',
+        extra: withCounterStore(),
+      );
+
+      expect(app.errors, isEmpty, reason: 'the cross-file store class reference resolves (BRG1201 would fire otherwise)');
+      final Map<String, dynamic> store = app.only('app.Store');
+      final List<Map<String, dynamic>> reads = app.ofKind('logic.PropertyAccess');
+      final Map<String, dynamic> countRead = reads.firstWhere((Map<String, dynamic> n) => n['property'] == 'count');
+      expect(store['derived'] as List<dynamic>, contains(countRead['target']));
+    });
+
+    test('a TextEditingController field stays an ordinary state-holder signal, not an app.StoreInstance', () async {
+      // `TextEditingController extends ChangeNotifier` too — the exact overlap `isStateHolder` and
+      // `isStoreBase` share, and the defect the build-proof golden caught mid-milestone: `isStoreBase`
+      // alone cannot tell a user's own store class from a framework notifier type. Only a field whose
+      // type this *project* declares becomes an `app.StoreInstance`.
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+
+class Screen extends StatefulWidget {
+  const Screen({super.key});
+  @override
+  State<Screen> createState() => _ScreenState();
+}
+
+class _ScreenState extends State<Screen> {
+  final TextEditingController _email = TextEditingController();
+
+  @override
+  void dispose() {
+    _email.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => TextField(controller: _email);
+}
+''');
+
+      expect(app.errors, isEmpty);
+      expect(app.ofKind('app.StoreInstance'), isEmpty, reason: 'TextEditingController is a framework type, not a declared store');
+      expect(app.ofKind('app.Store'), isEmpty);
+      // `_email.dispose()` must survive — erasing a framework resource's own disposal would leak it.
+      final List<Map<String, dynamic>> disposeCalls = app
+          .ofKind('logic.MethodCall')
+          .where((Map<String, dynamic> n) => n['method'] == 'dispose')
+          .toList();
+      expect(
+        disposeCalls.any((Map<String, dynamic> n) => (n['receiver'] as Map<String, dynamic>?)?['name'] == '_email'),
+        isTrue,
+        reason: "_email.dispose() is not erased — only a locally-owned store instance's lifecycle calls are",
+      );
+    });
+  });
+
   group('paths in UIR are platform-independent (M5-F)', () {
     // `span.file` is not a filesystem path once it is written: it becomes an anchor —
     // `'${span.file}#$segment'` in `node_factory.dart` — and an anchor is hashed into the node's id

@@ -264,6 +264,9 @@ abstract final class MaterialCatalog {
   /// write the UIR records, and the name is one no downstream pass may know.
   static const Set<String> changeNotificationCalls = <String>{'notifyListeners'};
 
+  /// Manual `ChangeNotifier` subscription/disposal calls, erased on a store-typed receiver (ADR-27).
+  static const Set<String> storeLifecycleCalls = <String>{'addListener', 'removeListener', 'dispose'};
+
   /// The classes that own the navigation methods.
   static const Set<String> navigationTypes = <String>{'Navigator', 'NavigatorState'};
 

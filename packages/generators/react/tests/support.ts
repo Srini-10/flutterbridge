@@ -223,3 +223,9 @@ export function asyncPushGuardRaw(): string {
   const path = fileURLToPath(new URL('../../../../fixtures/uir/async_push_guard.ndjson', import.meta.url));
   return readFileSync(path, 'utf8');
 }
+
+/** The real `fixtures/apps/local_store` document, raw analyzer output (M7-N) — not yet normalized. */
+export function localStoreRaw(): string {
+  const path = fileURLToPath(new URL('../../../../fixtures/uir/local_store.ndjson', import.meta.url));
+  return readFileSync(path, 'utf8');
+}

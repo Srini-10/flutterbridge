@@ -90,14 +90,24 @@ export function emitComponent(component: Node, module: ModuleBuilder, scope: Emi
     const withRouter: EmitScope = routerLocal === undefined ? scope : { ...scope, routerLocal };
     const mountedLocal = declareMounted(component, module, withRouter);
     const withMounted: EmitScope = mountedLocal === undefined ? withRouter : { ...withRouter, mountedLocal };
+    // This component's own locally-owned store instances (ADR-27), before store *consumption* — a
+    // `.member` access on one of these must never also trigger `declareStoreConsumption`'s `useStore()`
+    // acquisition for the same store, and `localName` has to resolve the instance's own receiver
+    // (`favorites`) before anything downstream asks for it.
+    const storeInstances = declareLocalStoreInstances(component, module, withMounted);
+    const withInstances: EmitScope =
+      storeInstances.size === 0
+        ? withMounted
+        : { ...withMounted, localName: (id) => storeInstances.get(id) ?? withMounted.localName(id) };
     // Store consumption next, before this component's own signals/actions — a `useStore`/`useSignal` pair
     // is exactly the same kind of hoisted hook `declareLocalSignals` emits next, and both must run before
     // the tree that needs them is ever walked (M7-F).
-    const { outer, subscriptions } = declareStoreConsumption(component, module, withMounted);
+    const { outer, subscriptions } = declareStoreConsumption(component, module, withInstances);
     const signals = declareLocalSignals(component, module, outer);
+    const storeInstanceReads = declareStoreInstanceReads(component, module, outer, storeInstances);
     // Actions the tree calls, declared before the tree that calls them. See `declareLocalActions`.
     const actions = declareLocalActions(component, module, outer, signals, params);
-    const inner = childScope(outer, signals, params, actions, subscriptions);
+    const inner = childScope(outer, signals, params, actions, subscriptions, storeInstanceReads);
     const tree = component['render'];
     if (tree === undefined) {
       module.line('return null;');
@@ -384,7 +394,13 @@ function declareLocalSignals(
   scope: EmitScope,
 ): Map<NodeId, string> {
   const signals = new Map<NodeId, string>();
-  const ids = Array.isArray(component['localSignals']) ? (component['localSignals'] as string[]) : [];
+  // `localSignals` carries both plain reactive fields (`sig.Signal`) and locally-owned store instances
+  // (`app.StoreInstance`, ADR-27) — this function owns only the first; `declareLocalStoreInstances` owns
+  // the second, and it is skipped here rather than reported as unresolved: an `app.StoreInstance` id is
+  // fully in the program, just not this function's shape.
+  const ids = (Array.isArray(component['localSignals']) ? (component['localSignals'] as string[]) : []).filter(
+    (id) => kindOf((scope.node(id) as unknown as Node | undefined) ?? {}) !== 'app.StoreInstance',
+  );
   if (ids.length === 0) return signals;
 
   const signalFn = useRuntime(module, 'signal');
@@ -415,6 +431,120 @@ function declareLocalSignals(
 
   module.line();
   return signals;
+}
+
+/**
+ * Declares this component's own locally-owned store instances (ADR-27) — `final FavoritesStore
+ * _favorites = FavoritesStore();`, a `State` field whose type is a declared store, not a plain value.
+ *
+ * One `useLocalStore(...)` per instance, hoisted unconditionally at the top of the component — the same
+ * Rules-of-Hooks discipline every other hook here is declared under. Distinct from `declareStoreConsumption`
+ * (M7-F): that acquires a store an *ancestor* provides via `<StoreProvider>`/`useStore()`; this constructs
+ * one this component owns outright, and nothing above it in the tree can see.
+ *
+ * @param component - the `ui.Component` node.
+ * @param module - the file to write into.
+ * @param scope - resolution and reporting.
+ * @returns the instance's own `app.StoreInstance` id → its local variable name.
+ */
+function declareLocalStoreInstances(component: Node, module: ModuleBuilder, scope: EmitScope): Map<NodeId, string> {
+  const instances = new Map<NodeId, string>();
+  const ids = (Array.isArray(component['localSignals']) ? (component['localSignals'] as string[]) : []).filter(
+    (id) => kindOf((scope.node(id) as unknown as Node | undefined) ?? {}) === 'app.StoreInstance',
+  );
+  if (ids.length === 0) return instances;
+
+  const useLocalStoreFn = useRuntime(module, 'useLocalStore');
+  for (const id of ids) {
+    const node = scope.node(id) as unknown as Node;
+    const storeId = node['store'];
+    if (typeof storeId !== 'string') continue;
+    const exportInfo = scope.storeExports.get(storeId);
+    if (exportInfo === undefined) {
+      scope.report(
+        GeneratorDiagnosticCode.UnresolvedReference,
+        'error',
+        `store \`${storeId}\` is not in the program`,
+        idOf(component),
+      );
+      continue;
+    }
+    const storeImport = module.use(exportInfo.module, exportInfo.export);
+    const local = identifierOf(nameOfSignal(node, id, scope));
+    instances.set(id, local);
+    module.line(`const ${local} = ${useLocalStoreFn}(${storeImport});`);
+  }
+  module.line();
+  return instances;
+}
+
+/**
+ * Hoists a `useSignal(...)` for every locally-owned store instance's signal/derived member this
+ * component's render tree reads (ADR-27) — the local-instance sibling of `declareStoreConsumption`'s own
+ * subscription loop.
+ *
+ * Keyed by the `logic.PropertyAccess` node's own id, not the member's: `left.count` and `right.count`
+ * name the same declared member (`CounterStore.count`, one `sig.Derived`) but must not collapse into one
+ * subscription — the receiver differs, and a `PropertyAccess` node's content (receiver included) already
+ * gives each its own id, by construction (ADR-17). `favorites.toggle(...)` (an action) is never in this
+ * map: `EmitScope.storeAccessRead` only ever consults it for a signal/derived target.
+ *
+ * @param component - the `ui.Component` node.
+ * @param module - the file to write into.
+ * @param scope - resolution and reporting.
+ * @param instances - this component's own locally-owned store instances, from `declareLocalStoreInstances`.
+ * @returns the `logic.PropertyAccess` node id → its subscribed local name (`$` included).
+ */
+function declareStoreInstanceReads(
+  component: Node,
+  module: ModuleBuilder,
+  scope: EmitScope,
+  instances: ReadonlyMap<NodeId, string>,
+): Map<NodeId, string> {
+  const reads = new Map<NodeId, string>();
+  if (instances.size === 0) return reads;
+
+  const found: { readonly id: NodeId; readonly instanceLocal: string; readonly property: string }[] = [];
+  const visit = (value: unknown): void => {
+    if (Array.isArray(value)) {
+      for (const item of value) visit(item);
+      return;
+    }
+    if (value === null || typeof value !== 'object') return;
+    const node = value as Node;
+    if (kindOf(node) === 'logic.PropertyAccess') {
+      const id = idOf(node);
+      const target = node['target'];
+      const receiver = node['receiver'] as Node | undefined;
+      const receiverTarget = receiver !== undefined && kindOf(receiver) === 'logic.Ref' ? receiver['target'] : undefined;
+      if (
+        id !== undefined &&
+        typeof target === 'string' &&
+        typeof receiverTarget === 'string' &&
+        instances.has(receiverTarget) &&
+        scope.storeMembers.get(target)?.kind !== 'action'
+      ) {
+        found.push({ id, instanceLocal: instances.get(receiverTarget)!, property: String(node['property'] ?? '') });
+      }
+    }
+    for (const child of Object.values(node)) visit(child);
+  };
+  visit(component['render']);
+  // Sorted by node id — deterministic regardless of the order the render tree happened to be walked in.
+  found.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+
+  if (found.length === 0) return reads;
+  const useSignal = useRuntime(module, 'useSignal');
+  const seen = new Set<NodeId>();
+  for (const { id, instanceLocal, property } of found) {
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const local = identifierOf(`${instanceLocal}_${property}`);
+    module.line(`const ${local}$ = ${useSignal}(${instanceLocal}.${identifierOf(property)});`);
+    reads.set(id, `${local}$`);
+  }
+  module.line();
+  return reads;
 }
 
 /** The subscribed value of a component-local signal — what render position reads. */
@@ -632,6 +762,11 @@ function childScope(
   // subscribed by `declareStoreConsumption` — the full local name, `$` included, since it was hoisted as
   // its own `useSignal(...)` call rather than following `signals`' useState-then-subscribe shape (M7-F).
   storeSubscriptions: ReadonlyMap<NodeId, string> = new Map(),
+  // A locally-owned store instance's signal/derived member this component's tree reads in render
+  // position, already subscribed by `declareStoreInstanceReads` (ADR-27) — keyed by the
+  // `logic.PropertyAccess` node's own id, not by the member's, since two instances of the same store
+  // share one member declaration (see `EmitScope.storeAccessRead`'s own doc).
+  storeInstanceReads: ReadonlyMap<NodeId, string> = new Map(),
 ): EmitScope {
   const paramNames = new Map<string, string>();
   for (const param of params) {
@@ -642,6 +777,8 @@ function childScope(
     module: parent.module,
     report: parent.report.bind(parent),
     storeMembers: parent.storeMembers,
+    storeExports: parent.storeExports,
+    storeAccessRead: (id) => storeInstanceReads.get(id) ?? parent.storeAccessRead(id),
     // Forwarded, not rebuilt: the router is declared once per component and every nested scope inside it
     // refers to that one declaration. Spread rather than assigned, because `exactOptionalPropertyTypes`
     // distinguishes "absent" from "present and undefined" — and absent is what a component that does not

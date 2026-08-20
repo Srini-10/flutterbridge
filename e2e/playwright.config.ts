@@ -22,6 +22,9 @@
 // a third, distinct generated application.
 //
 // `async-push-guard.spec.ts` gets its own pair (3317/3318): `async_push_guard` (M7-H/M7-J) is a fourth.
+//
+// `local-store.spec.ts` gets its own pair (3319/3320): `local_store` (M7-N, ADR-27) is a fifth, distinct
+// generated application.
 
 import { defineConfig, devices } from '@playwright/test';
 
@@ -86,6 +89,16 @@ export default defineConfig({
       name: 'async-push-guard-development',
       use: { ...devices['Desktop Chrome'], baseURL: 'http://127.0.0.1:3318' },
       testMatch: /async-push-guard\.dev-only\.spec/,
+    },
+    {
+      name: 'local-store-production',
+      use: { ...devices['Desktop Chrome'], baseURL: 'http://127.0.0.1:3319' },
+      testMatch: /local-store\.spec/,
+    },
+    {
+      name: 'local-store-development',
+      use: { ...devices['Desktop Chrome'], baseURL: 'http://127.0.0.1:3320' },
+      testMatch: /local-store\.dev-only\.spec/,
     },
   ],
 
@@ -159,6 +172,24 @@ export default defineConfig({
       command: 'npx next dev --port 3318',
       cwd: './.fixtures/async-push-guard-dev',
       port: 3318,
+      reuseExistingServer: false,
+      timeout: 120_000,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    },
+    {
+      command: 'npx next start --port 3319',
+      cwd: './.fixtures/local-store/build/bridge',
+      port: 3319,
+      reuseExistingServer: false,
+      timeout: 120_000,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    },
+    {
+      command: 'npx next dev --port 3320',
+      cwd: './.fixtures/local-store-dev',
+      port: 3320,
       reuseExistingServer: false,
       timeout: 120_000,
       stdout: 'pipe',

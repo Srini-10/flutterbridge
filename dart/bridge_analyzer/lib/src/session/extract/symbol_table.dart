@@ -94,6 +94,31 @@ final class Symbols {
     return path == null ? null : 'comp:$path#$name';
   }
 
+  /// The store symbol for a class declared in [libraryUri] (ADR-27) — the sibling of [componentIn], for
+  /// `_favorites.favoriteCount`-style member access where `_favorites`'s type is declared elsewhere.
+  static String? storeIn(String libraryUri, String name, {required String packageName}) {
+    final String? path = pathOf(libraryUri, packageName: packageName);
+    return path == null ? null : 'store:$path#$name';
+  }
+
+  /// The signal symbol for a member declared in [libraryUri] (ADR-27).
+  static String? signalIn(String libraryUri, String name, {required String owner, required String packageName}) {
+    final String? path = pathOf(libraryUri, packageName: packageName);
+    return path == null ? null : 'sig:$path#$owner.$name';
+  }
+
+  /// The derived symbol for a member declared in [libraryUri] (ADR-27).
+  static String? derivedIn(String libraryUri, String name, {required String owner, required String packageName}) {
+    final String? path = pathOf(libraryUri, packageName: packageName);
+    return path == null ? null : 'der:$path#$owner.$name';
+  }
+
+  /// The action symbol for a member declared in [libraryUri] (ADR-27).
+  static String? actionIn(String libraryUri, String name, {required String owner, required String packageName}) {
+    final String? path = pathOf(libraryUri, packageName: packageName);
+    return path == null ? null : 'act:$path#$owner.$name';
+  }
+
   /// The project-relative path of a library URI, or `null` if it is not in this project.
   ///
   /// `package:hello_bridge/screens/login_screen.dart` → `lib/screens/login_screen.dart`. A widget from

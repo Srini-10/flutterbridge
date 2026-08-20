@@ -217,6 +217,17 @@ abstract interface class WidgetAdapter implements PackageAdapter {
   /// a call the program actually makes, and deleting it would be deleting the user's code.
   bool isChangeNotification(MethodInvocation node);
 
+  /// Whether [node] is a **manual store subscription/disposal call** that must be erased (ADR-27).
+  ///
+  /// `_favorites.addListener(_onChange)` in `initState`, `_favorites.removeListener(_onChange)`/
+  /// `_favorites.dispose()` in `dispose` — the idiom a locally-owned `ChangeNotifier` store's own
+  /// reactivity (`useLocalStore`) already supersedes: React re-renders on a signal write already, and
+  /// the instance is already disposed on unmount. Erased only when the *receiver's resolved type* is a
+  /// declared store — never on an arbitrary `Listenable`/`ChangeNotifier` field this project does not
+  /// model as a store, and never on a `TextEditingController`/`FocusNode`/`ScrollController`'s own
+  /// `dispose()`, which this method must not touch.
+  bool isStoreLifecycleCall(MethodInvocation node);
+
   /// Whether [node] is the framework getter a `State` uses to reach its own props (INV-22).
   ///
   /// `widget.isDark` is a read of the **component's parameter** `isDark`. Extraction already lifts a

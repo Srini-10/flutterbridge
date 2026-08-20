@@ -1,7 +1,7 @@
 // GENERATED CODE — DO NOT EDIT
 //
 // Produced by tools/schema-codegen from packages/uir/schema/*.json.
-// UIR schema version: 1.6.0
+// UIR schema version: 1.7.0
 //
 // Edit the schema and re-run `pnpm codegen`. Hand-edits to this file are lost on the next run,
 // and CI fails if this file does not match the schema (drift check).
@@ -11,10 +11,10 @@
 import { createHash } from 'node:crypto';
 
 /** The UIR schema version this module was generated from. */
-export const UIR_VERSION = '1.6.0' as const;
+export const UIR_VERSION = '1.7.0' as const;
 
 /** A hash of the schema sources this module was generated from. */
-export const UIR_SCHEMA_HASH = '388886b7e06ac0bb' as const;
+export const UIR_SCHEMA_HASH = 'd65d81e51738858e' as const;
 
 /** Node kind -> the fields of that node which hold `NodeId` references. */
 export const UIR_REFERENCE_FIELDS: Readonly<Record<string, readonly string[]>> = {
@@ -46,7 +46,7 @@ export const UIR_REFERENCE_FIELDS: Readonly<Record<string, readonly string[]>> =
   'logic.ListLit': ['id'],
   'logic.Lit': ['id'],
   'logic.MapLit': ['id'],
-  'logic.MethodCall': ['id'],
+  'logic.MethodCall': ['id', 'target'],
   'logic.Navigate': ['id', 'transition'],
   'logic.New': ['id'],
   'logic.NullCheck': ['id'],
@@ -54,7 +54,7 @@ export const UIR_REFERENCE_FIELDS: Readonly<Record<string, readonly string[]>> =
   'logic.OpaqueExpr': ['id'],
   'logic.OpaqueStmt': ['id'],
   'bind.Param': ['id'],
-  'logic.PropertyAccess': ['id'],
+  'logic.PropertyAccess': ['id', 'target'],
   'logic.Ref': ['id', 'target'],
   'logic.Return': ['id'],
   'app.Route': ['component', 'guards', 'id', 'layout'],
@@ -63,6 +63,7 @@ export const UIR_REFERENCE_FIELDS: Readonly<Record<string, readonly string[]>> =
   'bind.Signal': ['id', 'signal'],
   'l0.SourceFile': ['id'],
   'app.Store': ['actions', 'derived', 'id', 'signals'],
+  'app.StoreInstance': ['id', 'store'],
   'logic.StringInterp': ['id'],
   'logic.Switch': ['id'],
   'logic.Throw': ['id'],
@@ -659,6 +660,26 @@ export function parseSizeIntent(value: unknown, path = 'SizeIntent'): SizeIntent
   return asEnum(value, path, sizeIntentValues);
 }
 
+/// Where a locally-owned store instance's lifetime is anchored.
+///
+/// Only `component` is supported today (ADR-27): a class's own field, constructed inline, used only within that class's own body. An instance passed as a parameter, returned from a function, or held in a collection has no identity-preserving representation yet and remains an ordinary (unsupported) construction.
+export const StoreInstanceScope = {
+  /// Owned by one component instance — a Flutter State field, constructed inline.
+  component: 'component',
+} as const;
+
+/// Where a locally-owned store instance's lifetime is anchored.
+///
+/// Only `component` is supported today (ADR-27): a class's own field, constructed inline, used only within that class's own body. An instance passed as a parameter, returned from a function, or held in a collection has no identity-preserving representation yet and remains an ordinary (unsupported) construction.
+export type StoreInstanceScope = (typeof StoreInstanceScope)[keyof typeof StoreInstanceScope];
+
+const storeInstanceScopeValues = Object.values(StoreInstanceScope) as readonly StoreInstanceScope[];
+
+/** Parses a {@link StoreInstanceScope}. Rejects any value outside the enum. */
+export function parseStoreInstanceScope(value: unknown, path = 'StoreInstanceScope'): StoreInstanceScope {
+  return asEnum(value, path, storeInstanceScopeValues);
+}
+
 /// Where a store came from.
 export const StoreOrigin = {
   /// The application declared it — e.g. a ChangeNotifier class.
@@ -1043,7 +1064,7 @@ export interface Component {
   readonly id: NodeId;
   /// Discriminant.
   readonly kind: 'ui.Component';
-  /// Component-scoped signals — the State fields (Spec §2.3).
+  /// Component-scoped state — the State fields (Spec §2.3): plain reactive values (sig.Signal) and locally-owned store instances (app.StoreInstance, ADR-27).
   readonly localSignals?: readonly NodeId[];
   /// The component name, e.g. `LoginScreen`.
   readonly name: string;
@@ -1441,6 +1462,8 @@ export interface MethodCall {
   readonly receiver: Expr;
   /// Where the node came from.
   readonly span: SourceSpan;
+  /// The store member (sig.Action) this resolves to, when the receiver's resolved type is a declared store (ADR-27). Absent for an ordinary method call.
+  readonly target?: NodeId;
   /// Resolved return type.
   readonly type: TypeRef;
 }
@@ -1609,6 +1632,8 @@ export interface PropertyAccess {
   readonly receiver: Expr;
   /// Where the node came from.
   readonly span: SourceSpan;
+  /// The store member (sig.Signal/sig.Derived) this resolves to, when the receiver's resolved type is a declared store (ADR-27). Absent for an ordinary property access.
+  readonly target?: NodeId;
   /// Resolved type.
   readonly type: TypeRef;
 }
@@ -1803,6 +1828,26 @@ export interface Store {
   readonly signals?: readonly NodeId[];
   /// Where the node came from.
   readonly span: SourceSpan;
+}
+
+/// A component-owned instance of a declared store (ADR-27).
+///
+/// `final CartStore cartStore = CartStore();` inside a `State` — not a value the component holds, a live store handle it owns. Symbol-addressed like `sig.Signal`, so two fields of the same store type on one class each get their own, distinct identity (`logic.New`, the construction expression itself, is content-addressed and would collapse them). `logic.PropertyAccess`/`logic.MethodCall` on a `logic.Ref` to this node resolve their `target` against the store's own `signals`/`derived`/`actions`, never against this node.
+export interface StoreInstance {
+  /// The override key, when the node is addressable by a human.
+  readonly anchor?: Anchor;
+  /// Plugin extension data, namespaced `x-<plugin>`. Core passes round-trip it untouched (Spec §2.6).
+  readonly ext?: Readonly<Record<string, unknown>>;
+  /// The node's stable, content-addressed identity.
+  readonly id: NodeId;
+  /// Discriminant.
+  readonly kind: 'app.StoreInstance';
+  /// The instance's lifetime.
+  readonly scope: StoreInstanceScope;
+  /// Where the node came from.
+  readonly span: SourceSpan;
+  /// The declared app.Store this instantiates.
+  readonly store: NodeId;
 }
 
 /// An interpolated string. Each interpolation is a reactive read.
@@ -3424,6 +3469,7 @@ export function parseMethodCall(value: unknown, path = 'MethodCall'): MethodCall
     ...(own(o, 'namedArgs') === undefined || own(o, 'namedArgs') === null ? {} : { namedArgs: asMap(own(o, 'namedArgs'), `${path}.namedArgs`, (v, p) => parseExpr(v, p)) }),
     receiver: parseExpr(req(o, 'receiver', path), `${path}.receiver`),
     span: parseSourceSpan(req(o, 'span', path), `${path}.span`),
+    ...(own(o, 'target') === undefined || own(o, 'target') === null ? {} : { target: parseNodeId(own(o, 'target'), `${path}.target`) }),
     type: parseTypeRef(req(o, 'type', path), `${path}.type`),
   };
 }
@@ -3686,6 +3732,7 @@ export function parsePropertyAccess(value: unknown, path = 'PropertyAccess'): Pr
     property: asString(req(o, 'property', path), `${path}.property`),
     receiver: parseExpr(req(o, 'receiver', path), `${path}.receiver`),
     span: parseSourceSpan(req(o, 'span', path), `${path}.span`),
+    ...(own(o, 'target') === undefined || own(o, 'target') === null ? {} : { target: parseNodeId(own(o, 'target'), `${path}.target`) }),
     type: parseTypeRef(req(o, 'type', path), `${path}.type`),
   };
 }
@@ -3972,6 +4019,38 @@ export function equalsStore(a: Store, b: Store): boolean {
 
 /** Returns a copy of [node] with [patch] applied. The original is never mutated. */
 export function copyWithStore(node: Store, patch: Partial<Store>): Store {
+  return { ...node, ...patch };
+}
+
+/** Parses a {@link StoreInstance}, validating as it goes. Throws {@link UirParseError} on bad input. */
+export function parseStoreInstance(value: unknown, path = 'StoreInstance'): StoreInstance {
+  const o = asObject(value, path);
+  const kind = asString(req(o, 'kind', path), `${path}.kind`);
+  if (kind !== 'app.StoreInstance') throw new UirParseError(`${path}.kind`, `expected "app.StoreInstance", got "${kind}"`);
+
+  return {
+    ...(own(o, 'anchor') === undefined || own(o, 'anchor') === null ? {} : { anchor: parseAnchor(own(o, 'anchor'), `${path}.anchor`) }),
+    ...(own(o, 'ext') === undefined || own(o, 'ext') === null ? {} : { ext: asMap(own(o, 'ext'), `${path}.ext`, (v) => v) }),
+    id: parseNodeId(req(o, 'id', path), `${path}.id`),
+    kind: 'app.StoreInstance',
+    scope: parseStoreInstanceScope(req(o, 'scope', path), `${path}.scope`),
+    span: parseSourceSpan(req(o, 'span', path), `${path}.span`),
+    store: parseNodeId(req(o, 'store', path), `${path}.store`),
+  };
+}
+
+/** Serializes a {@link StoreInstance} to canonical JSON. */
+export function serializeStoreInstance(node: StoreInstance): Record<string, unknown> {
+  return canonicalJson(node) as Record<string, unknown>;
+}
+
+/** Structural equality. List order is significant: UIR children are ordered (Spec §2.3). */
+export function equalsStoreInstance(a: StoreInstance, b: StoreInstance): boolean {
+  return deepEquals(canonicalJson(a), canonicalJson(b));
+}
+
+/** Returns a copy of [node] with [patch] applied. The original is never mutated. */
+export function copyWithStoreInstance(node: StoreInstance, patch: Partial<StoreInstance>): StoreInstance {
   return { ...node, ...patch };
 }
 
@@ -4939,7 +5018,7 @@ export function acceptUiNode<R>(node: UiNode, visitor: UiNodeVisitor<R>): R {
 }
 
 /** Any UIR node. */
-export type AnyUirNode = Action | Assign | Await | Binary | Block | Break | Call | Cast | ClassDecl | Component | Conditional | ConstBinding | Continue | Derived | Effect | Endpoint | EnumDecl | ExprBinding | ExprStmt | FieldDecl | For | FunctionDecl | If | Intrinsic | Lambda | ListLit | Lit | MapLit | MethodCall | Navigate | New | NullCheck | OpaqueDecl | OpaqueExpr | OpaqueStmt | ParamBinding | PropertyAccess | Ref | Return | Route | RouteTransition | Signal | SignalBinding | SourceFile | Store | StringInterp | Switch | Throw | Token | TryCatch | TypeAliasDecl | UiAsync | UiCond | UiElement | UiList | UiOpaque | UiOverrideRef | UiSlotRef | UiText | Unary | VarDecl | While;
+export type AnyUirNode = Action | Assign | Await | Binary | Block | Break | Call | Cast | ClassDecl | Component | Conditional | ConstBinding | Continue | Derived | Effect | Endpoint | EnumDecl | ExprBinding | ExprStmt | FieldDecl | For | FunctionDecl | If | Intrinsic | Lambda | ListLit | Lit | MapLit | MethodCall | Navigate | New | NullCheck | OpaqueDecl | OpaqueExpr | OpaqueStmt | ParamBinding | PropertyAccess | Ref | Return | Route | RouteTransition | Signal | SignalBinding | SourceFile | Store | StoreInstance | StringInterp | Switch | Throw | Token | TryCatch | TypeAliasDecl | UiAsync | UiCond | UiElement | UiList | UiOpaque | UiOverrideRef | UiSlotRef | UiText | Unary | VarDecl | While;
 
 /** Parses any UIR node, dispatching on `kind` across every node kind in the schema. */
 export function parseUirNode(value: unknown, path = 'UirNode'): AnyUirNode {
@@ -5036,6 +5115,8 @@ export function parseUirNode(value: unknown, path = 'UirNode'): AnyUirNode {
       return parseSourceFile(o, path);
     case 'app.Store':
       return parseStore(o, path);
+    case 'app.StoreInstance':
+      return parseStoreInstance(o, path);
     case 'logic.StringInterp':
       return parseStringInterp(o, path);
     case 'logic.Switch':

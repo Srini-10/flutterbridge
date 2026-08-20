@@ -143,6 +143,28 @@ export interface EmitScope {
    * a store name coincidence, or declaration order.
    */
   readonly storeMembers: ReadonlyMap<NodeId, StoreMemberInfo>;
+  /**
+   * Every `app.Store`'s own module and export name, by the store's own id — what a locally-owned
+   * instance (`app.StoreInstance`, ADR-27) needs to import to call `useLocalStore(...)`, independent of
+   * any particular member. Built alongside {@link storeMembers}, from the same `emitStore` call.
+   */
+  readonly storeExports: ReadonlyMap<NodeId, { readonly module: string; readonly export: string }>;
+  /**
+   * The resolved expression for a `logic.PropertyAccess` whose `target` names a signal/derived member of
+   * a *locally-owned* store instance (ADR-27) — `favorites.favoriteCount` where `favorites` is this
+   * component's own `useLocalStore(...)`.
+   *
+   * Keyed by the `PropertyAccess` node's **own id**, not by `target`: `target` alone cannot distinguish
+   * `left.count` from `right.count` when both are the same store type's `count`, since the member they
+   * name is one shared declaration — the receiver is what differs, and a `PropertyAccess` node's content
+   * (receiver included) already gives it a distinct id per (instance, member) pair, by construction
+   * (ADR-17). Absent for an ordinary property access, or one whose `target` names an action (a tear-off
+   * needs no subscription — it is called, not read).
+   *
+   * @param id - the `PropertyAccess` node's own id.
+   * @returns the resolved expression, or `undefined` to fall through to ordinary `receiver.property` lowering.
+   */
+  storeAccessRead(id: NodeId): string | undefined;
 }
 
 /**
@@ -452,6 +474,17 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
     }
 
     case 'logic.PropertyAccess': {
+      // A locally-owned store instance's signal/derived member (ADR-27) — `favorites.favoriteCount`.
+      // Resolved by the node's own id, never by `target` alone: `target` names the *member* (shared by
+      // every instance of the store), and the id is what distinguishes `left.count` from `right.count`.
+      // `storeAccessRead` returns undefined for an ordinary property access, or one whose `target` names
+      // an action (a tear-off is called, not read, and needs no subscription) — in which case this falls
+      // through to the same `receiver.property` lowering it always had.
+      const id = idOf(node);
+      if (id !== undefined) {
+        const resolved = scope.storeAccessRead(id);
+        if (resolved !== undefined) return resolved;
+      }
       const receiver = emitExpression(node['receiver'] as Node, scope);
       return `${receiver}.${identifierOf(String(node['property'] ?? ''))}`;
     }
@@ -727,6 +760,31 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
       );
       return 'undefined';
   }
+}
+
+/**
+ * The non-subscribing (`.get()`) read for a `logic.PropertyAccess` naming a store instance's signal/
+ * derived member (ADR-27) — the default `EmitScope.storeAccessRead`, used everywhere a component's own
+ * render-position subscription (`declareStoreInstanceReads`, `component.ts`) does not override it: inside
+ * an action body, exactly the "handler reads `.get()`, never a stale subscribed local" rule `actionScope`
+ * already applies to a component's own signals.
+ *
+ * Computed on demand rather than hoisted: `.get()` is a plain method call, not a hook, so it carries none
+ * of the Rules-of-Hooks constraints a `useSignal(...)` call would.
+ *
+ * @param id - a `logic.PropertyAccess` node's own id.
+ * @param scope - resolution, to look the node and its target's kind back up.
+ * @returns the resolved read, or `undefined` if `id` does not name this shape.
+ */
+export function defaultStoreAccessRead(id: NodeId, scope: EmitScope): string | undefined {
+  const node = scope.node(id) as unknown as Node | undefined;
+  if (node === undefined || node['kind'] !== 'logic.PropertyAccess') return undefined;
+  const target = node['target'];
+  if (typeof target !== 'string') return undefined;
+  const info = scope.storeMembers.get(target);
+  if (info === undefined || info.kind === 'action') return undefined;
+  const receiver = emitExpression(node['receiver'] as Node, scope);
+  return `${receiver}.${identifierOf(String(node['property'] ?? ''))}.get()`;
 }
 
 /** Emits a call's positional arguments. */

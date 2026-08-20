@@ -30,7 +30,7 @@ import { GeneratorDiagnosticCode } from './diagnostics/codes.js';
 import { isAppRoot, reportAppRoot } from './emit/app_root.js';
 import { assetManifestLines, collectAssets } from './emit/assets.js';
 import { emitBinding, emitComponent } from './emit/component.js';
-import type { EmitScope, StoreMemberInfo } from './emit/expression.js';
+import { defaultStoreAccessRead, type EmitScope, type StoreMemberInfo } from './emit/expression.js';
 import { ModuleBuilder, fileNameOf, identifierOf } from './emit/module.js';
 import { RUNTIME_MODULE } from './emit/runtime.js';
 import { banner, scaffold, type PageInput, type PageScreen } from './emit/project.js';
@@ -147,6 +147,10 @@ export function generateProject(context: GeneratorContext): GeneratorOutput {
     stores.push({ module: storeModule, name: emitted.name });
 
     const storeId = String(store['id'] ?? '') as NodeId;
+    (scope.storeExports as Map<NodeId, { readonly module: string; readonly export: string }>).set(storeId, {
+      module: storeModule,
+      export: emitted.name,
+    });
     const record = (
       kind: 'signal' | 'derived' | 'action',
       members: ReadonlyMap<NodeId, string>,
@@ -494,11 +498,17 @@ function rootScope(
     if (typeof token['role'] === 'string') themeRoles.add(token['role']);
   }
 
-  return {
+  // Populated by the stores loop in `generate`, before any component is emitted — the sibling of
+  // `storeMemberInfo` above, one entry per store rather than one per member: what a locally-owned
+  // instance (`app.StoreInstance`, ADR-27) needs to import to call `useLocalStore(...)`.
+  const storeExportInfo = new Map<NodeId, { readonly module: string; readonly export: string }>();
+
+  const scope: EmitScope = {
     module: new ModuleBuilder('<none>'),
     report,
     themeRoles,
     storeMembers: storeMemberInfo,
+    storeExports: storeExportInfo,
     node: (id: NodeId) => context.program.get(id) as AnyUirNode | undefined,
     // A bare reference at the root resolves nothing — every store member reachable here is resolved
     // explicitly, per component, by `declareStoreConsumption` (M7-F), which is the only thing that knows
@@ -513,7 +523,11 @@ function rootScope(
     // No class is ever emitted — M3-B lowers no `logic.ClassDecl`. Stated once, here, so `logic.New` can
     // refuse a construction of one by name instead of emitting a reference that fails at `tsc`.
     declaresClass: () => false,
+    // The generic (`.get()`) fallback (ADR-27) — correct anywhere that is not a component's own
+    // render position, which overrides this with a subscribed local (`declareStoreInstanceReads`).
+    storeAccessRead: (id) => defaultStoreAccessRead(id, scope),
   };
+  return scope;
 }
 
 /**
@@ -539,6 +553,16 @@ function nameIndex(nodes: readonly AnyUirNode[]): Map<NodeId, string> {
     if (node['kind'] === 'logic.Ref') {
       const target = node['target'];
       const name = node['name'];
+      if (typeof target === 'string' && typeof name === 'string' && !names.has(target)) {
+        names.set(target, name);
+      }
+    }
+    // The same recovery, for a store instance's `.member` access (ADR-27): `favorites.favoriteCount`'s
+    // `target` names the store's own `sig.Derived`, and `property`/`method` is the name the author wrote
+    // for it — `logic.PropertyAccess`/`logic.MethodCall`'s own equivalent of `logic.Ref.name`.
+    if (node['kind'] === 'logic.PropertyAccess' || node['kind'] === 'logic.MethodCall') {
+      const target = node['target'];
+      const name = node['kind'] === 'logic.PropertyAccess' ? node['property'] : node['method'];
       if (typeof target === 'string' && typeof name === 'string' && !names.has(target)) {
         names.set(target, name);
       }

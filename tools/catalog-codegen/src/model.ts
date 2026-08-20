@@ -182,6 +182,12 @@ export interface Catalog {
    * erasing is correct — the reasoning is the load-bearing part, and a bare array has nowhere to put it.
    */
   readonly changeNotificationCalls?: { readonly calls?: readonly string[] };
+  /**
+   * Manual `ChangeNotifier` subscription/disposal calls (ADR-27), erased on a receiver whose resolved
+   * static type is a declared store — a locally-owned store instance's own reactivity/disposal already
+   * carries the same meaning.
+   */
+  readonly storeLifecycleCalls?: { readonly calls?: readonly string[] };
   readonly navigation?: NavigationMeta;
   readonly semantics?: SemanticsMeta;
   readonly theme?: ThemeMeta;

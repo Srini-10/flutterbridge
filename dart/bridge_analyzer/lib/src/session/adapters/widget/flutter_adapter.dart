@@ -208,6 +208,35 @@ final class FlutterWidgetAdapter implements WidgetAdapter, ThemeAdapter {
   }
 
   @override
+  bool isStoreLifecycleCall(MethodInvocation node) {
+    if (!MaterialCatalog.storeLifecycleCalls.contains(node.methodName.name)) {
+      return false;
+    }
+
+    // Resolved, not named — the same discipline `isChangeNotification` uses. `addListener`/
+    // `removeListener`/`dispose` declared on the user's own class are not `ChangeNotifier`'s.
+    final String? library = node.methodName.element?.library?.identifier;
+    if (library == null || !library.startsWith(_package)) {
+      return false;
+    }
+
+    // The receiver's *resolved type*, not its name: a `TextEditingController`/`FocusNode`'s own
+    // `dispose()` must not be erased — this project does not model either as a store, and erasing their
+    // disposal would silently leak a real framework resource this compiler has no other primitive for.
+    //
+    // `isStoreBase` alone is not enough: `TextEditingController`/`ValueNotifier`/`FocusNode` all extend
+    // `ChangeNotifier`, so they match it too. The receiver's type must additionally be declared *outside*
+    // `package:flutter/` — a real user store, never one of the framework's own notifier types — which is
+    // exactly the same distinction `signal_extractor.dart`'s `app.StoreInstance` field check makes.
+    final DartType? receiverType = node.realTarget?.staticType;
+    if (!isStoreBase(receiverType)) {
+      return false;
+    }
+    final String? receiverLibrary = receiverType is InterfaceType ? receiverType.element.library.identifier : null;
+    return receiverLibrary != null && !receiverLibrary.startsWith(_package);
+  }
+
+  @override
   bool isComponentPropsGetter(Expression node) {
     if (MaterialCatalog.componentPropsGetter.isEmpty) {
       return false;

@@ -295,6 +295,10 @@ final class AdapterRegistry {
   bool isChangeNotification(MethodInvocation node) =>
       widgetAdapters.any((WidgetAdapter a) => a.isChangeNotification(node));
 
+  /// Whether [node] is a manual store subscription/disposal call that must be erased (ADR-27).
+  bool isStoreLifecycleCall(MethodInvocation node) =>
+      widgetAdapters.any((WidgetAdapter a) => a.isStoreLifecycleCall(node));
+
   /// Whether [node] is the framework getter a `State` uses to reach its own props (INV-22).
   bool isComponentPropsGetter(Expression node) =>
       widgetAdapters.any((WidgetAdapter a) => a.isComponentPropsGetter(node));

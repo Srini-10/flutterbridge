@@ -13,6 +13,7 @@ import {
   StoreProvider,
   ThemeProvider,
   useDerived,
+  useLocalStore,
   useMountEffect,
   useMounted,
   useRouter,
@@ -385,6 +386,81 @@ describe('StoreProvider scopes a store to a subtree (ADR-15)', () => {
     } finally {
       consoleError.mockRestore();
     }
+  });
+});
+
+describe('useLocalStore — a component-owned instance, no provider (ADR-27)', () => {
+  it('creates and reads a store directly, with no <StoreProvider>', () => {
+    function Count(): ReactElement {
+      const cart = useLocalStore(cartStore);
+      return createElement('span', null, String(useSignal(cart.count)));
+    }
+    const { container } = render(createElement(Count));
+    expect(container.textContent).toBe('0');
+  });
+
+  it('re-renders on an action write, exactly as useStore does', () => {
+    let add: ((sku: string) => void) | null = null;
+    function Count(): ReactElement {
+      const cart = useLocalStore(cartStore);
+      add = cart.add;
+      return createElement('span', null, String(useSignal(cart.count)));
+    }
+    const { container } = render(createElement(Count));
+
+    act(() => add?.('a'));
+    expect(container.textContent).toBe('1');
+  });
+
+  it('gives two components their own, independent instance of the same definition', () => {
+    const adders: Array<(sku: string) => void> = [];
+    function Count(): ReactElement {
+      const cart = useLocalStore(cartStore);
+      adders.push(cart.add);
+      return createElement('span', null, String(useSignal(cart.count)));
+    }
+    const { container } = render(createElement('div', null, createElement(Count), createElement(Count)));
+
+    act(() => adders[0]?.('a'));
+
+    // `left`/`right` in the same component, or two mounted components — either way, two `useLocalStore`
+    // calls against the same definition must never share state (ADR-27, ADR-15/INV-19).
+    expect(container.textContent).toBe('10');
+  });
+
+  it('disposes the instance when the component unmounts', () => {
+    const cleanup = vi.fn();
+    const watched = defineStore('watched-local', ({ signal: state, effect: watch }) => {
+      const value = state(0);
+      watch(() => {
+        value.get();
+        return cleanup;
+      }, 'watcher');
+      return { value };
+    });
+    function Child(): ReactElement {
+      useLocalStore(watched);
+      return createElement('span');
+    }
+    const { unmount } = render(createElement(Child));
+    cleanup.mockClear();
+
+    unmount();
+
+    expect(cleanup).toHaveBeenCalledTimes(1);
+  });
+
+  it('survives StrictMode’s mount/unmount/remount with a live instance', () => {
+    function Count(): ReactElement {
+      const cart = useLocalStore(cartStore);
+      return createElement('span', null, String(useSignal(cart.count)));
+    }
+    const { container } = render(createElement(StrictMode, null, createElement(Count)));
+
+    // The same defect `StoreProvider`'s own StrictMode test guards: our unmount disposes the instance and
+    // React keeps the `useState` value across the replay, so a naive implementation would remount onto a
+    // disposed instance and throw BRG4003 on the first dispatch.
+    expect(container.textContent).toBe('0');
   });
 });
 

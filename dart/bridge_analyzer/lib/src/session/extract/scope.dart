@@ -38,6 +38,11 @@ enum Binds {
   /// `onDestinationSelected: _select` reach the generator as something it can call, rather than as a bare
   /// name it reports `BRG3006` for.
   action,
+
+  /// A field whose type is a declared store (ADR-27) — `final FavoritesStore _favorites =
+  /// FavoritesStore();`. Distinct from [Binds.signal]: the field's *value* is a live store handle, not a
+  /// plain reactive value, and its declaration is an `app.StoreInstance`, not a `sig.Signal`.
+  storeInstance,
 }
 
 /// One binding in a scope.

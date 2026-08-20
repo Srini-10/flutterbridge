@@ -1,0 +1,18 @@
+name: local_store
+description: >-
+  M7-N fixture: a component-owned instance of a declared store (`final CounterStore _counter =
+  CounterStore();`) — construction, a signal, a derived value, an action, a parameterized action, an
+  action tear-off, and two independent instances of the same store type on one component
+  (docs/adr/0027-local-store-instances-and-member-identity.md).
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

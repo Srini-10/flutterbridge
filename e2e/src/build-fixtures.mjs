@@ -63,6 +63,7 @@ export const APPS = [
   { name: 'promoted-counter', source: 'fixtures/apps/promoted_counter' },
   { name: 'inline-push-props', source: 'fixtures/apps/inline_push_props' },
   { name: 'async-push-guard', source: 'fixtures/apps/async_push_guard' },
+  { name: 'local-store', source: 'fixtures/apps/local_store' },
 ];
 
 const run = (program, args, cwd, env = {}) =>

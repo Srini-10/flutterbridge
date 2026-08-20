@@ -147,6 +147,9 @@ abstract final class GapCatalog {
   /// write the UIR records, and the name is one no downstream pass may know.
   static const Set<String> changeNotificationCalls = <String>{};
 
+  /// Manual `ChangeNotifier` subscription/disposal calls, erased on a store-typed receiver (ADR-27).
+  static const Set<String> storeLifecycleCalls = <String>{};
+
   /// The classes that own the navigation methods.
   static const Set<String> navigationTypes = <String>{};
 

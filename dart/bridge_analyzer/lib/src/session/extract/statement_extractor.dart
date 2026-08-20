@@ -87,6 +87,14 @@ final class StatementExtractor implements StatementExtractorRef {
         if (registry.isChangeNotification(expression)) {
           return const <RawValue>[];
         }
+
+        // A **manual store subscription/disposal call** on a locally-owned store instance (ADR-27) —
+        // `_favorites.addListener(_onChange)`/`.removeListener(_onChange)`/`.dispose()`. Erased for the
+        // same reason `notifyListeners()` is: `useLocalStore`'s own reactivity and disposal already carry
+        // this meaning, and the call's name is one no downstream pass may know.
+        if (registry.isStoreLifecycleCall(expression)) {
+          return const <RawValue>[];
+        }
       }
     }
     return <RawValue>[RawChild(extract(statement, scope))];
@@ -123,6 +131,15 @@ final class StatementExtractor implements StatementExtractorRef {
           // has a branch, and the branch now does nothing, which is exactly what the source meant once
           // the notification is implied by the write.
           if (registry.isChangeNotification(expression)) {
+            return RawNode(
+              kind: 'logic.Block',
+              span: out.span(node),
+              fields: const <String, RawValue>{'statements': RawList(<RawValue>[])},
+            );
+          }
+          // The same erasure, in the same non-block position — a manual store subscription/disposal call
+          // (ADR-27).
+          if (registry.isStoreLifecycleCall(expression)) {
             return RawNode(
               kind: 'logic.Block',
               span: out.span(node),

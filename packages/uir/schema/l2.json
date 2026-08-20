@@ -611,9 +611,9 @@
               "type": "array",
               "items": {
                 "$ref": "shared.json#/$defs/NodeId",
-                "description": "A signal."
+                "description": "A sig.Signal or an app.StoreInstance."
               },
-              "description": "Component-scoped signals — the State fields (Spec §2.3)."
+              "description": "Component-scoped state — the State fields (Spec §2.3): plain reactive values (sig.Signal) and locally-owned store instances (app.StoreInstance, ADR-27)."
             },
             "render": {
               "$ref": "l2.json#/$defs/UiNode",

@@ -133,6 +133,9 @@ final class GapWidgetAdapter implements WidgetAdapter {
   @override
   bool isChangeNotification(MethodInvocation node) => false;
 
+  @override
+  bool isStoreLifecycleCall(MethodInvocation node) => false;
+
   /// `gap` declares no stateful pair, so it has no props getter.
   @override
   bool isComponentPropsGetter(Expression node) => false;

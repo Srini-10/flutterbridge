@@ -28,11 +28,13 @@ library;
 
 import 'package:analyzer/dart/ast/ast.dart';
 import 'package:analyzer/dart/ast/visitor.dart';
+import 'package:analyzer/dart/element/type.dart';
 import 'package:bridge_analyzer/src/model/raw_node.dart';
 import 'package:bridge_analyzer/src/session/adapters/adapter_registry.dart';
 import 'package:bridge_analyzer/src/session/extract/expression_extractor.dart';
 import 'package:bridge_analyzer/src/session/extract/raw_node_emitter.dart';
 import 'package:bridge_analyzer/src/session/extract/scope.dart';
+import 'package:bridge_analyzer/src/session/extract/symbol_table.dart';
 
 /// The state a class owns.
 final class ClassState {
@@ -109,9 +111,44 @@ final class SignalExtractor {
       }
       for (final VariableDeclaration variable in member.fields.variables) {
         final String name = variable.name.lexeme;
+        final DartType? fieldType = variable.declaredFragment?.element.type;
+
+        // `final FavoritesStore _favorites = FavoritesStore();` (ADR-27) — a field typed as a *declared*
+        // store, not a plain reactive value. `isStoreBase` alone is not enough: `ValueNotifier`,
+        // `AnimationController`, and any other framework `ChangeNotifier` descendant also match it, and
+        // a `ValueNotifier<int>` field is exactly the ordinary value-that-changes case `isStateHolder`
+        // exists for below — not a handle to a separately modelled `app.Store`. `Symbols.storeIn`
+        // returning non-null is what actually decides this: it resolves only for a type this *project*
+        // declares (`Symbols.pathOf` returns `null` for `package:flutter/...`), which is precisely the
+        // fact that separates a user's own store class from a framework notifier type.
+        final String? storeSymbol = fieldType is InterfaceType && registry.isStoreBase(fieldType)
+            ? Symbols.storeIn(
+                fieldType.element.library.identifier,
+                fieldType.element.name ?? '',
+                packageName: out.packageName,
+              )
+            : null;
+        if (storeSymbol != null) {
+          final String symbol = out.symbols.signal(name, owner: owner);
+          signals.add(symbol);
+          bindings.add(Binding(name: name, binds: Binds.storeInstance, symbol: symbol));
+          out.emit(
+            RawNode(
+              kind: 'app.StoreInstance',
+              span: out.span(variable),
+              symbol: symbol,
+              fields: <String, RawValue>{
+                'store': RawRef(storeSymbol),
+                'scope': RawLiteral(storeScope),
+              },
+            ),
+          );
+          continue;
+        }
+
         final bool reactive = !member.fields.isFinal ||
             mutated.names.contains(name) ||
-            registry.isStateHolder(variable.declaredFragment?.element.type);
+            registry.isStateHolder(fieldType);
 
         if (!reactive) {
           // A constant of the object. No symbol: nothing declares it as a node, so a reference to it

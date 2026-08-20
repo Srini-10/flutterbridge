@@ -282,6 +282,7 @@ export {
   RouterProvider,
   StoreProvider,
   ThemeProvider,
+  useLocalStore,
   useRouter,
   useStore,
   useTheme,

@@ -25,6 +25,7 @@ import 'package:bridge_analyzer/src/session/adapters/adapter_result.dart';
 import 'package:bridge_analyzer/src/session/colour_constants.dart';
 import 'package:bridge_analyzer/src/session/extract/raw_node_emitter.dart';
 import 'package:bridge_analyzer/src/session/extract/scope.dart';
+import 'package:bridge_analyzer/src/session/extract/symbol_table.dart';
 
 /// Extracts expressions.
 final class ExpressionExtractor {
@@ -173,6 +174,8 @@ final class ExpressionExtractor {
           fields: <String, RawValue>{
             'receiver': RawChild(extract(node.prefix, scope)),
             'property': RawLiteral(node.identifier.name),
+            if (_storeMemberTarget(node.prefix.staticType, node.identifier.element) case final String symbol)
+              'target': RawRef(symbol),
             'type': out.typeRef(node.staticType, at: node),
           },
         );
@@ -197,6 +200,8 @@ final class ExpressionExtractor {
           fields: <String, RawValue>{
             'receiver': RawChild(extract(target, scope)),
             'property': RawLiteral(node.propertyName.name),
+            if (_storeMemberTarget(target.staticType, node.propertyName.element) case final String symbol)
+              'target': RawRef(symbol),
             'type': out.typeRef(node.staticType, at: node),
           },
         );
@@ -887,11 +892,48 @@ final class ExpressionExtractor {
         else ...<String, RawValue>{
           'receiver': RawChild(extract(target, scope)),
           'method': RawLiteral(node.methodName.name),
+          if (_storeMemberTarget(target.staticType, node.methodName.element) case final String symbol)
+            'target': RawRef(symbol),
         },
         ..._arguments(node.argumentList, scope),
         'type': out.typeRef(node.staticType, at: node),
       },
     );
+  }
+
+  /// The store member [element] resolves to, when [receiverType] is a declared store (ADR-27).
+  ///
+  /// Resolved by the member's own declaring element, never by name: a `MethodElement` — a call, or a
+  /// tear-off with no parens, which reaches the analyzer as the same `PropertyAccess`/`PrefixedIdentifier`
+  /// shape a getter read does — resolves against the store's action symbol scheme; an explicit getter
+  /// against its derived scheme; the implicit getter Dart synthesizes for a plain field against its
+  /// signal scheme. A member declared outside this project (`addListener`, `notifyListeners`, `dispose` —
+  /// `ChangeNotifier`'s own API, not the store's) yields `null`: `Symbols.pathOf` returns `null` for a
+  /// library this project does not declare, which is exactly the fact that separates a store's own member
+  /// from the framework surface every `ChangeNotifier` inherits.
+  String? _storeMemberTarget(DartType? receiverType, Element? element) {
+    if (element == null || !registry.isStoreBase(receiverType)) {
+      return null;
+    }
+    final Element? owner = element.enclosingElement;
+    final String? ownerName = owner?.name;
+    final String? library = owner?.library?.identifier;
+    final String? name = element.name;
+    if (ownerName == null || library == null || name == null) {
+      return null;
+    }
+    if (element is MethodElement) {
+      return Symbols.actionIn(library, name, owner: ownerName, packageName: out.packageName);
+    }
+    if (element is GetterElement) {
+      // `isOriginVariable` — the implicit getter Dart synthesizes for a plain field — vs. an explicit
+      // getter the author wrote (`isOriginDeclaration`). Not `isSynthetic`: deprecated in this analyzer
+      // in favour of exactly this pair, for exactly this distinction.
+      return element.isOriginVariable
+          ? Symbols.signalIn(library, name, owner: ownerName, packageName: out.packageName)
+          : Symbols.derivedIn(library, name, owner: ownerName, packageName: out.packageName);
+    }
+    return null;
   }
 
   RawNode _construction(InstanceCreationExpression node, Scope scope) {

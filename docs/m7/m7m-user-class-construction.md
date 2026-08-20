@@ -2,6 +2,12 @@
 
 ## Status: investigated, not implemented. Documentation only.
 
+> **Resolved by M7-N.** The recommendation below — an ADR deciding member-access resolution, then
+> implementing it — is exactly what M7-N did. See
+> [ADR-27](../adr/0027-local-store-instances-and-member-identity.md) and
+> [`m7n-local-store-member-resolution.md`](m7n-local-store-member-resolution.md). This document's findings
+> are left as originally written; only this pointer is new.
+
 This milestone traced `FavoritesStore`'s `BRG3002` refusal to its exact root, and found the refusal is
 **correct given the current architecture** — not a generator gap that a small fix closes. A faithful lowering
 requires a member-access resolution mechanism that does not exist anywhere in this codebase today, and

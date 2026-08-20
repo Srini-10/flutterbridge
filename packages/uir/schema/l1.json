@@ -297,6 +297,10 @@
               "type": "string",
               "description": "The method name."
             },
+            "target": {
+              "$ref": "shared.json#/$defs/NodeId",
+              "description": "The store member (sig.Action) this resolves to, when the receiver's resolved type is a declared store (ADR-27). Absent for an ordinary method call."
+            },
             "args": {
               "type": "array",
               "items": {
@@ -350,6 +354,10 @@
             "property": {
               "type": "string",
               "description": "The property name."
+            },
+            "target": {
+              "$ref": "shared.json#/$defs/NodeId",
+              "description": "The store member (sig.Signal/sig.Derived) this resolves to, when the receiver's resolved type is a declared store (ADR-27). Absent for an ordinary property access."
             },
             "type": {
               "$ref": "shared.json#/$defs/TypeRef",
