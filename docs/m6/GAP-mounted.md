@@ -266,3 +266,29 @@ Still open, and still the only open question: what the runtime kit provides. `us
 component handle is not idiomatic — and that is a lowering decision for the ADR, not a schema one.
 
 **Unchanged: not implemented.** This remains a schema change, and the M6 rule stops it here.
+
+---
+
+## M7-I follow-up — reconfirmed against a current analyzer, with Flutter-source and runtime-kit evidence
+
+M7-H (async/`await`/awaited-navigation extraction) landed and left exactly this gap as the one
+diagnostic standing on its own dedicated fixture (`async_push_guard`) and on `hello_bridge`'s real push.
+M7-I was scoped to close it. `docs/m7/m7i-mounted-lifecycle-lowering.md` is the full report; the
+conclusion is unchanged from this document — **still a schema amendment, still not implemented** — and
+nothing below revises the `logic.Intrinsic` proposal above. What M7-I adds:
+
+- The UIR shape (`logic.Ref{name: 'mounted'}`, no `target`) was re-verified against a **fresh** analyzer
+  run, post-M7-H, not assumed from this document's own earlier measurement. Byte-identical.
+- Read directly from the installed Flutter SDK (`framework.dart`): `State.mounted => _element != null`,
+  `Element.mounted => _widget != null`. Within one `unmount()` call, `context.mounted` clears *before*
+  `dispose()` runs and `State.mounted` clears *after* — a genuine, previously-unmeasured ordering
+  difference between the two, which does not change the two-member vocabulary decision above (their
+  scope difference — lexical `this` vs. a passed value — was already the load-bearing reason for two
+  members, not their timing) but is worth having on record precisely.
+- The runtime contract question this document left open — "what the runtime kit provides" — has a
+  designed (not implemented) answer now: a ref-based `useMounted()`, following the exact pattern this
+  kit's own `packages/runtimes/react/src/internal/react/lifecycle.ts` already uses for a different fact
+  (`useUpdateEffect`'s internal `mounted` ref) — including the Strict-Mode-correctness detail that the
+  ref must be re-set to `true` *inside* the effect body, not only at its initial value, to survive
+  React's development-mode mount→cleanup→remount replay. See M7-I's own document for the full derivation
+  and the rejected boolean-snapshot alternative.
