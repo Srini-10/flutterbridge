@@ -68,12 +68,30 @@ export function useRuntimeType(module: ModuleBuilder, name: string): string {
 type Node = Record<string, unknown>;
 
 /**
+ * Dart SDK value types — outside `package:flutter/`, entirely — the kit mirrors one by one.
+ *
+ * Unlike the Flutter-library check below, `dart:core` and `dart:async` are broad SDK namespaces most of
+ * which the kit has no business mirroring — `String`, `List`, `RegExp`, `StackTrace` all resolve to
+ * `dart:core` and none of them belong here. So this *is* the hand-kept list the library check avoids: small
+ * and explicit, one entry per type the kit actually carries, keyed by `library#name`.
+ *
+ * `Duration` was mirrored for M4-H's implicit animations (`widgets/animation.ts`) before this milestone
+ * existed; M7-L found the SDK's own `Duration(milliseconds: …)` — `dart:core`, not `package:flutter/` —
+ * fell through the library check below and refused, even though the kit had carried the exact shape it
+ * needed since M4-H.
+ */
+const SDK_VALUE_TYPES: ReadonlySet<string> = new Set(['dart:core#Duration']);
+
+/**
  * Whether a constructed type is provided by the runtime kit, and so must be imported from it.
  *
  * Decided from the type's own **library**, not a hand-kept list of names: `EdgeInsets` resolves to
  * `package:flutter/…` and the kit mirrors it; `Product` resolves to the application's own package and does
  * not. A kit value type added later — `Alignment`, `BoxConstraints` — needs no change here, which is the
  * property that makes "one runtime component, one map entry, nothing else" true for value types too.
+ *
+ * `dart:core`/`dart:async` SDK types are the one exception, checked against {@link SDK_VALUE_TYPES}
+ * explicitly rather than by library prefix — see that constant for why a blanket rule is wrong there.
  *
  * A framework type the kit does *not* export is caught the moment the build-proof typechecks real output
  * (`TS2305`), which is what that test is for. This was validation defect D2, fixed by asking the library
@@ -84,5 +102,8 @@ type Node = Record<string, unknown>;
  */
 export function isKitProvided(type: Node | undefined): boolean {
   const library = type?.['library'];
-  return typeof library === 'string' && library.startsWith('package:flutter/');
+  if (typeof library !== 'string') return false;
+  if (library.startsWith('package:flutter/')) return true;
+  const name = type?.['name'];
+  return typeof name === 'string' && SDK_VALUE_TYPES.has(`${library}#${name}`);
 }

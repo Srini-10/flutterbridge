@@ -3,20 +3,20 @@ import 'package:flutter/material.dart';
 import 'detail_screen.dart';
 
 /// `hello_bridge/lib/screens/login_screen.dart`'s own shape, reduced: a named async method
-/// (referenced by tear-off, not written inline in `onPressed`) that checks `mounted` and only then
-/// awaits the push itself — `await Navigator.push(...)`, not a bare one. `_count`/`_increment` are
-/// read by `DetailScreen` itself (single-hop), which is what makes them promotable under M7-F/N11;
-/// `title` is a plain constant that must never be promoted.
+/// (referenced by tear-off, not written inline in `onPressed`) that awaits a real, Duration-backed
+/// delay, checks `mounted` only once that delay resolves, and only then awaits the push itself —
+/// `await Navigator.push(...)`, not a bare one. `_count`/`_increment` are read by `DetailScreen`
+/// itself (single-hop), which is what makes them promotable under M7-F/N11; `title` is a plain
+/// constant that must never be promoted.
 ///
-/// No earlier `await Future.delayed(...)`/network stand-in, unlike `hello_bridge`'s own `_submit`:
-/// `Duration`'s named constructor argument, and `Duration`/`Future` themselves reaching the
-/// generator as opaque application classes, are `hello_bridge`'s own separate, pre-existing gaps
-/// (BRG3002) — confirmed unaffected by this milestone (measured before and after, identical count).
-/// Including one here would block this fixture's own `tsc` proof on a defect this milestone does not
-/// own, for no gain: `dart/bridge_analyzer/test/transition_test.dart`'s reduction ladder already
-/// proves an earlier `await` ahead of the guard extracts and orders correctly, exhaustively, at the
-/// analyzer level — this fixture's job is the rest of the pipeline (N1–N11, the generator, `tsc`),
-/// which does not need a second await to exercise.
+/// The `Future.delayed(Duration(...))` is real, not a stand-in: through M7-J this fixture had none,
+/// because `Duration`/`Future` reaching the generator as opaque application classes (BRG3002) was a
+/// separate, pre-existing gap this fixture's `tsc` proof could not clear regardless. M7-L closed that
+/// gap — the kit already carried `Duration` for M4-H's implicit animations, and `delay(Duration)`
+/// wraps it in a `Promise<void>` — so the delay this comment used to explain away now belongs here,
+/// exercising the real await this fixture's mounted/navigate guard is meant to guard. 30ms: long
+/// enough for a Playwright test to unmount the tree mid-flight without a real race, short enough that
+/// no browser test waits on it meaningfully (Phase 17, M7-L).
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -42,6 +42,8 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() {
       _isSubmitting = true;
     });
+
+    await Future<void>.delayed(const Duration(milliseconds: 30));
 
     if (!mounted) {
       return;

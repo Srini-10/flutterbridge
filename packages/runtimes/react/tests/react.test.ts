@@ -6,6 +6,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   defineStore,
+  delay,
+  Duration,
   RouterProvider,
   signal,
   StoreProvider,
@@ -591,6 +593,52 @@ describe('useMounted — component/context liveness (ADR-0026)', () => {
     });
 
     expect(sawAfterAwait).toBe(false);
+  });
+
+  it('composes with the real delay() primitive, not just a manually-controlled Promise (M7-L)', async () => {
+    // The scenario above proves `useMounted()` against a `Promise` this test resolves by hand. This
+    // proves the same race against the actual artefact M7-L generates code to await —
+    // `await delay(Duration(...))` is exactly what a lowered `await Future.delayed(Duration(...))`
+    // calls — so the guard hello_bridge's real `_submit`/`async_push_guard`'s real `_submit` compile to
+    // is proven against the real function, not a stand-in for it.
+    vi.useFakeTimers();
+    try {
+      let ref: { current: boolean } | undefined;
+      let sawAfterAwait: boolean | undefined;
+
+      function Screen(): ReactElement {
+        ref = useMounted();
+        return createElement(
+          'button',
+          {
+            onClick: () => {
+              void (async () => {
+                await delay(new Duration({ milliseconds: 30 }));
+                sawAfterAwait = ref!.current;
+              })();
+            },
+          },
+          'go',
+        );
+      }
+
+      const { container, unmount } = render(createElement(Screen));
+      const button = container.querySelector('button')!;
+      act(() => button.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+
+      // Unmount while the real 30ms timer is still pending — exactly the unmount-during-await race
+      // `hello_bridge`'s `_submit`/`async_push_guard`'s `_submit` guard against in the generated app.
+      unmount();
+      expect(ref?.current).toBe(false);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30);
+      });
+
+      expect(sawAfterAwait).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('two instances of the same component are isolated (ADR-15/INV-19)', () => {

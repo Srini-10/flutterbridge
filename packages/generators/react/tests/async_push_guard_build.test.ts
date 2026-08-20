@@ -11,12 +11,13 @@ import {
   typecheckEmitted,
 } from './support.js';
 
-// The M7-H/M7-J build-proof — an awaited `Navigator.push`, reached only after a `mounted` guard, inside
-// a named async method referenced by tear-off (`onPressed: _isSubmitting ? null : _submit`) rather than
-// written inline — `hello_bridge/lib/screens/login_screen.dart`'s own shape, isolated from its 27 other,
-// unrelated blockers (missing theme tokens, opaque `Duration`/`Future` classes, `ui.Async` branches,
-// `themeMode`, multi-hop forwarding). See `docs/m7/m7h-async-navigation-extraction.md` and
-// `docs/m7/m7j-mounted-lifecycle-implementation.md`.
+// The M7-H/M7-J/M7-L build-proof — a real `await Future.delayed(Duration(...))`, then a `mounted` guard,
+// then an awaited `Navigator.push`, inside a named async method referenced by tear-off (`onPressed:
+// _isSubmitting ? null : _submit`) rather than written inline — `hello_bridge/lib/screens/login_screen.dart`'s
+// own shape, isolated from its other, unrelated blockers (missing theme tokens — closed by M7-K — `ui.Async`
+// branches, `themeMode`, multi-hop forwarding, `FavoritesStore`'s own class construction). See
+// `docs/m7/m7h-async-navigation-extraction.md`, `docs/m7/m7j-mounted-lifecycle-implementation.md`, and
+// `docs/m7/m7l-async-duration-future-lowering.md`.
 //
 // Real analyzer output in, real `bridge normalize` (N1–N11), real generator, real `tsc` — no
 // hand-authored UIR anywhere, matching every other build-proof in this suite.
@@ -26,8 +27,13 @@ import {
 // `logic.Ref`, indistinguishable in shape from a genuine unresolved reference, because nothing carried
 // its resolved-element identity past extraction. ADR-0026 closes that: `mounted`/`context.mounted` are
 // recognized by resolved element in the analyzer (never by spelling) and lowered to `logic.Intrinsic`,
-// a framework-neutral fact the generator turns into `@bridge/runtime-react`'s `useMounted()`. This file
-// is the fixture that gap left waiting for exactly that — it now reaches a clean `tsc` build.
+// a framework-neutral fact the generator turns into `@bridge/runtime-react`'s `useMounted()`.
+//
+// Through M7-J this fixture deliberately had no `Future.delayed`/`Duration` of its own: both reached the
+// generator as opaque application classes (`BRG3002`), a separate, pre-existing gap that would have
+// blocked this file's own `tsc` proof on a defect neither milestone owned. M7-L closed that gap — see the
+// fixture's own doc comment (`lib/home_screen.dart`) — and this file now exercises the real await it
+// stands in for, not a stand-in without one.
 
 afterAll(cleanupBuildProofTemporaries);
 
@@ -141,11 +147,23 @@ describe('M7-H/M7-J build-proof: an awaited, mounted-guarded push, real analyzer
 
     // Hoisted once, unconditionally, at component top — never inside the handler that reads it.
     expect(source.match(/const mounted = useMounted\(\);/g)?.length).toBe(1);
-    // The handler reads `.current` live, after the state writes that precede the guard in source order
-    // — never a value captured before them.
-    expect(source).toMatch(/_isSubmitting\.set\(true\);\s*if \(\(!mounted\.current\)\) {\s*return;/);
+    // The real await between the two state writes and the guard: `Future.delayed(Duration(...))` lowered
+    // to the kit's `delay(Duration)`, `Duration(milliseconds: 30)` surviving as `new Duration({ ... })`
+    // rather than a bare number (M7-L) — a reviewer reading this beside the Dart sees the same call.
+    expect(source).toMatch(/_isSubmitting\.set\(true\);\s*await delay\(new Duration\(\{ milliseconds: 30 \}\)\);\s*if \(\(!mounted\.current\)\) {\s*return;/);
     // The push itself is still there, after the guard, unconditionally reached once the guard passes.
     expect(source).toMatch(/router\.push\(/);
+  });
+
+  it('the handler is declared async — sig.Action.isAsync drives it, not whether a lowered await survives (M7-L)', () => {
+    // M7-H's terminal-navigate rule drops the `await` off a trailing `Navigator.push` (nothing follows it
+    // to sequence with), so before this fixture had a *second*, non-terminal await, this handler's only
+    // surviving `await` token belonged to a function nothing had ever checked was declared `async` — a
+    // latent defect `tsc` could not catch until there was a real await left to misplace.
+    const { context } = harness(after);
+    const { files } = reactGenerator.generate(context);
+    const source = fileAt(files, 'src/components/home-screen.tsx') ?? '';
+    expect(source).toMatch(/const handle_[0-9a-f]+ = async \(\) => {/);
   });
 
   it('Flutter → analyzer (ADR-0026 recognition) → compiler (promotion) → generator → tsc', () => {

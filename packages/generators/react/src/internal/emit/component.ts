@@ -478,7 +478,14 @@ function declareLocalActions(
       )
       .join(', ');
 
-    module.line(`const ${names.get(id)!} = (${actionParams}) => {`);
+    // `sig.Action.isAsync` — the analyzer's own record of `async` on the Dart method — drives this rather
+    // than whether the lowered body happens to contain an `await` token. M7-H's terminal-navigate rule
+    // drops the `await` off a trailing `Navigator.push` (nothing follows it to sequence with), so a
+    // handler whose only *surviving* await is a plain `await Navigator.push(...)` had no `await` in its
+    // emitted body at all — until M7-L gave `Future.delayed` somewhere to lower to, no fixture had a
+    // second, non-terminal await to expose that the function itself was never marked `async`.
+    const isAsync = action['isAsync'] === true;
+    module.line(`const ${names.get(id)!} = ${isAsync ? 'async ' : ''}(${actionParams}) => {`);
     module.block(() => {
       module.lineAll(
         emitActionBody(action, actionScope(scope, signals, declared, names, componentParams)),

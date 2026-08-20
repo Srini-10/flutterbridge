@@ -1,4 +1,6 @@
-// What the **development** build says about the mounted-guarded, awaited push (M7-H/M7-J).
+// What the **development** build says about the mounted-guarded, awaited push (M7-H/M7-J/M7-L), now
+// awaiting a real `Future.delayed(Duration(...))` ahead of the guard rather than resolving synchronously
+// underneath it.
 //
 // `async-push-guard.spec.ts` runs against production, where React's hook-order diagnostics are
 // shortened to a numbered URL and Strict Mode's development-only mount→cleanup→remount replay never

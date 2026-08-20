@@ -523,6 +523,35 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
         );
         return 'undefined';
       }
+
+      // `Future.delayed(Duration(...))` — M7-L. Not a `Future` compatibility class: JavaScript already has
+      // the value this needs, `Promise<void>`, and `logic.Await` already lowers to plain `await`. `delay`
+      // is the one function the kit needed to add. Recognized by the resolved type (`dart:async`'s
+      // `Future`) and constructor name, never by matching the source text `Future.delayed`.
+      const constructedType = node['type'] as Node | undefined;
+      if (typeName === 'Future' && constructedType?.['library'] === 'dart:async' && node['constructorName'] === 'delayed') {
+        const delayedArgs = asArray(node['args']);
+        // The two-argument overload — `Future.delayed(duration, computation)` — runs `computation` after
+        // the delay and resolves to *its* result. `delay` is `Promise<void>`: there is nothing in it to
+        // resolve a callback's result into, so a computation is refused by name rather than silently
+        // dropped — the single-argument shape is asserted by length, not by ignoring a second argument.
+        if (delayedArgs.length !== 1) {
+          scope.report(
+            GeneratorDiagnosticCode.UnsupportedExpression,
+            'error',
+            '`Future.delayed` with a computation callback resolves to whatever that callback returns, ' +
+              "once the delay elapses. This kit's `delay` is `Promise<void>` — nothing to resolve a " +
+              'callback\'s result into. Missing capability: an asynchronous computation, not just a wait. ' +
+              'Owner: the runtime kit.',
+            idOf(node),
+          );
+          return REFUSED;
+        }
+        const durationArg = emitExpression(delayedArgs[0] as Node, scope);
+        if (durationArg === REFUSED) return REFUSED;
+        return `${scope.module.use(RUNTIME, 'delay')}(${durationArg})`;
+      }
+
       const constructorName = node['constructorName'];
       const kitProvided = isKitProvided(node['type'] as Node | undefined);
 

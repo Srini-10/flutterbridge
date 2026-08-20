@@ -1,11 +1,13 @@
-// The M7-H/M7-J browser proof — an async, awaited `Navigator.push`, reached only after a `mounted`
-// guard, inside a named method reached by tear-off (`onPressed: _isSubmitting ? null : _submit`) rather
-// than written inline. `hello_bridge/lib/screens/login_screen.dart`'s own shape, and the one scenario
-// this whole M7 navigation arc has been building toward: M7-H got the awaited push to lower; ADR-0026/
-// M7-J got `mounted` itself a real lowering (`useMounted()`), closing the last diagnostic standing
-// between this fixture and a running application. `async_push_guard_build.test.ts` proves the emitted
-// project typechecks; it cannot prove the guard reads *live* state rather than something captured at
-// render — only a real click, in a real browser, against the real generated app can.
+// The M7-H/M7-J/M7-L browser proof — an async, awaited `Navigator.push`, reached only after a real
+// `await Future.delayed(Duration(...))` and a `mounted` guard, inside a named method reached by
+// tear-off (`onPressed: _isSubmitting ? null : _submit`) rather than written inline.
+// `hello_bridge/lib/screens/login_screen.dart`'s own shape, and the one scenario this whole M7
+// navigation arc has been building toward: M7-H got the awaited push to lower; ADR-0026/M7-J got
+// `mounted` itself a real lowering (`useMounted()`); M7-L got the real await ahead of the guard to
+// lower (`delay(Duration)`), so the guard this fixture exercises now suspends on a genuine asynchronous
+// boundary rather than resolving synchronously underneath it. `async_push_guard_build.test.ts` proves
+// the emitted project typechecks; it cannot prove the guard reads *live* state rather than something
+// captured at render — only a real click, in a real browser, against the real generated app can.
 
 import { expect, test } from '@playwright/test';
 
@@ -75,9 +77,15 @@ test.describe('the guarded async push, still mounted', () => {
     const button = page.getByRole('button', { name: 'Sign in' });
     await expect(button).toBeEnabled();
     await button.click();
+    // M7-L: `_submit` now awaits a real `Future.delayed(Duration(milliseconds: 30))` — lowered to a real
+    // `await delay(...)` — before its `mounted` guard, so there is a genuine, observable window in which
+    // `_isSubmitting` is `true` and nothing has navigated yet. Through M7-J this assertion was not
+    // reachable: the handler had nothing to await, so the button's disabled state and the destination
+    // screen could both appear in the same microtask flush.
+    await expect(button).toBeDisabled();
     // By the time navigation has occurred, `_isSubmitting` was already reset to `false` before the push
-    // (source order: setState(true) → mounted check → setState(false) → push) — the destination screen
-    // is what's on screen now, not a disabled button frozen mid-submit.
+    // (source order: setState(true) → await delay → mounted check → setState(false) → push) — the
+    // destination screen is what's on screen now, not a disabled button frozen mid-submit.
     await expect(page.locator('header')).toContainText('Authenticated');
   });
 });

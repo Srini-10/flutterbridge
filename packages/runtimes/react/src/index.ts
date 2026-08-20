@@ -485,6 +485,13 @@ export {
   type DurationOptions,
 } from './internal/widgets/animation.js';
 
+// ── M7-L: `Future.delayed` ────────────────────────────────────────────────────────────────────────
+//
+// The proven subset of Dart's `Future`: a single-argument `Future.delayed(Duration(...))`, awaited in
+// statement position. Not a `Future` compatibility class — JavaScript's own `Promise` and `await` already
+// carry that shape; `delay` is the one function needed to await.
+export { delay } from './internal/async/delay.js';
+
 // ── M4-G: the application shell ───────────────────────────────────────────────────────────────────
 //
 // There is deliberately no `MaterialApp`. Everything it carries has already been consumed by the time a

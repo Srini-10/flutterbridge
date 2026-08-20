@@ -542,7 +542,12 @@ describe('the real hello_bridge document', () => {
     reactGenerator.generate(context);
     const codes = [...new Set(reported.filter((d) => d.severity === 'error').map((d) => d.code))].sort();
     expect(codes).toEqual([
-      // a call with Dart named arguments, whose callee signature the program does not carry
+      // `new FavoritesStore()` — one of the application's own classes, which this generator does not emit
+      // a declaration for. `Duration`/`Future.delayed` no longer contribute to this code: M7-L taught the
+      // generator both are SDK types the kit already mirrors (`Duration`) or has a direct lowering for
+      // (`Future.delayed(Duration(...))` → `delay(Duration)`), recognized by resolved library and
+      // constructor name, never by matching `Future.delayed` as a source string. See
+      // docs/m7/m7l-async-duration-future-lowering.md.
       'BRG3002',
       // a `FutureBuilder` whose loading and error branches are inside the builder (BRG2104 upstream)
       'BRG3007',
@@ -1390,5 +1395,157 @@ describe('M7-J — logic.Intrinsic lowers to useMounted() (ADR-0026)', () => {
     expect(source).toMatch(/if \(\(!mounted\.current\)\) {/);
     // `context` itself never needed to be a distinct name in the output — there is only one ref.
     expect(source).not.toMatch(/\bcontext\b\.mounted/);
+  });
+});
+
+describe('M7-L — Future.delayed(Duration(...)) lowers to delay(Duration)', () => {
+  function durationNew(id: string, milliseconds: number): unknown {
+    return {
+      id,
+      kind: 'logic.New',
+      span,
+      isConst: true,
+      typeName: 'Duration',
+      type: { library: 'dart:core', name: 'Duration' },
+      namedArgs: {
+        milliseconds: { id: `${id}-ms`, kind: 'logic.Lit', span, type: { library: 'dart:core', name: 'int' }, value: milliseconds },
+      },
+    };
+  }
+
+  function futureDelayed(id: string, args: unknown[]): unknown {
+    return {
+      id,
+      kind: 'logic.New',
+      span,
+      typeName: 'Future',
+      type: { library: 'dart:async', name: 'Future<void>' },
+      constructorName: 'delayed',
+      args,
+    };
+  }
+
+  function asyncAction(id: string, body: unknown[]): AnyUirNode {
+    return { id, kind: 'sig.Action', span, anchor: `lib/main.dart#${id}`, isAsync: true, body } as unknown as AnyUirNode;
+  }
+
+  it('a bare Duration(milliseconds: N) is kit-provided, by resolved type (dart:core), not by name', () => {
+    const nodes: AnyUirNode[] = [
+      ...minimalApp().filter((n) => n.kind !== 'ui.Component'),
+      component('c1', 'HomeScreen', element('e1', 'AnimatedOpacity', { duration: { id: 'b1', kind: 'bind.Expr', span, expr: durationNew('d1', 250) } })),
+    ];
+    const { context, reported } = harness(nodes);
+    const { files } = reactGenerator.generate(context);
+    expect(reported.filter((d) => d.severity === 'error')).toEqual([]);
+    const source = fileAt(files, 'src/components/home-screen.tsx') ?? '';
+    expect(source).toContain('new Duration({ milliseconds: 250 })');
+    expect(source).toMatch(/import \{[^}]*\bDuration\b[^}]*\} from '@bridge\/runtime-react'/);
+  });
+
+  it('await Future.delayed(Duration(...)) lowers to await delay(new Duration({ ... })), and the handler is async', () => {
+    const nodes: AnyUirNode[] = [
+      asyncAction('act-submit', [
+        {
+          id: 'stmt1',
+          kind: 'logic.ExprStmt',
+          span,
+          expr: { id: 'aw1', kind: 'logic.Await', span, type: { library: 'dart:core', name: 'void' }, operand: futureDelayed('fd1', [durationNew('d1', 400)]) },
+        },
+      ]),
+      component(
+        'home',
+        'HomeScreen',
+        element('btn1', 'ElevatedButton', {
+          onPressed: { id: 'oe1', kind: 'bind.Expr', span, expr: { id: 'ref2', kind: 'logic.Ref', span, type: { name: 'void Function()' }, name: '_submit', target: 'act-submit' } },
+        }),
+      ),
+      { id: 'r1', kind: 'app.Route', span, path: '/', component: 'home' } as unknown as AnyUirNode,
+    ];
+    const { context, reported } = harness(nodes);
+    const { files } = reactGenerator.generate(context);
+    expect(reported.filter((d) => d.severity === 'error')).toEqual([]);
+    const source = fileAt(files, 'src/components/home-screen.tsx') ?? '';
+    expect(source).toContain('await delay(new Duration({ milliseconds: 400 }))');
+    expect(source).toMatch(/const handle_\w+ = async \(\) => {/);
+    expect(source).toMatch(/import \{[^}]*\bdelay\b[^}]*\} from '@bridge\/runtime-react'/);
+  });
+
+  it('a computation-bearing Future.delayed is refused by name, not silently dropped', () => {
+    const nodes: AnyUirNode[] = [
+      asyncAction('act-submit', [
+        {
+          id: 'stmt1',
+          kind: 'logic.ExprStmt',
+          span,
+          expr: {
+            id: 'aw1',
+            kind: 'logic.Await',
+            span,
+            type: { library: 'dart:core', name: 'void' },
+            operand: futureDelayed('fd1', [
+              durationNew('d1', 400),
+              { id: 'cb1', kind: 'logic.Lambda', span, params: [], body: { id: 'lit1', kind: 'logic.Lit', span, type: { name: 'int' }, value: 1 }, type: { name: 'int Function()' } },
+            ]),
+          },
+        },
+      ]),
+      component(
+        'home',
+        'HomeScreen',
+        element('btn1', 'ElevatedButton', {
+          onPressed: { id: 'oe1', kind: 'bind.Expr', span, expr: { id: 'ref2', kind: 'logic.Ref', span, type: { name: 'void Function()' }, name: '_submit', target: 'act-submit' } },
+        }),
+      ),
+      { id: 'r1', kind: 'app.Route', span, path: '/', component: 'home' } as unknown as AnyUirNode,
+    ];
+    const { context, reported } = harness(nodes);
+    reactGenerator.generate(context);
+    const errors = reported.filter((d) => d.severity === 'error');
+    expect(errors.length).toBeGreaterThan(0);
+    expect(errors.some((d) => /computation callback/.test(d.message))).toBe(true);
+  });
+
+  it("Future.value(...) — a different constructor — is not mistaken for the delayed(...) shape", () => {
+    // The recognition is `typeName === 'Future' && library === 'dart:async' && constructorName === 'delayed'`
+    // together, not `typeName === 'Future'` alone — a different named constructor still refuses as an
+    // ordinary unmapped construction, which is the correct outcome: `Future.value` was never probed or
+    // proven equivalent to anything in this milestone (Phase 6).
+    const nodes: AnyUirNode[] = [
+      asyncAction('act-submit', [
+        {
+          id: 'stmt1',
+          kind: 'logic.ExprStmt',
+          span,
+          expr: {
+            id: 'aw1',
+            kind: 'logic.Await',
+            span,
+            type: { library: 'dart:core', name: 'void' },
+            operand: {
+              id: 'fv1',
+              kind: 'logic.New',
+              span,
+              typeName: 'Future',
+              type: { library: 'dart:async', name: 'Future<int>' },
+              constructorName: 'value',
+              args: [{ id: 'lit1', kind: 'logic.Lit', span, type: { library: 'dart:core', name: 'int' }, value: 1 }],
+            },
+          },
+        },
+      ]),
+      component(
+        'home',
+        'HomeScreen',
+        element('btn1', 'ElevatedButton', {
+          onPressed: { id: 'oe1', kind: 'bind.Expr', span, expr: { id: 'ref2', kind: 'logic.Ref', span, type: { name: 'void Function()' }, name: '_submit', target: 'act-submit' } },
+        }),
+      ),
+      { id: 'r1', kind: 'app.Route', span, path: '/', component: 'home' } as unknown as AnyUirNode,
+    ];
+    const { context, reported } = harness(nodes);
+    reactGenerator.generate(context);
+    const errors = reported.filter((d) => d.severity === 'error');
+    expect(errors.length).toBeGreaterThan(0);
+    expect(errors.some((d) => /own class/.test(d.message) || /does not emit class declarations/.test(d.message))).toBe(true);
   });
 });
