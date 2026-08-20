@@ -648,6 +648,11 @@ final class ExpressionExtractor {
   /// A name. If it resolves to a declaration something else can refer to, it carries a `target`.
   RawNode _reference(Expression node, String name, Scope scope, {DartType? type}) {
     final Binding? binding = scope.lookup(name);
+    // A build-method local (M8-B): the render tree has no `logic.VarDecl` to point a `target` at, so the
+    // value is carried by re-extracting the local's own initializer here instead of naming it.
+    if (binding?.inlineValue case final Expression initializer) {
+      return extract(initializer, scope);
+    }
     return RawNode(
       kind: 'logic.Ref',
       span: out.span(node),

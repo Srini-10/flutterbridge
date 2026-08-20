@@ -128,6 +128,12 @@ final class WidgetExtractor {
         // is opaque *at the UI level* while remaining fully modelled as an expression inside.
         return out.opaqueUi(node, 'widget returned by a call', type: node.staticType);
 
+      // A build-method local holding a widget (M8-B) — `final child = Text('A'); return child;`. The
+      // render tree has nowhere to declare `child`, so its own initializer is extracted again here,
+      // in its place, rather than the reference being left opaque.
+      case SimpleIdentifier() when scope.lookup(node.name)?.inlineValue != null:
+        return extract(scope.lookup(node.name)!.inlineValue!, scope, index: index, slot: slot);
+
       case SimpleIdentifier() || PrefixedIdentifier() || PropertyAccess():
         return out.opaqueUi(node, 'widget held in a variable', type: node.staticType);
 

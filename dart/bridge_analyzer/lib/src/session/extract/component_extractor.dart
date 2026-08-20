@@ -15,6 +15,8 @@
 library;
 
 import 'package:analyzer/dart/ast/ast.dart';
+import 'package:analyzer/dart/ast/visitor.dart';
+import 'package:analyzer/dart/element/element.dart';
 import 'package:bridge_analyzer/src/model/raw_node.dart';
 import 'package:bridge_analyzer/src/session/adapters/adapter_context.dart';
 import 'package:bridge_analyzer/src/session/adapters/adapter_registry.dart';
@@ -150,9 +152,10 @@ final class ComponentExtractor {
     ]);
 
     final Expression? rendered = _returnedWidget(build.body);
-    final RawNode render = rendered == null
-        ? out.opaqueUi(build.body, 'build body with statements')
-        : widgets.extract(rendered, buildScope);
+    final RawNode render = rendered != null
+        ? widgets.extract(rendered, buildScope)
+        : _structuredBody(build.body, buildScope) ??
+              out.opaqueUi(build.body, 'build body with statements');
 
     out.emit(
       RawNode(
@@ -191,8 +194,163 @@ final class ComponentExtractor {
   /// caller keeps the whole body opaque — visible, and fixable later.
   static Expression? _returnedWidget(FunctionBody body) => switch (body) {
     ExpressionFunctionBody() => body.expression,
-    BlockFunctionBody() when body.block.statements.length == 1 =>
-      (body.block.statements.single as ReturnStatement?)?.expression,
+    BlockFunctionBody(block: Block(statements: [ReturnStatement(:final Expression? expression)])) =>
+      expression,
     _ => null,
   };
+
+  /// Decomposes a `build`-shaped body whose statements are: zero or more `final x = expr;` locals,
+  /// then a return-shaped tail (a bare `return`, an early-return `if` chain, or a terminal
+  /// `if`/`else` where both branches return) — the multi-statement shapes real applications were
+  /// measured to need (`docs/m8/m8a-real-application-baseline.md` §5, §15; M8-B).
+  ///
+  /// Everything else — a bare expression statement, a mutating statement, a loop, a `switch`, an `if`
+  /// whose branch does anything but return, statements after a terminal `if`/`else` — returns `null`,
+  /// unrecognised, and the caller falls back to the existing opaque body.
+  ///
+  /// The grammar this accepts *is* the side-effect boundary (M8-B Phase 7): nothing it admits can
+  /// mutate anything outside a fresh temporary, so nothing the transform below reorders or
+  /// duplicates can have an externally observable effect. It does not otherwise sniff for purity —
+  /// Flutter's own contract already requires `build()` to have none.
+  RawNode? _structuredBody(FunctionBody body, Scope scope) {
+    if (body is! BlockFunctionBody) {
+      return null;
+    }
+    final List<Statement> statements = body.block.statements;
+
+    int i = 0;
+    Scope withLocals = scope;
+    final List<Element> declared = <Element>[];
+    while (i < statements.length) {
+      final Statement statement = statements[i];
+      if (statement is! VariableDeclarationStatement) {
+        break;
+      }
+      final List<VariableDeclaration> variables = statement.variables.variables;
+      if (variables.length != 1) {
+        // `var a = 1, b = 2;` in one statement — the schema has no multi-declaration shape for a
+        // render-tree local, and no real build method needed one (M8-A's census).
+        return null;
+      }
+      final VariableDeclaration variable = variables.single;
+      final Expression? initializer = variable.initializer;
+      final Element? element = variable.declaredFragment?.element;
+      if (initializer == null || element == null) {
+        // Nothing to substitute a bare `late Widget child;` with.
+        return null;
+      }
+      declared.add(element);
+      withLocals = withLocals.withBinding(
+        Binding(name: variable.name.lexeme, binds: Binds.local, inlineValue: initializer),
+      );
+      i++;
+    }
+
+    final RawNode? tail = _tail(statements, i, withLocals);
+    if (tail == null) {
+      return null;
+    }
+
+    // Every declared local must be read somewhere in the method — an unused one would otherwise
+    // vanish from the output along with whatever its initializer did (Phase 7: no silent effect
+    // dropping). A local can be read from a later local's own initializer as well as from the tail,
+    // so the whole statement list is scanned, not just the tail.
+    final _UsageFinder usage = _UsageFinder();
+    for (final Statement statement in statements) {
+      statement.accept(usage);
+    }
+    if (declared.any((Element element) => !usage.elements.contains(element))) {
+      return null;
+    }
+
+    return tail;
+  }
+
+  /// The render tree at [statements]\[[index]\] onward — a plain return, an early-return `if` chain,
+  /// or a terminal `if`/`else` where both branches return. `null` for anything else.
+  RawNode? _tail(List<Statement> statements, int index, Scope scope) {
+    if (index >= statements.length) {
+      return null;
+    }
+    final Statement statement = statements[index];
+
+    if (statement is ReturnStatement) {
+      if (index != statements.length - 1 || statement.expression == null) {
+        return null;
+      }
+      return widgets.extract(statement.expression!, scope);
+    }
+
+    if (statement is IfStatement) {
+      final Expression? thenReturn = _bareReturn(statement.thenStatement);
+      if (thenReturn == null) {
+        return null;
+      }
+
+      if (statement.elseStatement == null) {
+        // `if (c) return A;` — the fallback is whatever comes after it.
+        final RawNode? otherwise = _tail(statements, index + 1, scope);
+        if (otherwise == null) {
+          return null;
+        }
+        return _cond(statement, thenReturn, otherwise, scope, index);
+      }
+
+      // `if (c) { return A; } else { return B; }` — both branches terminal, so nothing may follow.
+      if (index != statements.length - 1) {
+        return null;
+      }
+      final Expression? elseReturn = _bareReturn(statement.elseStatement!);
+      if (elseReturn == null) {
+        return null;
+      }
+      return _cond(
+        statement,
+        thenReturn,
+        widgets.extract(elseReturn, scope, slot: 'otherwise'),
+        scope,
+        index,
+      );
+    }
+
+    return null;
+  }
+
+  /// `return X;`, bare or as the sole statement of a `{ return X; }` block. `null` for anything else,
+  /// including a value-less `return;`.
+  static Expression? _bareReturn(Statement statement) => switch (statement) {
+    ReturnStatement(:final Expression? expression) => expression,
+    Block(statements: [ReturnStatement(:final Expression? expression)]) => expression,
+    _ => null,
+  };
+
+  RawNode _cond(
+    IfStatement source,
+    Expression thenExpression,
+    RawNode otherwise,
+    Scope scope,
+    int index,
+  ) => RawNode(
+    kind: 'ui.Cond',
+    span: out.span(source),
+    anchorSegment: 'if[$index]',
+    fields: <String, RawValue>{
+      'test': RawChild(widgets.bindings.extract(source.expression, scope)),
+      'then': RawChild(widgets.extract(thenExpression, scope, slot: 'then')),
+      'otherwise': RawChild(otherwise),
+    },
+  );
+}
+
+/// Finds which declarations a statement tree reads, by resolved element — never by name (M8-B).
+final class _UsageFinder extends RecursiveAstVisitor<void> {
+  final Set<Element> elements = <Element>{};
+
+  @override
+  void visitSimpleIdentifier(SimpleIdentifier node) {
+    if (node.element case final Element element) {
+      elements.add(element);
+    }
+    super.visitSimpleIdentifier(node);
+  }
 }

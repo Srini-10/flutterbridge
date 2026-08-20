@@ -846,7 +846,15 @@ export function emitUiNode(node: Node, module: ModuleBuilder, scope: EmitScope, 
       // A `ui.Cond` is a ternary, not an `if`: it is an expression, and it sits inside JSX where a statement
       // cannot go. An absent branch renders nothing — `null`, not an empty fragment, which would still create
       // a node.
-      const condition = emitBinding(node['condition'] as Node, scope);
+      //
+      // The schema's field is `test` (`l2.json`'s `UiCond`), not `condition` — this read the wrong field,
+      // so `emitBinding(undefined, scope)` emitted the literal string `undefined` as the ternary's own
+      // condition, and every `ui.Cond` reachable from a real build always rendered its `otherwise` branch,
+      // silently. Never caught for the same reason `ui.List`'s field-name bug above wasn't: no real
+      // analyzer output had ever reached this case through a build that went on to actually typecheck and
+      // run (M8-B's structured build-method extraction is what first put a signal-driven `ui.Cond` at a
+      // component's render root and proved it through real `tsc`).
+      const condition = emitBinding(node['test'] as Node, scope);
       const then = node['then'] === undefined ? 'null' : emitUiNode(node['then'] as Node, module, scope, depth + 1);
       const otherwise =
         node['otherwise'] === undefined ? 'null' : emitUiNode(node['otherwise'] as Node, module, scope, depth + 1);

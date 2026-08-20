@@ -12,6 +12,7 @@
 /// see.
 library;
 
+import 'package:analyzer/dart/ast/ast.dart';
 import 'package:meta/meta.dart';
 
 /// What a name in scope refers to.
@@ -49,7 +50,7 @@ enum Binds {
 @immutable
 final class Binding {
   /// Creates a binding of [name].
-  const Binding({required this.name, required this.binds, this.symbol});
+  const Binding({required this.name, required this.binds, this.symbol, this.inlineValue});
 
   /// The name as written.
   final String name;
@@ -61,6 +62,18 @@ final class Binding {
   ///
   /// A local has none: nothing outside its function can refer to it, so it needs no identity.
   final String? symbol;
+
+  /// A build-method local's own initializer, substituted at every reference instead of named
+  /// (M8-B, "structured build-method extraction").
+  ///
+  /// `ui.Component.render` has no statement sequence to declare a local in — it is a `ui.*` tree, not a
+  /// `logic.Block` — so a reference cannot resolve to a sibling `logic.VarDecl` the way one does inside
+  /// an action body. Re-extracting the declaration's own initializer at each use site is what carries the
+  /// value into the tree instead, relying on the same invariant Flutter's own framework contract already
+  /// requires of `build()`: it is free of externally observable side effects, so evaluating its
+  /// expressions more than once (or reordering them relative to a later branch) does not change what the
+  /// program renders. `null` for every other binding kind — nothing else needs this.
+  final Expression? inlineValue;
 }
 
 /// A lexical scope: a set of names, and the scope enclosing it.

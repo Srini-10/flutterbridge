@@ -1,0 +1,19 @@
+name: structured_build
+description: >-
+  M8-B fixture: a build() body extraction previously collapsed to ui.Opaque wholesale — a local
+  (`final greeting = _greeted ? '...' : '...';`), used inside the returned tree, followed by an
+  early return on a signal-driven condition (`if (_loading) { return ...; }`), followed by the
+  final return. The exact shape both audited Continuum applications hit
+  (docs/m8/m8a-real-application-baseline.md §5, §15).
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

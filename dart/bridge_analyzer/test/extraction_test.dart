@@ -1484,6 +1484,356 @@ class _ScreenState extends State<Screen> {
     });
   });
 
+  group('structured build-method extraction (M8-B)', () {
+    // M8-A measured two real applications (Continuum) and found the single blocker preventing either
+    // from reaching generated output: a `build()`-shaped method whose body is not a single
+    // `return <expr>` was extracted wholesale as `ui.Opaque` — even a plain `if`/local-variable shape
+    // that carries no side effect at all. These tests assert the *structure* extraction now produces
+    // for the shapes M8-A's census found real, not merely the absence of `ui.Opaque`.
+
+    test('A: a single return still extracts exactly as before', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('A');
+}
+''');
+      expect(app.errors, isEmpty);
+      expect(app.ofKind('ui.Opaque'), isEmpty);
+      final Map<String, dynamic> render = app.only('ui.Component')['render'] as Map<String, dynamic>;
+      expect(render['kind'], 'ui.Text');
+    });
+
+    test('B: a local holding a widget substitutes at its one use, not opaqued', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) {
+    final child = const Text('A');
+    return child;
+  }
+}
+''');
+      expect(app.errors, isEmpty);
+      expect(
+        app.ofKind('ui.Opaque'),
+        isEmpty,
+        reason: 'a widget-valued local referenced once must not fall back to "widget held in a variable"',
+      );
+      final Map<String, dynamic> render = app.only('ui.Component')['render'] as Map<String, dynamic>;
+      expect(render['kind'], 'ui.Text');
+      expect((render['value'] as Map<String, dynamic>)['value'], 'A');
+    });
+
+    test('C: if + fallback return becomes ui.Cond, condition and branches correct', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class W extends StatelessWidget {
+  const W({required this.flag, super.key});
+  final bool flag;
+  @override
+  Widget build(BuildContext context) {
+    if (flag) {
+      return const Text('A');
+    }
+    return const Text('B');
+  }
+}
+''');
+      expect(app.errors, isEmpty);
+      expect(app.ofKind('ui.Opaque'), isEmpty);
+      expect(app.ofKind('ui.Cond'), hasLength(1));
+      final Map<String, dynamic> cond = app.only('ui.Cond');
+      expect((cond['test'] as Map<String, dynamic>)['param'], 'flag');
+      final Map<String, dynamic> then = cond['then'] as Map<String, dynamic>;
+      final Map<String, dynamic> otherwise = cond['otherwise'] as Map<String, dynamic>;
+      expect((then['value'] as Map<String, dynamic>)['value'], 'A');
+      expect((otherwise['value'] as Map<String, dynamic>)['value'], 'B');
+    });
+
+    test('D: an early-return chain becomes nested ui.Cond, in source order', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class W extends StatelessWidget {
+  const W({required this.a, required this.b, super.key});
+  final bool a;
+  final bool b;
+  @override
+  Widget build(BuildContext context) {
+    if (a) return const Text('A');
+    if (b) return const Text('B');
+    return const Text('C');
+  }
+}
+''');
+      expect(app.errors, isEmpty);
+      expect(app.ofKind('ui.Opaque'), isEmpty);
+      final List<Map<String, dynamic>> conds = app.ofKind('ui.Cond');
+      expect(conds, hasLength(2), reason: 'two ifs, two ui.Cond — one is not collapsed into the other');
+
+      final Map<String, dynamic> outer = app.only('ui.Component')['render'] as Map<String, dynamic>;
+      expect(
+        (outer['test'] as Map<String, dynamic>)['param'],
+        'a',
+        reason: 'the first condition in source order must be the outermost — reversing it changes which branch a true `a` takes',
+      );
+      expect(((outer['then'] as Map<String, dynamic>)['value'] as Map<String, dynamic>)['value'], 'A');
+
+      final Map<String, dynamic> inner = outer['otherwise'] as Map<String, dynamic>;
+      expect(inner['kind'], 'ui.Cond');
+      expect((inner['test'] as Map<String, dynamic>)['param'], 'b');
+      expect(((inner['then'] as Map<String, dynamic>)['value'] as Map<String, dynamic>)['value'], 'B');
+      expect(((inner['otherwise'] as Map<String, dynamic>)['value'] as Map<String, dynamic>)['value'], 'C');
+    });
+
+    test('E: a conditional expression assigned to a local still reaches ui.Cond', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class W extends StatelessWidget {
+  const W({required this.flag, super.key});
+  final bool flag;
+  @override
+  Widget build(BuildContext context) {
+    final child = flag ? const Text('A') : const Text('B');
+    return child;
+  }
+}
+''');
+      expect(app.errors, isEmpty);
+      expect(app.ofKind('ui.Opaque'), isEmpty);
+      expect(app.ofKind('ui.Cond'), hasLength(1));
+    });
+
+    test('F: a local referenced twice substitutes independently at each site', () async {
+      final Extracted app = await extract(r'''
+import 'package:flutter/material.dart';
+class W extends StatelessWidget {
+  const W({required this.name, super.key});
+  final String name;
+  @override
+  Widget build(BuildContext context) {
+    final label = 'Hello, \$name';
+    return Column(children: [Text(label), Text(label.toUpperCase())]);
+  }
+}
+''');
+      expect(app.errors, isEmpty);
+      expect(app.ofKind('ui.Opaque'), isEmpty);
+      final List<Map<String, dynamic>> texts = app.ofKind('ui.Text');
+      expect(texts, hasLength(2));
+      // The second use wraps the *same* substituted expression in `.toUpperCase()` — proving the
+      // second site is not a stale or shared reference to the first's node, but its own extraction of
+      // the same initializer, only in .toUpperCase() where the first one is bare.
+      expect(
+        (texts[1]['value'] as Map<String, dynamic>)['expr'] as Map<String, dynamic>?,
+        containsPair('method', 'toUpperCase'),
+      );
+    });
+
+    test('two distinct locals never resolve to the wrong one', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) {
+    final first = const Text('first');
+    final second = const Text('second');
+    return Row(children: [second, first]);
+  }
+}
+''');
+      expect(app.errors, isEmpty);
+      expect(app.ofKind('ui.Opaque'), isEmpty);
+      final Map<String, dynamic> row = app.only('ui.Element');
+      final List<dynamic> children = row['children'] as List<dynamic>;
+      final List<Map<String, dynamic>> texts = children.cast<Map<String, dynamic>>();
+      expect(
+        (texts[0]['value'] as Map<String, dynamic>)['value'],
+        'second',
+        reason: 'source order put `second` first — resolving by declaration order rather than by the reference actually written would silently swap these',
+      );
+      expect((texts[1]['value'] as Map<String, dynamic>)['value'], 'first');
+    });
+
+    test('G: if/else where both branches return is the same shape as if + fallback', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class W extends StatelessWidget {
+  const W({required this.flag, super.key});
+  final bool flag;
+  @override
+  Widget build(BuildContext context) {
+    if (flag) {
+      return const Text('A');
+    } else {
+      return const Text('B');
+    }
+  }
+}
+''');
+      expect(app.errors, isEmpty);
+      expect(app.ofKind('ui.Opaque'), isEmpty);
+      expect(app.ofKind('ui.Cond'), hasLength(1));
+      final Map<String, dynamic> cond = app.only('ui.Cond');
+      expect(((cond['then'] as Map<String, dynamic>)['value'] as Map<String, dynamic>)['value'], 'A');
+      expect(((cond['otherwise'] as Map<String, dynamic>)['value'] as Map<String, dynamic>)['value'], 'B');
+    });
+
+    test('a build() that was already a lone if/else statement no longer crashes extraction', () async {
+      // Regression: `_returnedWidget`'s old unsafe `as ReturnStatement?` cast threw
+      // `type 'IfStatementImpl' is not a subtype of type 'ReturnStatement?'` for exactly this shape —
+      // found by this milestone's own reduction ladder, not present in any prior fixture.
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class W extends StatelessWidget {
+  const W({required this.flag, super.key});
+  final bool flag;
+  @override
+  Widget build(BuildContext context) {
+    if (flag) {
+      return const Text('A');
+    } else {
+      return const Text('B');
+    }
+  }
+}
+''');
+      expect(app.result, isNotNull);
+      expect(app.errors, isEmpty);
+    });
+
+    group('the side-effect boundary refuses honestly rather than dropping anything (Phase 7)', () {
+      test('a bare statement before the return stays opaque', () async {
+        final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+void logSomething() {}
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) {
+    logSomething();
+    return const Text('A');
+  }
+}
+''');
+        final Map<String, dynamic> render = app.only('ui.Component')['render'] as Map<String, dynamic>;
+        expect(render['kind'], 'ui.Opaque');
+        expect(render['reason'], 'build body with statements');
+        expect(
+          render['dartSource'],
+          contains('logSomething()'),
+          reason: 'the call is preserved verbatim, not silently dropped (INV-4)',
+        );
+      });
+
+      test('mutating a local (`x++`) stays opaque', () async {
+        final Extracted app = await extract(r'''
+import 'package:flutter/material.dart';
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) {
+    var x = 0;
+    x++;
+    return Text('$x');
+  }
+}
+''');
+        final Map<String, dynamic> render = app.only('ui.Component')['render'] as Map<String, dynamic>;
+        expect(render['kind'], 'ui.Opaque');
+      });
+
+      test('a side effect inside a non-returning if stays opaque', () async {
+        final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class W extends StatelessWidget {
+  const W({required this.flag, super.key});
+  final bool flag;
+  void mutate() {}
+  @override
+  Widget build(BuildContext context) {
+    if (flag) {
+      mutate();
+    }
+    return const Text('A');
+  }
+}
+''');
+        final Map<String, dynamic> render = app.only('ui.Component')['render'] as Map<String, dynamic>;
+        expect(
+          render['kind'],
+          'ui.Opaque',
+          reason: 'an if whose branch does not return is not the proven-safe grammar — refuse, do not guess',
+        );
+      });
+
+      test('an unused local stays opaque rather than silently dropping its initializer', () async {
+        final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+int sideEffecting() => 1;
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) {
+    final unused = sideEffecting();
+    return const Text('A');
+  }
+}
+''');
+        final Map<String, dynamic> render = app.only('ui.Component')['render'] as Map<String, dynamic>;
+        expect(
+          render['kind'],
+          'ui.Opaque',
+          reason: 'dropping an unread local would silently drop whatever its initializer did',
+        );
+        expect(render['dartSource'], contains('sideEffecting()'));
+      });
+
+      test('statements after a terminal if/else stay opaque, not silently unreachable code', () async {
+        final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class W extends StatelessWidget {
+  const W({required this.flag, super.key});
+  final bool flag;
+  @override
+  Widget build(BuildContext context) {
+    if (flag) {
+      return const Text('A');
+    } else {
+      return const Text('B');
+    }
+    // ignore: dead_code
+    return const Text('C');
+  }
+}
+''');
+        final Map<String, dynamic> render = app.only('ui.Component')['render'] as Map<String, dynamic>;
+        expect(render['kind'], 'ui.Opaque');
+      });
+
+      test('a multi-variable declaration statement stays opaque', () async {
+        final Extracted app = await extract(r'''
+import 'package:flutter/material.dart';
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) {
+    final a = 1, b = 2;
+    return Text('\$a\$b');
+  }
+}
+''');
+        final Map<String, dynamic> render = app.only('ui.Component')['render'] as Map<String, dynamic>;
+        expect(render['kind'], 'ui.Opaque');
+      });
+    });
+  });
+
   group('paths in UIR are platform-independent (M5-F)', () {
     // `span.file` is not a filesystem path once it is written: it becomes an anchor —
     // `'${span.file}#$segment'` in `node_factory.dart` — and an anchor is hashed into the node's id

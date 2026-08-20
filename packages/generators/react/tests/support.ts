@@ -229,3 +229,9 @@ export function localStoreRaw(): string {
   const path = fileURLToPath(new URL('../../../../fixtures/uir/local_store.ndjson', import.meta.url));
   return readFileSync(path, 'utf8');
 }
+
+/** The real `fixtures/apps/structured_build` document, raw analyzer output (M8-B) — not yet normalized. */
+export function structuredBuildRaw(): string {
+  const path = fileURLToPath(new URL('../../../../fixtures/uir/structured_build.ndjson', import.meta.url));
+  return readFileSync(path, 'utf8');
+}
