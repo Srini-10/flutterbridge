@@ -1834,6 +1834,192 @@ class W extends StatelessWidget {
     });
   });
 
+  group('enum constant reference identity (M8-D)', () {
+    // M8-C measured 7 real Continuum sites where an application enum constant (`_Stage.loading`)
+    // reached the generator as an apparently-undeclared name — `logic.Ref` with no `target` — even
+    // though the analyzer had already, itself, fully resolved which declaration it named. These tests
+    // assert the resolved identity directly (`target` equals the enum declaration's own id), not merely
+    // the absence of a diagnostic — a test that only checked `errors: isEmpty` would still pass if the
+    // target were wrong, or pointed at nothing.
+
+    test('a same-file enum constant carries a target to its own declaration', () async {
+      final Extracted app = await extract(r'''
+import 'package:flutter/material.dart';
+enum Stage { idle, ready }
+class W extends StatelessWidget {
+  const W({required this.flag, super.key});
+  final bool flag;
+  @override
+  Widget build(BuildContext context) => Text('${flag ? Stage.ready : Stage.idle}');
+}
+''');
+      expect(app.errors, isEmpty);
+      final Map<String, dynamic> decl = app.only('logic.EnumDecl');
+      expect(decl['name'], 'Stage');
+      final List<Map<String, dynamic>> refs = app
+          .ofKind('logic.Ref')
+          .where((Map<String, dynamic> r) => (r['name'] as String).startsWith('Stage.'))
+          .toList();
+      expect(refs, hasLength(2));
+      for (final Map<String, dynamic> ref in refs) {
+        expect(
+          ref['target'],
+          decl['id'],
+          reason: '`${ref['name']}` must resolve to the enum it names, not merely to *an* enum',
+        );
+      }
+    });
+
+    test('a cross-file, same-package enum constant resolves to the declaring file, not the referring one', () async {
+      final Extracted app = await extract(
+        r'''
+import 'package:flutter/material.dart';
+import 'stage.dart';
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => Text('${Stage.ready}');
+}
+''',
+        extra: <String, String>{'stage.dart': 'enum Stage { idle, ready }'},
+      );
+      expect(app.errors, isEmpty);
+      final Map<String, dynamic> decl = app.only('logic.EnumDecl');
+      final Map<String, dynamic> ref = app.ofKind('logic.Ref').singleWhere((Map<String, dynamic> r) => r['name'] == 'Stage.ready');
+      expect(ref['target'], decl['id']);
+      expect(
+        (decl['span'] as Map<String, dynamic>)['file'],
+        'lib/stage.dart',
+        reason: 'the declaration extraction found must be the one in stage.dart, not a duplicate invented in main.dart',
+      );
+    });
+
+    test('two different enums with an identically-named member never share identity', () async {
+      final Extracted app = await extract(r'''
+import 'package:flutter/material.dart';
+enum EnumA { ready, waiting }
+enum EnumB { ready, waiting }
+class W extends StatelessWidget {
+  const W({required this.a, required this.b, super.key});
+  final EnumA a;
+  final EnumB b;
+  @override
+  Widget build(BuildContext context) => Text('${a == EnumA.ready}${b == EnumB.ready}');
+}
+''');
+      expect(app.errors, isEmpty);
+      final List<Map<String, dynamic>> decls = app.ofKind('logic.EnumDecl');
+      expect(decls, hasLength(2));
+      final String declA = decls.singleWhere((Map<String, dynamic> d) => d['name'] == 'EnumA')['id'] as String;
+      final String declB = decls.singleWhere((Map<String, dynamic> d) => d['name'] == 'EnumB')['id'] as String;
+      expect(declA, isNot(declB));
+
+      final Map<String, dynamic> refA = app.ofKind('logic.Ref').singleWhere((Map<String, dynamic> r) => r['name'] == 'EnumA.ready');
+      final Map<String, dynamic> refB = app.ofKind('logic.Ref').singleWhere((Map<String, dynamic> r) => r['name'] == 'EnumB.ready');
+      expect(refA['target'], declA);
+      expect(refB['target'], declB);
+      expect(
+        refA['target'],
+        isNot(refB['target']),
+        reason: 'the two `.ready`s must never resolve to the same identity merely because they are spelled the same',
+      );
+    });
+
+    test('a local variable shadowing an enum member name is never claimed as the enum', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+enum Stage { idle, ready }
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) {
+    final ready = 'shadow';
+    return Text(ready);
+  }
+}
+''');
+      expect(app.errors, isEmpty);
+      // The local wins by ordinary lexical scoping (M8-B) before any static/enum-qualified handling is
+      // ever considered — its value is substituted in place, so no `logic.Ref` survives to name it at
+      // all, and certainly none carries a `target` into `Stage`.
+      expect(app.ofKind('logic.Ref'), isEmpty);
+      final Map<String, dynamic> text = app.only('ui.Text');
+      final Map<String, dynamic> value = text['value'] as Map<String, dynamic>;
+      expect(
+        (value['expr'] as Map<String, dynamic>)['value'],
+        'shadow',
+        reason: "the local's own value, substituted in place — not the enum member of the same name",
+      );
+    });
+
+    test('an unrelated instance property with the same spelling stays a plain property read', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+enum Stage { idle, ready }
+class Thing {
+  final String ready = 'x';
+}
+class W extends StatelessWidget {
+  const W({required this.thing, super.key});
+  final Thing thing;
+  @override
+  Widget build(BuildContext context) => Text(thing.ready);
+}
+''');
+      expect(app.errors, isEmpty);
+      final Map<String, dynamic> access = app.only('logic.PropertyAccess');
+      expect(access['property'], 'ready');
+      expect(
+        access.containsKey('target'),
+        isFalse,
+        reason: '`thing.ready` is an ordinary instance field read, not an enum constant — claiming a '
+            'target here would resolve it to `Stage` on the strength of the word "ready" alone',
+      );
+    });
+
+    test('a static const on a plain class is not claimed as an enum constant (Phase 13)', () async {
+      final Extracted app = await extract(r'''
+import 'package:flutter/material.dart';
+class Limits {
+  static const count = 3;
+}
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => Text('${Limits.count}');
+}
+''');
+      expect(app.errors, isEmpty);
+      final Map<String, dynamic> ref = app.ofKind('logic.Ref').singleWhere((Map<String, dynamic> r) => r['name'] == 'Limits.count');
+      expect(
+        ref.containsKey('target'),
+        isFalse,
+        reason: 'a plain static const is not an enum constant (`isEnumConstant` is false) — this '
+            'milestone only proved the enum case; classifying static const the same way would be an '
+            'unproven claim, not a proven identity',
+      );
+    });
+
+    test('an unresolved reference is still unresolved, not accidentally claimed', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => Text(SomethingUndeclared.value);
+}
+''');
+      // The project itself is malformed here (an undeclared name) — this asserts the extractor does not
+      // crash on it and does not fabricate a `target` for a name that resolves to nothing.
+      final List<Map<String, dynamic>> refs = app.ofKind('logic.Ref');
+      for (final Map<String, dynamic> ref in refs) {
+        if (ref['name'] == 'SomethingUndeclared.value') {
+          expect(ref.containsKey('target'), isFalse);
+        }
+      }
+    });
+  });
+
   group('paths in UIR are platform-independent (M5-F)', () {
     // `span.file` is not a filesystem path once it is written: it becomes an anchor —
     // `'${span.file}#$segment'` in `node_factory.dart` — and an anchor is hashed into the node's id

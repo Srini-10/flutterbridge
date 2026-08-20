@@ -101,6 +101,15 @@ final class Symbols {
     return path == null ? null : 'store:$path#$name';
   }
 
+  /// The symbol for a class, mixin, enum, or type alias declared in [libraryUri] — the sibling of
+  /// [componentIn] and [storeIn], for an enum constant reference (`Stage.ready`) whose declaring file
+  /// may or may not be the referring one (M8-D). Mirrors [type] exactly; the two agree by construction,
+  /// since both derive from the same [pathOf].
+  static String? typeIn(String libraryUri, String name, {required String packageName}) {
+    final String? path = pathOf(libraryUri, packageName: packageName);
+    return path == null ? null : 'type:$path#$name';
+  }
+
   /// The signal symbol for a member declared in [libraryUri] (ADR-27).
   static String? signalIn(String libraryUri, String name, {required String owner, required String packageName}) {
     final String? path = pathOf(libraryUri, packageName: packageName);

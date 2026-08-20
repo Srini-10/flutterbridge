@@ -303,6 +303,21 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
         if (read !== undefined) return read;
         const local = scope.localName(target);
         if (local !== undefined) return local;
+
+        // An application enum constant (M8-D) — `Stage.ready`, `target` resolved by the analyzer's own
+        // element model to the declaring `logic.EnumDecl` (never by matching this string against
+        // anything). No runtime kit or generated declaration models a Dart enum's *type* today — no
+        // contract this milestone found says one should — so the value it carries is the one thing
+        // already proven and already unique within it: the constant's own name, read from the tail of
+        // this Ref's own `name` (not re-derived by search), lowered as a plain string literal. Dart's own
+        // type system already refuses to compare two different enums' constants against each other, so
+        // nothing downstream can conflate `Stage.ready` with an unrelated enum's own `ready`.
+        const enumDecl = scope.node(target) as unknown as Node | undefined;
+        if (enumDecl !== undefined && enumDecl['kind'] === 'logic.EnumDecl') {
+          const dotted = typeof node['name'] === 'string' ? node['name'] : '';
+          const member = dotted.split('.').at(-1) ?? '';
+          return stringLiteral(member);
+        }
       }
       const name = node['name'];
 

@@ -154,6 +154,7 @@ final class ExpressionExtractor {
               ? node.identifier.name
               : '${node.prefix.name}.${node.identifier.name}',
           scope,
+          staticTarget: _enumConstantTarget(node.identifier.element),
         );
 
       case PrefixedIdentifier():
@@ -186,7 +187,12 @@ final class ExpressionExtractor {
           if (_constValue(node) case final RawNode folded) {
             return folded;
           }
-          return _reference(node, '${target.name}.${node.propertyName.name}', scope);
+          return _reference(
+            node,
+            '${target.name}.${node.propertyName.name}',
+            scope,
+            staticTarget: _enumConstantTarget(node.propertyName.element),
+          );
         }
         if (registry.mountedIntrinsicOf(node) case final MountedKind kind) {
           return _intrinsic(kind, extract(target, scope), node);
@@ -646,13 +652,19 @@ final class ExpressionExtractor {
   );
 
   /// A name. If it resolves to a declaration something else can refer to, it carries a `target`.
-  RawNode _reference(Expression node, String name, Scope scope, {DartType? type}) {
+  ///
+  /// [staticTarget] is for a name lexical scope has no opinion on at all — a static/enum-qualified
+  /// access (`Stage.ready`) is not a local, a parameter, or a field, so [Scope] never binds it, and
+  /// nothing here asks it to (M8-D). It is resolved by the caller instead, from the reference's own
+  /// analyzer element, before `_reference` is ever called.
+  RawNode _reference(Expression node, String name, Scope scope, {DartType? type, String? staticTarget}) {
     final Binding? binding = scope.lookup(name);
     // A build-method local (M8-B): the render tree has no `logic.VarDecl` to point a `target` at, so the
     // value is carried by re-extracting the local's own initializer here instead of naming it.
     if (binding?.inlineValue case final Expression initializer) {
       return extract(initializer, scope);
     }
+    final String? target = staticTarget ?? binding?.symbol;
     return RawNode(
       kind: 'logic.Ref',
       span: out.span(node),
@@ -661,7 +673,7 @@ final class ExpressionExtractor {
         // A `target` is a promise that something declares this symbol. A local has none — nothing
         // outside its function can refer to it — and inventing one would be a promise we could not
         // keep, which the builder would then report as BRG1201.
-        if (binding?.symbol != null) 'target': RawRef(binding!.symbol!),
+        if (target != null) 'target': RawRef(target),
         'type': out.typeRef(type ?? node.staticType, at: node),
       },
     );
@@ -904,6 +916,34 @@ final class ExpressionExtractor {
         'type': out.typeRef(node.staticType, at: node),
       },
     );
+  }
+
+  /// The enum declaration [element] belongs to, when it is an enum constant declared in this project
+  /// (M8-D).
+  ///
+  /// Resolved by `element.isEnumConstant` — a fact the analyzer already proved when it resolved the
+  /// reference, never a guess from spelling — and by the constant's own enclosing element, which is
+  /// the enum. `Symbols.typeIn` mirrors exactly how `logic.EnumDecl` registers its own symbol
+  /// (`declaration_extractor.dart`'s `out.symbols.type(name)`), so the two agree by construction: both
+  /// derive from the same declaring file and the same name, never matched against each other after the
+  /// fact. A constant declared outside this project (an SDK enum, or one from a sibling workspace
+  /// package this analysis root does not include) yields `null` — `Symbols.pathOf` returns `null` for a
+  /// library this project does not declare, exactly as it already does for `_storeMemberTarget` below.
+  String? _enumConstantTarget(Element? element) {
+    // `Stage.ready` resolves to the *getter* Dart synthesizes for the constant, the same shape any
+    // field read reaches this file as (`_storeMemberTarget`'s own `isOriginVariable` check, above) —
+    // never the `FieldElement` directly. `.variable` is the one already-resolved step back to it.
+    final Element? field = element is GetterElement && element.isOriginVariable ? element.variable : element;
+    if (field is! FieldElement || !field.isEnumConstant) {
+      return null;
+    }
+    final InstanceElement owner = field.enclosingElement;
+    final String? name = owner.name;
+    final String library = owner.library.identifier;
+    if (name == null) {
+      return null;
+    }
+    return Symbols.typeIn(library, name, packageName: out.packageName);
   }
 
   /// The store member [element] resolves to, when [receiverType] is a declared store (ADR-27).
