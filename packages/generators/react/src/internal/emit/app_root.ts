@@ -79,8 +79,10 @@ const UNMODELLED: Readonly<Record<string, { readonly capability: string; readonl
   supportedLocales: { capability: 'localisation', owner: 'an ADR — no UIR construct models a locale' },
   scrollBehavior: { capability: 'a scroll behaviour override', owner: 'the runtime kit' },
   themeMode: {
-    capability: 'selecting light or dark at runtime',
-    owner: 'the runtime kit (`ThemeProvider` resolves one brightness per tree; nothing switches it)',
+    capability: 'selecting light or dark at runtime from a Dart expression',
+    owner:
+      'the generator (the runtime kit already exposes a writable `theme.brightness` signal via ' +
+      '`ThemeProvider`/`useTheme()` — nothing here lowers `themeMode:`\'s expression into a call to it)',
   },
 };
 
