@@ -214,6 +214,26 @@ abstract final class GapCatalog {
   /// The argument carrying a theme's brightness.
   static const String brightnessProp = '';
 
+  /// The argument naming an explicit `ColorScheme` on `ThemeData`.
+  static const String colorSchemeProp = '';
+
+  /// The argument naming an implicit seed directly on `ThemeData` (not `ColorScheme.fromSeed`'s own).
+  static const String colorSchemeSeedProp = '';
+
+  /// The argument selecting Material 3.
+  static const String useMaterial3Prop = '';
+
   /// Arguments of a colour scheme that are not Material roles.
   static const Set<String> nonRoleProps = <String>{};
+
+  /// Flutter's own literal M3 baseline `ColorScheme`, light — what `ThemeData` falls back to when
+  /// neither [colorSchemeProp] nor [colorSchemeSeedProp] is given (ADR-13/M7-K).
+  static const Map<String, String> material3BaselineLight = <String, String>{
+
+  };
+
+  /// The dark half of [material3BaselineLight].
+  static const Map<String, String> material3BaselineDark = <String, String>{
+
+  };
 }

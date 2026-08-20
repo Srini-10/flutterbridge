@@ -496,7 +496,14 @@ describe('the real hello_bridge document', () => {
     // `app.Route.arguments`. The node count held at 38 through that regeneration — neither change adds or
     // removes a top-level record — but the *content* of several nodes did, which is why this file's
     // `notifyListeners` and `BRG3018` assertions changed alongside it.
-    expect(nodes.length).toBe(38);
+    //
+    // Regenerated again at M7-K (docs/m7/m7k-material-theme-token-completeness.md): `hello_bridge`'s theme
+    // sets `primaryColor:`/`scaffoldBackgroundColor:` with no `colorScheme:`/`colorSchemeSeed:`, and Flutter
+    // never leaves `ColorScheme` unset — `ThemeData` falls back to its own literal Material 3 baseline
+    // scheme. The analyzer now emits that baseline's 46 roles as `app.Token`s (INV-20; read verbatim from
+    // the SDK, not invented), which is 46 new top-level records — one `logic.Ref`, `_favoriteIds`, does not
+    // change; every other count below is unchanged.
+    expect(nodes.length).toBe(84);
     expect(nodes.filter((n) => n.kind === 'ui.Component')).toHaveLength(3);
     expect(nodes.filter((n) => n.kind === 'app.Store')).toHaveLength(1);
   });
@@ -539,14 +546,15 @@ describe('the real hello_bridge document', () => {
       'BRG3002',
       // a `FutureBuilder` whose loading and error branches are inside the builder (BRG2104 upstream)
       'BRG3007',
-      // the theme states `primaryColor:`, not a `ColorScheme`, so N10 derives no role set (INV-20)
-      'BRG3010',
       // `isDark`/`onToggleTheme` cross a route boundary but `LoginScreen` only forwards them, never
       // reads them — the multi-hop shape M7-E3 correctly declines to promote (ADR-11 amendment).
       // `mounted` and `widget` no longer contribute to this code: `widget` was lowered before this test
       // existed, and `mounted` is now `logic.Intrinsic` (ADR-0026), recognized and lowered rather than
-      // reaching here as an unresolved reference. `notifyListeners` is erased outright (M6-1). See
-      // docs/m7/m7d-reality-audit.md, docs/m7/m7j-mounted-lifecycle-implementation.md.
+      // reaching here as an unresolved reference. `notifyListeners` is erased outright (M6-1). `BRG3010`
+      // no longer contributes either: the theme states `primaryColor:`/`scaffoldBackgroundColor:` with no
+      // `colorScheme:`/`colorSchemeSeed:`, and the analyzer now emits Flutter's own M3 baseline role set
+      // for exactly that case (INV-20; M7-K). See docs/m7/m7d-reality-audit.md,
+      // docs/m7/m7j-mounted-lifecycle-implementation.md, docs/m7/m7k-material-theme-token-completeness.md.
       'BRG3013',
       // `MaterialApp.themeMode` — switching brightness after mount
       'BRG3016',
@@ -581,8 +589,14 @@ describe('the real hello_bridge document', () => {
     // and friends — which carry the same ARGB encoding but are named after their value rather than after a
     // `ThemeData` parameter. Filtering by name keeps this test about ADR-21's passthrough rather than about
     // how many colours the fixture happens to contain.
+    //
+    // Also excludes the 46 Material role tokens M7-K's baseline fallback now adds: real values too (they
+    // are the fixture's actual root cause fix), but a `role` other than these two legacy properties, and
+    // covered by their own fixture instead of this one.
     const tokens = (helloBridge() as unknown as Record<string, unknown>[])
-      .filter((n) => n['kind'] === 'app.Token' && !String(n['name'] ?? '').startsWith('color'));
+      .filter(
+        (n) => n['kind'] === 'app.Token' && !String(n['name'] ?? '').startsWith('color') && n['role'] == null,
+      );
     expect(tokens.length).toBe(2);
     const nodes = [...minimalApp().filter((n) => n.kind !== 'app.Token'), ...(tokens as unknown as AnyUirNode[])];
     const { files } = reactGenerator.generate(harness(nodes).context);

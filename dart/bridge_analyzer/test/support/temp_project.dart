@@ -306,9 +306,12 @@ class ColorScheme {
 }
 
 class ThemeData {
-  const ThemeData({this.colorScheme});
+  const ThemeData({this.colorScheme, this.brightness});
   final ColorScheme? colorScheme;
+  final Brightness? brightness;
 }
+
+enum Brightness { light, dark }
 
 enum BoxFit { fill, contain, cover, fitWidth, fitHeight, none, scaleDown }
 

@@ -336,6 +336,116 @@ abstract final class MaterialCatalog {
   /// The argument carrying a theme's brightness.
   static const String brightnessProp = 'brightness';
 
+  /// The argument naming an explicit `ColorScheme` on `ThemeData`.
+  static const String colorSchemeProp = 'colorScheme';
+
+  /// The argument naming an implicit seed directly on `ThemeData` (not `ColorScheme.fromSeed`'s own).
+  static const String colorSchemeSeedProp = 'colorSchemeSeed';
+
+  /// The argument selecting Material 3.
+  static const String useMaterial3Prop = 'useMaterial3';
+
   /// Arguments of a colour scheme that are not Material roles.
   static const Set<String> nonRoleProps = <String>{'brightness', 'seedColor', 'dynamicSchemeVariant'};
+
+  /// Flutter's own literal M3 baseline `ColorScheme`, light — what `ThemeData` falls back to when
+  /// neither [colorSchemeProp] nor [colorSchemeSeedProp] is given (ADR-13/M7-K).
+  static const Map<String, String> material3BaselineLight = <String, String>{
+  'primary': '#FF6750A4',
+  'onPrimary': '#FFFFFFFF',
+  'primaryContainer': '#FFEADDFF',
+  'onPrimaryContainer': '#FF4F378B',
+  'primaryFixed': '#FFEADDFF',
+  'primaryFixedDim': '#FFD0BCFF',
+  'onPrimaryFixed': '#FF21005D',
+  'onPrimaryFixedVariant': '#FF4F378B',
+  'secondary': '#FF625B71',
+  'onSecondary': '#FFFFFFFF',
+  'secondaryContainer': '#FFE8DEF8',
+  'onSecondaryContainer': '#FF4A4458',
+  'secondaryFixed': '#FFE8DEF8',
+  'secondaryFixedDim': '#FFCCC2DC',
+  'onSecondaryFixed': '#FF1D192B',
+  'onSecondaryFixedVariant': '#FF4A4458',
+  'tertiary': '#FF7D5260',
+  'onTertiary': '#FFFFFFFF',
+  'tertiaryContainer': '#FFFFD8E4',
+  'onTertiaryContainer': '#FF633B48',
+  'tertiaryFixed': '#FFFFD8E4',
+  'tertiaryFixedDim': '#FFEFB8C8',
+  'onTertiaryFixed': '#FF31111D',
+  'onTertiaryFixedVariant': '#FF633B48',
+  'error': '#FFB3261E',
+  'onError': '#FFFFFFFF',
+  'errorContainer': '#FFF9DEDC',
+  'onErrorContainer': '#FF8C1D18',
+  'surface': '#FFFEF7FF',
+  'onSurface': '#FF1D1B20',
+  'surfaceDim': '#FFDED8E1',
+  'surfaceBright': '#FFFEF7FF',
+  'surfaceContainerLowest': '#FFFFFFFF',
+  'surfaceContainerLow': '#FFF7F2FA',
+  'surfaceContainer': '#FFF3EDF7',
+  'surfaceContainerHigh': '#FFECE6F0',
+  'surfaceContainerHighest': '#FFE6E0E9',
+  'onSurfaceVariant': '#FF49454F',
+  'surfaceTint': '#FF6750A4',
+  'outline': '#FF79747E',
+  'outlineVariant': '#FFCAC4D0',
+  'shadow': '#FF000000',
+  'scrim': '#FF000000',
+  'inverseSurface': '#FF322F35',
+  'onInverseSurface': '#FFF5EFF7',
+  'inversePrimary': '#FFD0BCFF',
+  };
+
+  /// The dark half of [material3BaselineLight].
+  static const Map<String, String> material3BaselineDark = <String, String>{
+  'primary': '#FFD0BCFF',
+  'onPrimary': '#FF381E72',
+  'primaryContainer': '#FF4F378B',
+  'onPrimaryContainer': '#FFEADDFF',
+  'primaryFixed': '#FFEADDFF',
+  'primaryFixedDim': '#FFD0BCFF',
+  'onPrimaryFixed': '#FF21005D',
+  'onPrimaryFixedVariant': '#FF4F378B',
+  'secondary': '#FFCCC2DC',
+  'onSecondary': '#FF332D41',
+  'secondaryContainer': '#FF4A4458',
+  'onSecondaryContainer': '#FFE8DEF8',
+  'secondaryFixed': '#FFE8DEF8',
+  'secondaryFixedDim': '#FFCCC2DC',
+  'onSecondaryFixed': '#FF1D192B',
+  'onSecondaryFixedVariant': '#FF4A4458',
+  'tertiary': '#FFEFB8C8',
+  'onTertiary': '#FF492532',
+  'tertiaryContainer': '#FF633B48',
+  'onTertiaryContainer': '#FFFFD8E4',
+  'tertiaryFixed': '#FFFFD8E4',
+  'tertiaryFixedDim': '#FFEFB8C8',
+  'onTertiaryFixed': '#FF31111D',
+  'onTertiaryFixedVariant': '#FF633B48',
+  'error': '#FFF2B8B5',
+  'onError': '#FF601410',
+  'errorContainer': '#FF8C1D18',
+  'onErrorContainer': '#FFF9DEDC',
+  'surface': '#FF141218',
+  'onSurface': '#FFE6E0E9',
+  'surfaceDim': '#FF141218',
+  'surfaceBright': '#FF3B383E',
+  'surfaceContainerLowest': '#FF0F0D13',
+  'surfaceContainerLow': '#FF1D1B20',
+  'surfaceContainer': '#FF211F26',
+  'surfaceContainerHigh': '#FF2B2930',
+  'surfaceContainerHighest': '#FF36343B',
+  'onSurfaceVariant': '#FFCAC4D0',
+  'surfaceTint': '#FFD0BCFF',
+  'outline': '#FF938F99',
+  'outlineVariant': '#FF49454F',
+  'shadow': '#FF000000',
+  'scrim': '#FF000000',
+  'inverseSurface': '#FFE6E0E9',
+  'onInverseSurface': '#FF322F35',
+  'inversePrimary': '#FF6750A4',
+  };
 }

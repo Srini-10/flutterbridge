@@ -338,7 +338,44 @@ final class FlutterWidgetAdapter implements WidgetAdapter, ThemeAdapter {
         ),
       );
     }
+
+    // `ThemeData(...)` with neither `colorScheme:` nor `colorSchemeSeed:` — Flutter does not leave
+    // `ColorScheme` unset. `ThemeData`'s own factory constructor falls back to its hardcoded Material 3
+    // baseline scheme (`_colorSchemeLightM3`/`_colorSchemeDarkM3`), unconditionally, whenever
+    // `useMaterial3` is not explicitly `false`. That fallback is SDK behaviour, not a colour this
+    // adapter invents (INV-20): every value below is read verbatim from the installed Flutter SDK
+    // (ADR-13/M7-K), and an explicit `colorScheme:`/`colorSchemeSeed:` argument — checked above via
+    // `_argument`, which returns `null` only when the argument is textually absent — always wins.
+    if (type == 'ThemeData' &&
+        _argument(node, MaterialCatalog.colorSchemeProp) == null &&
+        _argument(node, MaterialCatalog.colorSchemeSeedProp) == null &&
+        _usesMaterial3(node)) {
+      final Map<String, String> baseline =
+          dark ? MaterialCatalog.material3BaselineDark : MaterialCatalog.material3BaselineLight;
+      for (final MapEntry<String, String> role in baseline.entries) {
+        tokens.add(
+          TokenDeclaration(
+            group: 'color',
+            name: role.key,
+            value: role.value,
+            at: node,
+            isDark: dark,
+            role: role.key,
+          ),
+        );
+      }
+    }
     return tokens;
+  }
+
+  /// Whether [node] — a `ThemeData(...)` — uses Material 3.
+  ///
+  /// `useMaterial3` defaults to `true` (`ThemeData`'s factory constructor: `useMaterial3 ??= true;`).
+  /// Only a literal `false` disables it; anything else — absent, a literal `true`, or a non-literal
+  /// expression this adapter cannot evaluate — is treated as Material 3, matching the SDK default.
+  static bool _usesMaterial3(InstanceCreationExpression node) {
+    final Expression? value = _argument(node, MaterialCatalog.useMaterial3Prop);
+    return value == null || value.toSource() != 'false';
   }
 
   /// Whether a theme is the dark one.

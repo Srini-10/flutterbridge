@@ -1018,6 +1018,167 @@ class Screen extends StatelessWidget {
     });
   });
 
+  group('a ThemeData with neither colorScheme: nor colorSchemeSeed: falls back to the M3 baseline (M7-K)', () {
+    // Flutter's own `ThemeData` factory constructor never leaves `colorScheme` unset: when `useMaterial3`
+    // is not explicitly `false` (its default is `true`) and the caller supplies neither `colorScheme:` nor
+    // `colorSchemeSeed:`, it falls back to a hardcoded, literal Material 3 baseline scheme
+    // (`_colorSchemeLightM3`/`_colorSchemeDarkM3`). That fallback is SDK behaviour the analyzer reads
+    // verbatim from `MaterialCatalog`, not a colour it invents (INV-20) — and it is exactly the case
+    // `hello_bridge` hits: a `ThemeData(primaryColor:, scaffoldBackgroundColor:, useMaterial3: true)` with
+    // no `colorScheme:`/`colorSchemeSeed:` at all.
+
+    const String bareThemeApp = '''
+import 'package:flutter/material.dart';
+
+class BareThemeApp extends StatelessWidget {
+  const BareThemeApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      theme: ThemeData(
+        primaryColor: const Color(0xFF123456),
+        scaffoldBackgroundColor: const Color(0xFF654321),
+        useMaterial3: true,
+      ),
+      home: const Text('bare'),
+    );
+  }
+}
+''';
+
+    test('every M3 role is emitted, sourced from the SDK baseline', () async {
+      final Extracted app = await extract(bareThemeApp);
+      expect(app.errors, isEmpty);
+
+      final Map<String, Map<String, dynamic>> byRole = <String, Map<String, dynamic>>{
+        for (final Map<String, dynamic> t in app.ofKind('app.Token'))
+          if (t['role'] is String) t['role']! as String: t,
+      };
+
+      expect(byRole.keys, containsAll(<String>['surface', 'onSurface', 'onSurfaceVariant', 'primary', 'error']));
+      expect(byRole['primary']!['light'], '#FF6750A4', reason: 'the literal M3 baseline, not an invented value');
+      expect(byRole['surface']!['light'], '#FFFEF7FF');
+      expect(byRole.length, 46, reason: 'every role the schema declares, no more and no fewer');
+    });
+
+    test('legacy Color properties still tokenize on their own name, unaffected', () async {
+      final Extracted app = await extract(bareThemeApp);
+
+      final Map<String, dynamic> primaryColor = app.ofKind('app.Token').firstWhere(
+        (Map<String, dynamic> t) => t['name'] == 'primaryColor',
+      );
+      expect(primaryColor['light'], '#FF123456');
+      expect(primaryColor['role'], isNull, reason: 'a legacy property name is not a Material role');
+    });
+
+    test('an explicit colorScheme: wins — no baseline role is invented', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+
+class ExplicitApp extends StatelessWidget {
+  const ExplicitApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      theme: ThemeData(
+        colorScheme: const ColorScheme.light(primary: Color(0xFF00FF00)),
+      ),
+      home: const Text('explicit'),
+    );
+  }
+}
+''');
+      expect(app.errors, isEmpty);
+
+      final Map<String, Map<String, dynamic>> byRole = <String, Map<String, dynamic>>{
+        for (final Map<String, dynamic> t in app.ofKind('app.Token'))
+          if (t['role'] is String) t['role']! as String: t,
+      };
+
+      expect(byRole['primary']!['light'], '#FF00FF00', reason: 'the author wrote this — it must win');
+      expect(
+        byRole.length,
+        lessThan(46),
+        reason: 'ColorScheme.light() only states the roles it was given; the baseline must not fill the rest',
+      );
+    });
+
+    test('an explicit colorSchemeSeed: suppresses the baseline too', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+
+class SeededApp extends StatelessWidget {
+  const SeededApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      theme: ThemeData(colorSchemeSeed: Colors.indigo),
+      home: const Text('seeded'),
+    );
+  }
+}
+''');
+      expect(app.errors, isEmpty);
+
+      final bool hasBaselinePrimary = app
+          .ofKind('app.Token')
+          .any((Map<String, dynamic> t) => t['role'] == 'primary' && t['light'] == '#FF6750A4');
+      expect(hasBaselinePrimary, isFalse, reason: 'colorSchemeSeed: is an explicit choice; the M3 baseline must not override it');
+    });
+
+    test('useMaterial3: false suppresses the baseline', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+
+class MaterialTwoApp extends StatelessWidget {
+  const MaterialTwoApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      theme: ThemeData(useMaterial3: false, primaryColor: const Color(0xFF123456)),
+      home: const Text('m2'),
+    );
+  }
+}
+''');
+      expect(app.errors, isEmpty);
+
+      final bool hasBaselineRole =
+          app.ofKind('app.Token').any((Map<String, dynamic> t) => t['role'] == 'surface');
+      expect(hasBaselineRole, isFalse, reason: 'Material 2 has no M3 baseline scheme to fall back to');
+    });
+
+    test('theme: and darkTheme: each fall back to their own baseline, merged into one token', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+
+class LightDarkApp extends StatelessWidget {
+  const LightDarkApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      theme: ThemeData(brightness: Brightness.light, useMaterial3: true),
+      darkTheme: ThemeData(brightness: Brightness.dark, useMaterial3: true),
+      home: const Text('both'),
+    );
+  }
+}
+''');
+      expect(app.errors, isEmpty);
+
+      final Map<String, dynamic> primary = app
+          .ofKind('app.Token')
+          .firstWhere((Map<String, dynamic> t) => t['role'] == 'primary');
+      expect(primary['light'], '#FF6750A4');
+      expect(primary['dark'], '#FFD0BCFF', reason: 'the dark M3 baseline is a distinct literal table, not a derived inverse');
+    });
+  });
+
   group('paths in UIR are platform-independent (M5-F)', () {
     // `span.file` is not a filesystem path once it is written: it becomes an anchor —
     // `'${span.file}#$segment'` in `node_factory.dart` — and an anchor is hashed into the node's id

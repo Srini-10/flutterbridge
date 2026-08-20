@@ -68,8 +68,26 @@ export interface ThemeMeta {
   readonly types: readonly string[];
   readonly seedConstructor: string;
   readonly seedProp: string;
+  /** The argument naming an explicit `ColorScheme`, e.g. `ThemeData(colorScheme: ...)`. */
+  readonly colorSchemeProp?: string;
+  /** The argument naming an implicit seed on `ThemeData` itself (distinct from `ColorScheme.fromSeed`'s
+   * own `seedProp`) — `ThemeData(colorSchemeSeed: ...)`. */
+  readonly colorSchemeSeedProp?: string;
+  /** The argument selecting Material 3, e.g. `ThemeData(useMaterial3: ...)`. Defaults to `true` in the
+   * SDK when absent — see `material3Baseline`'s own `$comment`. */
+  readonly useMaterial3Prop?: string;
   readonly brightnessProp: string;
   readonly nonRoleProps: readonly string[];
+  /**
+   * Flutter's own literal M3 baseline `ColorScheme`, light and dark — what `ThemeData`'s factory
+   * constructor falls back to when neither {@link colorSchemeProp} nor {@link colorSchemeSeedProp} is
+   * given (and `useMaterial3` is not explicitly `false`). Read directly from the installed SDK, not
+   * derived — see the catalog's own `$comment` for why an algorithmic derivation would not reproduce it.
+   */
+  readonly material3Baseline?: {
+    readonly light: Readonly<Record<string, string>>;
+    readonly dark: Readonly<Record<string, string>>;
+  };
 }
 
 /** How a framework navigates. */
