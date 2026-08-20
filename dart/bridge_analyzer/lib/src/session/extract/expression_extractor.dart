@@ -21,6 +21,7 @@ import 'package:analyzer/dart/element/type.dart';
 import 'package:bridge_analyzer/src/diagnostics/codes.dart';
 import 'package:bridge_analyzer/src/model/raw_node.dart';
 import 'package:bridge_analyzer/src/session/adapters/adapter_registry.dart';
+import 'package:bridge_analyzer/src/session/adapters/adapter_result.dart';
 import 'package:bridge_analyzer/src/session/colour_constants.dart';
 import 'package:bridge_analyzer/src/session/extract/raw_node_emitter.dart';
 import 'package:bridge_analyzer/src/session/extract/scope.dart';
@@ -131,6 +132,10 @@ final class ExpressionExtractor {
         );
 
       case SimpleIdentifier():
+        // Bare `mounted` — Flutter's `State.mounted`, read the same way `widget.isDark` is (ADR-0026).
+        if (registry.mountedIntrinsicOf(node) case final MountedKind kind) {
+          return _intrinsic(kind, null, node);
+        }
         return _reference(node, node.name, scope, type: _typeOfIdentifier(node));
 
       // `MainAxisAlignment.center`, `http.get`, `Colors.blue` — the left-hand side is a *type* or an
@@ -151,6 +156,13 @@ final class ExpressionExtractor {
         );
 
       case PrefixedIdentifier():
+        // `context.mounted` — Flutter's `BuildContext.mounted` (ADR-0026). Checked ahead of
+        // `_componentProp`: the two recognize different, mutually exclusive framework getters, and
+        // neither depends on which runs first, but the intrinsic is checked here for the same reason
+        // `widget.isDark` is checked next — both need the resolved element, not the spelling.
+        if (registry.mountedIntrinsicOf(node) case final MountedKind kind) {
+          return _intrinsic(kind, extract(node.prefix, scope), node);
+        }
         // `widget.isDark` — a read of this component's own parameter. See `_componentProp`.
         if (_componentProp(node.prefix, node.identifier.name, node) case final RawNode prop) {
           return prop;
@@ -172,6 +184,9 @@ final class ExpressionExtractor {
             return folded;
           }
           return _reference(node, '${target.name}.${node.propertyName.name}', scope);
+        }
+        if (registry.mountedIntrinsicOf(node) case final MountedKind kind) {
+          return _intrinsic(kind, extract(target, scope), node);
         }
         if (_componentProp(target, node.propertyName.name, node) case final RawNode prop) {
           return prop;
@@ -608,6 +623,20 @@ final class ExpressionExtractor {
     fields: <String, RawValue>{
       if (value != null) 'value': RawLiteral(value),
       'type': out.typeRef(node.staticType, at: node),
+    },
+  );
+
+  /// A framework liveness read — `mounted` or `<value>.mounted` (ADR-0026).
+  ///
+  /// [operand] is the already-extracted context value, for `contextMounted`; absent (`null`) for the
+  /// nullary `componentMounted`, exactly as the schema requires.
+  RawNode _intrinsic(MountedKind kind, RawNode? operand, Expression at) => RawNode(
+    kind: 'logic.Intrinsic',
+    span: out.span(at),
+    fields: <String, RawValue>{
+      'intrinsic': RawLiteral(kind.name),
+      if (operand != null) 'operand': RawChild(operand),
+      'type': out.typeRef(at.staticType, at: at),
     },
   );
 

@@ -299,6 +299,17 @@ final class AdapterRegistry {
   bool isComponentPropsGetter(Expression node) =>
       widgetAdapters.any((WidgetAdapter a) => a.isComponentPropsGetter(node));
 
+  /// Which framework liveness fact [node] reads, if any (ADR-0026).
+  MountedKind? mountedIntrinsicOf(Expression node) {
+    for (final WidgetAdapter adapter in widgetAdapters) {
+      final MountedKind? kind = adapter.mountedIntrinsicOf(node);
+      if (kind != null) {
+        return kind;
+      }
+    }
+    return null;
+  }
+
   /// Whether [library] is a framework, rather than the application being compiled.
   bool isFrameworkLibrary(String library) =>
       widgetAdapters.any((WidgetAdapter a) => a.isFrameworkLibrary(library));

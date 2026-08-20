@@ -537,16 +537,16 @@ describe('the real hello_bridge document', () => {
     expect(codes).toEqual([
       // a call with Dart named arguments, whose callee signature the program does not carry
       'BRG3002',
-      // `mounted`, `widget` — framework primitives INV-22 should have erased. `notifyListeners` itself is
-      // now erased (M6-1), so it no longer contributes to this code — see docs/m7/m7d-reality-audit.md.
-      'BRG3006',
       // a `FutureBuilder` whose loading and error branches are inside the builder (BRG2104 upstream)
       'BRG3007',
-      // `Navigator.push(MaterialPageRoute(...))` — an inline destination with no path (§A17.6)
-      'BRG3008',
       // the theme states `primaryColor:`, not a `ColorScheme`, so N10 derives no role set (INV-20)
       'BRG3010',
-      // the *call site* of a navigation, which the schema does not link to its `app.RouteTransition`
+      // `isDark`/`onToggleTheme` cross a route boundary but `LoginScreen` only forwards them, never
+      // reads them — the multi-hop shape M7-E3 correctly declines to promote (ADR-11 amendment).
+      // `mounted` and `widget` no longer contribute to this code: `widget` was lowered before this test
+      // existed, and `mounted` is now `logic.Intrinsic` (ADR-0026), recognized and lowered rather than
+      // reaching here as an unresolved reference. `notifyListeners` is erased outright (M6-1). See
+      // docs/m7/m7d-reality-audit.md, docs/m7/m7j-mounted-lifecycle-implementation.md.
       'BRG3013',
       // `MaterialApp.themeMode` — switching brightness after mount
       'BRG3016',
@@ -1179,5 +1179,202 @@ describe('M7-H — a navigation inside a referenced action, not the component’
     expect(source).not.toBe('');
     expect(source).toContain('const router = useRouter();');
     expect(source).toMatch(/router\.push\(/);
+  });
+});
+
+describe('M7-J — logic.Intrinsic lowers to useMounted() (ADR-0026)', () => {
+  function intrinsic(id: string, kind: 'componentMounted' | 'contextMounted', operand?: unknown): unknown {
+    return {
+      id,
+      kind: 'logic.Intrinsic',
+      span,
+      intrinsic: kind,
+      ...(operand === undefined ? {} : { operand }),
+      type: { library: 'dart:core', name: 'bool' },
+    };
+  }
+
+  it('declares useMounted() once and reads it live, for an intrinsic inside a referenced action', () => {
+    const nodes: AnyUirNode[] = [
+      {
+        id: 'act-submit',
+        kind: 'sig.Action',
+        span,
+        anchor: 'lib/home_screen.dart#_submit',
+        writes: ['s1'],
+        body: [
+          {
+            id: 'if1',
+            kind: 'logic.If',
+            span,
+            test: { id: 'un1', kind: 'logic.Unary', span, operator: '!', operand: intrinsic('mnt1', 'componentMounted'), type: { name: 'bool' } },
+            then: { id: 'ret1', kind: 'logic.Return', span },
+          },
+          {
+            id: 'stmt1',
+            kind: 'logic.ExprStmt',
+            span,
+            expr: {
+              id: 'asg1',
+              kind: 'logic.Assign',
+              span,
+              operator: 'assign',
+              type: { name: 'int' },
+              target: { id: 'ref1', kind: 'logic.Ref', span, type: { name: 'int' }, name: 'count', target: 's1' },
+              value: { id: 'lit1', kind: 'logic.Lit', span, type: { name: 'int' }, value: 1 },
+            },
+          },
+        ],
+      } as unknown as AnyUirNode,
+      signal('s1', 0),
+      component(
+        'home',
+        'HomeScreen',
+        element('btn1', 'ElevatedButton', {
+          onPressed: {
+            id: 'oe1',
+            kind: 'bind.Expr',
+            span,
+            expr: { id: 'ref2', kind: 'logic.Ref', span, type: { name: 'void Function()' }, name: '_submit', target: 'act-submit' },
+          },
+        }),
+        ['s1'],
+      ),
+      { id: 'r1', kind: 'app.Route', span, path: '/', component: 'home' } as unknown as AnyUirNode,
+    ];
+
+    const { context, reported } = harness(nodes);
+    const { files } = reactGenerator.generate(context);
+    expect(reported.filter((d) => d.severity === 'error')).toEqual([]);
+
+    const source = fileAt(files, 'src/components/home-screen.tsx') ?? '';
+    expect(source).not.toBe('');
+    // Hoisted once, unconditionally, at component top.
+    expect(source.match(/const mounted = useMounted\(\);/g)?.length).toBe(1);
+    // And read live, inside the handler — never a captured value.
+    expect(source).toMatch(/if \(\(!mounted\.current\)\) {/);
+  });
+
+  it('a component that reads no intrinsic gets no useMounted() and imports nothing for one', () => {
+    const nodes = minimalApp();
+    const { context, reported } = harness(nodes);
+    const { files } = reactGenerator.generate(context);
+    expect(reported.filter((d) => d.severity === 'error')).toEqual([]);
+
+    const source = fileAt(files, 'src/components/home-screen.tsx') ?? '';
+    expect(source).not.toContain('useMounted');
+  });
+
+  it('ten reads in the same component still declare exactly one useMounted()', () => {
+    const nodes: AnyUirNode[] = [
+      {
+        id: 'act-check',
+        kind: 'sig.Action',
+        span,
+        anchor: 'lib/home_screen.dart#_check',
+        writes: ['s1'],
+        body: (Array.from({ length: 10 }, (_, i) => ({
+          id: `if${i}`,
+          kind: 'logic.If',
+          span,
+          test: { id: `un${i}`, kind: 'logic.Unary', span, operator: '!', operand: intrinsic(`mnt${i}`, 'componentMounted'), type: { name: 'bool' } },
+          then: { id: `ret${i}`, kind: 'logic.Return', span },
+        })) as unknown[]).concat([
+          {
+            id: 'stmt1',
+            kind: 'logic.ExprStmt',
+            span,
+            expr: {
+              id: 'asg1',
+              kind: 'logic.Assign',
+              span,
+              operator: 'assign',
+              type: { name: 'int' },
+              target: { id: 'ref1', kind: 'logic.Ref', span, type: { name: 'int' }, name: 'count', target: 's1' },
+              value: { id: 'lit1', kind: 'logic.Lit', span, type: { name: 'int' }, value: 1 },
+            },
+          },
+        ]),
+      } as unknown as AnyUirNode,
+      signal('s1', 0),
+      component(
+        'home',
+        'HomeScreen',
+        element('btn1', 'ElevatedButton', {
+          onPressed: {
+            id: 'oe1',
+            kind: 'bind.Expr',
+            span,
+            expr: { id: 'ref2', kind: 'logic.Ref', span, type: { name: 'void Function()' }, name: '_check', target: 'act-check' },
+          },
+        }),
+        ['s1'],
+      ),
+      { id: 'r1', kind: 'app.Route', span, path: '/', component: 'home' } as unknown as AnyUirNode,
+    ];
+
+    const { context, reported } = harness(nodes);
+    const { files } = reactGenerator.generate(context);
+    expect(reported.filter((d) => d.severity === 'error')).toEqual([]);
+
+    const source = fileAt(files, 'src/components/home-screen.tsx') ?? '';
+    expect(source.match(/const mounted = useMounted\(\);/g)?.length).toBe(1);
+    expect(source.match(/mounted\.current/g)?.length).toBe(10);
+  });
+
+  it('contextMounted also lowers to mounted.current, and its operand is dropped from the output', () => {
+    const nodes: AnyUirNode[] = [
+      component(
+        'home',
+        'HomeScreen',
+        element('btn1', 'ElevatedButton', {
+          onPressed: {
+            id: 'oe1',
+            kind: 'bind.Expr',
+            span,
+            expr: {
+              id: 'lam1',
+              kind: 'logic.Lambda',
+              span,
+              params: [],
+              body: [
+                {
+                  id: 'if1',
+                  kind: 'logic.If',
+                  span,
+                  test: {
+                    id: 'un1',
+                    kind: 'logic.Unary',
+                    span,
+                    operator: '!',
+                    type: { name: 'bool' },
+                    operand: intrinsic('mnt1', 'contextMounted', {
+                      id: 'ctx1',
+                      kind: 'logic.Ref',
+                      span,
+                      name: 'context',
+                      type: { name: 'BuildContext' },
+                    }),
+                  },
+                  then: { id: 'ret1', kind: 'logic.Return', span },
+                },
+              ],
+              type: { name: 'void Function()' },
+            },
+          },
+        }),
+      ),
+      { id: 'r1', kind: 'app.Route', span, path: '/', component: 'home' } as unknown as AnyUirNode,
+    ];
+
+    const { context, reported } = harness(nodes);
+    const { files } = reactGenerator.generate(context);
+    expect(reported.filter((d) => d.severity === 'error')).toEqual([]);
+
+    const source = fileAt(files, 'src/components/home-screen.tsx') ?? '';
+    expect(source.match(/const mounted = useMounted\(\);/g)?.length).toBe(1);
+    expect(source).toMatch(/if \(\(!mounted\.current\)\) {/);
+    // `context` itself never needed to be a distinct name in the output — there is only one ref.
+    expect(source).not.toMatch(/\bcontext\b\.mounted/);
   });
 });

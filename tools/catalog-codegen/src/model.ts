@@ -145,6 +145,14 @@ export interface Catalog {
   readonly stateBase?: string;
   /** The getter a `State` uses to reach its `StatefulWidget`'s fields — `widget` (INV-22). */
   readonly componentPropsGetter?: { readonly name?: string };
+  /**
+   * The framework's component/context liveness getter — `mounted` (ADR-0026).
+   *
+   * `name`, declared on `stateBase` for the nullary (`componentMounted`) form; `contextClass` names the
+   * class it is declared on for the one-operand (`contextMounted`) form — `BuildContext.mounted`, not
+   * `State.mounted`, so the two are distinguished by which class's element the getter resolves to.
+   */
+  readonly mountedGetter?: { readonly name?: string; readonly contextClass?: string };
   readonly stateHolders?: readonly string[];
   readonly storeBases?: readonly string[];
   readonly lifecycle?: Readonly<Record<string, string>>;

@@ -136,4 +136,8 @@ final class GapWidgetAdapter implements WidgetAdapter {
   /// `gap` declares no stateful pair, so it has no props getter.
   @override
   bool isComponentPropsGetter(Expression node) => false;
+
+  /// `gap` declares no lifecycle, so it has no liveness getter either.
+  @override
+  MountedKind? mountedIntrinsicOf(Expression node) => null;
 }

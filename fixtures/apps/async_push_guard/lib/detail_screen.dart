@@ -30,6 +30,13 @@ class DetailScreen extends StatelessWidget {
                   onPressed: onIncrement,
                   child: const Text('Increment'),
                 ),
+                const SizedBox(height: 12),
+                ElevatedButton(
+                  onPressed: () {
+                    Navigator.pop(context);
+                  },
+                  child: const Text('Go back'),
+                ),
               ],
             ),
           ),

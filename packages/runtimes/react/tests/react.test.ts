@@ -12,6 +12,7 @@ import {
   ThemeProvider,
   useDerived,
   useMountEffect,
+  useMounted,
   useRouter,
   useSignal,
   useSignalEffect,
@@ -531,6 +532,113 @@ describe('lifecycle helpers land the Flutter callbacks where the catalog says', 
 
     act(() => root.render(createElement(Screen, { value: 3 })));
     expect(body).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('useMounted — component/context liveness (ADR-0026)', () => {
+  it('is true while mounted and false after unmount', () => {
+    let ref: { current: boolean } | undefined;
+    function Screen(): ReactElement {
+      ref = useMounted();
+      return createElement('span');
+    }
+    const { unmount } = render(createElement(Screen));
+    expect(ref?.current).toBe(true);
+
+    unmount();
+    expect(ref?.current).toBe(false);
+  });
+
+  it('is load-bearing: a plain boolean snapshot would be wrong, and this is not one', async () => {
+    // The scenario `mounted`/`context.mounted` exist for: an async handler suspends, the component
+    // unmounts *during* the suspension, and the check after resuming must see the unmount. A boolean
+    // captured at render time never could — this test fails immediately if `useMounted` is changed to
+    // return a plain `boolean` instead of a live ref.
+    let ref: { current: boolean } | undefined;
+    let resolveOperation: (() => void) | undefined;
+    let sawAfterAwait: boolean | undefined;
+
+    function Screen(): ReactElement {
+      ref = useMounted();
+      return createElement(
+        'button',
+        {
+          onClick: () => {
+            void (async () => {
+              await new Promise<void>((resolve) => {
+                resolveOperation = resolve;
+              });
+              sawAfterAwait = ref!.current;
+            })();
+          },
+        },
+        'go',
+      );
+    }
+
+    const { container, unmount } = render(createElement(Screen));
+    const button = container.querySelector('button')!;
+    act(() => button.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+
+    // The handler is now suspended mid-`await`. Unmount the component before it resumes — exactly the
+    // race the guard exists to catch.
+    unmount();
+    expect(ref?.current).toBe(false);
+
+    await act(async () => {
+      resolveOperation?.();
+      await Promise.resolve();
+    });
+
+    expect(sawAfterAwait).toBe(false);
+  });
+
+  it('two instances of the same component are isolated (ADR-15/INV-19)', () => {
+    const refs: Array<{ current: boolean }> = [];
+    function Screen(): ReactElement {
+      const mounted = useMounted();
+      refs.push(mounted);
+      return createElement('span');
+    }
+    const a = render(createElement(Screen));
+    const b = render(createElement(Screen));
+    expect(refs).toHaveLength(2);
+    expect(refs[0]).not.toBe(refs[1]);
+
+    a.unmount();
+    expect(refs[0]!.current).toBe(false);
+    expect(refs[1]!.current).toBe(true);
+
+    b.unmount();
+    expect(refs[1]!.current).toBe(false);
+  });
+
+  it('stays true after Strict Mode’s development mount→cleanup→remount replay', () => {
+    let ref: { current: boolean } | undefined;
+    function Screen(): ReactElement {
+      ref = useMounted();
+      return createElement('span');
+    }
+    // Strict Mode's replay only runs under `act` in a jsdom environment with the dev build — the same
+    // one this whole file already opts into (see the `IS_REACT_ACT_ENVIRONMENT` global above).
+    const { unmount } = render(createElement(StrictMode, null, createElement(Screen)));
+    expect(ref?.current, 'true after the replay settles, not left false by its cleanup pass').toBe(true);
+
+    unmount();
+    expect(ref?.current).toBe(false);
+  });
+
+  it('causes no rerender on its own — no useState involved', () => {
+    let renders = 0;
+    function Screen(): ReactElement {
+      useMounted();
+      renders += 1;
+      return createElement('span');
+    }
+    render(createElement(Screen));
+    // One render for the mount. If `useMounted` scheduled a state update from its effect, this would be
+    // two.
+    expect(renders).toBe(1);
   });
 });
 

@@ -1,9 +1,19 @@
 # Gap — `mounted` has no UIR representation
 
-**Status: blocked on a schema decision. Not implemented. Documented and stopped, per the M6 rule.**
+**Status: CLOSED (M7-J).** The schema decision this document reached and stopped on —
+`logic.Intrinsic`, a two-member vocabulary — is decided in
+[`docs/adr/0026-mounted-lifecycle-intrinsics.md`](../adr/0026-mounted-lifecycle-intrinsics.md) and
+implemented in [`docs/m7/m7j-mounted-lifecycle-implementation.md`](../m7/m7j-mounted-lifecycle-implementation.md):
+analyzer recognition by resolved element, the `logic.Intrinsic` node, a `useMounted()` runtime primitive,
+and generator lowering, end to end through a real `tsc` build and a real browser. The rest of this
+document is kept as the original investigation and its evidence — the corpus measurement, the semantic
+analysis, and the reasoning that ruled out erasure and a statement-level fix are all still accurate and
+still the record of *why* the amendment took the shape it did. Only its own "not implemented, stopped
+here" conclusion is superseded; do not read the sections below as describing current behavior.
 
-This is the last BRG3006 case in `hello_bridge`. BRG3006 went 4 → 2 across M6-1 and M6-B; the two that
-remain are both this one construct.
+This was the last `BRG3006` case in `hello_bridge` that this construct alone caused. `BRG3006` went
+4 → 2 across M6-1 and M6-B, then 2 → 1 (`mounted` closed here) — see M7-J's own `hello_bridge`
+measurement for the current count and everything still open.
 
 ## The construct
 
@@ -292,3 +302,20 @@ nothing below revises the `logic.Intrinsic` proposal above. What M7-I adds:
   ref must be re-set to `true` *inside* the effect body, not only at its initial value, to survive
   React's development-mode mount→cleanup→remount replay. See M7-I's own document for the full derivation
   and the rejected boolean-snapshot alternative.
+
+---
+
+## M7-J — implemented. The gap above is closed.
+
+`docs/adr/0026-mounted-lifecycle-intrinsics.md` decides the amendment every section above led to,
+unchanged in shape (`logic.Intrinsic`, `componentMounted`/`contextMounted`), and
+`docs/m7/m7j-mounted-lifecycle-implementation.md` builds it: analyzer recognition by resolved element,
+the schema node, `useMounted()` in `@bridge/runtime-react`, and generator lowering — proven through a
+real `tsc` build (`async_push_guard_build.test.ts`) and a real browser
+(`e2e/tests/async-push-guard.spec.ts`/`.dev-only.spec.ts`, including a Strict Mode replay proof).
+`hello_bridge`'s own `mounted` guard now resolves; its `BRG3006` count for this construct is 0.
+
+Every "not implemented" and "stopped here" above describes this document's own history, not current
+behavior. If a future change to this construct's representation is ever needed, amend ADR-0026 (or write
+a superseding one) rather than this document — this file's job was deciding what to build, and that
+decision is now built.

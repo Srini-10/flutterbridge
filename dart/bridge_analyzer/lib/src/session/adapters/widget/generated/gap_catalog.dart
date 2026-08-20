@@ -117,6 +117,16 @@ abstract final class GapCatalog {
   /// word for "my own props" and must not survive extraction.
   static const String componentPropsGetter = '';
 
+  /// The framework's component/context liveness getter (ADR-0026): `mounted`.
+  ///
+  /// Bare `mounted`, declared on [stateBase], is Flutter's `State.mounted`. `<value>.mounted`,
+  /// declared on [mountedContextClass], is `BuildContext.mounted` — a different fact, about whatever
+  /// context value was passed in rather than the enclosing component.
+  static const String mountedGetter = '';
+
+  /// The class `<value>.mounted` must resolve to for the read to be `BuildContext.mounted`.
+  static const String mountedContextClass = '';
+
   /// Types whose *value* is state even when the field holding them is `final`.
   static const Set<String> stateHolders = <String>{};
 

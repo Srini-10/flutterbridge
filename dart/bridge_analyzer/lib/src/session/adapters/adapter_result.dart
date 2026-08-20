@@ -42,6 +42,21 @@ enum NavigateAction {
   popUntil,
 }
 
+/// Which framework liveness fact a `logic.Intrinsic` reads (ADR-0026).
+///
+/// Named for what the fact *means*, not for the Flutter getter that answers it — matching
+/// `IntrinsicKind`'s own schema vocabulary exactly, so `.name` serializes straight into the field
+/// `logic.Intrinsic.intrinsic` expects, the same way [NavigateAction]'s members already do for
+/// `logic.Navigate.action`.
+enum MountedKind {
+  /// The enclosing component instance's own liveness — Flutter's `State.mounted`. Nullary: no operand.
+  componentMounted,
+
+  /// A specific context value's liveness — Flutter's `BuildContext.mounted`. Takes the context value as
+  /// `logic.Intrinsic.operand`.
+  contextMounted,
+}
+
 /// A navigation an adapter recognised at a call site.
 ///
 /// **The adapter states intent; it does not resolve it.** It says "this call goes to the path

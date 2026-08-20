@@ -1,7 +1,7 @@
 // GENERATED CODE — DO NOT EDIT
 //
 // Produced by tools/schema-codegen from packages/uir/schema/*.json.
-// UIR schema version: 1.5.0
+// UIR schema version: 1.6.0
 //
 // Edit the schema and re-run `pnpm codegen`. Hand-edits to this file are lost on the next run,
 // and CI fails if this file does not match the schema (drift check).
@@ -11,10 +11,10 @@
 import { createHash } from 'node:crypto';
 
 /** The UIR schema version this module was generated from. */
-export const UIR_VERSION = '1.5.0' as const;
+export const UIR_VERSION = '1.6.0' as const;
 
 /** A hash of the schema sources this module was generated from. */
-export const UIR_SCHEMA_HASH = '9b5c1183b869601f' as const;
+export const UIR_SCHEMA_HASH = '388886b7e06ac0bb' as const;
 
 /** Node kind -> the fields of that node which hold `NodeId` references. */
 export const UIR_REFERENCE_FIELDS: Readonly<Record<string, readonly string[]>> = {
@@ -41,6 +41,7 @@ export const UIR_REFERENCE_FIELDS: Readonly<Record<string, readonly string[]>> =
   'logic.For': ['id'],
   'logic.FunctionDecl': ['id'],
   'logic.If': ['id'],
+  'logic.Intrinsic': ['id'],
   'logic.Lambda': ['id'],
   'logic.ListLit': ['id'],
   'logic.Lit': ['id'],
@@ -410,6 +411,24 @@ const httpMethodValues = Object.values(HttpMethod) as readonly HttpMethod[];
 /** Parses a {@link HttpMethod}. Rejects any value outside the enum. */
 export function parseHttpMethod(value: unknown, path = 'HttpMethod'): HttpMethod {
   return asEnum(value, path, httpMethodValues);
+}
+
+/// The vocabulary of framework-provided facts `logic.Intrinsic` can represent (ADR-0026). Deliberately target-neutral — a name for what the fact *means*, never the framework API that answers it today, so a non-Flutter frontend could produce the same node for its own equivalent concept.
+export const IntrinsicKind = {
+  /// Whether the enclosing component instance is still part of the live tree. Nullary — asks about the component this expression is lexically inside; `logic.Intrinsic.operand` is absent. Flutter: `State.mounted`.
+  componentMounted: 'componentMounted',
+  /// Whether the element behind a specific context value is still part of the live tree. Takes `operand` — the context value — because it asks about whatever was passed in, which in the common real case is not the enclosing component (a free function taking a `BuildContext` parameter has none). Flutter: `BuildContext.mounted`.
+  contextMounted: 'contextMounted',
+} as const;
+
+/// The vocabulary of framework-provided facts `logic.Intrinsic` can represent (ADR-0026). Deliberately target-neutral — a name for what the fact *means*, never the framework API that answers it today, so a non-Flutter frontend could produce the same node for its own equivalent concept.
+export type IntrinsicKind = (typeof IntrinsicKind)[keyof typeof IntrinsicKind];
+
+const intrinsicKindValues = Object.values(IntrinsicKind) as readonly IntrinsicKind[];
+
+/** Parses a {@link IntrinsicKind}. Rejects any value outside the enum. */
+export function parseIntrinsicKind(value: unknown, path = 'IntrinsicKind'): IntrinsicKind {
+  return asEnum(value, path, intrinsicKindValues);
 }
 
 /// Which implementation of Flutter's layout protocol a subtree needs (Spec §5, risk R2).
@@ -1300,6 +1319,30 @@ export interface If {
   readonly then: Stmt;
 }
 
+/// A value the host framework provides, which the program does not declare (ADR-0026).
+///
+/// UIR's other two ways to spell a reference both need something the program contains: `logic.Ref{target}` a declaration, `logic.Ref{name}` a lexically enclosing parameter. A framework intrinsic like Flutter's `State.mounted`/`BuildContext.mounted` is neither — recognized by the analyzer from the resolved element (never from the spelling `mounted`, which an application's own field could share), and represented here as the target-neutral fact it answers rather than the framework API that answers it.
+///
+/// Expression-level, not a statement-level guard: `docs/m6/GAP-mounted.md`'s corpus measurement found `mounted` used as one boolean operand among several (`if (result == null || !mounted) return;`) in 58 of 348 real occurrences, which only an ordinary composable expression node can represent.
+export interface Intrinsic {
+  /// The override key, when the node is addressable by a human.
+  readonly anchor?: Anchor;
+  /// Plugin extension data, namespaced `x-<plugin>`. Core passes round-trip it untouched (Spec §2.6).
+  readonly ext?: Readonly<Record<string, unknown>>;
+  /// The node's stable, content-addressed identity.
+  readonly id: NodeId;
+  /// Which framework-provided fact this reads.
+  readonly intrinsic: IntrinsicKind;
+  /// Discriminant.
+  readonly kind: 'logic.Intrinsic';
+  /// The value the intrinsic is about, for a member that takes one (`context.mounted`'s context value). Absent for a nullary member (`component.mounted`).
+  readonly operand?: Expr;
+  /// Where the node came from.
+  readonly span: SourceSpan;
+  /// Resolved type.
+  readonly type: TypeRef;
+}
+
 /// An anonymous function.
 export interface Lambda {
   /// The override key, when the node is addressable by a human.
@@ -2138,6 +2181,7 @@ export type Expr =
   | Call
   | Cast
   | Conditional
+  | Intrinsic
   | Lambda
   | ListLit
   | Lit
@@ -3197,6 +3241,39 @@ export function equalsIf(a: If, b: If): boolean {
 
 /** Returns a copy of [node] with [patch] applied. The original is never mutated. */
 export function copyWithIf(node: If, patch: Partial<If>): If {
+  return { ...node, ...patch };
+}
+
+/** Parses a {@link Intrinsic}, validating as it goes. Throws {@link UirParseError} on bad input. */
+export function parseIntrinsic(value: unknown, path = 'Intrinsic'): Intrinsic {
+  const o = asObject(value, path);
+  const kind = asString(req(o, 'kind', path), `${path}.kind`);
+  if (kind !== 'logic.Intrinsic') throw new UirParseError(`${path}.kind`, `expected "logic.Intrinsic", got "${kind}"`);
+
+  return {
+    ...(own(o, 'anchor') === undefined || own(o, 'anchor') === null ? {} : { anchor: parseAnchor(own(o, 'anchor'), `${path}.anchor`) }),
+    ...(own(o, 'ext') === undefined || own(o, 'ext') === null ? {} : { ext: asMap(own(o, 'ext'), `${path}.ext`, (v) => v) }),
+    id: parseNodeId(req(o, 'id', path), `${path}.id`),
+    intrinsic: parseIntrinsicKind(req(o, 'intrinsic', path), `${path}.intrinsic`),
+    kind: 'logic.Intrinsic',
+    ...(own(o, 'operand') === undefined || own(o, 'operand') === null ? {} : { operand: parseExpr(own(o, 'operand'), `${path}.operand`) }),
+    span: parseSourceSpan(req(o, 'span', path), `${path}.span`),
+    type: parseTypeRef(req(o, 'type', path), `${path}.type`),
+  };
+}
+
+/** Serializes a {@link Intrinsic} to canonical JSON. */
+export function serializeIntrinsic(node: Intrinsic): Record<string, unknown> {
+  return canonicalJson(node) as Record<string, unknown>;
+}
+
+/** Structural equality. List order is significant: UIR children are ordered (Spec §2.3). */
+export function equalsIntrinsic(a: Intrinsic, b: Intrinsic): boolean {
+  return deepEquals(canonicalJson(a), canonicalJson(b));
+}
+
+/** Returns a copy of [node] with [patch] applied. The original is never mutated. */
+export function copyWithIntrinsic(node: Intrinsic, patch: Partial<Intrinsic>): Intrinsic {
   return { ...node, ...patch };
 }
 
@@ -4586,6 +4663,8 @@ export function parseExpr(value: unknown, path = 'Expr'): Expr {
       return parseCast(o, path);
     case 'logic.Conditional':
       return parseConditional(o, path);
+    case 'logic.Intrinsic':
+      return parseIntrinsic(o, path);
     case 'logic.Lambda':
       return parseLambda(o, path);
     case 'logic.ListLit':
@@ -4628,6 +4707,7 @@ export interface ExprVisitor<R> {
   visitCall(node: Call): R;
   visitCast(node: Cast): R;
   visitConditional(node: Conditional): R;
+  visitIntrinsic(node: Intrinsic): R;
   visitLambda(node: Lambda): R;
   visitListLit(node: ListLit): R;
   visitLit(node: Lit): R;
@@ -4657,6 +4737,8 @@ export function acceptExpr<R>(node: Expr, visitor: ExprVisitor<R>): R {
       return visitor.visitCast(node as Cast);
     case 'logic.Conditional':
       return visitor.visitConditional(node as Conditional);
+    case 'logic.Intrinsic':
+      return visitor.visitIntrinsic(node as Intrinsic);
     case 'logic.Lambda':
       return visitor.visitLambda(node as Lambda);
     case 'logic.ListLit':
@@ -4857,7 +4939,7 @@ export function acceptUiNode<R>(node: UiNode, visitor: UiNodeVisitor<R>): R {
 }
 
 /** Any UIR node. */
-export type AnyUirNode = Action | Assign | Await | Binary | Block | Break | Call | Cast | ClassDecl | Component | Conditional | ConstBinding | Continue | Derived | Effect | Endpoint | EnumDecl | ExprBinding | ExprStmt | FieldDecl | For | FunctionDecl | If | Lambda | ListLit | Lit | MapLit | MethodCall | Navigate | New | NullCheck | OpaqueDecl | OpaqueExpr | OpaqueStmt | ParamBinding | PropertyAccess | Ref | Return | Route | RouteTransition | Signal | SignalBinding | SourceFile | Store | StringInterp | Switch | Throw | Token | TryCatch | TypeAliasDecl | UiAsync | UiCond | UiElement | UiList | UiOpaque | UiOverrideRef | UiSlotRef | UiText | Unary | VarDecl | While;
+export type AnyUirNode = Action | Assign | Await | Binary | Block | Break | Call | Cast | ClassDecl | Component | Conditional | ConstBinding | Continue | Derived | Effect | Endpoint | EnumDecl | ExprBinding | ExprStmt | FieldDecl | For | FunctionDecl | If | Intrinsic | Lambda | ListLit | Lit | MapLit | MethodCall | Navigate | New | NullCheck | OpaqueDecl | OpaqueExpr | OpaqueStmt | ParamBinding | PropertyAccess | Ref | Return | Route | RouteTransition | Signal | SignalBinding | SourceFile | Store | StringInterp | Switch | Throw | Token | TryCatch | TypeAliasDecl | UiAsync | UiCond | UiElement | UiList | UiOpaque | UiOverrideRef | UiSlotRef | UiText | Unary | VarDecl | While;
 
 /** Parses any UIR node, dispatching on `kind` across every node kind in the schema. */
 export function parseUirNode(value: unknown, path = 'UirNode'): AnyUirNode {
@@ -4910,6 +4992,8 @@ export function parseUirNode(value: unknown, path = 'UirNode'): AnyUirNode {
       return parseFunctionDecl(o, path);
     case 'logic.If':
       return parseIf(o, path);
+    case 'logic.Intrinsic':
+      return parseIntrinsic(o, path);
     case 'logic.Lambda':
       return parseLambda(o, path);
     case 'logic.ListLit':

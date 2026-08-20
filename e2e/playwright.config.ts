@@ -20,6 +20,8 @@
 //
 // `inline-push.spec.ts` gets its own pair (3315/3316) for the same reason: `inline_push_props` (M7-G) is
 // a third, distinct generated application.
+//
+// `async-push-guard.spec.ts` gets its own pair (3317/3318): `async_push_guard` (M7-H/M7-J) is a fourth.
 
 import { defineConfig, devices } from '@playwright/test';
 
@@ -75,6 +77,16 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'], baseURL: 'http://127.0.0.1:3316' },
       testMatch: /inline-push\.dev-only\.spec/,
     },
+    {
+      name: 'async-push-guard-production',
+      use: { ...devices['Desktop Chrome'], baseURL: 'http://127.0.0.1:3317' },
+      testMatch: /async-push-guard\.spec/,
+    },
+    {
+      name: 'async-push-guard-development',
+      use: { ...devices['Desktop Chrome'], baseURL: 'http://127.0.0.1:3318' },
+      testMatch: /async-push-guard\.dev-only\.spec/,
+    },
   ],
 
   webServer: [
@@ -129,6 +141,24 @@ export default defineConfig({
       command: 'npx next dev --port 3316',
       cwd: './.fixtures/inline-push-props-dev',
       port: 3316,
+      reuseExistingServer: false,
+      timeout: 120_000,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    },
+    {
+      command: 'npx next start --port 3317',
+      cwd: './.fixtures/async-push-guard/build/bridge',
+      port: 3317,
+      reuseExistingServer: false,
+      timeout: 120_000,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    },
+    {
+      command: 'npx next dev --port 3318',
+      cwd: './.fixtures/async-push-guard-dev',
+      port: 3318,
       reuseExistingServer: false,
       timeout: 120_000,
       stdout: 'pipe',

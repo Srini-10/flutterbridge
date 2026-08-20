@@ -228,6 +228,21 @@ abstract interface class WidgetAdapter implements PackageAdapter {
   /// Without it the receiver reached the generator as an undeclared name and every component that reads a
   /// prop was refused with BRG3006.
   bool isComponentPropsGetter(Expression node);
+
+  /// Which framework liveness fact [node] reads, if any (ADR-0026).
+  ///
+  /// `mounted` — bare, or as `<value>.mounted` — is Flutter's word for "is this still part of the live
+  /// tree", and neither of UIR's two reference shapes can carry it honestly: there is no program
+  /// declaration for `logic.Ref{target}` to point at, and it is not a lexically enclosing parameter for
+  /// `logic.Ref{name}`. `logic.Intrinsic` is the shape that can.
+  ///
+  /// **Resolved, not named** (C1/ISSUE-18) — the same discipline `isComponentPropsGetter` above already
+  /// applies to `widget`. An application's own field, parameter, or unrelated class's own getter, all
+  /// spelled `mounted`, must return `null` here: only the resolved element deciding whether the getter is
+  /// declared where Flutter declares its own may say yes.
+  ///
+  /// Returns `null` for almost everything, including a program-declared `mounted` of any kind.
+  MountedKind? mountedIntrinsicOf(Expression node);
 }
 
 /// An adapter that recognises design tokens.

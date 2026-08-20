@@ -47,6 +47,17 @@ export interface EmitScope {
    */
   readonly routerLocal?: string;
   /**
+   * The identifier of the component's `useMounted()` ref, when its tree reads `logic.Intrinsic`
+   * (ADR-0026) — `mounted` or `context.mounted`, however many times.
+   *
+   * `useMounted()` is a hook, hoisted to the component body for the same rules-of-hooks reason
+   * {@link routerLocal} is: the read is often inside a callback (`onPressed: () async { if (!mounted)
+   * return; ... }`), and a hook at that call site would be a runtime violation `tsc` does not catch.
+   *
+   * Absent when the component reads no intrinsic, so such a component imports nothing for one.
+   */
+  readonly mountedLocal?: string;
+  /**
    * The local expression that reads a signal declared by `id`, if one is in scope.
    *
    * A `logic.Ref` whose target is a `sig.Signal` must become `count.get()`, not `count` — the signal is an
@@ -408,6 +419,36 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
       const operand = emitExpression(node['operand'] as Node, scope);
       if (node['fallback'] === undefined) return `${operand}!`;
       return paren(`${operand} ?? ${emitExpression(node['fallback'] as Node, scope)}`);
+    }
+
+    case 'logic.Intrinsic': {
+      // `mounted` / `context.mounted` (ADR-0026) — both lower to this component's own `useMounted()`
+      // ref. There is no other "which component" a flat React tree could ask about, which is why the
+      // schema keeps the two facts distinct (a future target may answer them differently) while this
+      // target answers them the same way.
+      const local = scope.mountedLocal;
+      if (local === undefined) {
+        // The component emitter declares this whenever the tree reads an intrinsic, the same way
+        // `routerLocal` is declared whenever it navigates. Unreachable from a whole component; reachable
+        // only if a `logic.Intrinsic` is lowered from somewhere that has none.
+        scope.report(
+          GeneratorDiagnosticCode.UnresolvedReference,
+          'error',
+          'a mounted/context.mounted read is lowered outside a component, so there is no lifecycle ref ' +
+            'in scope for it. It is declared per component; this read reached the generator from ' +
+            'somewhere that has none.',
+          idOf(node),
+        );
+        return 'undefined';
+      }
+      // `operand` (the context value, for `contextMounted`) is never evaluated. It carries no
+      // information this lowering needs — both members read the same ref — and unlike a dropped
+      // constructor argument, evaluating it anyway would not protect against a silent omission; it would
+      // only risk refusing an otherwise-ordinary read that happens to be unresolvable on its own, such as
+      // a bare `context` parameter (never bound in `Scope` — Spec v2.5 §A18.3 resolves a parameter by
+      // name, and the build method's own `context` is not a declared parameter of anything the generator
+      // tracks). A refusal here would be about a value this output never uses.
+      return `${local}.current`;
     }
 
     case 'logic.PropertyAccess': {

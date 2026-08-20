@@ -18,6 +18,11 @@
     "$comment": "The getter a `State` uses to reach its `StatefulWidget`'s fields. `widget.isDark` is a read of the *component's* parameter `isDark` — extraction already lifts those fields onto `ui.Component.params`, so the read is a parameter reference and `widget` is the framework's word for 'my own props' (INV-22). Without this the receiver reached the generator as an undeclared name and every component that reads a prop was refused with BRG3006. flutter/widgets.dart:State.widget.",
     "name": "widget"
   },
+  "mountedGetter": {
+    "$comment": "ADR-0026. `mounted` reaches extraction as a reference to a framework property no `logic.Ref` shape can honestly carry — there is no declaration in the program to point at (it is Flutter's), and it is not a lexically enclosing parameter. Recognized here, by resolved element, and lowered to `logic.Intrinsic`. Bare `mounted` (State.mounted, declared on `stateBase`) is `componentMounted`; `<value>.mounted` (BuildContext.mounted, declared on `contextClass`) is `contextMounted`. Both names, never one spelled `mounted` on an unrelated class or a program-declared local of the same name — the element's declaring class is what tells them apart, exactly as `componentPropsGetter` above already does for `widget`. flutter/widgets.dart:State.mounted, flutter/widgets.dart:BuildContext.mounted.",
+    "name": "mounted",
+    "contextClass": "BuildContext"
+  },
   "stateHolders": [
     "AnimationController",
     "ChangeNotifier",

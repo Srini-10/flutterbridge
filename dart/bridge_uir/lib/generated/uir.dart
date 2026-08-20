@@ -1,7 +1,7 @@
 // GENERATED CODE — DO NOT EDIT
 //
 // Produced by tools/schema-codegen from packages/uir/schema/*.json.
-// UIR schema version: 1.5.0
+// UIR schema version: 1.6.0
 //
 // Edit the schema and re-run `pnpm codegen`. Hand-edits to this file are lost on the next run,
 // and CI fails if this file does not match the schema (drift check).
@@ -26,12 +26,12 @@ import 'package:crypto/crypto.dart';
 import 'package:meta/meta.dart';
 
 /// The UIR schema version this library was generated from.
-const String uirVersion = '1.5.0';
+const String uirVersion = '1.6.0';
 
 /// A hash of the schema sources this library was generated from.
 ///
 /// Stamped into every emitted manifest: a UIR document always says which schema produced it.
-const String uirSchemaHash = '9b5c1183b869601f';
+const String uirSchemaHash = '388886b7e06ac0bb';
 
 /// Node kind -> the fields of that node which hold `NodeId` references.
 ///
@@ -61,6 +61,7 @@ const Map<String, List<String>> uirReferenceFields = <String, List<String>>{
   'logic.For': <String>['id'],
   'logic.FunctionDecl': <String>['id'],
   'logic.If': <String>['id'],
+  'logic.Intrinsic': <String>['id'],
   'logic.Lambda': <String>['id'],
   'logic.ListLit': <String>['id'],
   'logic.Lit': <String>['id'],
@@ -460,6 +461,27 @@ enum HttpMethod {
   String toJson() => name;
 }
 
+/// The vocabulary of framework-provided facts `logic.Intrinsic` can represent (ADR-0026). Deliberately target-neutral — a name for what the fact *means*, never the framework API that answers it today, so a non-Flutter frontend could produce the same node for its own equivalent concept.
+enum IntrinsicKind {
+  /// Whether the enclosing component instance is still part of the live tree. Nullary — asks about the component this expression is lexically inside; `logic.Intrinsic.operand` is absent. Flutter: `State.mounted`.
+  componentMounted,
+  /// Whether the element behind a specific context value is still part of the live tree. Takes `operand` — the context value — because it asks about whatever was passed in, which in the common real case is not the enclosing component (a free function taking a `BuildContext` parameter has none). Flutter: `BuildContext.mounted`.
+  contextMounted,
+  ;
+
+  /// Parses a [IntrinsicKind] from its wire value. Rejects anything outside the enum.
+  static IntrinsicKind fromJson(Object? value, [String path = 'IntrinsicKind']) {
+    final String raw = _asString(value, path);
+    for (final IntrinsicKind candidate in IntrinsicKind.values) {
+      if (candidate.name == raw) return candidate;
+    }
+    throw UirParseError(path, 'unknown IntrinsicKind "$raw"');
+  }
+
+  /// The wire value.
+  String toJson() => name;
+}
+
 /// Which implementation of Flutter's layout protocol a subtree needs (Spec §5, risk R2).
 enum LayoutTier {
   /// Expressible in flexbox/grid. The default, and the cheapest: no measurement at runtime.
@@ -836,6 +858,8 @@ sealed class Expr extends UirNode {
         return Cast.fromJson(json, path);
       case 'logic.Conditional':
         return Conditional.fromJson(json, path);
+      case 'logic.Intrinsic':
+        return Intrinsic.fromJson(json, path);
       case 'logic.Lambda':
         return Lambda.fromJson(json, path);
       case 'logic.ListLit':
@@ -4570,6 +4594,133 @@ final class If extends Stmt {
     _equality.hash(span),
     _equality.hash(test),
     _equality.hash(then),
+  ]);
+}
+
+/// A value the host framework provides, which the program does not declare (ADR-0026).
+///
+/// UIR's other two ways to spell a reference both need something the program contains: `logic.Ref{target}` a declaration, `logic.Ref{name}` a lexically enclosing parameter. A framework intrinsic like Flutter's `State.mounted`/`BuildContext.mounted` is neither — recognized by the analyzer from the resolved element (never from the spelling `mounted`, which an application's own field could share), and represented here as the target-neutral fact it answers rather than the framework API that answers it.
+///
+/// Expression-level, not a statement-level guard: `docs/m6/GAP-mounted.md`'s corpus measurement found `mounted` used as one boolean operand among several (`if (result == null || !mounted) return;`) in 58 of 348 real occurrences, which only an ordinary composable expression node can represent.
+@immutable
+final class Intrinsic extends Expr {
+  /// Creates a [Intrinsic].
+  const Intrinsic({
+    required this.id,
+    required this.intrinsic,
+    required this.span,
+    required this.type,
+    this.anchor,
+    this.ext,
+    this.operand,
+  });
+
+  /// Parses a [Intrinsic] from JSON, validating as it goes.
+  factory Intrinsic.fromJson(Object? value, [String path = 'Intrinsic']) {
+    final Map<String, Object?> json = _asObject(value, path);
+    final String kind = _asString(_req(json, 'kind', path), '$path.kind');
+    if (kind != 'logic.Intrinsic') {
+      throw UirParseError('$path.kind', 'expected "logic.Intrinsic", got "$kind"');
+    }
+    return Intrinsic(
+      anchor: json['anchor'] == null ? null : _asString(json['anchor'], '$path.anchor'),
+      ext: json['ext'] == null ? null : _asMap<Object?>(json['ext'], '$path.ext', (Object? v, String p) => v),
+      id: _asString(_req(json, 'id', path), '$path.id'),
+      intrinsic: IntrinsicKind.fromJson(_req(json, 'intrinsic', path), '$path.intrinsic'),
+      operand: json['operand'] == null ? null : Expr.fromJson(json['operand'], '$path.operand'),
+      span: SourceSpan.fromJson(_req(json, 'span', path), '$path.span'),
+      type: TypeRef.fromJson(_req(json, 'type', path), '$path.type'),
+    );
+  }
+
+  /// The override key, when the node is addressable by a human.
+  final Anchor? anchor;
+
+  /// Plugin extension data, namespaced `x-<plugin>`. Core passes round-trip it untouched (Spec §2.6).
+  final Map<String, Object?>? ext;
+
+  /// The node's stable, content-addressed identity.
+  final NodeId id;
+
+  /// Which framework-provided fact this reads.
+  final IntrinsicKind intrinsic;
+
+  /// The value the intrinsic is about, for a member that takes one (`context.mounted`'s context value). Absent for a nullary member (`component.mounted`).
+  final Expr? operand;
+
+  /// Where the node came from.
+  final SourceSpan span;
+
+  /// Resolved type.
+  final TypeRef type;
+
+  /// The node's discriminant.
+  @override
+  String get kind => 'logic.Intrinsic';
+
+  /// Serializes to canonical JSON: keys sorted, nulls omitted.
+  @override
+  Map<String, Object?> toJson() => canonicalJson(<String, Object?>{
+    'anchor': anchor,
+    'ext': ext,
+    'id': id,
+    'intrinsic': intrinsic.toJson(),
+    'kind': 'logic.Intrinsic',
+    'operand': operand?.toJson(),
+    'span': span.toJson(),
+    'type': type.toJson(),
+  })! as Map<String, Object?>;
+
+  /// Returns a copy with the given fields replaced. The original is never mutated.
+  ///
+  /// An omitted argument keeps its current value; `copyWith` cannot set a field back to
+  /// null. Construct a new node when that is what you mean.
+  Intrinsic copyWith({
+    Anchor? anchor,
+    Map<String, Object?>? ext,
+    NodeId? id,
+    IntrinsicKind? intrinsic,
+    Expr? operand,
+    SourceSpan? span,
+    TypeRef? type,
+  }) {
+    return Intrinsic(
+      anchor: anchor ?? this.anchor,
+      ext: ext ?? this.ext,
+      id: id ?? this.id,
+      intrinsic: intrinsic ?? this.intrinsic,
+      operand: operand ?? this.operand,
+      span: span ?? this.span,
+      type: type ?? this.type,
+    );
+  }
+
+  @override
+  R accept<R>(ExprVisitor<R> visitor) => visitor.visitIntrinsic(this);
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is Intrinsic &&
+        _equality.equals(other.anchor, anchor) &&
+        _equality.equals(other.ext, ext) &&
+        _equality.equals(other.id, id) &&
+        _equality.equals(other.intrinsic, intrinsic) &&
+        _equality.equals(other.operand, operand) &&
+        _equality.equals(other.span, span) &&
+        _equality.equals(other.type, type);
+  }
+
+  @override
+  int get hashCode => Object.hashAll(<Object?>[
+    'Intrinsic',
+    _equality.hash(anchor),
+    _equality.hash(ext),
+    _equality.hash(id),
+    _equality.hash(intrinsic),
+    _equality.hash(operand),
+    _equality.hash(span),
+    _equality.hash(type),
   ]);
 }
 
@@ -9402,6 +9553,9 @@ abstract interface class ExprVisitor<R> {
   /// Visits a [Conditional].
   R visitConditional(Conditional node);
 
+  /// Visits a [Intrinsic].
+  R visitIntrinsic(Intrinsic node);
+
   /// Visits a [Lambda].
   R visitLambda(Lambda node);
 
@@ -9571,6 +9725,8 @@ UirNode uirNodeFromJson(Object? value, [String path = 'UirNode']) {
       return FunctionDecl.fromJson(json, path);
     case 'logic.If':
       return If.fromJson(json, path);
+    case 'logic.Intrinsic':
+      return Intrinsic.fromJson(json, path);
     case 'logic.Lambda':
       return Lambda.fromJson(json, path);
     case 'logic.ListLit':

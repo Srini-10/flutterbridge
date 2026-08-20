@@ -84,14 +84,16 @@ export function emitComponent(component: Node, module: ModuleBuilder, scope: Emi
   module.line(`/** \`${component['name']}\`, from ${spanOf(component)}. */`);
   module.line(`export function ${name}(${propsType}) {`);
   module.block(() => {
-    // The router, before anything that could use it — an action body is emitted by
-    // `declareLocalActions` below, and a navigation inside one reads this name.
+    // The router and the mounted ref, before anything that could use either — an action body is emitted
+    // by `declareLocalActions` below, and a navigation or a liveness read inside one reads these names.
     const routerLocal = declareRouter(component, module, scope);
     const withRouter: EmitScope = routerLocal === undefined ? scope : { ...scope, routerLocal };
+    const mountedLocal = declareMounted(component, module, withRouter);
+    const withMounted: EmitScope = mountedLocal === undefined ? withRouter : { ...withRouter, mountedLocal };
     // Store consumption next, before this component's own signals/actions — a `useStore`/`useSignal` pair
     // is exactly the same kind of hoisted hook `declareLocalSignals` emits next, and both must run before
     // the tree that needs them is ever walked (M7-F).
-    const { outer, subscriptions } = declareStoreConsumption(component, module, withRouter);
+    const { outer, subscriptions } = declareStoreConsumption(component, module, withMounted);
     const signals = declareLocalSignals(component, module, outer);
     // Actions the tree calls, declared before the tree that calls them. See `declareLocalActions`.
     const actions = declareLocalActions(component, module, outer, signals, params);
@@ -139,6 +141,30 @@ function declareRouter(component: Node, module: ModuleBuilder, scope: EmitScope)
 }
 
 /**
+ * Declares the component's `useMounted()` ref, if its tree (or an action it references) reads
+ * `logic.Intrinsic` — `mounted` or `context.mounted` (ADR-0026).
+ *
+ * Hoisted for the same rules-of-hooks reason {@link declareRouter} is: the read is usually inside a
+ * callback (`onPressed: () async { ...; if (!mounted) return; ... }`), and `useMounted()` is a hook.
+ * Declared **only when needed**, and **once**, however many times the tree reads it — one ref answers
+ * every read, since they are all asking about the same component instance.
+ *
+ * @param component - the `ui.Component` node.
+ * @param module - the file to write into.
+ * @param scope - resolution, to reach a `sig.Action` the tree references by id (as {@link declareRouter}
+ * does).
+ * @returns the identifier holding the ref, or undefined when the component reads no intrinsic.
+ */
+function declareMounted(component: Node, module: ModuleBuilder, scope: EmitScope): string | undefined {
+  if (!componentReaches(component, scope, (node) => node['kind'] === 'logic.Intrinsic')) return undefined;
+  const useMounted = useRuntime(module, 'useMounted');
+  const local = 'mounted';
+  module.line(`const ${local} = ${useMounted}();`);
+  module.line();
+  return local;
+}
+
+/**
  * Whether `component` performs a navigation — in its own render tree, or inside a `sig.Action` that
  * tree references (M7-H).
  *
@@ -153,21 +179,31 @@ function declareRouter(component: Node, module: ModuleBuilder, scope: EmitScope)
  * navigation this document already represents correctly (M7-H) still could not be emitted.
  */
 function navigatesSomewhere(component: Node, scope: EmitScope): boolean {
-  if (containsNavigate(component)) return true;
+  return componentReaches(component, scope, (node) => node['kind'] === 'logic.Navigate');
+}
+
+/**
+ * Whether `component`'s render tree, or a `sig.Action` it references, contains a node `matches`
+ * accepts. Shared by {@link navigatesSomewhere} and `declareMounted`'s own reachability check
+ * (ADR-0026) — both need "walk the render tree, then walk every referenced action's body too," and
+ * only the predicate differs.
+ */
+function componentReaches(component: Node, scope: EmitScope, matches: (node: Node) => boolean): boolean {
+  if (containsNode(component, matches)) return true;
   for (const id of referencedActions(component['render'], scope)) {
     const action = scope.node(id) as unknown as Node | undefined;
-    if (action !== undefined && containsNavigate(action)) return true;
+    if (action !== undefined && containsNode(action, matches)) return true;
   }
   return false;
 }
 
-/** Whether anything in `value` is a `logic.Navigate`. */
-function containsNavigate(value: unknown): boolean {
-  if (Array.isArray(value)) return value.some(containsNavigate);
+/** Whether anything in `value` is a node `matches` accepts. */
+function containsNode(value: unknown, matches: (node: Node) => boolean): boolean {
+  if (Array.isArray(value)) return value.some((item) => containsNode(item, matches));
   if (value === null || typeof value !== 'object') return false;
   const node = value as Node;
-  if (node['kind'] === 'logic.Navigate') return true;
-  return Object.values(node).some(containsNavigate);
+  if (matches(node)) return true;
+  return Object.values(node).some((child) => containsNode(child, matches));
 }
 
 /**
@@ -604,6 +640,9 @@ function childScope(
     // distinguishes "absent" from "present and undefined" — and absent is what a component that does not
     // navigate must have.
     ...(parent.routerLocal === undefined ? {} : { routerLocal: parent.routerLocal }),
+    // Same reasoning, same shape, for `useMounted()`'s ref (ADR-0026) — declared once per component, and
+    // every render-tree read of `mounted`/`context.mounted` must resolve to that same instance.
+    ...(parent.mountedLocal === undefined ? {} : { mountedLocal: parent.mountedLocal }),
     // Program-wide, so a child scope forwards it unchanged rather than rebuilding it per component.
     themeRoles: parent.themeRoles,
     node: parent.node.bind(parent),

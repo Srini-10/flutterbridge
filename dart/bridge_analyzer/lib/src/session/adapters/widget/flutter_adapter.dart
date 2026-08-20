@@ -235,6 +235,50 @@ final class FlutterWidgetAdapter implements WidgetAdapter, ThemeAdapter {
     return identifier.element?.enclosingElement?.name == MaterialCatalog.stateBase;
   }
 
+  @override
+  MountedKind? mountedIntrinsicOf(Expression node) {
+    if (MaterialCatalog.mountedGetter.isEmpty) {
+      return null;
+    }
+
+    // Bare `mounted` — a SimpleIdentifier, resolving to State's own getter, read the same way `widget`
+    // is above. `this.mounted` is the same read spelled explicitly.
+    final SimpleIdentifier? bare = switch (node) {
+      SimpleIdentifier() => node,
+      PropertyAccess(target: ThisExpression(), propertyName: final SimpleIdentifier name) => name,
+      _ => null,
+    };
+    if (bare != null && bare.name == MaterialCatalog.mountedGetter) {
+      final String? library = bare.element?.library?.identifier;
+      if (library != null &&
+          library.startsWith(_package) &&
+          bare.element?.enclosingElement?.name == MaterialCatalog.stateBase) {
+        return MountedKind.componentMounted;
+      }
+      return null;
+    }
+
+    // `<value>.mounted` — a PropertyAccess (or the equivalent PrefixedIdentifier form) whose receiver is
+    // an ordinary value, not `this`. Resolved the same way: the getter's declaring class must be
+    // Flutter's `BuildContext`, never a program-declared class of the same name.
+    final SimpleIdentifier? property = switch (node) {
+      PropertyAccess(propertyName: final SimpleIdentifier name) => name,
+      PrefixedIdentifier(:final SimpleIdentifier identifier) => identifier,
+      _ => null,
+    };
+    if (property == null || property.name != MaterialCatalog.mountedGetter) {
+      return null;
+    }
+    final String? library = property.element?.library?.identifier;
+    if (library == null || !library.startsWith(_package)) {
+      return null;
+    }
+    if (property.element?.enclosingElement?.name != MaterialCatalog.mountedContextClass) {
+      return null;
+    }
+    return MountedKind.contextMounted;
+  }
+
   // ── theme ─────────────────────────────────────────────────────────────────────────────────────
 
   @override

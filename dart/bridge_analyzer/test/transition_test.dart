@@ -1089,13 +1089,17 @@ class _HomeState extends State<Home> {
       expect((body[2] as Map<String, dynamic>)['kind'], 'logic.Navigate', reason: 'the push is last');
 
       // The guard's own test is a plain boolean expression — `!mounted` — never a special construct
-      // that could not also compose in `if (a || !mounted)`.
+      // that could not also compose in `if (a || !mounted)`. `mounted` itself is `logic.Intrinsic`
+      // (ADR-0026): a framework-provided fact, not a program declaration or a lexical parameter, and
+      // this is the node that proves it is no longer indistinguishable from an unresolved reference.
       final Map<String, dynamic> guard = body[1] as Map<String, dynamic>;
       final Map<String, dynamic> test = guard['test'] as Map<String, dynamic>;
       expect(test['kind'], 'logic.Unary');
       expect(test['operator'], '!');
-      expect((test['operand'] as Map<String, dynamic>)['kind'], 'logic.Ref');
-      expect((test['operand'] as Map<String, dynamic>)['name'], 'mounted');
+      final Map<String, dynamic> operand = test['operand'] as Map<String, dynamic>;
+      expect(operand['kind'], 'logic.Intrinsic');
+      expect(operand['intrinsic'], 'componentMounted');
+      expect(operand.containsKey('operand'), isFalse, reason: 'nullary — no context value to name');
     });
 
     test('context.mounted guards the awaited push exactly as State.mounted does', () async {
@@ -1117,12 +1121,15 @@ class _HomeState extends State<Home> {
         (Map<String, dynamic> a) => (a['body'] as List<dynamic>).length == 3,
       );
       final Map<String, dynamic> guard = (action['body'] as List<dynamic>)[1] as Map<String, dynamic>;
-      final Map<String, dynamic> operand = (guard['test'] as Map<String, dynamic>)['operand'] as Map<String, dynamic>;
-      // `context.mounted` is a PropertyAccess on a Ref to `context` — distinct from bare `mounted`,
-      // never conflated with it.
-      expect(operand['kind'], 'logic.PropertyAccess');
-      expect(operand['property'], 'mounted');
-      expect((operand['receiver'] as Map<String, dynamic>)['name'], 'context');
+      final Map<String, dynamic> test = (guard['test'] as Map<String, dynamic>)['operand'] as Map<String, dynamic>;
+      // `context.mounted` is `logic.Intrinsic{intrinsic: 'contextMounted', operand: <context value>}` —
+      // distinct from bare `mounted`'s nullary `componentMounted`, never conflated with it, and the
+      // context value it is about is still a plain reference to `context`.
+      expect(test['kind'], 'logic.Intrinsic');
+      expect(test['intrinsic'], 'contextMounted');
+      final Map<String, dynamic> operand = test['operand'] as Map<String, dynamic>;
+      expect(operand['kind'], 'logic.Ref');
+      expect(operand['name'], 'context');
     });
 
     test('destination arguments survive the await — M7-G still receives them', () async {
@@ -1244,6 +1251,202 @@ class _HomeState extends State<Home> {
       final Extracted second = await extractAsyncNav(asyncApp(source));
       expect(first.bytes, second.bytes);
       expect(first.ofKind('logic.Navigate'), hasLength(1));
+    });
+  });
+
+  // ADR-0026 — mounted lifecycle intrinsics. Recognition is by resolved element only (never by
+  // spelling), so every positive case here is paired with a negative one proving the same spelling,
+  // unresolved to Flutter, stays an ordinary reference.
+  group('ADR-0026 — mounted lifecycle intrinsics', () {
+    Map<String, dynamic> intrinsicIn(Map<String, dynamic> node) {
+      Map<String, dynamic>? found;
+      void walk(Object? value) {
+        if (value is Map<String, dynamic>) {
+          if (value['kind'] == 'logic.Intrinsic') found = value;
+          value.values.forEach(walk);
+        } else if (value is List<dynamic>) {
+          value.forEach(walk);
+        }
+      }
+
+      walk(node);
+      if (found == null) {
+        throw StateError('no logic.Intrinsic found');
+      }
+      return found!;
+    }
+
+    test('bare mounted is componentMounted, nullary', () async {
+      final Extracted extracted = await extractAsyncNav(
+        asyncApp('if (!mounted) return;'),
+      );
+      expect(extracted.errors, isEmpty);
+      final Map<String, dynamic> lambda = extracted.ofKind('logic.Lambda').first;
+      final Map<String, dynamic> intrinsic = intrinsicIn(lambda);
+      expect(intrinsic['intrinsic'], 'componentMounted');
+      expect(intrinsic.containsKey('operand'), isFalse);
+    });
+
+    test('context.mounted is contextMounted, with the context value as its operand', () async {
+      final Extracted extracted = await extractAsyncNav(
+        asyncApp('if (!context.mounted) return;'),
+      );
+      expect(extracted.errors, isEmpty);
+      final Map<String, dynamic> lambda = extracted.ofKind('logic.Lambda').first;
+      final Map<String, dynamic> intrinsic = intrinsicIn(lambda);
+      expect(intrinsic['intrinsic'], 'contextMounted');
+      final Map<String, dynamic> operand = intrinsic['operand'] as Map<String, dynamic>;
+      expect(operand['kind'], 'logic.Ref');
+      expect(operand['name'], 'context');
+    });
+
+    test('compound: a non-boolean check ahead of !mounted still composes it as an ordinary operand',
+        () async {
+      final Extracted extracted = await extractAsyncNav(
+        asyncApp('''
+      String? result;
+      if (result == null || !mounted) return;
+'''),
+      );
+      expect(extracted.errors, isEmpty);
+      final Map<String, dynamic> lambda = extracted.ofKind('logic.Lambda').first;
+      final Map<String, dynamic> intrinsic = intrinsicIn(lambda);
+      expect(intrinsic['intrinsic'], 'componentMounted');
+    });
+
+    test('compound: !context.mounted composes with another operand under ||', () async {
+      final Extracted extracted = await extractAsyncNav(
+        asyncApp('''
+      const bool cancelled = false;
+      if (!context.mounted || cancelled) return;
+'''),
+      );
+      expect(extracted.errors, isEmpty);
+      final Map<String, dynamic> lambda = extracted.ofKind('logic.Lambda').first;
+      final Map<String, dynamic> intrinsic = intrinsicIn(lambda);
+      expect(intrinsic['intrinsic'], 'contextMounted');
+    });
+
+    test('two reads in one function are two separate intrinsic nodes, not one reused', () async {
+      final Extracted extracted = await extractAsyncNav(
+        asyncApp('''
+      if (!mounted) return;
+      await doSomething();
+      if (!mounted) return;
+'''),
+      );
+      expect(extracted.errors, isEmpty);
+      expect(extracted.ofKind('logic.Intrinsic'), hasLength(2));
+    });
+
+    /// Extracts a single-file app against [asyncNavFlutter], with full control over its content — the
+    /// negative-recognition tests below need an extra, unrelated class or a shadowing local in scope,
+    /// which `asyncApp`'s fixed template has no slot for.
+    Future<Extracted> extractCustom(String source) async {
+      final String project = createProject(
+        name: 'app',
+        libraries: <String, String>{'main.dart': source},
+        dependencies: <String, Map<String, String>>{'flutter': asyncNavFlutter},
+      );
+      final Directory out = Directory.systemTemp.createTempSync('extract_');
+      addTearDown(() => out.deleteSync(recursive: true));
+      final AnalyzerResult result = await const BridgeAnalyzer().run(
+        AnalyzerRequest(projectRoot: project, outputPath: '${out.path}/uir.ndjson'),
+      );
+      final File document = File('${out.path}/uir.ndjson');
+      return Extracted(
+        result: result,
+        nodes: document.existsSync()
+            ? document
+                  .readAsLinesSync()
+                  .where((String l) => l.isNotEmpty)
+                  .map((String l) => jsonDecode(l) as Map<String, dynamic>)
+                  .toList()
+            : <Map<String, dynamic>>[],
+        bytes: document.existsSync() ? document.readAsStringSync() : '',
+      );
+    }
+
+    test('a local variable named mounted shadows the intrinsic, resolved as a local read', () async {
+      final Extracted extracted = await extractCustom('''
+import 'package:flutter/material.dart';
+
+class Home extends StatefulWidget {
+  const Home({super.key});
+  @override
+  State<Home> createState() => _HomeState();
+}
+
+class _HomeState extends State<Home> {
+  @override
+  Widget build(BuildContext context) => ElevatedButton(
+    onPressed: () {
+      bool mounted = true;
+      if (!mounted) return;
+    },
+    child: const Text('go'),
+  );
+}
+''');
+      expect(extracted.errors, isEmpty);
+      expect(
+        extracted.ofKind('logic.Intrinsic'),
+        isEmpty,
+        reason: 'a local variable of the same name resolves to itself, never to State.mounted',
+      );
+    });
+
+    test('<value>.mounted on a class unrelated to BuildContext is not the intrinsic', () async {
+      final Extracted extracted = await extractCustom('''
+import 'package:flutter/material.dart';
+
+class NotAContext {
+  bool mounted = true;
+}
+
+class Home extends StatelessWidget {
+  const Home({super.key});
+  @override
+  Widget build(BuildContext context) {
+    final NotAContext thing = NotAContext();
+    return ElevatedButton(
+      onPressed: () {
+        if (!thing.mounted) return;
+      },
+      child: const Text('go'),
+    );
+  }
+}
+''');
+      expect(extracted.errors, isEmpty);
+      expect(extracted.ofKind('logic.Intrinsic'), isEmpty);
+    });
+
+    test("an application's own mounted getter, on a class named neither State nor BuildContext, "
+        'is never claimed', () async {
+      final Extracted extracted = await extractCustom('''
+import 'package:flutter/material.dart';
+
+class MyState {
+  bool get mounted => true;
+}
+
+class Home extends StatelessWidget {
+  const Home({super.key});
+  @override
+  Widget build(BuildContext context) {
+    final MyState fake = MyState();
+    return ElevatedButton(
+      onPressed: () {
+        if (!fake.mounted) return;
+      },
+      child: const Text('go'),
+    );
+  }
+}
+''');
+      expect(extracted.errors, isEmpty);
+      expect(extracted.ofKind('logic.Intrinsic'), isEmpty);
     });
   });
 }

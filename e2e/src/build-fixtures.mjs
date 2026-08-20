@@ -51,11 +51,18 @@ const workspace = join(here, '../.fixtures');
  * different constant arguments, which is the shape that needs a browser: `build.test.ts`-style tsc proof
  * cannot tell a first-caller-wins collapse from correct per-transition resolution, because both typecheck.
  * See `docs/m7/m7g-inline-push-prop-resolution.md`.
+ *
+ * `async_push_guard` (M7-H/M7-J) closes the last gap in the navigation arc: `hello_bridge`'s own push is
+ * awaited and guarded by `mounted`, inside a named async method reached by tear-off — the one shape none
+ * of the fixtures above exercise. It could not join this list until ADR-0026 gave `mounted` a generator
+ * lowering (`useMounted()`); before that it refused with `BRG3006` and had no application to load. See
+ * `docs/m7/m7j-mounted-lifecycle-implementation.md`.
  */
 export const APPS = [
   { name: 'counter', source: 'examples/counter' },
   { name: 'promoted-counter', source: 'fixtures/apps/promoted_counter' },
   { name: 'inline-push-props', source: 'fixtures/apps/inline_push_props' },
+  { name: 'async-push-guard', source: 'fixtures/apps/async_push_guard' },
 ];
 
 const run = (program, args, cwd, env = {}) =>

@@ -99,6 +99,17 @@
         "popUntil": "Entries are removed until a predicate holds. The predicate is **not** modelled; a generator that cannot express one must refuse rather than approximate."
       }
     },
+    "IntrinsicKind": {
+      "description": "The vocabulary of framework-provided facts `logic.Intrinsic` can represent (ADR-0026). Deliberately target-neutral — a name for what the fact *means*, never the framework API that answers it today, so a non-Flutter frontend could produce the same node for its own equivalent concept.",
+      "enum": [
+        "componentMounted",
+        "contextMounted"
+      ],
+      "x-uir-enum-docs": {
+        "componentMounted": "Whether the enclosing component instance is still part of the live tree. Nullary — asks about the component this expression is lexically inside; `logic.Intrinsic.operand` is absent. Flutter: `State.mounted`.",
+        "contextMounted": "Whether the element behind a specific context value is still part of the live tree. Takes `operand` — the context value — because it asks about whatever was passed in, which in the common real case is not the enclosing component (a free function taking a `BuildContext` parameter has none). Flutter: `BuildContext.mounted`."
+      }
+    },
     "AssignmentOperator": {
       "description": "How an assignment combines its target with its value (Spec v2.2 §A10).\n\nAn enum, not a free-form string: a generator that receives an operator it does not know must fail to compile rather than silently emit the wrong arithmetic. `Binary.operator` is a string because a binary operator is pure — the worst a wrong one does is compute the wrong number. A wrong assignment operator writes the wrong value to state.",
       "enum": [
@@ -834,6 +845,43 @@
             "fallback": {
               "$ref": "l1.json#/$defs/Expr",
               "description": "The fallback, for `??`."
+            },
+            "type": {
+              "$ref": "shared.json#/$defs/TypeRef",
+              "description": "Resolved type."
+            }
+          }
+        }
+      ]
+    },
+    "Intrinsic": {
+      "description": "A value the host framework provides, which the program does not declare (ADR-0026).\n\nUIR's other two ways to spell a reference both need something the program contains: `logic.Ref{target}` a declaration, `logic.Ref{name}` a lexically enclosing parameter. A framework intrinsic like Flutter's `State.mounted`/`BuildContext.mounted` is neither — recognized by the analyzer from the resolved element (never from the spelling `mounted`, which an application's own field could share), and represented here as the target-neutral fact it answers rather than the framework API that answers it.\n\nExpression-level, not a statement-level guard: `docs/m6/GAP-mounted.md`'s corpus measurement found `mounted` used as one boolean operand among several (`if (result == null || !mounted) return;`) in 58 of 348 real occurrences, which only an ordinary composable expression node can represent.",
+      "x-uir-kind": "logic.Intrinsic",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "intrinsic",
+            "type"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "logic.Intrinsic",
+              "description": "Discriminant."
+            },
+            "intrinsic": {
+              "$ref": "#/$defs/IntrinsicKind",
+              "description": "Which framework-provided fact this reads."
+            },
+            "operand": {
+              "$ref": "l1.json#/$defs/Expr",
+              "description": "The value the intrinsic is about, for a member that takes one (`context.mounted`'s context value). Absent for a nullary member (`component.mounted`)."
             },
             "type": {
               "$ref": "shared.json#/$defs/TypeRef",
@@ -1663,6 +1711,9 @@
         },
         {
           "$ref": "#/$defs/NullCheck"
+        },
+        {
+          "$ref": "#/$defs/Intrinsic"
         },
         {
           "$ref": "#/$defs/OpaqueExpr"
