@@ -150,6 +150,19 @@ export interface EmitScope {
    */
   readonly storeExports: ReadonlyMap<NodeId, { readonly module: string; readonly export: string }>;
   /**
+   * Every project-declared `ui.Component`'s own module and export name, keyed by its anchor
+   * (`` `${file}#${name}` `` — the same string a `ui.Element.component`'s `library`+`name` pair
+   * reconstructs) — what a reference to a *sibling* component, anywhere in an ordinary render tree,
+   * needs to import and render (M8-F).
+   *
+   * `file` is a project-relative path for the project's own component, or a `package:<name>/…` URI for
+   * one declared in a local dependency (`ProjectInfo.dependencyLibraryFiles`'s own shape, unchanged
+   * all the way through) — the two can never collide, so this map needs no separate notion of package
+   * ownership: the anchor string already carries it. Built once, before any component is emitted, so
+   * a component processed early in the program's fixed order can still reference one processed later.
+   */
+  readonly componentModules: ReadonlyMap<string, { readonly module: string; readonly name: string }>;
+  /**
    * The resolved expression for a `logic.PropertyAccess` whose `target` names a signal/derived member of
    * a *locally-owned* store instance (ADR-27) — `favorites.favoriteCount` where `favorites` is this
    * component's own `useLocalStore(...)`.

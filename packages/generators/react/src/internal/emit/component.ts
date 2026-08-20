@@ -778,6 +778,7 @@ function childScope(
     report: parent.report.bind(parent),
     storeMembers: parent.storeMembers,
     storeExports: parent.storeExports,
+    componentModules: parent.componentModules,
     storeAccessRead: (id) => storeInstanceReads.get(id) ?? parent.storeAccessRead(id),
     // Forwarded, not rebuilt: the router is declared once per component and every nested scope inside it
     // refers to that one declaration. Spread rather than assigned, because `exactOptionalPropertyTypes`
@@ -978,6 +979,21 @@ export function emitUiNode(node: Node, module: ModuleBuilder, scope: EmitScope, 
 function emitElement(node: Node, module: ModuleBuilder, scope: EmitScope, depth: number): string {
   const componentRef = node['component'] as Node | undefined;
   const widgetName = String(componentRef?.['name'] ?? '');
+
+  // A reference to a *project-declared* sibling component (M8-F) — `ui.Element.component.library`
+  // reconstructs the exact anchor `scope.componentModules` indexes every `ui.Component` by, so this is
+  // a lookup by the declaration's own identity, never a guess from `userDefined` alone (a widget this
+  // generator has simply never catalogued would also read `userDefined: true`, and must still be
+  // refused — see the fall-through below). Checked ahead of the catalog: the catalog is Flutter SDK
+  // vocabulary, and a project's own component was never going to be in it.
+  if (componentRef !== undefined) {
+    const anchor = `${String(componentRef['library'] ?? '')}#${widgetName}`;
+    const target = scope.componentModules.get(anchor);
+    if (target !== undefined) {
+      return emitComponentReference(node, target, module, scope);
+    }
+  }
+
   const mapping = mappingOf(widgetName);
 
   if (mapping === undefined) {
@@ -1067,6 +1083,42 @@ function emitElement(node: Node, module: ModuleBuilder, scope: EmitScope, depth:
   const pad = '  '.repeat(depth + 1);
   const inner = children.map((child) => `${pad}  ${child}`).join('\n');
   return `<${tag}${attributes}>\n${inner}\n${pad}</${tag}>`;
+}
+
+/**
+ * Emits a reference to a project-declared sibling component (M8-F) — `<GreetingCard name={…} />`,
+ * imported from its own emitted file.
+ *
+ * Props pass 1:1, by the name the source wrote — `identifierOf(name)={emitBinding(value)}` — never a
+ * catalog mapping. A `WidgetMapping` exists because a Flutter SDK widget's prop names are not the
+ * runtime kit's own; a project component *is* the runtime kit's own naming, generated from the same
+ * `ParamDecl`s its own emission (`declareLocalSignals`'s sibling, the component's own parameter
+ * binding) already used, so there is nothing to translate.
+ *
+ * Slots and children are not handled here: no site reached in this milestone's own evidence (a real
+ * Continuum build, this milestone's own fixture) constructs a project component with either, and
+ * inventing the mapping without one would be guessing at a shape nothing has proven (M8-F Phase 9).
+ * A construction that supplies one is refused honestly by `reportUnsatisfiableConstructions` or a
+ * downstream `tsc` error, never silently dropped.
+ */
+function emitComponentReference(
+  node: Node,
+  target: { readonly module: string; readonly name: string },
+  module: ModuleBuilder,
+  scope: EmitScope,
+): string {
+  const tag = module.use(target.module, target.name);
+  const props: string[] = [];
+  const propMap = (node['props'] ?? {}) as Record<string, unknown>;
+
+  // Sorted, for the same reason every other prop loop in this file is: source order is not semantic.
+  for (const propName of Object.keys(propMap).sort()) {
+    const value = emitBinding(propMap[propName] as Node, scope);
+    props.push(`${identifierOf(propName)}={${value}}`);
+  }
+
+  const attributes = props.length === 0 ? '' : ` ${props.join(' ')}`;
+  return `<${tag}${attributes} />`;
 }
 
 /**

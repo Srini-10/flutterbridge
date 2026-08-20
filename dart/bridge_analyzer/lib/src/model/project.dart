@@ -20,6 +20,7 @@ final class ProjectInfo {
     required this.isWorkspaceMember,
     required this.isFlutterProject,
     required this.dependencies,
+    this.dependencyLibraryFiles = const <String>[],
     this.sdkConstraint,
     this.flutterConstraint,
     this.dartSdkPath,
@@ -44,6 +45,17 @@ final class ProjectInfo {
   ///
   /// Ordered by `sortedPaths` at construction: filesystem listing order is not a specification.
   final List<String> libraryFiles;
+
+  /// Every Dart library belonging to a local dependency (M8-F) — a `path:` dependency, or a
+  /// pub-workspace member, whose own source lives in this checkout rather than a pub cache or SDK
+  /// install (`PackageEntry.isLocal`).
+  ///
+  /// Named as full `package:<name>/…` URIs, never a bare relative path — the same shape a reference
+  /// to one already carries (`Symbols.pathOf`'s own input), and a shape that cannot collide with a
+  /// [libraryFiles] entry, which never contains a colon. Empty for every project with no local
+  /// dependency, which is every fixture this compiler had before M8-F — `libraryFiles` alone is
+  /// unaffected by this field's existence.
+  final List<String> dependencyLibraryFiles;
 
   /// Whether [packageConfigPath] was found above [root] — i.e. the project is a member of a pub
   /// workspace rather than a standalone package.

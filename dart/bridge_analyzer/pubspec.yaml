@@ -17,6 +17,11 @@ dependencies:
     path: ../bridge_uir
   collection: ^1.19.1
   crypto: ^3.0.7
+  # A local dependency's own `analyzer.exclude` globs (M8-F) — generated code a package's own author
+  # already opted out of analysis, which `AnalysisContextCollection` refuses to resolve regardless.
+  # Already resolved transitively (analyzer's own dependency); declared directly because this file
+  # reads it, and a transitive-only dependency is one `analyzer` is free to drop without warning.
+  glob: ^2.1.3
   meta: ^1.19.0
   path: ^1.9.1
   yaml: ^3.1.3

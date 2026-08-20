@@ -86,6 +86,24 @@ export function generateProject(context: GeneratorContext): GeneratorOutput {
   const files: EmittedFile[] = [];
   const scope = rootScope(context, report);
 
+  // Every non-app-root component's own output path and export name, decided once, before any component
+  // is emitted (M8-F) — so a component processed earlier in the program's fixed order can still
+  // reference one processed later, by anchor (`ui.Element.component`'s own `library`+`name`, which
+  // reconstructs exactly the string a `ui.Component`'s own `anchor` already is). `fileNameOf`/`isAppRoot`
+  // are pure functions of the node alone, so computing this ahead of the loop that actually emits changes
+  // nothing about what gets emitted — it only lets the two questions ("where does X live" and "render X
+  // now") happen in either order.
+  for (const component of context.program.ofKind('ui.Component') as unknown as Node[]) {
+    if (isAppRoot(component)) continue;
+    const anchor = component['anchor'];
+    if (typeof anchor !== 'string') continue;
+    const base = fileNameOf(String(component['name'] ?? 'component'));
+    (scope.componentModules as Map<string, { readonly module: string; readonly name: string }>).set(anchor, {
+      module: `@/components/${base}`,
+      name: String(component['name'] ?? ''),
+    });
+  }
+
   // ── theme ──
   const themeModule = new ModuleBuilder('src/theme/tokens.ts');
   themeModule.setBanner(banner("the program's app.Token nodes"));
@@ -503,12 +521,19 @@ function rootScope(
   // instance (`app.StoreInstance`, ADR-27) needs to import to call `useLocalStore(...)`.
   const storeExportInfo = new Map<NodeId, { readonly module: string; readonly export: string }>();
 
+  // Populated immediately after this function returns (M8-F) — see `generate`'s own pre-pass, run before
+  // any component is emitted for the same reason `storeExportInfo` is populated early: a forward
+  // reference from a component processed earlier in the program's fixed order to one processed later
+  // must still resolve.
+  const componentModuleInfo = new Map<string, { readonly module: string; readonly name: string }>();
+
   const scope: EmitScope = {
     module: new ModuleBuilder('<none>'),
     report,
     themeRoles,
     storeMembers: storeMemberInfo,
     storeExports: storeExportInfo,
+    componentModules: componentModuleInfo,
     node: (id: NodeId) => context.program.get(id) as AnyUirNode | undefined,
     // A bare reference at the root resolves nothing — every store member reachable here is resolved
     // explicitly, per component, by `declareStoreConsumption` (M7-F), which is the only thing that knows

@@ -15,10 +15,20 @@ import 'package:test/test.dart';
 import 'support/temp_project.dart';
 
 /// Extracts a single-file app, and returns its UIR as JSON.
-Future<Extracted> extract(String source, {Map<String, String> extra = const <String, String>{}}) async {
+///
+/// [localDependencies] adds a `path:` dependency (M8-F) — a real, on-disk sibling package, registered
+/// with a relative `rootUri`, exactly as `pub get` records one.
+Future<Extracted> extract(
+  String source, {
+  Map<String, String> extra = const <String, String>{},
+  Map<String, Map<String, String>> localDependencies = const <String, Map<String, String>>{},
+  Map<String, Map<String, String>>? dependencies,
+}) async {
   final String project = createProject(
     name: 'app',
     libraries: <String, String>{'main.dart': source, ...extra},
+    localDependencies: localDependencies,
+    dependencies: dependencies ?? const <String, Map<String, String>>{'flutter': flutterPackage},
   );
   final Directory out = Directory.systemTemp.createTempSync('extract_');
   addTearDown(() => out.deleteSync(recursive: true));
@@ -2017,6 +2027,235 @@ class W extends StatelessWidget {
           expect(ref.containsKey('target'), isFalse);
         }
       }
+    });
+  });
+
+  group('cross-package component program assembly (M8-F)', () {
+    // M8-E found the capability stopped at three narrow chokepoints — file discovery, analysis-context
+    // scope, and Symbols.pathOf's single-packageName filter — not a missing architecture. These tests
+    // assert the actual identity a caller gets, not merely that extraction did not crash.
+
+    test('a component declared in a local path dependency becomes a real ui.Component', () async {
+      final Extracted app = await extract(
+        '''
+import 'package:flutter/material.dart';
+import 'package:ui_kit/greeting_card.dart';
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => const GreetingCard(name: 'Ada');
+}
+''',
+        localDependencies: <String, Map<String, String>>{
+          'ui_kit': <String, String>{
+            'greeting_card.dart': r'''
+import 'package:flutter/material.dart';
+class GreetingCard extends StatelessWidget {
+  const GreetingCard({required this.name, super.key});
+  final String name;
+  @override
+  Widget build(BuildContext context) => Card(child: Text('Hello, $name'));
+}
+''',
+          },
+        },
+      );
+      expect(app.errors, isEmpty);
+
+      final Map<String, dynamic> card = app.ofKind('ui.Component').singleWhere(
+        (Map<String, dynamic> c) => c['name'] == 'GreetingCard',
+      );
+      expect(
+        (card['anchor'] as String).startsWith('package:ui_kit/greeting_card.dart#'),
+        isTrue,
+        reason: 'a dependency component is anchored to its own file, in its own package’s URI space',
+      );
+      // Its own render tree is genuinely present, not stubbed — the whole point of assembly, not just
+      // discovery.
+      expect(card['render'], isNotNull);
+      expect((card['render'] as Map<String, dynamic>)['kind'], 'ui.Element');
+
+      final Map<String, dynamic> reference = app.ofKind('ui.Element').singleWhere(
+        (Map<String, dynamic> e) => (e['component'] as Map<String, dynamic>?)?['name'] == 'GreetingCard',
+      );
+      final Map<String, dynamic> componentRef = reference['component'] as Map<String, dynamic>;
+      expect(
+        componentRef['library'],
+        'package:ui_kit/greeting_card.dart',
+        reason: 'the caller’s own reference must name the same declaring file the ui.Component is anchored to',
+      );
+      expect(componentRef['userDefined'], isTrue);
+
+      // The constructor prop crossed the package boundary too, not just the bare reference.
+      final Map<String, dynamic> props = reference['props'] as Map<String, dynamic>;
+      expect((props['name'] as Map<String, dynamic>)['value'], 'Ada');
+    });
+
+    test('same class name in two local dependencies never collides', () async {
+      final Extracted app = await extract(
+        '''
+import 'package:flutter/material.dart';
+import 'package:pkg_a/shared.dart' as a;
+import 'package:pkg_b/shared.dart' as b;
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => Column(children: [const a.SharedPage(), const b.SharedPage()]);
+}
+''',
+        localDependencies: <String, Map<String, String>>{
+          'pkg_a': <String, String>{
+            'shared.dart': '''
+import 'package:flutter/material.dart';
+class SharedPage extends StatelessWidget {
+  const SharedPage({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('from A');
+}
+''',
+          },
+          'pkg_b': <String, String>{
+            'shared.dart': '''
+import 'package:flutter/material.dart';
+class SharedPage extends StatelessWidget {
+  const SharedPage({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('from B');
+}
+''',
+          },
+        },
+      );
+      expect(app.errors, isEmpty);
+
+      final List<Map<String, dynamic>> shared = app.ofKind('ui.Component').where(
+        (Map<String, dynamic> c) => c['name'] == 'SharedPage',
+      ).toList();
+      expect(shared, hasLength(2), reason: 'each package’s own SharedPage must extract as its own component');
+      expect(
+        shared[0]['id'],
+        isNot(shared[1]['id']),
+        reason: 'two distinct declarations sharing a class name must never share a NodeId',
+      );
+      expect(shared[0]['anchor'], isNot(shared[1]['anchor']));
+
+      final List<Map<String, dynamic>> refs = app.ofKind('ui.Element').where(
+        (Map<String, dynamic> e) => (e['component'] as Map<String, dynamic>?)?['name'] == 'SharedPage',
+      ).toList();
+      expect(refs, hasLength(2));
+      final Set<String> referencedLibraries = refs
+          .map((Map<String, dynamic> e) => (e['component'] as Map<String, dynamic>)['library'] as String)
+          .toSet();
+      expect(
+        referencedLibraries,
+        <String>{'package:pkg_a/shared.dart', 'package:pkg_b/shared.dart'},
+        reason: 'each call site must reference its own package’s SharedPage, not either one arbitrarily',
+      );
+    });
+
+    test('same relative file path in two local dependencies never collides', () async {
+      final Extracted app = await extract(
+        '''
+import 'package:flutter/material.dart';
+import 'package:pkg_a/page.dart' as a;
+import 'package:pkg_b/page.dart' as b;
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => Column(children: [const a.PageA(), const b.PageB()]);
+}
+''',
+        localDependencies: <String, Map<String, String>>{
+          'pkg_a': <String, String>{
+            'page.dart': '''
+import 'package:flutter/material.dart';
+class PageA extends StatelessWidget {
+  const PageA({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('A');
+}
+''',
+          },
+          'pkg_b': <String, String>{
+            'page.dart': '''
+import 'package:flutter/material.dart';
+class PageB extends StatelessWidget {
+  const PageB({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('B');
+}
+''',
+          },
+        },
+      );
+      expect(app.errors, isEmpty);
+
+      final Map<String, dynamic> pageA = app.ofKind('ui.Component').singleWhere((Map<String, dynamic> c) => c['name'] == 'PageA');
+      final Map<String, dynamic> pageB = app.ofKind('ui.Component').singleWhere((Map<String, dynamic> c) => c['name'] == 'PageB');
+      expect(pageA['id'], isNot(pageB['id']));
+      expect(pageA['anchor'], 'package:pkg_a/page.dart#PageA');
+      expect(pageB['anchor'], 'package:pkg_b/page.dart#PageB');
+    });
+
+    test('a Flutter SDK class never becomes a project component', () async {
+      final Extracted app = await extract(counterApp);
+      for (final Map<String, dynamic> component in app.ofKind('ui.Component')) {
+        expect(
+          component['name'],
+          isNot(anyOf('StatelessWidget', 'StatefulWidget', 'Widget', 'State')),
+          reason: 'the SDK is framework surface, never project declaration, regardless of what the '
+              'analyzer can resolve about it',
+        );
+      }
+    });
+
+    test('an unrelated (non-local) pub dependency widget is not accidentally compiled', () async {
+      final Extracted app = await extract(
+        '''
+import 'package:flutter/material.dart';
+import 'package:some_pub_pkg/widget.dart';
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => const PubWidget();
+}
+''',
+        dependencies: <String, Map<String, String>>{
+          'flutter': flutterPackage,
+          'some_pub_pkg': <String, String>{
+            'widget.dart': '''
+import 'package:flutter/material.dart';
+class PubWidget extends StatelessWidget {
+  const PubWidget({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('pub');
+}
+''',
+          },
+        },
+      );
+      expect(app.errors, isEmpty);
+      expect(
+        app.ofKind('ui.Component').where((Map<String, dynamic> c) => c['name'] == 'PubWidget'),
+        isEmpty,
+        reason: 'an ordinary pub dependency (source: hosted, an absolute rootUri) is not this closure '
+            'merely because the analyzer can resolve it — only a local (path/workspace) dependency is',
+      );
+    });
+
+    test('a dart:core class never becomes a project component', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => Text(DateTime.now().toString());
+}
+''');
+      expect(
+        app.ofKind('ui.Component').where((Map<String, dynamic> c) => c['name'] == 'DateTime'),
+        isEmpty,
+      );
     });
   });
 

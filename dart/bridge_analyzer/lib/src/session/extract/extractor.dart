@@ -62,6 +62,8 @@ final class Extractor {
     required CompilationUnit unit,
     required DiagnosticSink diagnostics,
     AdapterRegistry? registry,
+    Set<String> localPackageNames = const <String>{},
+    Set<String> extractedDependencyFiles = const <String>{},
   }) {
     // The compiler's entire package knowledge, in one object. An extractor that wanted to know whether
     // something was a `GoRoute` would have to go through here — and there is nowhere else to ask.
@@ -78,6 +80,8 @@ final class Extractor {
       lineInfo: unit.lineInfo,
       diagnostics: diagnostics,
       registry: adapters,
+      localPackageNames: localPackageNames,
+      extractedDependencyFiles: extractedDependencyFiles,
     );
 
     final ExpressionExtractor expressions = ExpressionExtractor(out, adapters);

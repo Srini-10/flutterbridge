@@ -799,6 +799,12 @@ String createProject({
   Map<String, Map<String, String>> dependencies = const <String, Map<String, String>>{
     'flutter': flutterPackage,
   },
+  // A `path:`/workspace dependency (M8-F) — its own package, written to disk with a *relative*
+  // `rootUri`, exactly as `pub get` records a local dependency's source rather than a pub-cache or
+  // SDK one. Separate from [dependencies] on purpose: mixing the two into one map would force every
+  // existing caller to choose, when the whole point is that most stand-ins (`flutter`, `go_router`)
+  // are meant to stay framework surface, never local project source.
+  Map<String, Map<String, String>> localDependencies = const <String, Map<String, String>>{},
   bool isFlutter = true,
   bool withPackageConfig = true,
   bool packageConfigAtParent = false,
@@ -814,7 +820,7 @@ String createProject({
 
   if (withPubspec) {
     final StringBuffer pubspec = StringBuffer('name: $name\nenvironment:\n  sdk: ^3.11.0\n');
-    if (isFlutter || dependencies.isNotEmpty) {
+    if (isFlutter || dependencies.isNotEmpty || localDependencies.isNotEmpty) {
       pubspec.writeln('dependencies:');
       if (isFlutter) {
         pubspec.writeln('  flutter:\n    sdk: flutter');
@@ -823,6 +829,9 @@ String createProject({
         if (dependency != 'flutter') {
           pubspec.writeln('  $dependency: ^1.0.0');
         }
+      }
+      for (final String dependency in localDependencies.keys) {
+        pubspec.writeln('  $dependency:\n    path: ../$dependency');
       }
     }
     File(p.join(projectDir.path, 'pubspec.yaml')).writeAsStringSync(pubspec.toString());
@@ -843,9 +852,24 @@ String createProject({
       _entry(name, _uriFrom(configHome.path, projectDir.path)),
     ];
 
-    // Dependencies live outside the project, as a pub cache does.
+    // Dependencies live outside the project, as a pub cache does — and are recorded with an absolute
+    // `file://` `rootUri`, exactly as a real pub cache or SDK install is (never a bare relative path,
+    // which real `pub`/`flutter` write only for a `path:`/workspace dependency's own source). M8-F's
+    // `PackageEntry.isLocal` reads precisely this distinction to decide what to analyze — a relative
+    // `rootUri` here would make every stand-in dependency (`flutter` included) look like local
+    // project source instead of the framework surface these tests mean it to be.
     for (final MapEntry<String, Map<String, String>> dependency in dependencies.entries) {
       final String packageRoot = p.join(root.path, '_packages', dependency.key);
+      for (final MapEntry<String, String> file in dependency.value.entries) {
+        _write(p.join(packageRoot, 'lib', file.key), file.value);
+      }
+      entries.add(_entry(dependency.key, Uri.file('$packageRoot${p.separator}').toString()));
+    }
+
+    // A local dependency sits beside the project, as a real `path:` dependency does — and is recorded
+    // with the same *relative* `rootUri` shape a real one gets, which is the one thing `isLocal` reads.
+    for (final MapEntry<String, Map<String, String>> dependency in localDependencies.entries) {
+      final String packageRoot = p.join(root.path, dependency.key);
       for (final MapEntry<String, String> file in dependency.value.entries) {
         _write(p.join(packageRoot, 'lib', file.key), file.value);
       }

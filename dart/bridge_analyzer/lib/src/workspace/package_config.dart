@@ -23,13 +23,25 @@ import 'package:path/path.dart' as p;
 @immutable
 final class PackageEntry {
   /// Creates an entry.
-  const PackageEntry({required this.name, required this.libRoot});
+  const PackageEntry({required this.name, required this.libRoot, required this.isLocal});
 
   /// The package name, as it appears in a `package:` URI.
   final String name;
 
   /// The absolute directory that `package:<name>/…` resolves against.
   final String libRoot;
+
+  /// Whether this package's source lives in this checkout, rather than a pub cache or SDK install
+  /// (M8-F).
+  ///
+  /// Read directly from `rootUri`'s own shape, which `pub get` already writes this distinction into:
+  /// a hosted or `git:` dependency's `rootUri` is an absolute `file://` URI into `~/.pub-cache`; the
+  /// Flutter SDK's is an absolute `file://` URI into the SDK install; a `path:` dependency's — and a
+  /// pub-workspace member's, which resolves through the same mechanism — is a bare relative path,
+  /// because it is meant to stay portable across checkouts. This is the same fact `pub`/`flutter`
+  /// itself already decided when it wrote the config; nothing here re-derives it by guessing at a
+  /// package name or a filesystem layout.
+  final bool isLocal;
 }
 
 /// The resolved package config.
@@ -91,7 +103,11 @@ final class PackageConfig {
           ? entry['packageUri']! as String
           : 'lib/';
 
-      packages[name] = PackageEntry(name: name, libRoot: p.normalize(p.join(root, packageUri)));
+      packages[name] = PackageEntry(
+        name: name,
+        libRoot: p.normalize(p.join(root, packageUri)),
+        isLocal: !rootUri.startsWith('file://') && !p.isAbsolute(rootUri),
+      );
     }
 
     return PackageConfig(path: file.path, packages: packages);
@@ -105,6 +121,13 @@ final class PackageConfig {
 
   /// Whether [name] is a package this project can import.
   bool has(String name) => packages.containsKey(name);
+
+  /// Every local package other than [rootPackageName] — the closure M8-F analyzes in addition to the
+  /// root project's own `lib/`. Sorted, so the set a project resolves against does not depend on
+  /// `pub`'s own JSON key order (D1).
+  List<PackageEntry> localDependenciesOf(String rootPackageName) =>
+      packages.values.where((PackageEntry e) => e.isLocal && e.name != rootPackageName).toList()
+        ..sort((PackageEntry a, PackageEntry b) => a.name.compareTo(b.name));
 
   /// The Dart SDK this project was resolved against, or `null` when it cannot be derived.
   ///

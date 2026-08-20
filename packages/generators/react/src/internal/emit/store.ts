@@ -184,6 +184,7 @@ function storeScope(
     themeRoles: parent.themeRoles,
     storeMembers: parent.storeMembers,
     storeExports: parent.storeExports,
+    componentModules: parent.componentModules,
     storeAccessRead: (id) => parent.storeAccessRead(id),
     node: parent.node.bind(parent),
     isStoreOwned: (id) => parent.isStoreOwned(id),

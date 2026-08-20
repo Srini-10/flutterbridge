@@ -1,0 +1,17 @@
+name: cross_package_ui
+description: >-
+  M8-F fixture: a shared UI package, played by continuum_ui_kit's own role in Continuum — a
+  Flutter package consumed by an application via a `path:` dependency, with a component the
+  application constructs (docs/m8/m8f-cross-package-component-assembly.md).
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

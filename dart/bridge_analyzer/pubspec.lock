@@ -47,7 +47,7 @@ packages:
       path: "../bridge_uir"
       relative: true
     source: path
-    version: "0.0.1"
+    version: "0.1.0"
   cli_config:
     dependency: transitive
     description:
@@ -105,7 +105,7 @@ packages:
     source: hosted
     version: "4.0.0"
   glob:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: glob
       sha256: c3f1ee72c96f8f78935e18aa8cecced9ab132419e8625dc187e1c2408efc20de

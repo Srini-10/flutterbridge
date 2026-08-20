@@ -115,7 +115,10 @@ final class LoadStage extends Stage<AnalyzerRequest, LoadResult> {
       );
     }
 
-    final AnalysisSessionHandle session = AnalysisSessionHandle(project: project);
+    final AnalysisSessionHandle session = AnalysisSessionHandle(
+      project: project,
+      packageConfig: loaded.packageConfig,
+    );
 
     final Preflight preflight = Preflight(
       resolver: ImportResolver(

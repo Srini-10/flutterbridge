@@ -126,6 +126,8 @@ final class SignalExtractor {
                 fieldType.element.library.identifier,
                 fieldType.element.name ?? '',
                 packageName: out.packageName,
+                localPackages: out.localPackageNames,
+                extractedDependencyFiles: out.extractedDependencyFiles,
               )
             : null;
         if (storeSymbol != null) {

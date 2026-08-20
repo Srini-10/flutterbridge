@@ -39,13 +39,30 @@ final class RawNodeEmitter {
     required this.lineInfo,
     required this.diagnostics,
     required this.registry,
+    this.localPackageNames = const <String>{},
+    this.extractedDependencyFiles = const <String>{},
   }) : symbols = Symbols(path);
 
-  /// The file, project-relative.
+  /// The file, project-relative — or, for a file belonging to a local dependency (M8-F), its full
+  /// `package:<name>/…` URI.
   final String path;
 
-  /// The analyzed package's name, so a `package:<self>/…` library can be mapped back to a file.
+  /// The analyzed package's own name, so a `package:<self>/…` library can be mapped back to a file.
   final String packageName;
+
+  /// Every local dependency's own package name (M8-F) — a `path:`/workspace dependency whose source
+  /// this analysis root includes, per `PackageEntry.isLocal`. Distinct from [packageName]: a reference
+  /// into one of these resolves to a real declaration this program also extracted; a reference into
+  /// anything else (the Flutter SDK, an ordinary pub dependency) does not, and stays honestly
+  /// unresolved (`Symbols.pathOf`).
+  final Set<String> localPackageNames;
+
+  /// Every local dependency file this analysis root actually extracted (M8-F), named exactly as
+  /// `ProjectInfo.dependencyLibraryFiles` names it — a `package:<name>/…` URI. A local dependency's own
+  /// `analyzer.exclude` globs (generated protobuf/drift bindings) mean this is a strict subset of the
+  /// package's own files, and a reference into the excluded remainder must stay honestly unresolved
+  /// (`Symbols.pathOf`) rather than promise a declaration this program never emitted.
+  final Set<String> extractedDependencyFiles;
 
   /// The line map, for turning offsets into spans.
   final LineInfo lineInfo;
@@ -142,7 +159,13 @@ final class RawNodeEmitter {
     if (library == null) {
       return null;
     }
-    return Symbols.componentIn(library, name, packageName: packageName);
+    return Symbols.componentIn(
+      library,
+      name,
+      packageName: packageName,
+      localPackages: localPackageNames,
+      extractedDependencyFiles: extractedDependencyFiles,
+    );
   }
 
   // ── the escape hatches ────────────────────────────────────────────────────────────────────────

@@ -89,15 +89,37 @@ final class Symbols {
   /// A route in `main.dart` refers to `LoginScreen`, which `screens/login_screen.dart` declares. The
   /// symbol must be the one that file emits — building it from the *referring* file's path names a
   /// declaration nobody makes, and the builder rightly rejects it (BRG1201).
-  static String? componentIn(String libraryUri, String name, {required String packageName}) {
-    final String? path = pathOf(libraryUri, packageName: packageName);
+  static String? componentIn(
+    String libraryUri,
+    String name, {
+    required String packageName,
+    Set<String> localPackages = const <String>{},
+    Set<String> extractedDependencyFiles = const <String>{},
+  }) {
+    final String? path = pathOf(
+      libraryUri,
+      packageName: packageName,
+      localPackages: localPackages,
+      extractedDependencyFiles: extractedDependencyFiles,
+    );
     return path == null ? null : 'comp:$path#$name';
   }
 
   /// The store symbol for a class declared in [libraryUri] (ADR-27) — the sibling of [componentIn], for
   /// `_favorites.favoriteCount`-style member access where `_favorites`'s type is declared elsewhere.
-  static String? storeIn(String libraryUri, String name, {required String packageName}) {
-    final String? path = pathOf(libraryUri, packageName: packageName);
+  static String? storeIn(
+    String libraryUri,
+    String name, {
+    required String packageName,
+    Set<String> localPackages = const <String>{},
+    Set<String> extractedDependencyFiles = const <String>{},
+  }) {
+    final String? path = pathOf(
+      libraryUri,
+      packageName: packageName,
+      localPackages: localPackages,
+      extractedDependencyFiles: extractedDependencyFiles,
+    );
     return path == null ? null : 'store:$path#$name';
   }
 
@@ -105,43 +127,127 @@ final class Symbols {
   /// [componentIn] and [storeIn], for an enum constant reference (`Stage.ready`) whose declaring file
   /// may or may not be the referring one (M8-D). Mirrors [type] exactly; the two agree by construction,
   /// since both derive from the same [pathOf].
-  static String? typeIn(String libraryUri, String name, {required String packageName}) {
-    final String? path = pathOf(libraryUri, packageName: packageName);
+  static String? typeIn(
+    String libraryUri,
+    String name, {
+    required String packageName,
+    Set<String> localPackages = const <String>{},
+    Set<String> extractedDependencyFiles = const <String>{},
+  }) {
+    final String? path = pathOf(
+      libraryUri,
+      packageName: packageName,
+      localPackages: localPackages,
+      extractedDependencyFiles: extractedDependencyFiles,
+    );
     return path == null ? null : 'type:$path#$name';
   }
 
   /// The signal symbol for a member declared in [libraryUri] (ADR-27).
-  static String? signalIn(String libraryUri, String name, {required String owner, required String packageName}) {
-    final String? path = pathOf(libraryUri, packageName: packageName);
+  static String? signalIn(
+    String libraryUri,
+    String name, {
+    required String owner,
+    required String packageName,
+    Set<String> localPackages = const <String>{},
+    Set<String> extractedDependencyFiles = const <String>{},
+  }) {
+    final String? path = pathOf(
+      libraryUri,
+      packageName: packageName,
+      localPackages: localPackages,
+      extractedDependencyFiles: extractedDependencyFiles,
+    );
     return path == null ? null : 'sig:$path#$owner.$name';
   }
 
   /// The derived symbol for a member declared in [libraryUri] (ADR-27).
-  static String? derivedIn(String libraryUri, String name, {required String owner, required String packageName}) {
-    final String? path = pathOf(libraryUri, packageName: packageName);
+  static String? derivedIn(
+    String libraryUri,
+    String name, {
+    required String owner,
+    required String packageName,
+    Set<String> localPackages = const <String>{},
+    Set<String> extractedDependencyFiles = const <String>{},
+  }) {
+    final String? path = pathOf(
+      libraryUri,
+      packageName: packageName,
+      localPackages: localPackages,
+      extractedDependencyFiles: extractedDependencyFiles,
+    );
     return path == null ? null : 'der:$path#$owner.$name';
   }
 
   /// The action symbol for a member declared in [libraryUri] (ADR-27).
-  static String? actionIn(String libraryUri, String name, {required String owner, required String packageName}) {
-    final String? path = pathOf(libraryUri, packageName: packageName);
+  static String? actionIn(
+    String libraryUri,
+    String name, {
+    required String owner,
+    required String packageName,
+    Set<String> localPackages = const <String>{},
+    Set<String> extractedDependencyFiles = const <String>{},
+  }) {
+    final String? path = pathOf(
+      libraryUri,
+      packageName: packageName,
+      localPackages: localPackages,
+      extractedDependencyFiles: extractedDependencyFiles,
+    );
     return path == null ? null : 'act:$path#$owner.$name';
   }
 
-  /// The project-relative path of a library URI, or `null` if it is not in this project.
+  /// The path a library URI names within this analysis root, or `null` if it is outside it.
   ///
-  /// `package:hello_bridge/screens/login_screen.dart` → `lib/screens/login_screen.dart`. A widget from
-  /// `package:flutter/…` is not ours to declare, and yields `null`.
-  static String? pathOf(String libraryUri, {required String packageName}) {
+  /// `package:hello_bridge/screens/login_screen.dart` → `lib/screens/login_screen.dart` — this
+  /// project's own package, named project-relative exactly as it always was (M1–M7; unchanged by
+  /// M8-F, so a single-package project's symbols are byte-identical to before it existed).
+  ///
+  /// `package:continuum_ui_kit/src/onboarding_page.dart`, when `continuum_ui_kit` is in
+  /// [localPackages] **and** [libraryUri] is itself a member of [extractedDependencyFiles] (M8-F) →
+  /// the URI itself, unchanged — the same shape `ProjectInfo.dependencyLibraryFiles` already names
+  /// that file by, so a dependency's own declaration and a reference to it agree on the symbol by
+  /// construction, never by matching a path or a name against each other after the fact.
+  /// Distinguishable from a project-relative path by construction too: the project's own paths are
+  /// always `lib/…`, which contains no colon, so the two spellings can never collide.
+  ///
+  /// The second check is not redundant with the first. A local dependency's own `analyzer.exclude`
+  /// globs (M8-F) — generated protobuf/drift bindings its author opted out of analysis — mean
+  /// `ProjectInfo.dependencyLibraryFiles` does not walk every file the package *contains*, only the
+  /// ones `AnalysisContextCollection` will actually resolve; `contextFor` genuinely refuses the rest.
+  /// The Dart analyzer resolves a *type* declared in an excluded file regardless — exclusion governs a
+  /// file's own diagnostics, not whether another file may reference what it declares — so without this
+  /// check a package being in [localPackages] alone would promise a declaration this program never
+  /// emitted: a dangling reference, `BRG1201`, and a real one — `continuum_protocol`'s generated
+  /// `Envelope_Payload` enum is exactly this shape. Membership makes the promise honest: only a symbol
+  /// this program actually declared is ever handed back.
+  ///
+  /// Anything else — the Flutter SDK, an ordinary pub dependency, a package this analysis root does
+  /// not include, or a local dependency's own excluded file — yields `null`. Widening [localPackages]
+  /// or [extractedDependencyFiles] is the only way to widen what resolves; there is no fallback that
+  /// resolves a file this project did not itself extract.
+  static String? pathOf(
+    String libraryUri, {
+    required String packageName,
+    Set<String> localPackages = const <String>{},
+    Set<String> extractedDependencyFiles = const <String>{},
+  }) {
     const String scheme = 'package:';
     if (!libraryUri.startsWith(scheme)) {
       return null;
     }
     final String rest = libraryUri.substring(scheme.length);
     final int slash = rest.indexOf('/');
-    if (slash <= 0 || rest.substring(0, slash) != packageName) {
+    if (slash <= 0) {
       return null;
     }
-    return 'lib/${rest.substring(slash + 1)}';
+    final String referencedPackage = rest.substring(0, slash);
+    if (referencedPackage == packageName) {
+      return 'lib/${rest.substring(slash + 1)}';
+    }
+    if (localPackages.contains(referencedPackage) && extractedDependencyFiles.contains(libraryUri)) {
+      return libraryUri;
+    }
+    return null;
   }
 }

@@ -59,12 +59,27 @@ final class ExtractStage extends Stage<LoadResult, ExtractionResult> {
     // **application-scoped** rather than file-scoped. See [_isApplicationScoped].
     final Set<String> shared = <String>{};
 
+    // Every local dependency this analysis root includes (M8-F), by name — read straight off
+    // `ProjectInfo.dependencyLibraryFiles`'s own `package:<name>/…` shape rather than re-deriving it,
+    // so there is exactly one place that decides the closure (`ProjectLoader`) and this is a reader of
+    // it, not a second opinion.
+    final Set<String> localPackageNames = <String>{
+      for (final String file in input.project.dependencyLibraryFiles) _packageNameOf(file),
+    };
+
+    // The exact set `Symbols.pathOf` must check a reference's declaring file against (M8-F) — a
+    // dependency's own `analyzer.exclude` globs already filtered `dependencyLibraryFiles` down to what
+    // this program actually extracted, so this is a reader of that decision, not a second one.
+    final Set<String> extractedDependencyFiles = input.project.dependencyLibraryFiles.toSet();
+
     await for (final ResolvedUnit unit in input.session.resolveAll()) {
       for (final RawNode record in Extractor(
         path: unit.relativePath,
         packageName: input.project.packageName,
         unit: unit.result.unit,
         diagnostics: context.diagnostics,
+        localPackageNames: localPackageNames,
+        extractedDependencyFiles: extractedDependencyFiles,
       ).extract()) {
         final String? symbol = record.symbol;
         if (symbol != null && _isApplicationScoped(symbol) && !shared.add(symbol)) {
@@ -76,6 +91,16 @@ final class ExtractStage extends Stage<LoadResult, ExtractionResult> {
 
     return ExtractionResult(records: records);
   }
+}
+
+/// The package name out of a `package:<name>/…` logical path (M8-F).
+///
+/// Every entry in `ProjectInfo.dependencyLibraryFiles` has this exact shape — `ProjectLoader` never
+/// writes any other kind of path there — so this is a plain string read, not a guess.
+String _packageNameOf(String packageUri) {
+  final String rest = packageUri.substring('package:'.length);
+  final int slash = rest.indexOf('/');
+  return slash <= 0 ? rest : rest.substring(0, slash);
 }
 
 /// Whether [symbol] names a declaration that belongs to the **application** rather than to a file.

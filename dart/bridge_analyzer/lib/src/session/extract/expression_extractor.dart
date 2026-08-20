@@ -943,7 +943,13 @@ final class ExpressionExtractor {
     if (name == null) {
       return null;
     }
-    return Symbols.typeIn(library, name, packageName: out.packageName);
+    return Symbols.typeIn(
+      library,
+      name,
+      packageName: out.packageName,
+      localPackages: out.localPackageNames,
+      extractedDependencyFiles: out.extractedDependencyFiles,
+    );
   }
 
   /// The store member [element] resolves to, when [receiverType] is a declared store (ADR-27).
@@ -968,15 +974,36 @@ final class ExpressionExtractor {
       return null;
     }
     if (element is MethodElement) {
-      return Symbols.actionIn(library, name, owner: ownerName, packageName: out.packageName);
+      return Symbols.actionIn(
+        library,
+        name,
+        owner: ownerName,
+        packageName: out.packageName,
+        localPackages: out.localPackageNames,
+        extractedDependencyFiles: out.extractedDependencyFiles,
+      );
     }
     if (element is GetterElement) {
       // `isOriginVariable` — the implicit getter Dart synthesizes for a plain field — vs. an explicit
       // getter the author wrote (`isOriginDeclaration`). Not `isSynthetic`: deprecated in this analyzer
       // in favour of exactly this pair, for exactly this distinction.
       return element.isOriginVariable
-          ? Symbols.signalIn(library, name, owner: ownerName, packageName: out.packageName)
-          : Symbols.derivedIn(library, name, owner: ownerName, packageName: out.packageName);
+          ? Symbols.signalIn(
+              library,
+              name,
+              owner: ownerName,
+              packageName: out.packageName,
+              localPackages: out.localPackageNames,
+              extractedDependencyFiles: out.extractedDependencyFiles,
+            )
+          : Symbols.derivedIn(
+              library,
+              name,
+              owner: ownerName,
+              packageName: out.packageName,
+              localPackages: out.localPackageNames,
+              extractedDependencyFiles: out.extractedDependencyFiles,
+            );
     }
     return null;
   }

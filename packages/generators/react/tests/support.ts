@@ -235,3 +235,9 @@ export function structuredBuildRaw(): string {
   const path = fileURLToPath(new URL('../../../../fixtures/uir/structured_build.ndjson', import.meta.url));
   return readFileSync(path, 'utf8');
 }
+
+/** The real `fixtures/apps/cross_package_app` document, raw analyzer output (M8-F) — not yet normalized. */
+export function crossPackageAppRaw(): string {
+  const path = fileURLToPath(new URL('../../../../fixtures/uir/cross_package_app.ndjson', import.meta.url));
+  return readFileSync(path, 'utf8');
+}
