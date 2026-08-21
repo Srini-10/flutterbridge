@@ -508,7 +508,13 @@ describe('the real hello_bridge document', () => {
     // `sig.Signal`, and `.favoriteCount` gained a `target` — both changes to *content* nested inside
     // already-counted top-level records (the field, the property access), not new top-level records. The
     // count holds at 84.
-    expect(nodes.length).toBe(84);
+    //
+    // Regenerated again at M8-H (docs/m8/m8h-write-nothing-action-extraction.md): a method needs no
+    // signal write to become a `sig.Action`. Two write-nothing methods were previously invisible —
+    // `FavoritesStore.isFavorite` (a query with no state to mutate) and `HomeScreen._onFavoritesChanged`
+    // (a `ChangeNotifier` listener callback whose own body is an erased, empty `setState(() {})`) — and
+    // both are now real top-level records. 85.
+    expect(nodes.length).toBe(85);
     expect(nodes.filter((n) => n.kind === 'ui.Component')).toHaveLength(3);
     expect(nodes.filter((n) => n.kind === 'app.Store')).toHaveLength(1);
   });

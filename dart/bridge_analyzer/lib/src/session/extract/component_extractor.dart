@@ -114,11 +114,24 @@ final class ComponentExtractor {
     final ClassDeclaration builder = state ?? node;
     final String owner = builder.namePart.typeName.lexeme;
 
+    // Identified *before* signal extraction (M8-H), so the exact node — not its name — can be excluded
+    // from action discovery: `build` is the render tree, already extracted below by `WidgetExtractor`,
+    // never an ordinary callable method regardless of whether it writes state.
+    final MethodDeclaration? build = _buildMethod(builder);
+    if (build == null) {
+      // A widget class with no `build` — an abstract base, or one whose build lives in a mixin. It is
+      // not a component we can render, and pretending otherwise would emit a component with an
+      // invented body. `ui.Component.render` is required, so there is nothing honest to emit.
+      transitions.enclosingComponent = null;
+      return null;
+    }
+
     final ClassState classState = signals.extract(
       builder,
       owner: owner,
       storeScope: 'component',
       enclosing: enclosing,
+      renderMethod: build,
     );
 
     // Parameters go **inside** the class's own field bindings, so they win.
@@ -133,15 +146,6 @@ final class ComponentExtractor {
       ...paramBindings,
       if (state != null) const Binding(name: 'widget', binds: Binds.parameter),
     ]);
-
-    final MethodDeclaration? build = _buildMethod(builder);
-    if (build == null) {
-      // A widget class with no `build` — an abstract base, or one whose build lives in a mixin. It is
-      // not a component we can render, and pretending otherwise would emit a component with an
-      // invented body. `ui.Component.render` is required, so there is nothing honest to emit.
-      transitions.enclosingComponent = null;
-      return null;
-    }
 
     // `build(BuildContext context)` — and, for a ConsumerWidget, `build(context, ref)`.
     final Scope buildScope = withParams.child(<Binding>[

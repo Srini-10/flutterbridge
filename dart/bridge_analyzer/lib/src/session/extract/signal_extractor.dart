@@ -85,11 +85,20 @@ final class SignalExtractor {
   ///
   /// [owner] names the class for symbol purposes. [storeScope] is `store` for a `ChangeNotifier` —
   /// state that outlives any one component — and `component` for a `State`.
+  ///
+  /// [renderMethod] is the exact `MethodDeclaration` the caller already identified as the class's own
+  /// `build` (M8-H) — by AST-node identity, never re-derived by name here. It is `null` for a store,
+  /// which has no render tree. Every *other* instance method is now a candidate `sig.Action` regardless
+  /// of whether it writes state; `build` is not a "method that happens to write nothing" the same way
+  /// `_exportLogs` is — it is the render tree itself, already extracted in full by `WidgetExtractor`,
+  /// and giving it action identity too would duplicate the whole component as an inert, never-called
+  /// declaration alongside the real one.
   ClassState extract(
     ClassDeclaration node, {
     required String owner,
     required String storeScope,
     required Scope enclosing,
+    MethodDeclaration? renderMethod,
   }) {
     final List<String> signals = <String>[];
     final List<String> derived = <String>[];
@@ -184,35 +193,40 @@ final class SignalExtractor {
 
     // ── 1b. Actions, named before any body is extracted. ──
     //
-    // A method that writes state becomes a `sig.Action`, and a *reference* to that method — the tear-off
-    // `onDestinationSelected: _select`, which is how every real navigation surface is written — has to
-    // resolve to it. It did not until M4-G: the class scope was frozen after the signals pass, so a method
-    // name was not in it, and `_select` reached the generator as a `logic.Ref` with no `target`. The
-    // generator then reported `BRG3006` — *"`_select` is not declared in this program"* — which was true of
-    // the document and false of the program: the `sig.Action` was right there, unreachable.
+    // Every ordinary instance method becomes a `sig.Action`, whether or not it writes signal state
+    // (M8-H) — and a *reference* to that method — the tear-off `onDestinationSelected: _select`, which
+    // is how every real navigation surface is written — has to resolve to it. It did not until M4-G: the
+    // class scope was frozen after the signals pass, so a method name was not in it, and `_select`
+    // reached the generator as a `logic.Ref` with no `target`. The generator then reported `BRG3006` —
+    // *"`_select` is not declared in this program"* — which was true of the document and false of the
+    // program: the `sig.Action` was right there, unreachable.
     //
-    // It survived this long because no earlier fixture passed a method tear-off as a callback. Every
-    // callback in the build proof is an inline lambda, and `hello_bridge`'s one tear-off is a *parameter*
-    // (`widget.onToggleTheme`), which resolves by a different path. A navigation shell is the first screen
-    // where the tear-off is the natural way to write it.
+    // ## Why "writes nothing" is not "does nothing" (M8-H)
     //
-    // Naming them needs its own pass, not a bigger loop: `_signalsWrittenBy` resolves names against the
-    // *signal* scope, so the signals must already be bound (they are, above) and the action bodies must not
-    // yet be extracted (they are not, below). This is the only point between the two.
-    final Scope signalScope = enclosing.child(bindings);
+    // `sig.Action`'s own schema requires nothing but `kind` — `writes`, `body`, `params`, `isAsync` are
+    // all optional, and `writes: []`/absent was already a legal document before this milestone; nothing
+    // downstream ever assumed otherwise (N11's own `classify()` has always had a branch for a targeted
+    // action whose `writes` is empty — `{kind: 'unpromotable', reason: 'no state that the compiler can
+    // name'}` — a case only reachable if such an action could already exist). What was missing was
+    // extraction ever *producing* one: a method gated on writing state to be named at all conflates two
+    // different questions — "is this a reactive write" and "is this a callable unit of application
+    // behavior" — and Continuum's real `_exportLogs` (file I/O, no signal touched, torn off as a route
+    // argument) is squarely the second without being the first. Its reference reached N11 as an
+    // untargeted `logic.Ref` — the identical shape a genuinely *forwarded* parameter has (docs/m8/
+    // m8g-multi-hop-provenance-decision.md §2) — and was misdiagnosed as one, because there was no
+    // declaration for it to target instead.
+    //
+    // Naming them needs its own pass, not a bigger loop: this walk must run before any body is
+    // extracted (below), so a tear-off inside an *earlier* method's body — as `_openSettings`'s
+    // `onExportLogs: _exportLogs` already is — resolves against a scope that already knows every
+    // sibling method's name, not just the ones seen so far.
     final Map<String, String> actionSymbols = <String, String>{};
     for (final ClassMember member in node.body.members) {
-      if (member is! MethodDeclaration || member.isStatic) {
+      if (member is! MethodDeclaration || member.isStatic || identical(member, renderMethod)) {
         continue;
       }
       final String name = member.name.lexeme;
       if (registry.lifecycleMethods[name] != null || member.isGetter || member.isSetter) {
-        continue;
-      }
-      // The same test the emitting loop applies, and it must stay the same test: a name bound here that the
-      // loop below declines to emit would be a `logic.Ref` pointing at a node the document does not contain,
-      // which is BRG1201 and is worse than the missing binding it replaced.
-      if (_signalsWrittenBy(member, _scopeOf(member.parameters, signalScope)).isEmpty) {
         continue;
       }
       final String symbol = out.symbols.action(name, owner: owner);
@@ -224,7 +238,7 @@ final class SignalExtractor {
 
     // ── 2. Everything that reads or writes those signals. ──
     for (final ClassMember member in node.body.members) {
-      if (member is! MethodDeclaration || member.isStatic) {
+      if (member is! MethodDeclaration || member.isStatic || identical(member, renderMethod)) {
         continue;
       }
       final String name = member.name.lexeme;
@@ -287,12 +301,20 @@ final class SignalExtractor {
       // declares it (Spec v2.5 §A18).
       final Scope inner = _scopeOf(member.parameters, scope);
 
-      // A method that writes state is an action. One that does not is just a method, and turning it
-      // into an action would tell the generator to notify subscribers of a change that never happened.
-      final List<String> writes = _signalsWrittenBy(member, inner);
-      if (writes.isEmpty || member.isSetter) {
+      // A setter is excluded regardless: `set foo(int v)` is how Dart spells a *write*, not a callable
+      // behavior, and giving it action identity would let something invoke a property assignment as if
+      // it were a method — a shape nothing in the schema or the generator expects.
+      if (member.isSetter) {
         continue;
       }
+
+      // Every remaining instance method is an action (M8-H) — reactive or not. `writes` records
+      // *whether* it mutates signal state, which N11's own `classify()` already inspects to decide
+      // whether the action can be promoted across a route boundary; it is not what decides whether the
+      // method is modeled at all. Turning a write-nothing method into an action does not tell the
+      // generator to notify subscribers of a change that never happened — `writes` says exactly which
+      // changes happened, empty or not, and the runtime notifies on those and nothing else.
+      final List<String> writes = _signalsWrittenBy(member, inner);
 
       final List<RawValue> params = _params(member.parameters, scope);
       // Minted in the naming pass above, so the symbol a reference resolved to and the symbol the node is
@@ -305,10 +327,10 @@ final class SignalExtractor {
           span: out.span(member),
           symbol: symbol,
           fields: <String, RawValue>{
-            // Absent, never empty. Absent *is* the schema's word for "takes none"; `[]` would be a
-            // second spelling of it, and would change the content of every action that has none.
+            // Absent, never empty — the same convention `params` already uses, and for the same reason:
+            // two spellings of "writes nothing" would be two different documents for one program.
             if (params.isNotEmpty) 'params': RawList(params),
-            'writes': RawList(writes.map(RawRef.new).toList()),
+            if (writes.isNotEmpty) 'writes': RawList(writes.map(RawRef.new).toList()),
             'body': RawList(expressions.bodyOf(member.body, inner)),
             if (member.body.isAsynchronous) 'isAsync': const RawLiteral(true),
           },

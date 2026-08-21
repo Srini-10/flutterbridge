@@ -648,15 +648,18 @@ class RangeStore extends ChangeNotifier {
 
     test('a parameter shadows a field of the same name, so it is not a write to the signal', () async {
       // Dart's rule, and the reason the body resolves in the method's own scope. Recording the field
-      // as written would tell the generator to re-render on a change that never happened.
-      final Extracted app = await extract(r'''
+      // as written would tell the generator to re-render on a change that never happened. `report` is
+      // itself an action now regardless (M8-H: a method needs no write to be one) — the point this test
+      // protects is narrower than "is `report` an action at all": it is that its own parameter is never
+      // mistaken for a write to the field it shadows.
+      final Extracted app = await extract('''
 import 'package:flutter/material.dart';
 
 class Store extends ChangeNotifier {
   int _count = 0;
 
   void report(int _count) {
-    debugPrint('$_count');
+    final int local = _count;
   }
 
   void bump() {
@@ -667,12 +670,18 @@ class Store extends ChangeNotifier {
 ''');
 
       expect(app.errors, isEmpty);
-      expect(
-        app.ofKind('sig.Action'),
-        hasLength(1),
-        reason: '`report` writes nothing: its `_count` is its own parameter',
+      final List<Map<String, Object?>> actions = app.ofKind('sig.Action');
+      expect(actions, hasLength(2), reason: 'both `report` and `bump` are actions (M8-H)');
+
+      final Map<String, Object?> report = actions.singleWhere(
+        (Map<String, Object?> a) => a.containsKey('params'),
       );
-      expect(app.only('sig.Action').containsKey('params'), isFalse, reason: 'that action is `bump`');
+      expect(report.containsKey('writes'), isFalse, reason: "`_count` is `report`'s own parameter, not the field");
+
+      final Map<String, Object?> bump = actions.singleWhere(
+        (Map<String, Object?> a) => !a.containsKey('params'),
+      );
+      expect(bump.containsKey('writes'), isTrue, reason: '`bump` writes the field `_count`');
     });
   });
 

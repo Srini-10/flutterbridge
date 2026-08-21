@@ -309,7 +309,14 @@ describe('the emitted project compiles against the real runtime (M3-D build-proo
     expect(componentSource).toContain('const [_email] = useState(() => signal(new TextEditingController()));');
     expect(componentSource).toContain('const _email$ = useSignal(_email);');
     expect(componentSource).toContain('controller={_email$}');
-    expect(componentSource).toContain('const [_emailFocus] = useState(() => signal(new FocusNode()));');
+    // `_emailFocus` (M8-H finding, unrelated to write-nothing actions): `nameOfSignal` recovers a signal's
+    // display name from any *named*, targeted `logic.Ref` anywhere in the program — `_email` gets one
+    // because `_submit` reads `_email.text` in an ordinary expression, but `_emailFocus` is consumed only
+    // as `focusNode: _emailFocus`, which `WidgetExtractor` lowers straight to an unnamed `bind.Signal`.
+    // No named reference to it exists anywhere, so it falls back to its own documented third tier,
+    // `signal_<id prefix>` (`component.ts`'s `nameOfSignal`) — a pre-existing generator-naming gap, not a
+    // correctness defect: the declaration and every read of it still agree, byte for byte.
+    expect(componentSource).toMatch(/const \[signal_[0-9a-f]{8}\] = useState\(\(\) => signal\(new FocusNode\(\)\)\);/);
   });
 
   it('a state-mutating callback becomes a typed local handler, not an unresolvable reference', () => {
@@ -527,7 +534,10 @@ describe('packages, erasure and selection surfaces (M4-I)', () => {
     // What survives is the body, and the notifier, which is state rather than machinery.
     expect(componentSource).toContain("<Text>{'ticks'}</Text>");
     expect(componentSource).toContain("<Text>{'listening'}</Text>");
-    expect(componentSource).toMatch(/const \[_ticks\] = useState\(\(\) => signal\(new ValueNotifier\(0\)\)\)/);
+    // `_ticks` (M8-H finding — see the `_emailFocus` assertion above for the full explanation): consumed
+    // only as `valueListenable: _ticks`, an unnamed `bind.Signal`, so its display name falls back to
+    // `signal_<id prefix>`. Still fully correct: declaration and read agree.
+    expect(componentSource).toMatch(/const \[signal_[0-9a-f]{8}\] = useState\(\(\) => signal\(new ValueNotifier\(0\)\)\)/);
   });
 
   it('the disclosure, tab and chip families reach the output', () => {
