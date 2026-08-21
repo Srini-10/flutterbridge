@@ -26,7 +26,7 @@
 import type { NodeId } from '@bridge/uir';
 
 import { GeneratorDiagnosticCode } from '../diagnostics/codes.js';
-import { emitExpression, stringLiteral, type EmitScope } from './expression.js';
+import { emitExpression, localBindingsIn, stringLiteral, type EmitScope } from './expression.js';
 import { emitStatements } from './statement.js';
 import { identifierOf, type ModuleBuilder } from './module.js';
 import { typeTextOf } from './types.js';
@@ -618,7 +618,10 @@ function declareLocalActions(
     module.line(`const ${names.get(id)!} = ${isAsync ? 'async ' : ''}(${actionParams}) => {`);
     module.block(() => {
       module.lineAll(
-        emitActionBody(action, actionScope(scope, signals, declared, names, componentParams)),
+        emitActionBody(
+          action,
+          actionScope(scope, signals, declared, names, componentParams, localBindingsIn(action['body'])),
+        ),
       );
     });
     module.line('};');
@@ -642,6 +645,7 @@ function actionScope(
   params: readonly Node[],
   actions: ReadonlyMap<NodeId, string>,
   componentParams: readonly Node[] = [],
+  locals: ReadonlyMap<NodeId, string> = new Map(),
 ): EmitScope {
   const names = new Set(params.map((param) => String(param['name'] ?? '')));
   // The enclosing component's parameters, which an action body can read because its closure is emitted
@@ -670,7 +674,11 @@ function actionScope(
       return local === undefined ? parent.signalRead(id) : `${local}.get()`;
     },
     signalLocal: (id) => signals.get(id) ?? parent.signalLocal(id),
-    localName: (id) => actions.get(id) ?? parent.localName(id),
+    // A local's own binding first (ADR-28) — it can never collide with a lifted action's id (the two id
+    // spaces are disjoint by construction, `local:` vs. a content hash), so checking both in either order
+    // gives the same answer; this order just reads as "what this action itself declared" before "what an
+    // outer render tree named."
+    localName: (id) => locals.get(id) ?? actions.get(id) ?? parent.localName(id),
     // Innermost-first, exactly as Dart resolves: the action's own parameter shadows a component
     // parameter of the same spelling, and a bare name is never `props.x`.
     paramInScope: (name) => {

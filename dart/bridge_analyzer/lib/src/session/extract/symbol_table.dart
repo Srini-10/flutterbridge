@@ -84,6 +84,17 @@ final class Symbols {
   /// token declared in two places is the same token.
   static String token(String group, String name) => 'token:$group.$name';
 
+  /// An ordinary local variable, declared inside [owner]'s own body (ADR-28).
+  ///
+  /// Unlike every other symbol here, a local is never referenced from outside the one function that
+  /// declares it — nothing needs [owner]/[ordinal] to be *rebuild*-stable across an edit, only
+  /// *deterministic* for the same, unedited source (ADR-28 §13). [ordinal] is what content addressing
+  /// cannot provide: two lexically distinct locals with identical name/type/initializer would collide
+  /// without it (ADR-28 §2, §5) — it is minted once, in AST-walk order, by the same pass that also
+  /// builds the binding this symbol is attached to, never independently re-derived.
+  String local(String name, {required String owner, required int ordinal}) =>
+      'local:$path#$owner.$ordinal.$name';
+
   /// The component symbol for a class declared in [libraryUri], which is somewhere *else*.
   ///
   /// A route in `main.dart` refers to `LoginScreen`, which `screens/login_screen.dart` declares. The

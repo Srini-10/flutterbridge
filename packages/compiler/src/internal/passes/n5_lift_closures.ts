@@ -47,7 +47,7 @@ import {
 } from '@bridge/uir';
 
 import { Program } from '../program.js';
-import { walkNode, type Analysis, type Pass, type PassContext } from '../normalize/pass.js';
+import { walk, walkNode, type Analysis, type Pass, type PassContext } from '../normalize/pass.js';
 
 export class N5LiftClosures implements Pass {
   readonly id = 'N5';
@@ -62,6 +62,21 @@ export class N5LiftClosures implements Pass {
     const signals = new Set<NodeId>(program.ofKind('sig.Signal').map((s) => s.id));
     if (signals.size === 0) return program;
 
+    // Every ordinary local variable's own declaration id (ADR-28). A targeted `logic.Ref` used to mean
+    // "safe to lift, unconditionally" (§below) — now that a local read can carry a `target` too
+    // (ADR-28), that is only true when the target is *not* one of these: a local's target is still
+    // lexically scoped to wherever it was declared, exactly like an untargeted one always was, and
+    // lifting a closure that captures one would leave it dangling outside the scope its declaration
+    // lives in.
+    // `logic.VarDecl` is never a top-level document node — it always sits inside a `sig.Action`/
+    // `logic.FunctionDecl` body — so this walks the whole program, the same way `writesOf`/`freeLocals`
+    // already walk one lambda's own subtree, rather than `program.ofKind` (top-level only).
+    const locals = new Set<NodeId>(
+      walk(program)
+        .filter((n) => n.kind === 'logic.VarDecl')
+        .map((n) => n.id),
+    );
+
     const lifted: AnyUirNode[] = [];
 
     // Rewrite every top-level node, lifting the closures inside it. `rewrite` returns the *same object*
@@ -69,7 +84,7 @@ export class N5LiftClosures implements Pass {
     // what makes the pipeline's fixed point cheap to check.
     const replacements = new Map<NodeId, AnyUirNode>();
     for (const node of program.nodes) {
-      const next = rewrite(node, signals, lifted, context);
+      const next = rewrite(node, signals, locals, lifted, context);
       if (next !== node) replacements.set(node.id, next as AnyUirNode);
     }
 
@@ -91,13 +106,14 @@ export class N5LiftClosures implements Pass {
 function rewrite(
   value: unknown,
   signals: ReadonlySet<NodeId>,
+  locals: ReadonlySet<NodeId>,
   lifted: AnyUirNode[],
   context: PassContext,
 ): unknown {
   if (Array.isArray(value)) {
     let changed = false;
     const out = value.map((item) => {
-      const next = rewrite(item, signals, lifted, context);
+      const next = rewrite(item, signals, locals, lifted, context);
       if (next !== item) changed = true;
       return next;
     });
@@ -112,7 +128,7 @@ function rewrite(
   if (node['kind'] === 'bind.Expr') {
     const expr = node['expr'] as Record<string, unknown> | undefined;
     if (expr?.['kind'] === 'logic.Lambda') {
-      const action = lift(expr, signals, context);
+      const action = lift(expr, signals, locals, context);
       if (action !== undefined) {
         lifted.push(action.action);
         // The binding keeps its own id. It is the *same binding* — it now refers to the action rather
@@ -126,7 +142,7 @@ function rewrite(
   let changed = false;
   const out: Record<string, unknown> = {};
   for (const [key, child] of Object.entries(node)) {
-    const next = rewrite(child, signals, lifted, context);
+    const next = rewrite(child, signals, locals, lifted, context);
     if (next !== child) changed = true;
     out[key] = next;
   }
@@ -137,6 +153,7 @@ function rewrite(
 function lift(
   lambda: Record<string, unknown>,
   signals: ReadonlySet<NodeId>,
+  locals: ReadonlySet<NodeId>,
   context: PassContext,
 ): { action: AnyUirNode; reference: Record<string, unknown> } | undefined {
   const writes = writesOf(lambda, signals);
@@ -146,7 +163,7 @@ function lift(
   // a change that never happens.
   if (writes.length === 0) return undefined;
 
-  const free = freeLocals(lambda);
+  const free = freeLocals(lambda, locals);
   if (free.length > 0) {
     context.report({
       code: 'BRG2105',
@@ -256,23 +273,40 @@ function signalOf(value: unknown, signals: ReadonlySet<NodeId>): NodeId | undefi
 /**
  * The free locals a lambda closes over.
  *
- * A `logic.Ref` **with** a `target` names something the UIR has an id for — a signal, a top-level
- * declaration. A `Ref` **without** one names a local or a parameter. If that name is not one of the
- * lambda's own parameters, it comes from an enclosing scope, and lifting the lambda out of that scope
- * would leave the reference dangling.
+ * A `logic.Ref` **without** a `target` names a `for`/`catch` binding or a parameter (ADR-28 leaves both
+ * untargeted) — bound only if [collectBound] finds its *name* declared inside this same lambda.
+ *
+ * A `logic.Ref` **with** a `target` is usually safe unconditionally — a signal, an action, a top-level
+ * declaration is reachable from anywhere, regardless of where the lambda that reads it ends up. An
+ * ordinary local variable (ADR-28) is the one exception: it now carries a `target` too, but its
+ * declaration is still exactly as lexically scoped as it always was — bound only if that target is
+ * *inside* this lambda's own subtree ([collectBoundIds]); otherwise it is exactly as free as an
+ * untargeted local always was, and lifting the closure would leave it exactly as dangling.
  */
-function freeLocals(lambda: Record<string, unknown>): string[] {
-  const bound = new Set<string>();
-  collectBound(lambda, bound);
+function freeLocals(lambda: Record<string, unknown>, locals: ReadonlySet<NodeId>): string[] {
+  const boundNames = new Set<string>();
+  collectBound(lambda, boundNames);
+  const boundIds = new Set<NodeId>();
+  collectBoundIds(lambda, boundIds);
 
   const free = new Set<string>();
   for (const node of walkNode(lambda)) {
     const record = node as unknown as Record<string, unknown>;
     if (record['kind'] !== 'logic.Ref') continue;
-    if (typeof record['target'] === 'string') continue;
-
+    const target = record['target'];
     const name = record['name'];
-    if (typeof name === 'string' && !bound.has(name)) free.add(name);
+
+    if (typeof target === 'string') {
+      // Not a local's own id at all (a signal, an action, a top-level thing) — always safe, unchanged.
+      if (!locals.has(target as NodeId)) continue;
+      // A local's id, declared inside this very lambda — bound, safe.
+      if (boundIds.has(target as NodeId)) continue;
+      // A local's id, declared in an *enclosing* scope — free, exactly like an untargeted one.
+      if (typeof name === 'string') free.add(name);
+      continue;
+    }
+
+    if (typeof name === 'string' && !boundNames.has(name)) free.add(name);
   }
 
   // Sorted: this text reaches a diagnostic, and a diagnostic whose word order depends on traversal
@@ -296,6 +330,17 @@ function collectBound(lambda: unknown, into: Set<string>): void {
   // Parameters are not nodes — they are `ParamDecl` value objects, so `walkNode` (which yields things
   // with an `id` and a `kind`) never reaches them. They are collected by shape.
   collectParams(lambda, into);
+}
+
+/** Every `logic.VarDecl` id declared *inside* [lambda]'s own subtree (ADR-28) — the id-based sibling of
+ * [collectBound], for a local reference that now carries a `target` instead of only a bare `name`. */
+function collectBoundIds(lambda: unknown, into: Set<NodeId>): void {
+  for (const node of walkNode(lambda)) {
+    const record = node as unknown as Record<string, unknown>;
+    if (record['kind'] === 'logic.VarDecl' && typeof record['id'] === 'string') {
+      into.add(record['id'] as NodeId);
+    }
+  }
 }
 
 function collectParams(value: unknown, into: Set<string>): void {

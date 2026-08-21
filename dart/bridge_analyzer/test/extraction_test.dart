@@ -2490,6 +2490,135 @@ class W extends StatelessWidget {
     });
   });
 
+  group('local variable declaration identity (ADR-28)', () {
+    // An ordinary `final`/`var` local declared inside an action body gets a real, declaration-tier
+    // symbol — owner+ordinal qualified, never a content hash, never a name.
+
+    String? targetOfRead(Extracted app, String name, {required int occurrence}) {
+      final List<Map<String, dynamic>> refs = app
+          .ofKind('logic.Ref')
+          .where((Map<String, dynamic> r) => r['name'] == name)
+          .toList();
+      return refs[occurrence]['target'] as String?;
+    }
+
+    const String actionWrapper = r'''
+import 'package:flutter/material.dart';
+class W extends StatefulWidget {
+  const W({super.key});
+  @override
+  State<W> createState() => _WState();
+}
+class _WState extends State<W> {
+  int _log = 0;
+  {{BODY}}
+  @override
+  Widget build(BuildContext context) => Text('$_log');
+}
+''';
+
+    test('two unrelated actions with textually identical locals never collide', () async {
+      final Extracted app = await extract(
+        actionWrapper.replaceFirst('{{BODY}}', '''
+  void _first() { final int total = 1; _log = total; }
+  void _second() { final int total = 1; _log = total; }
+'''),
+      );
+      expect(app.errors, isEmpty);
+
+      final List<Map<String, dynamic>> decls = app.ofKind('logic.VarDecl');
+      expect(decls, hasLength(2));
+      expect(decls[0]['id'], isNot(decls[1]['id']), reason: 'same content, different owners — must not collapse');
+
+      expect(targetOfRead(app, 'total', occurrence: 0), decls[0]['id']);
+      expect(targetOfRead(app, 'total', occurrence: 1), decls[1]['id']);
+    });
+
+    test('a local read twice resolves both reads to the same declaration', () async {
+      final Extracted app = await extract(
+        actionWrapper.replaceFirst('{{BODY}}', '''
+  void _twice() { final int value = 21; _log = value + value; }
+'''),
+      );
+      expect(app.errors, isEmpty);
+
+      final Map<String, dynamic> decl = app.only('logic.VarDecl');
+      expect(targetOfRead(app, 'value', occurrence: 0), decl['id']);
+      expect(targetOfRead(app, 'value', occurrence: 1), decl['id']);
+    });
+
+    test('lexical shadowing: each read resolves to the declaration actually in scope at that point', () async {
+      final Extracted app = await extract(
+        actionWrapper.replaceFirst('{{BODY}}', '''
+  void _shadow() {
+    final int level = 1;
+    if (_log == 0) {
+      final int level = 2;
+      _log = level;
+    }
+    _log = level;
+  }
+'''),
+      );
+      expect(app.errors, isEmpty);
+
+      final List<Map<String, dynamic>> decls = app.ofKind('logic.VarDecl');
+      expect(decls, hasLength(2));
+      expect(decls[0]['id'], isNot(decls[1]['id']));
+
+      // Source order: the inner (shadowing) read is the first `level` read reached by the walk (it sits
+      // inside the `if`, which is extracted before the trailing `_log = level;`), and must target the
+      // *inner* declaration; the outer read, after the `if`, must target the *outer* one.
+      expect(targetOfRead(app, 'level', occurrence: 0), decls[1]['id'], reason: 'the inner read targets the shadowing declaration');
+      expect(targetOfRead(app, 'level', occurrence: 1), decls[0]['id'], reason: 'the outer read, after the if, targets the outer declaration');
+    });
+
+    test('a mutable (var) local gets identity too, not only final ones', () async {
+      final Extracted app = await extract(
+        actionWrapper.replaceFirst('{{BODY}}', '''
+  void _mutate() {
+    var count = 0;
+    count = count + 1;
+    count++;
+    _log = count;
+  }
+'''),
+      );
+      expect(app.errors, isEmpty);
+
+      final Map<String, dynamic> decl = app.only('logic.VarDecl');
+      expect(decl['isFinal'], isNot(true));
+      expect(targetOfRead(app, 'count', occurrence: 0), decl['id']);
+      expect(targetOfRead(app, 'count', occurrence: 1), decl['id']);
+      expect(targetOfRead(app, 'count', occurrence: 2), decl['id']);
+    });
+
+    test('the same source extracts to the same ids on a second, independent run (determinism)', () async {
+      final String source = actionWrapper.replaceFirst('{{BODY}}', '''
+  void _first() { final int total = 1; _log = total; }
+  void _second() { final int total = 1; _log = total; }
+''');
+      final Extracted first = await extract(source);
+      final Extracted second = await extract(source);
+      expect(first.bytes, second.bytes);
+    });
+
+    test('a for-loop-declared variable is not given this identity (ADR-28 §17, out of scope)', () async {
+      final Extracted app = await extract(
+        actionWrapper.replaceFirst('{{BODY}}', '''
+  void _loop() {
+    for (var i = 0; i < 3; i++) {
+      _log = i;
+    }
+  }
+'''),
+      );
+      expect(app.errors, isEmpty);
+      expect(targetOfRead(app, 'i', occurrence: 0), isNull);
+      expect(targetOfRead(app, 'i', occurrence: 1), isNull);
+    });
+  });
+
   group('paths in UIR are platform-independent (M5-F)', () {
     // `span.file` is not a filesystem path once it is written: it becomes an anchor —
     // `'${span.file}#$segment'` in `node_factory.dart` — and an anchor is hashed into the node's id

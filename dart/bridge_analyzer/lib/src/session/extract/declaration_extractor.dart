@@ -227,7 +227,10 @@ final class DeclarationExtractor {
 
   void _function(FunctionDeclaration node, Scope scope) {
     final FunctionExpression function = node.functionExpression;
-    final Scope inner = scope.child(<Binding>[
+    // The same symbol the node itself is emitted under (below), so a local declared in this body and
+    // `Scope.forBody`'s owner agree by construction (ADR-28).
+    final String symbol = out.symbols.function(node.name.lexeme);
+    final Scope inner = Scope.forBody(scope, owner: symbol, body: function.body).child(<Binding>[
       for (final FormalParameter parameter
           in function.parameters?.parameters ?? const <FormalParameter>[])
         if (parameter.name != null)
@@ -238,7 +241,7 @@ final class DeclarationExtractor {
       RawNode(
         kind: 'logic.FunctionDecl',
         span: out.span(node),
-        symbol: out.symbols.function(node.name.lexeme),
+        symbol: symbol,
         fields: <String, RawValue>{
           'name': RawLiteral(node.name.lexeme),
           'returnType': out.typeRef(

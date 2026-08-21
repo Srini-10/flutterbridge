@@ -241,3 +241,9 @@ export function crossPackageAppRaw(): string {
   const path = fileURLToPath(new URL('../../../../fixtures/uir/cross_package_app.ndjson', import.meta.url));
   return readFileSync(path, 'utf8');
 }
+
+/** The real `fixtures/apps/local_variables` document, raw analyzer output (M8-N) — not yet normalized. */
+export function localVariablesRaw(): string {
+  const path = fileURLToPath(new URL('../../../../fixtures/uir/local_variables.ndjson', import.meta.url));
+  return readFileSync(path, 'utf8');
+}

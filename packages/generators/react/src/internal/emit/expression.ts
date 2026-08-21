@@ -245,6 +245,36 @@ const kindOf = (node: Node): string => (typeof node['kind'] === 'string' ? node[
 const idOf = (node: Node): string | undefined => (typeof node['id'] === 'string' ? node['id'] : undefined);
 
 /**
+ * The identifier every ordinary local variable [body] declares gets, by its own (declaration-tier,
+ * ADR-28) id.
+ *
+ * A `logic.VarDecl` is never a top-level document node — it sits inside the statement body that
+ * declares it — so `scope.node(id)` (the program's own top-level index) cannot resolve one; this walks
+ * the body directly instead, the same shape `component.ts`'s own `referencedActions` already walks a
+ * render tree with. `identifierOf` is a pure function of the declaration's own `name`, so two shadowed
+ * locals with the same spelling correctly get the same emitted text — two `const x` in two nested JS
+ * blocks shadow exactly the way the two Dart declarations did, and nothing here needs to invent a
+ * disambiguating suffix for that to be correct (ADR-28 §12).
+ */
+export function localBindingsIn(body: unknown): Map<NodeId, string> {
+  const found = new Map<NodeId, string>();
+  const visit = (value: unknown): void => {
+    if (Array.isArray(value)) {
+      for (const item of value) visit(item);
+      return;
+    }
+    if (value === null || typeof value !== 'object') return;
+    const node = value as Node;
+    if (kindOf(node) === 'logic.VarDecl' && typeof node['id'] === 'string') {
+      found.set(node['id'] as NodeId, identifierOf(String(node['name'] ?? '_')));
+    }
+    for (const child of Object.values(node)) visit(child);
+  };
+  visit(body);
+  return found;
+}
+
+/**
  * Binary operators that mean the same thing in both languages.
  *
  * `Binary.operator` is deliberately a free-form `string` in the schema, and the reason is stated there: *"a
@@ -741,13 +771,17 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
       // Resolution is by name and innermost-first, which is ordinary lexical scoping: a parameter shadows an
       // outer name of the same spelling, exactly as it does in Dart.
       const names = new Set(declared);
+      // A local this lambda itself declares (ADR-28) — reached here rather than through N5's lift path
+      // because this lambda was never lifted (it writes no signal state, e.g. a form validator), so its
+      // body is lowered inline instead of becoming a standalone `sig.Action`.
+      const locals = localBindingsIn(node['body']);
       const inner: EmitScope = {
         ...scope,
         report: scope.report.bind(scope),
         node: scope.node.bind(scope),
         signalRead: scope.signalRead.bind(scope),
         signalLocal: scope.signalLocal.bind(scope),
-        localName: scope.localName.bind(scope),
+        localName: (id) => locals.get(id) ?? scope.localName(id),
         declaredName: scope.declaredName.bind(scope),
         paramInScope: (name) => (names.has(name) ? identifierOf(name) : scope.paramInScope(name)),
       };

@@ -299,7 +299,15 @@ final class SignalExtractor {
       // change that never happened. `logic.Ref` resolves a parameter to no target, because a
       // `ParamDecl` is a value and has no id: the body names it, and the action's own `params`
       // declares it (Spec v2.5 §A18).
-      final Scope inner = _scopeOf(member.parameters, scope);
+      // Minted in the naming pass above, so `Scope.forBody`'s owner and the action's own emitted symbol
+      // (below) are the same string by construction — a local declared in this body and read back later
+      // in it resolves against the identical owner a second, independent lookup here could not
+      // accidentally disagree with (ADR-28).
+      final String bodyOwner = actionSymbols[name] ?? out.symbols.action(name, owner: owner);
+      final Scope inner = _scopeOf(
+        member.parameters,
+        Scope.forBody(scope, owner: bodyOwner, body: member.body),
+      );
 
       // A setter is excluded regardless: `set foo(int v)` is how Dart spells a *write*, not a callable
       // behavior, and giving it action identity would let something invoke a property assignment as if

@@ -11,6 +11,7 @@
 library;
 
 import 'package:analyzer/dart/ast/ast.dart';
+import 'package:analyzer/dart/element/element.dart';
 import 'package:bridge_analyzer/src/diagnostics/codes.dart';
 import 'package:bridge_analyzer/src/model/raw_node.dart';
 import 'package:bridge_analyzer/src/session/adapters/adapter_context.dart';
@@ -360,6 +361,10 @@ final class StatementExtractor implements StatementExtractorRef {
   RawNode _variable(VariableDeclaration node, VariableDeclarationList list, Scope scope) => RawNode(
     kind: 'logic.VarDecl',
     span: out.span(node),
+    // A declaration-tier symbol (ADR-28) — `null` for a `for`/`catch` binding, which never reaches
+    // this function with an ordinal available (`_localSymbol` returns `null` when [Scope.ordinalOf`]
+    // has nothing for this declaration's own element, matching `_declaring`'s identical check below).
+    symbol: _localSymbol(node, scope),
     fields: <String, RawValue>{
       'name': RawLiteral(node.name.lexeme),
       'type': out.typeRef(node.declaredFragment?.element.type ?? list.type?.type, at: node),
@@ -368,6 +373,24 @@ final class StatementExtractor implements StatementExtractorRef {
       if (list.isFinal || list.isConst) 'isFinal': const RawLiteral(true),
     },
   );
+
+  /// [node]'s own declaration-tier symbol (ADR-28), or `null` if [scope] has no ordinal for it —
+  /// [Scope.forBody]'s pre-pass only numbers an ordinary `final`/`var` declaration (ADR-28 §17), so a
+  /// `for`/`catch` binding, or a declaration reached outside any body (which cannot happen for a real
+  /// `VariableDeclarationStatement`), correctly yields `null` here rather than a manufactured id.
+  ///
+  /// Called from both [_variable] (the node itself) and [_declaring] (the binding a later reference
+  /// resolves against) on the *same* `VariableDeclaration`, so both independently compute the identical
+  /// string — a pure lookup, not a side-effecting counter, is what makes that safe regardless of which
+  /// one runs first (`scope.dart`'s own `_ordinalsOf` doc explains why).
+  String? _localSymbol(VariableDeclaration node, Scope scope) {
+    final String? owner = scope.owner;
+    final Element? element = node.declaredFragment?.element;
+    if (owner == null || element == null) return null;
+    final int? ordinal = scope.ordinalOf(element);
+    if (ordinal == null) return null;
+    return out.symbols.local(node.name.lexeme, owner: owner, ordinal: ordinal);
+  }
 
   RawNode _for(ForStatement node, Scope scope) {
     final ForLoopParts parts = node.forLoopParts;
@@ -440,7 +463,11 @@ final class StatementExtractor implements StatementExtractorRef {
     }
     return scope.child(<Binding>[
       for (final VariableDeclaration variable in statement.variables.variables)
-        Binding(name: variable.name.lexeme, binds: Binds.local),
+        Binding(
+          name: variable.name.lexeme,
+          binds: Binds.local,
+          symbol: _localSymbol(variable, scope),
+        ),
     ]);
   }
 

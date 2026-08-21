@@ -37,6 +37,19 @@ function stmt(id: string, expr: Record<string, unknown>): Record<string, unknown
   return { id, kind: 'logic.ExprStmt', span, expr };
 }
 
+/** A local variable declaration (ADR-28) — `final int <name> = <value>;`. */
+function varDecl(id: string, name: string, value: number): Record<string, unknown> {
+  return {
+    id,
+    kind: 'logic.VarDecl',
+    span,
+    name,
+    type: { name: 'int' },
+    isFinal: true,
+    initializer: { id: `${id}-init`, kind: 'logic.Lit', span, value, type: { name: 'int' } },
+  };
+}
+
 /** A lambda. */
 function lambda(
   id: string,
@@ -208,6 +221,74 @@ describe('N5 refuses to lift what it cannot close over', () => {
         ),
       ),
     );
+
+    expect(result.program.ofKind('sig.Action')).toHaveLength(1);
+    expect(result.diagnostics).toEqual([]);
+  });
+});
+
+describe('N5 treats a targeted local the same as an untargeted one (ADR-28)', () => {
+  it('a closure capturing a local declared OUTSIDE it is refused, even though the local now has a target', () => {
+    // Before ADR-28, `ref('r3', 'total')` (no target) was the only shape a captured local ever had, and
+    // `freeLocals` caught it by falling through the `typeof target === 'string'` check. ADR-28 gives an
+    // ordinary local a real target — this proves N5 does not mistake that for "safe to lift" the way it
+    // already, correctly, does for a signal's target.
+    const outer = varDecl('outer', 'total', 5) as unknown as AnyUirNode;
+    const result = lift(
+      Program.of([
+        signal('sig1'),
+        outer,
+        button(
+          'btn',
+          lambda('l1', [
+            stmt('s1', {
+              id: 'a1',
+              kind: 'logic.Assign',
+              span,
+              target: ref('r1', '_count', 'sig1'),
+              operator: 'assign',
+              value: ref('r3', 'total', 'outer'),
+              type: { name: 'int' },
+            }),
+          ]),
+        ),
+      ]),
+    );
+
+    expect(result.program.ofKind('sig.Action')).toHaveLength(0);
+    expect(result.diagnostics).toHaveLength(1);
+    expect(result.diagnostics[0]!.code).toBe('BRG2105');
+    expect(result.diagnostics[0]!.message).toContain('`total`');
+  });
+
+  it("a closure reading a local it declares ITSELF lifts — that capture is bound, not free", () => {
+    const inner = varDecl('inner', 'total', 5);
+    const result = lift(
+      app(
+        lambda('l1', [
+          inner,
+          stmt('s1', {
+            id: 'a1',
+            kind: 'logic.Assign',
+            span,
+            target: ref('r1', '_count', 'sig1'),
+            operator: 'assign',
+            value: ref('r3', 'total', 'inner'),
+            type: { name: 'int' },
+          }),
+        ]),
+      ),
+    );
+
+    expect(result.program.ofKind('sig.Action')).toHaveLength(1);
+    expect(result.diagnostics).toEqual([]);
+  });
+
+  it('a signal target is still always safe, unaffected by the local-id check', () => {
+    // Regression: the fix must not accidentally start treating a signal's own target as "a local id" —
+    // this is the exact shape every pre-existing N5 test above already exercises; pinned again here,
+    // explicitly, alongside the new local-specific cases so the three read as one proof.
+    const result = lift(app(lambda('l1', [stmt('s1', increment('a1', ref('r1', '_count', 'sig1')))])));
 
     expect(result.program.ofKind('sig.Action')).toHaveLength(1);
     expect(result.diagnostics).toEqual([]);
