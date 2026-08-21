@@ -143,6 +143,45 @@ final class Symbols {
     return path == null ? null : 'type:$path#$name';
   }
 
+  /// The symbol for a top-level variable declared in [libraryUri] — the sibling of [typeIn], for a
+  /// bare reference (`protocolVersion`) whose declaring file is not the referring one (M8-J). Mirrors
+  /// [variable] exactly; the two agree by construction, since both derive from the same [pathOf] and
+  /// the identical `var:` prefix.
+  static String? variableIn(
+    String libraryUri,
+    String name, {
+    required String packageName,
+    Set<String> localPackages = const <String>{},
+    Set<String> extractedDependencyFiles = const <String>{},
+  }) {
+    final String? path = pathOf(
+      libraryUri,
+      packageName: packageName,
+      localPackages: localPackages,
+      extractedDependencyFiles: extractedDependencyFiles,
+    );
+    return path == null ? null : 'var:$path#$name';
+  }
+
+  /// The symbol for a top-level function declared in [libraryUri] — the sibling of [variableIn], for a
+  /// bare reference (`formatBytes`) or a tear-off whose declaring file is not the referring one (M8-J).
+  /// Mirrors [function] exactly, the identical `fn:` prefix.
+  static String? functionIn(
+    String libraryUri,
+    String name, {
+    required String packageName,
+    Set<String> localPackages = const <String>{},
+    Set<String> extractedDependencyFiles = const <String>{},
+  }) {
+    final String? path = pathOf(
+      libraryUri,
+      packageName: packageName,
+      localPackages: localPackages,
+      extractedDependencyFiles: extractedDependencyFiles,
+    );
+    return path == null ? null : 'fn:$path#$name';
+  }
+
   /// The signal symbol for a member declared in [libraryUri] (ADR-27).
   static String? signalIn(
     String libraryUri,

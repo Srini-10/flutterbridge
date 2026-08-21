@@ -137,7 +137,13 @@ final class ExpressionExtractor {
         if (registry.mountedIntrinsicOf(node) case final MountedKind kind) {
           return _intrinsic(kind, null, node);
         }
-        return _reference(node, node.name, scope, type: _typeOfIdentifier(node));
+        return _reference(
+          node,
+          node.name,
+          scope,
+          type: _typeOfIdentifier(node),
+          staticTarget: _topLevelTarget(node.element),
+        );
 
       // `MainAxisAlignment.center`, `http.get`, `Colors.blue` — the left-hand side is a *type* or an
       // *import prefix*, not a value. It has no static type, because it is not a thing that has one,
@@ -154,7 +160,8 @@ final class ExpressionExtractor {
               ? node.identifier.name
               : '${node.prefix.name}.${node.identifier.name}',
           scope,
-          staticTarget: _enumConstantTarget(node.identifier.element),
+          staticTarget:
+              _enumConstantTarget(node.identifier.element) ?? _topLevelTarget(node.identifier.element),
         );
 
       case PrefixedIdentifier():
@@ -191,7 +198,8 @@ final class ExpressionExtractor {
             node,
             '${target.name}.${node.propertyName.name}',
             scope,
-            staticTarget: _enumConstantTarget(node.propertyName.element),
+            staticTarget:
+                _enumConstantTarget(node.propertyName.element) ?? _topLevelTarget(node.propertyName.element),
           );
         }
         if (registry.mountedIntrinsicOf(node) case final MountedKind kind) {
@@ -904,6 +912,8 @@ final class ExpressionExtractor {
               callee,
               scope,
               type: _typeOfIdentifier(node.methodName),
+              staticTarget:
+                  _enumConstantTarget(node.methodName.element) ?? _topLevelTarget(node.methodName.element),
             ),
           )
         else ...<String, RawValue>{
@@ -950,6 +960,71 @@ final class ExpressionExtractor {
       localPackages: out.localPackageNames,
       extractedDependencyFiles: out.extractedDependencyFiles,
     );
+  }
+
+  /// The top-level declaration [element] resolves to, when it is a plain top-level variable or
+  /// function this project (or a local dependency, M8-F) declares — the sibling of
+  /// [_enumConstantTarget], for `protocolVersion`/`formatBytes`-shaped references whose declaring file
+  /// is not the referring one (M8-J).
+  ///
+  /// A class's own static member is deliberately **not** handled here: `declaration_extractor.dart`'s
+  /// own `_fields` never gives a static field a symbol the way a top-level variable's `_topLevelScope`
+  /// binding already does (`Symbols.variable`) — so a static-member fix needs a declaration-side change
+  /// too, which this milestone's own scope is top-level declarations, not class members. Left refused,
+  /// same as before.
+  String? _topLevelTarget(Element? element) {
+    // The same unwrap `_enumConstantTarget` already does: a variable read reaches here as the
+    // *synthetic getter* Dart creates for it, never the `TopLevelVariableElement` directly.
+    final Element? unwrapped =
+        element is GetterElement && element.isOriginVariable ? element.variable : element;
+    if (unwrapped is TopLevelVariableElement) {
+      final String? name = unwrapped.name;
+      if (name == null) {
+        return null;
+      }
+      return Symbols.variableIn(
+        unwrapped.library.identifier,
+        name,
+        packageName: out.packageName,
+        localPackages: out.localPackageNames,
+        extractedDependencyFiles: out.extractedDependencyFiles,
+      );
+    }
+    if (unwrapped is TopLevelFunctionElement) {
+      final String? name = unwrapped.name;
+      if (name == null) {
+        return null;
+      }
+      return Symbols.functionIn(
+        unwrapped.library.identifier,
+        name,
+        packageName: out.packageName,
+        localPackages: out.localPackageNames,
+        extractedDependencyFiles: out.extractedDependencyFiles,
+      );
+    }
+    // An explicit top-level getter (`String get crossFileGetter => …`) — never a class's own getter,
+    // which `enclosingElement` distinguishes structurally (an `InstanceElement`/`ExtensionElement`),
+    // never by name. `declaration_extractor.dart`'s `_function` emits it exactly as it emits an
+    // ordinary top-level function — `logic.FunctionDecl`, `Symbols.function` — because Dart's own AST
+    // does not distinguish a `FunctionDeclaration` that happens to be a getter; neither does this.
+    if (unwrapped is GetterElement &&
+        unwrapped.isOriginDeclaration &&
+        unwrapped.enclosingElement is! InstanceElement &&
+        unwrapped.enclosingElement is! ExtensionElement) {
+      final String? name = unwrapped.name;
+      if (name == null) {
+        return null;
+      }
+      return Symbols.functionIn(
+        unwrapped.library.identifier,
+        name,
+        packageName: out.packageName,
+        localPackages: out.localPackageNames,
+        extractedDependencyFiles: out.extractedDependencyFiles,
+      );
+    }
+    return null;
   }
 
   /// The store member [element] resolves to, when [receiverType] is a declared store (ADR-27).

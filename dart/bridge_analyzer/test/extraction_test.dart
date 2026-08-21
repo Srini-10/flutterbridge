@@ -2268,6 +2268,228 @@ class W extends StatelessWidget {
     });
   });
 
+  group('top-level declaration identity (M8-J)', () {
+    // A bare or import-prefixed reference to a top-level const/final/function/getter resolved by
+    // `package:analyzer`'s own element model, never by matching a name against another file's.
+
+    String? targetOf(Extracted app, String name) => app
+        .ofKind('logic.Ref')
+        .firstWhere((Map<String, dynamic> r) => r['name'] == name)['target'] as String?;
+
+    test('a cross-file top-level const carries a target to its own declaration', () async {
+      final Extracted app = await extract(
+        '''
+import 'package:flutter/material.dart';
+import 'decls.dart';
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => Text(crossFileConst);
+}
+''',
+        extra: <String, String>{'decls.dart': "const String crossFileConst = 'value';"},
+      );
+      expect(app.errors, isEmpty);
+
+      final Map<String, dynamic> decl = app.only('logic.FieldDecl');
+      expect(targetOf(app, 'crossFileConst'), decl['id']);
+    });
+
+    test('a cross-file top-level function, called and torn off, both carry a target', () async {
+      final Extracted app = await extract(
+        '''
+import 'package:flutter/material.dart';
+import 'decls.dart';
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => ElevatedButton(onPressed: crossFileFn, child: Text(crossFileFn()));
+}
+''',
+        extra: <String, String>{'decls.dart': "String crossFileFn() => 'value';"},
+      );
+      expect(app.errors, isEmpty);
+
+      final Map<String, dynamic> decl = app.only('logic.FunctionDecl');
+      final List<Map<String, dynamic>> refs = app
+          .ofKind('logic.Ref')
+          .where((Map<String, dynamic> r) => r['name'] == 'crossFileFn')
+          .toList();
+      expect(refs, hasLength(2), reason: 'the tear-off and the call both reach a logic.Ref');
+      expect(refs.every((Map<String, dynamic> r) => r['target'] == decl['id']), isTrue);
+    });
+
+    test('a cross-file top-level getter carries a target to its own declaration', () async {
+      final Extracted app = await extract(
+        '''
+import 'package:flutter/material.dart';
+import 'decls.dart';
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => Text(crossFileGetter);
+}
+''',
+        extra: <String, String>{'decls.dart': "String get crossFileGetter => 'value';"},
+      );
+      expect(app.errors, isEmpty);
+
+      final Map<String, dynamic> decl = app.only('logic.FunctionDecl');
+      expect(targetOf(app, 'crossFileGetter'), decl['id']);
+    });
+
+    test('a cross-package top-level const and function, via an import prefix, both resolve', () async {
+      final Extracted app = await extract(
+        r'''
+import 'package:flutter/material.dart';
+import 'package:dep/dep.dart' as dep;
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => Text('${dep.depConst} ${dep.depFormat('x')}');
+}
+''',
+        localDependencies: <String, Map<String, String>>{
+          'dep': <String, String>{
+            'dep.dart': "const String depConst = 'v';\nString depFormat(String s) => s;",
+          },
+        },
+      );
+      expect(app.errors, isEmpty);
+
+      final Map<String, dynamic> constDecl = app
+          .ofKind('logic.FieldDecl')
+          .singleWhere((Map<String, dynamic> f) => f['name'] == 'depConst');
+      final Map<String, dynamic> fnDecl = app
+          .ofKind('logic.FunctionDecl')
+          .singleWhere((Map<String, dynamic> f) => f['name'] == 'depFormat');
+      expect(targetOf(app, 'depConst'), constDecl['id']);
+      expect(targetOf(app, 'depFormat'), fnDecl['id']);
+      expect(
+        (constDecl['span'] as Map<String, dynamic>)['file'],
+        'package:dep/dep.dart',
+        reason: 'the declaration is anchored in the dependency’s own package URI space, not the app’s',
+      );
+    });
+
+    test('the same declaration name in two files never shares identity', () async {
+      final Extracted app = await extract(
+        r'''
+import 'package:flutter/material.dart';
+import 'a.dart' as a;
+import 'b.dart' as b;
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => Text('${a.sameName} ${b.sameName}');
+}
+''',
+        extra: <String, String>{
+          'a.dart': "const String sameName = 'a';",
+          'b.dart': "const String sameName = 'b';",
+        },
+      );
+      expect(app.errors, isEmpty);
+
+      final List<Map<String, dynamic>> decls = app.ofKind('logic.FieldDecl');
+      expect(decls, hasLength(2));
+      expect(decls[0]['id'], isNot(decls[1]['id']), reason: 'two distinct consts sharing a name must never share a NodeId');
+
+      final List<Map<String, dynamic>> refs = app
+          .ofKind('logic.Ref')
+          .where((Map<String, dynamic> r) => r['name'] == 'sameName')
+          .toList();
+      expect(refs, hasLength(2));
+      expect(refs[0]['target'], isNot(refs[1]['target']));
+      expect(
+        <String?>{refs[0]['target'] as String?, refs[1]['target'] as String?},
+        <String?>{decls[0]['id'] as String?, decls[1]['id'] as String?},
+      );
+    });
+
+    test('a local variable shadowing a top-level const is never claimed as the top-level one', () async {
+      // Inside build() a local is substituted at its use (M8-B), never named by a `logic.Ref` — so the
+      // proof here is the inlined *value*, not a target: it must be the shadowing local's own, never
+      // the shadowed top-level const's.
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+const String value = 'top-level';
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) {
+    final String value = 'local';
+    return Text(value);
+  }
+}
+''');
+      expect(app.errors, isEmpty);
+
+      final Map<String, dynamic> text = app.only('ui.Text');
+      final Map<String, dynamic> value = text['value'] as Map<String, dynamic>;
+      expect(
+        (value['expr'] as Map<String, dynamic>)['value'],
+        'local',
+        reason: 'the read inside build() must resolve to the local, never fall back to the shadowed top-level const',
+      );
+    });
+
+    test('a parameter shadowing a top-level const is never claimed as the top-level one', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+const String value = 'top-level';
+String echo(String value) => value;
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => Text(echo('x'));
+}
+''');
+      expect(app.errors, isEmpty);
+
+      final Map<String, dynamic> topLevelDecl = app.only('logic.FieldDecl');
+      final String? target = targetOf(app, 'value');
+      expect(target, isNot(topLevelDecl['id']));
+    });
+
+    test('an SDK top-level declaration stays honestly unresolved, never claimed as this program’s own', () async {
+      final Extracted app = await extract(r'''
+import 'package:flutter/material.dart';
+import 'dart:math' as math;
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => Text('${math.pi}');
+}
+''');
+      expect(app.errors, isEmpty);
+      expect(app.ofKind('logic.FieldDecl'), isEmpty, reason: 'no declaration for an SDK constant is ever invented');
+      expect(targetOf(app, 'pi'), isNull);
+    });
+
+    test('a static class const is not claimed by the top-level mechanism (a separate, undecided gap)', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Constants {
+  static const String value = 'v';
+}
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => Text(Constants.value);
+}
+''');
+      expect(app.errors, isEmpty);
+      expect(
+        targetOf(app, 'Constants.value'),
+        isNull,
+        reason:
+            'a class field never gets a symbol the way a top-level variable does (declaration_extractor.dart’s '
+            '_fields), so this milestone’s reference-side fix correctly leaves it refused rather than half-fixing it',
+      );
+    });
+  });
+
   group('paths in UIR are platform-independent (M5-F)', () {
     // `span.file` is not a filesystem path once it is written: it becomes an anchor —
     // `'${span.file}#$segment'` in `node_factory.dart` — and an anchor is hashed into the node's id
