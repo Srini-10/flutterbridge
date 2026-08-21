@@ -382,6 +382,28 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
           );
           return REFUSED;
         }
+
+        // A project-defined top-level `const`/`final` variable (M8-J gave the reference its identity;
+        // M8-P measured whether the declaration itself could be lowered and found no real Continuum site
+        // that would benefit — both of the two motivating cases fail for reasons a `FieldDecl` fix would
+        // not touch: one's initializer constructs a third-party class `logic.New` already refuses on its
+        // own terms, and the other's only real reference is a route-boundary argument N11 classifies
+        // before this code ever runs. The identity is sound and the declaration is real; only the
+        // lowering is missing, so — mirroring `logic.FunctionDecl` immediately above, the identical
+        // structural check on the resolved target's own kind, never on `name` — the honest diagnostic is
+        // a missing capability, not an unresolved reference.
+        if (declaration !== undefined && declaration['kind'] === 'logic.FieldDecl') {
+          const fieldName = typeof declaration['name'] === 'string' ? declaration['name'] : String(node['name'] ?? '');
+          scope.report(
+            GeneratorDiagnosticCode.UnsupportedCapability,
+            'error',
+            `\`${fieldName}\` is a project-defined top-level variable, and this generator does not yet ` +
+              `lower a \`logic.FieldDecl\` to a module-level TypeScript declaration. That work belongs to ` +
+              `${OWNER_LABEL['generator']}.`,
+            idOf(node),
+          );
+          return REFUSED;
+        }
       }
       const name = node['name'];
 

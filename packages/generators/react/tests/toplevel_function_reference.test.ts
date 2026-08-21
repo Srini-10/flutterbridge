@@ -119,12 +119,13 @@ describe('a targeted reference to a project top-level function (M8-L)', () => {
     expect(reported.some((d) => d.code === 'BRG3006')).toBe(false);
   });
 
-  it('a targeted top-level const (M8-J) is unaffected by this fix — still BRG3006, not reclassified', () => {
-    // A sibling gap, found but deliberately not fixed here (M8-L is scoped to `logic.FunctionDecl`
-    // only): M8-J gave a top-level `const`/`final` reference real target identity, but nothing here
-    // recognises a `logic.FieldDecl` target either, so it still falls through to the generic message.
-    // This is the same shape of misattribution `greet` had — recorded as a candidate for a future,
-    // separately-scoped milestone, not folded in.
+  it('a targeted top-level const (M8-J) was BRG3006 at M8-L, and is now BRG3013 (M8-P)', () => {
+    // The sibling gap this milestone's own doc recorded, at the time deliberately not fixed (M8-L was
+    // scoped to `logic.FunctionDecl` only): M8-J gave a top-level `const`/`final` reference real target
+    // identity, but nothing here recognised a `logic.FieldDecl` target — the same shape of
+    // misattribution `greet` had. M8-P closed it, structurally, the identical way. This test is the
+    // updated regression guard for that change — see `toplevel_field_reference.test.ts` for the full
+    // M8-P coverage (same-name collision, missing-target, enum/local/action regressions).
     const fieldDecl: AnyUirNode = {
       id: 'const-decl',
       kind: 'logic.FieldDecl',
@@ -140,8 +141,11 @@ describe('a targeted reference to a project top-level function (M8-L)', () => {
     ];
     const { context, reported } = harness(nodes);
     reactGenerator.generate(context);
-    expect(reported.some((d) => d.severity === 'error' && d.code === 'BRG3006')).toBe(true);
-    expect(reported.some((d) => d.code === 'BRG3013')).toBe(false);
+    expect(reported.some((d) => d.severity === 'error' && d.code === 'BRG3006')).toBe(false);
+    const capability = reported.find((d) => d.code === 'BRG3013');
+    expect(capability?.severity).toBe('error');
+    expect(capability?.message).toContain('protocolVersion');
+    expect(capability?.message).not.toContain('not declared in this program');
   });
 
   it('an enum constant reference (M8-D) is unaffected — still a literal, not a capability refusal', () => {
