@@ -325,11 +325,32 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
         // this Ref's own `name` (not re-derived by search), lowered as a plain string literal. Dart's own
         // type system already refuses to compare two different enums' constants against each other, so
         // nothing downstream can conflate `Stage.ready` with an unrelated enum's own `ready`.
-        const enumDecl = scope.node(target) as unknown as Node | undefined;
-        if (enumDecl !== undefined && enumDecl['kind'] === 'logic.EnumDecl') {
+        const declaration = scope.node(target) as unknown as Node | undefined;
+        if (declaration !== undefined && declaration['kind'] === 'logic.EnumDecl') {
           const dotted = typeof node['name'] === 'string' ? node['name'] : '';
           const member = dotted.split('.').at(-1) ?? '';
           return stringLiteral(member);
+        }
+
+        // A project-defined top-level function or getter (M8-J gave the reference its identity;
+        // M8-K found the generator has no lowering for the declaration it now correctly targets). This
+        // is deliberately a check on the **resolved node's kind**, never on `name` — a table keyed by
+        // function name cannot generalise to an arbitrary project's own top-level functions the way
+        // `MISSING_CAPABILITIES` can for a small, enumerable set of framework APIs. The declaration is
+        // real (a `logic.FunctionDecl` exists, with real params, a body, and a return type); what does
+        // not exist is anywhere in this generator that turns one into a module-level TypeScript
+        // function, so the honest diagnostic is a missing capability, not an unresolved reference.
+        if (declaration !== undefined && declaration['kind'] === 'logic.FunctionDecl') {
+          const fnName = typeof declaration['name'] === 'string' ? declaration['name'] : String(node['name'] ?? '');
+          scope.report(
+            GeneratorDiagnosticCode.UnsupportedCapability,
+            'error',
+            `\`${fnName}\` is a project-defined top-level function, and this generator does not yet lower ` +
+              `a \`logic.FunctionDecl\` to a module-level TypeScript function. That work belongs to ` +
+              `${OWNER_LABEL['generator']}.`,
+            idOf(node),
+          );
+          return REFUSED;
         }
       }
       const name = node['name'];
