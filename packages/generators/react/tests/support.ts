@@ -247,3 +247,9 @@ export function localVariablesRaw(): string {
   const path = fileURLToPath(new URL('../../../../fixtures/uir/local_variables.ndjson', import.meta.url));
   return readFileSync(path, 'utf8');
 }
+
+/** The real `fixtures/apps/transitive_actions` document, raw analyzer output (M8-O) — not yet normalized. */
+export function transitiveActionsRaw(): string {
+  const path = fileURLToPath(new URL('../../../../fixtures/uir/transitive_actions.ndjson', import.meta.url));
+  return readFileSync(path, 'utf8');
+}

@@ -690,31 +690,72 @@ function actionScope(
 }
 
 /**
- * The ids of every `sig.Action` the tree references, sorted.
+ * The `sig.Action` ids [value] references directly — one level, `target`-based (M8-O's own primitive,
+ * shared by both the render-tree walk and each action-body walk {@link referencedActions} does above
+ * it). Appends into [found] rather than returning a fresh set, so the caller's fixed-point loop can tell
+ * a genuinely new id from one already seen without a second pass.
+ */
+function directActionRefs(value: unknown, scope: EmitScope, found: Set<NodeId>): void {
+  if (Array.isArray(value)) {
+    for (const item of value) directActionRefs(item, scope, found);
+    return;
+  }
+  if (value === null || typeof value !== 'object') return;
+  const node = value as Node;
+  if (kindOf(node) === 'logic.Ref' && typeof node['target'] === 'string') {
+    const target = node['target'];
+    const declaration = scope.node(target) as unknown as Node | undefined;
+    // Only actions, and only ones nothing else already resolves — a store's action is `rootScope`'s.
+    if (declaration !== undefined && kindOf(declaration) === 'sig.Action' && scope.localName(target) === undefined) {
+      found.add(target);
+    }
+  }
+  for (const child of Object.values(node)) directActionRefs(child, scope, found);
+}
+
+/**
+ * The ids of every `sig.Action` the tree references, directly or **transitively through another
+ * referenced action's own body** (M8-O), sorted.
  *
  * By `target`, not by name: normalization gives a lifted action a synthetic name (`action$8c1f32c5`) that
  * embeds its id, and parsing that string would be reading a fact the node already states properly.
+ *
+ * `outer() { inner(); }`, `onPressed: outer` used to declare only `outer` — a real, correctly targeted
+ * `sig.Action` reference *inside* `outer`'s own body was never itself a descendant of `component['render']`,
+ * so `inner` reached the expression emitter with a real `target` and no declaration to resolve it against,
+ * refused as `BRG3006` for a program that, in fact, declared it. Fixed by a fixed-point walk: seed from the
+ * tree exactly as before, then repeat — walk every *newly* found action's own body for more action
+ * references — until a pass adds nothing. `found` is a `Set<NodeId>`, so an id already discovered is never
+ * re-queued: a self-reference (`a() { a(); }`) or a mutual cycle (`a() { b(); } b() { a(); }`) terminates on
+ * its own, with no separate cycle-detection state to keep in sync.
  */
 function referencedActions(tree: unknown, scope: EmitScope): NodeId[] {
   const found = new Set<NodeId>();
-  const visit = (value: unknown): void => {
-    if (Array.isArray(value)) {
-      for (const item of value) visit(item);
-      return;
-    }
-    if (value === null || typeof value !== 'object') return;
-    const node = value as Node;
-    if (kindOf(node) === 'logic.Ref' && typeof node['target'] === 'string') {
-      const target = node['target'];
-      const declaration = scope.node(target) as unknown as Node | undefined;
-      // Only actions, and only ones nothing else already resolves — a store's action is `rootScope`'s.
-      if (declaration !== undefined && kindOf(declaration) === 'sig.Action' && scope.localName(target) === undefined) {
-        found.add(target);
+  directActionRefs(tree, scope, found);
+
+  // Fixed point: each pass walks only the ids the *previous* pass discovered and no earlier pass had
+  // already queued (`queue`), so an action's own body is walked exactly once no matter how many other
+  // actions call it — the loop terminates because `found` only grows and the program has finitely many
+  // actions. A self-reference (`a() { a(); }`) or a mutual cycle (`a() { b(); } b() { a(); }`) falls out
+  // of this for free: by the time `a` would be re-queued, it is already in `found`.
+  let queue = [...found];
+  while (queue.length > 0) {
+    const next: NodeId[] = [];
+    for (const id of queue) {
+      const action = scope.node(id) as unknown as Node | undefined;
+      if (action === undefined) continue;
+      const discovered = new Set<NodeId>();
+      directActionRefs(action['body'], scope, discovered);
+      for (const candidate of discovered) {
+        if (!found.has(candidate)) {
+          found.add(candidate);
+          next.push(candidate);
+        }
       }
     }
-    for (const child of Object.values(node)) visit(child);
-  };
-  visit(tree);
+    queue = next;
+  }
+
   return [...found].sort();
 }
 
