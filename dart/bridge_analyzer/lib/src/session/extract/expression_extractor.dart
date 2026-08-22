@@ -422,6 +422,15 @@ final class ExpressionExtractor {
           if (navigate != null) {
             return <RawValue>[RawChild(navigate)];
           }
+        } else if (value is SwitchExpression) {
+          // `String f(Reason r) => switch (r) { A => x, B => y };` (M8-Y) — the identical shape
+          // `switchExpressionAsReturn` admits for a block-bodied `return`, reached here because an
+          // arrow-bodied function's `return` is this `ExpressionFunctionBody`, never a real
+          // `ReturnStatement`.
+          final RawNode? lowered = switchExpressionAsReturn(value, body, scope);
+          if (lowered != null) {
+            return <RawValue>[RawChild(lowered)];
+          }
         }
         return <RawValue>[
           RawChild(
@@ -439,6 +448,61 @@ final class ExpressionExtractor {
       case FunctionBody():
         return <RawValue>[RawChild(out.opaqueStmt(body, 'function body'))];
     }
+  }
+
+  /// `logic.Switch` for a `return`'s own `switch (subject) { pattern => expr, ... }`, if every case is
+  /// an unguarded `ConstantPattern` — an enum constant, a literal, or `null` — or `null` if any case is
+  /// not (M8-Y). Shared by both real Dart shapes a `return switch` can take: a block-bodied function's
+  /// real `ReturnStatement` (`statement_extractor.dart`) and an arrow-bodied function's
+  /// `ExpressionFunctionBody` (`bodyOf`, above) — the two are the same program, and this is the one place
+  /// that treats them identically rather than solving the shape twice.
+  ///
+  /// Reuses the existing `SwitchStatement` extraction's own shape exactly (`statement_extractor.dart`'s
+  /// `case SwitchStatement()`): `subject` is the scrutinee, each case is `{test, body}`, and a case's
+  /// `body` here is always exactly one synthesized `logic.Return` of that case's own result expression —
+  /// the schema's own `SwitchCase.body: readonly Stmt[]` already holds a statement list, so no field is
+  /// invented, only populated with the one statement a `return switch` case always implies.
+  ///
+  /// `ConstantPattern.expression` is resolved by the exact same `extract` the pre-existing old-style
+  /// `case Reason.value:` arm already calls on `SwitchCase.expression` — the same expression node shape
+  /// (`PrefixedIdentifier`/`PropertyAccess` for an enum constant), resolved by the same, already-correct
+  /// machinery (M8-D). No new identity mechanism exists here to get wrong.
+  ///
+  /// Deliberately narrow, matched to real evidence, not to the language's own grammar (M8-V's own
+  /// discipline): a `WildcardPattern`, a `LogicalOrPattern`, an `ObjectPattern`/`RecordPattern`/
+  /// `ListPattern`/`MapPattern`, or any `guardedPattern.whenClause != null` (a `when` guard) is not an
+  /// unguarded `ConstantPattern`, so this returns `null` for the *whole* switch — one unsupported case
+  /// anywhere keeps every case opaque, never a partial lowering that silently drops a case, a guard, or a
+  /// pattern this extractor cannot prove safe.
+  RawNode? switchExpressionAsReturn(SwitchExpression expr, AstNode node, Scope scope) {
+    final List<RawValue> cases = <RawValue>[];
+    for (final SwitchExpressionCase case_ in expr.cases) {
+      if (case_.guardedPattern.whenClause != null) return null;
+      final DartPattern pattern = case_.guardedPattern.pattern;
+      if (pattern is! ConstantPattern) return null;
+      cases.add(
+        RawMap(<String, RawValue>{
+          'test': RawChild(extract(pattern.expression, scope)),
+          'body': RawList(<RawValue>[
+            RawChild(
+              RawNode(
+                kind: 'logic.Return',
+                span: out.span(case_),
+                fields: <String, RawValue>{'value': RawChild(extract(case_.expression, scope))},
+              ),
+            ),
+          ]),
+        }),
+      );
+    }
+    return RawNode(
+      kind: 'logic.Switch',
+      span: out.span(node),
+      fields: <String, RawValue>{
+        'subject': RawChild(extract(expr.expression, scope)),
+        'cases': RawList(cases),
+      },
+    );
   }
 
   /// The statement extractor, which is mutually recursive with this one: a lambda body holds

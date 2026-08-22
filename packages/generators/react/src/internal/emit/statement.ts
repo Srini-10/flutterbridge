@@ -24,6 +24,64 @@ function asArray(value: unknown): Node[] {
 }
 
 /**
+ * Whether `node` (a `logic.Switch` with no `default`/`defaultCase`) is structurally *provable* to be
+ * exhaustive — every one of a single enum's own declared members is covered by exactly one case, and, if
+ * the subject's own resolved type is nullable, a `null` case covers that too (M8-Y).
+ *
+ * Deliberately independent of *how* the switch was produced — this does not ask whether it came from
+ * `switchExpressionAsReturn` (the analyzer has no such marker in `logic.Switch` itself, on purpose: doing
+ * so would be a schema change M8-Y's own investigation found unnecessary). It re-derives the same proof
+ * structurally, from the case set alone, so it is equally sound for a hypothetical future old-style
+ * switch *statement* over a fully-covered enum — and it returns `false`, unchanged from this generator's
+ * pre-M8-Y behaviour, for anything it cannot prove: a primitive-typed switch (`int`/`String`), a subset of
+ * an enum's members, or a case whose `test` is not a resolvable enum-constant reference or a literal
+ * `null`. A `false` here leaves the switch exactly as it always lowered — no `default`, no throw, no
+ * claim of completeness this function could not verify.
+ */
+function isProvablyExhaustiveEnumSwitch(node: Node, scope: EmitScope): boolean {
+  const cases = asArray(node['cases']);
+  if (cases.length === 0) return false;
+
+  let enumDeclId: string | undefined;
+  const covered = new Set<string>();
+  let hasNullCase = false;
+
+  for (const entry of cases) {
+    const test = entry['test'] as Node | undefined;
+    if (test === undefined) return false;
+    // A Dart `null` literal's own `value` field is absent from canonical JSON, not `null` — the
+    // "absent, not null" convention this schema already uses elsewhere (a `default` case's own test is
+    // absent the same way) — so `undefined` here means the literal `null`, not "no test at all".
+    if (test['kind'] === 'logic.Lit' && (test['value'] === null || test['value'] === undefined)) {
+      hasNullCase = true;
+      continue;
+    }
+    if (test['kind'] !== 'logic.Ref' || typeof test['target'] !== 'string') return false;
+    const target = test['target'];
+    const declaration = scope.node(target) as unknown as Node | undefined;
+    if (declaration === undefined || declaration['kind'] !== 'logic.EnumDecl') return false;
+    if (enumDeclId === undefined) enumDeclId = target;
+    else if (enumDeclId !== target) return false; // two different enums in one switch — not this proof's shape
+    const name = typeof test['name'] === 'string' ? test['name'] : '';
+    const member = name.split('.').at(-1) ?? '';
+    if (member === '') return false;
+    covered.add(member);
+  }
+
+  if (enumDeclId === undefined) return false;
+  const declaration = scope.node(enumDeclId) as unknown as Node | undefined;
+  const values = Array.isArray(declaration?.['values']) ? (declaration['values'] as unknown[]) : undefined;
+  if (values === undefined) return false;
+  const allMembers = new Set(values.filter((v): v is string => typeof v === 'string'));
+  if (allMembers.size !== covered.size || [...allMembers].some((m) => !covered.has(m))) return false;
+
+  const subjectType = (node['subject'] as Node | undefined)?.['type'] as Node | undefined;
+  if (subjectType?.['nullable'] === true && !hasNullCase) return false;
+
+  return true;
+}
+
+/**
  * Lowers a statement list to lines of TypeScript.
  *
  * @param statements - the `logic.*` statement nodes, in order.
@@ -163,10 +221,13 @@ export function emitStatement(statement: Stmt | Node | undefined, scope: EmitSco
       // and every case ends implicitly. JavaScript falls through by default. So `break;` is emitted at the end
       // of every case that does not already leave: omitting it turns one branch into all the branches below
       // it, which runs code the author never wrote and produces no error anywhere.
+      // `SwitchCase.test` (uir.ts) — read as `item['value']` until M8-Y found it: `logic.Switch` had no
+      // real fixture or test exercising a non-empty case, so a case's own test always lowered to the
+      // literal text `undefined` unnoticed.
       const lines = [`switch (${emitExpression(node['subject'] as Node, scope)}) {`];
       for (const entry of asArray(node['cases'])) {
         const item = entry as Node;
-        const test = item['value'];
+        const test = item['test'];
         lines.push(`  case ${emitExpression(test as Node, scope)}: {`);
         const body = emitStatements(item['body'], scope);
         lines.push(...indent(indent(body)));
@@ -177,6 +238,18 @@ export function emitStatement(statement: Stmt | Node | undefined, scope: EmitSco
       if (fallback !== undefined) {
         lines.push('  default: {');
         lines.push(...indent(indent(emitStatements(fallback, scope))));
+        lines.push('  }');
+      } else if (isProvablyExhaustiveEnumSwitch(node, scope)) {
+        // No case in the source names this, ever — Dart's own compiler already proved every member of
+        // the enum is covered (§ below), the same proof `switchExpressionAsReturn` (M8-Y) relies on to
+        // admit the switch at all. TypeScript cannot see that proof from a plain `switch`, so without a
+        // `default` it infers an implicit `undefined` return on every call site — corrupting a caller
+        // that expects `string` (`Text`'s own `children` prop, concretely). A `throw` here restates the
+        // same exhaustiveness Dart already guarantees, in a form `tsc` can check; it is not a new
+        // execution path a real program can reach, the same way a `default: assert(false)` in a
+        // switch-on-a-closed-enum is idiomatic, unreachable-by-construction code in TypeScript generally.
+        lines.push('  default: {');
+        lines.push('    throw new Error(\'unreachable: every case of a closed enum was already covered\');');
         lines.push('  }');
       }
       lines.push('}');

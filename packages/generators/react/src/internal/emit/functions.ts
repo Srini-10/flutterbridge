@@ -11,7 +11,7 @@ import { localBindingsIn, type EmitScope } from './expression.js';
 import { fileNameOf, identifierOf, ModuleBuilder } from './module.js';
 import { useRuntime } from './runtime.js';
 import { emitStatements } from './statement.js';
-import { paramListOf, refuseNamedParams } from './types.js';
+import { paramListOf, refuseNamedParams, typeTextOf } from './types.js';
 
 type Node = Record<string, unknown>;
 
@@ -225,7 +225,26 @@ export function emitFunctionModules(
           else scope.report(code, severity, message, nodeId);
         },
       };
-      const signature = `(${paramListOf(params, identifierOf, (name) => useRuntime(scratch, name))})`;
+      // An explicit return type, but only where TypeScript cannot otherwise prove one: a body that is
+      // exactly one exhaustive `logic.Switch` (M8-Y) — the shape a `return switch (x) {...}` desugars
+      // to — has no `default`, because Dart's own compiler already proved every case is covered and a
+      // synthesized default would be a JS-only execution path valid Dart does not have. TypeScript
+      // cannot see that proof, so without an annotation it infers the "falls off the end" case as an
+      // implicit `undefined`, which corrupts every caller's own type (a `Text` prop typed `string`
+      // stops accepting the call). An explicit return type makes that same "falls off the end" shape a
+      // real compile error instead — the exhaustiveness proof this generator relies on, restated where
+      // `tsc` can check it, not a weaker one. Every other function keeps inferring its own return type,
+      // exactly as before M8-Y — the annotation is added only where its absence would otherwise be
+      // unsound.
+      const isSoleExhaustiveSwitch =
+        body.length === 1 &&
+        body[0]?.['kind'] === 'logic.Switch' &&
+        body[0]?.['defaultCase'] === undefined &&
+        body[0]?.['default'] === undefined;
+      const returnType = isSoleExhaustiveSwitch
+        ? `: ${typeTextOf(fn['returnType'] as Node | undefined, (name) => useRuntime(scratch, name))}`
+        : '';
+      const signature = `(${paramListOf(params, identifierOf, (name) => useRuntime(scratch, name))})${returnType}`;
       const lines = emitStatements(body, fnScope);
 
       if (hadError) continue; // try again next pass — a callee this pass hadn't resolved yet might resolve then

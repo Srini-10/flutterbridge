@@ -2791,4 +2791,264 @@ class _WState extends State<W> {
       );
     });
   });
+
+  group('switch expression → logic.Switch (M8-Y)', () {
+    // Continuum's real `describeTransferFailure` (`continuum_ui_kit.dart:121-127`) is exactly
+    // `return switch (reason) { EnumConstant => 'literal', ... };` — an unguarded, exhaustive,
+    // enum-constant-pattern switch expression in direct-return position. M8-X found this reaches
+    // `BRG1302` (opaque) unconditionally; these tests prove the narrow, evidence-bounded subset this
+    // extractor now admits, and that every unsupported neighbouring shape stays exactly as opaque as
+    // before.
+
+    test('the exact real describeTransferFailure shape lowers to logic.Switch, case order preserved', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+enum Reason { permissionDenied, hashMismatch, ioError, none }
+String describeTransferFailure(Reason reason) => switch (reason) {
+      Reason.permissionDenied => 'failed: permission denied',
+      Reason.hashMismatch => 'failed: checksum mismatch',
+      Reason.ioError => 'failed: storage error',
+      Reason.none => 'failed',
+    };
+class W extends StatelessWidget {
+  const W({required this.r, super.key});
+  final Reason r;
+  @override
+  Widget build(BuildContext context) => Text(describeTransferFailure(r));
+}
+''');
+      expect(app.errors, isEmpty);
+      expect(app.ofKind('logic.OpaqueExpr'), isEmpty, reason: 'the switch must not remain opaque');
+      final Map<String, dynamic> fn = app.only('logic.FunctionDecl');
+      final List<dynamic> body = fn['body'] as List<dynamic>;
+      expect(body, hasLength(1), reason: 'the whole arrow body is exactly one statement: the switch');
+      final Map<String, dynamic> sw = body.single as Map<String, dynamic>;
+      expect(sw['kind'], 'logic.Switch');
+      final List<dynamic> cases = sw['cases'] as List<dynamic>;
+      expect(cases, hasLength(4));
+      expect(
+        cases.map((dynamic c) => ((c as Map<String, dynamic>)['test'] as Map<String, dynamic>)['name']),
+        <String>['Reason.permissionDenied', 'Reason.hashMismatch', 'Reason.ioError', 'Reason.none'],
+        reason: 'case order must match source order exactly — it is not sorted or reconstructed',
+      );
+      for (final dynamic c in cases) {
+        final List<dynamic> caseBody = (c as Map<String, dynamic>)['body'] as List<dynamic>;
+        expect(caseBody, hasLength(1));
+        expect((caseBody.single as Map<String, dynamic>)['kind'], 'logic.Return');
+      }
+    });
+
+    test('every case test resolves to the same EnumDecl identity, structurally (M8-D reused)', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+enum Reason { a, b }
+String f(Reason r) => switch (r) { Reason.a => 'x', Reason.b => 'y' };
+class W extends StatelessWidget {
+  const W({required this.r, super.key});
+  final Reason r;
+  @override
+  Widget build(BuildContext context) => Text(f(r));
+}
+''');
+      expect(app.errors, isEmpty);
+      final Map<String, dynamic> decl = app.only('logic.EnumDecl');
+      final Map<String, dynamic> sw = app.only('logic.Switch');
+      final List<dynamic> cases = sw['cases'] as List<dynamic>;
+      for (final dynamic c in cases) {
+        expect((c as Map<String, dynamic>)['test'], containsPair('target', decl['id']));
+      }
+    });
+
+    test('two different enums with an identically-named member never share switch-case identity', () async {
+      final Extracted app = await extract(r'''
+import 'package:flutter/material.dart';
+enum EnumA { ready, waiting }
+enum EnumB { ready, waiting }
+String fa(EnumA a) => switch (a) { EnumA.ready => 'ar', EnumA.waiting => 'aw' };
+String fb(EnumB b) => switch (b) { EnumB.ready => 'br', EnumB.waiting => 'bw' };
+class W extends StatelessWidget {
+  const W({required this.a, required this.b, super.key});
+  final EnumA a;
+  final EnumB b;
+  @override
+  Widget build(BuildContext context) => Text('${fa(a)}${fb(b)}');
+}
+''');
+      expect(app.errors, isEmpty);
+      final List<dynamic> decls = app.ofKind('logic.EnumDecl');
+      final String declA = (decls.singleWhere((dynamic d) => (d as Map<String, dynamic>)['name'] == 'EnumA') as Map<String, dynamic>)['id'] as String;
+      final String declB = (decls.singleWhere((dynamic d) => (d as Map<String, dynamic>)['name'] == 'EnumB') as Map<String, dynamic>)['id'] as String;
+      expect(declA, isNot(declB));
+      final List<dynamic> switches = app.ofKind('logic.Switch');
+      expect(switches, hasLength(2));
+      for (final dynamic s in switches) {
+        final List<dynamic> cases = (s as Map<String, dynamic>)['cases'] as List<dynamic>;
+        final String subjectTarget = cases
+            .map((dynamic c) => ((c as Map<String, dynamic>)['test'] as Map<String, dynamic>)['target'] as String)
+            .toSet()
+            .single;
+        expect(
+          subjectTarget == declA || subjectTarget == declB,
+          isTrue,
+          reason: 'every case in one switch must resolve to exactly one of the two enums, never a mix',
+        );
+      }
+      final Set<String> distinctTargets = switches
+          .map((dynamic s) => ((((s as Map<String, dynamic>)['cases'] as List<dynamic>).first as Map<String, dynamic>)['test'] as Map<String, dynamic>)['target'] as String)
+          .toSet();
+      expect(distinctTargets, hasLength(2), reason: 'the two switches must resolve to two different enum identities, not one shared by name');
+    });
+
+    test('a null pattern is admitted — ConstantPattern covers null, not only enum constants', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+enum Reason { a, b }
+String f(Reason? r) => switch (r) { null => 'none', Reason.a => 'x', Reason.b => 'y' };
+class W extends StatelessWidget {
+  const W({required this.r, super.key});
+  final Reason? r;
+  @override
+  Widget build(BuildContext context) => Text(f(r));
+}
+''');
+      expect(app.errors, isEmpty);
+      expect(app.ofKind('logic.OpaqueExpr'), isEmpty);
+      final Map<String, dynamic> sw = app.only('logic.Switch');
+      final List<dynamic> cases = sw['cases'] as List<dynamic>;
+      expect(cases, hasLength(3));
+      expect((cases.first as Map<String, dynamic>)['test'], containsPair('kind', 'logic.Lit'));
+    });
+
+    test('a case result that calls a function is admitted, not just a literal', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+enum Reason { a, b }
+String tag(String s) => s;
+String f(Reason r) => switch (r) { Reason.a => tag('x'), Reason.b => tag('y') };
+class W extends StatelessWidget {
+  const W({required this.r, super.key});
+  final Reason r;
+  @override
+  Widget build(BuildContext context) => Text(f(r));
+}
+''');
+      expect(app.errors, isEmpty);
+      expect(app.ofKind('logic.OpaqueExpr'), isEmpty);
+      final Map<String, dynamic> sw = app.only('logic.Switch');
+      final List<dynamic> cases = sw['cases'] as List<dynamic>;
+      final Map<String, dynamic> firstReturn = ((cases.first as Map<String, dynamic>)['body'] as List<dynamic>).single as Map<String, dynamic>;
+      expect((firstReturn['value'] as Map<String, dynamic>)['kind'], 'logic.Call');
+    });
+
+    // ── negative controls: every unsupported neighbouring shape stays exactly as opaque as before ──
+
+    test('assigned to a local (not direct-return position) stays opaque', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+enum Reason { a, b }
+String f(Reason r) {
+  final s = switch (r) { Reason.a => 'x', Reason.b => 'y' };
+  return s;
+}
+class W extends StatelessWidget {
+  const W({required this.r, super.key});
+  final Reason r;
+  @override
+  Widget build(BuildContext context) => Text(f(r));
+}
+''');
+      expect(app.errors, isEmpty);
+      expect(app.ofKind('logic.Switch'), isEmpty);
+      expect(app.ofKind('logic.OpaqueExpr'), hasLength(1));
+    });
+
+    test('used as a function argument (not direct-return position) stays opaque', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+enum Reason { a, b }
+String id(String s) => s;
+String f(Reason r) => id(switch (r) { Reason.a => 'x', Reason.b => 'y' });
+class W extends StatelessWidget {
+  const W({required this.r, super.key});
+  final Reason r;
+  @override
+  Widget build(BuildContext context) => Text(f(r));
+}
+''');
+      expect(app.errors, isEmpty);
+      expect(app.ofKind('logic.Switch'), isEmpty);
+      expect(app.ofKind('logic.OpaqueExpr'), hasLength(1));
+    });
+
+    test('a wildcard pattern anywhere in the switch keeps the whole switch opaque', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+String f(int n) => switch (n) { 1 => 'one', _ => 'other' };
+class W extends StatelessWidget {
+  const W({required this.n, super.key});
+  final int n;
+  @override
+  Widget build(BuildContext context) => Text(f(n));
+}
+''');
+      expect(app.errors, isEmpty);
+      expect(app.ofKind('logic.Switch'), isEmpty);
+      expect(app.ofKind('logic.OpaqueExpr'), hasLength(1));
+    });
+
+    test('a guarded pattern keeps the whole switch opaque, not just the guarded case', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+enum Reason { a, b }
+String f(Reason r) => switch (r) { Reason.a when true => 'x', Reason.b => 'y' };
+class W extends StatelessWidget {
+  const W({required this.r, super.key});
+  final Reason r;
+  @override
+  Widget build(BuildContext context) => Text(f(r));
+}
+''');
+      expect(app.errors, isEmpty);
+      expect(app.ofKind('logic.Switch'), isEmpty);
+      expect(app.ofKind('logic.OpaqueExpr'), hasLength(1));
+    });
+
+    test('a logical-or pattern keeps the whole switch opaque', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+enum Reason { a, b, c }
+String f(Reason r) => switch (r) { Reason.a || Reason.b => 'ab', Reason.c => 'c' };
+class W extends StatelessWidget {
+  const W({required this.r, super.key});
+  final Reason r;
+  @override
+  Widget build(BuildContext context) => Text(f(r));
+}
+''');
+      expect(app.errors, isEmpty);
+      expect(app.ofKind('logic.Switch'), isEmpty);
+      expect(app.ofKind('logic.OpaqueExpr'), hasLength(1));
+    });
+
+    test('one unsupported case among otherwise-admitted cases still keeps the whole switch opaque', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+enum Reason { a, b, c }
+String f(Reason r) => switch (r) { Reason.a => 'x', Reason.b => 'y', _ => 'z' };
+class W extends StatelessWidget {
+  const W({required this.r, super.key});
+  final Reason r;
+  @override
+  Widget build(BuildContext context) => Text(f(r));
+}
+''');
+      expect(app.errors, isEmpty);
+      expect(
+        app.ofKind('logic.Switch'),
+        isEmpty,
+        reason: 'a partial lowering would silently drop the wildcard case — refused entirely instead',
+      );
+      expect(app.ofKind('logic.OpaqueExpr'), hasLength(1));
+    });
+  });
 }

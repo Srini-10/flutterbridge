@@ -1,0 +1,17 @@
+name: switch_expression
+description: >-
+  M8-Y fixture: Dart 3 switch-expression extraction — the narrow, evidence-bounded subset (unguarded
+  enum-constant patterns in direct-return position) this generator admits, including the exact real
+  shape of Continuum's own describeTransferFailure (docs/m8/m8y-switch-expression-extraction.md).
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

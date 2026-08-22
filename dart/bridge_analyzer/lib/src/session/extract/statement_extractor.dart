@@ -279,6 +279,17 @@ final class StatementExtractor implements StatementExtractorRef {
         );
 
       case ReturnStatement():
+        // `return switch (subject) { A => x, B => y };` (M8-Y) — the narrow, proven-safe subset of Dart
+        // 3's switch expression this extractor admits. Checked before the generic handling below, so an
+        // admitted shape never reaches `expressions.extract` and never becomes opaque. Lives on the
+        // expression extractor (not here) because a `=>`-bodied function's own `return` is never a real
+        // `ReturnStatement` — `expression_extractor.dart`'s own `bodyOf` reaches the identical shape from
+        // an `ExpressionFunctionBody` instead, and both call sites must share one implementation.
+        final Expression? returned = node.expression;
+        if (returned is SwitchExpression) {
+          final RawNode? lowered = expressions.switchExpressionAsReturn(returned, node, scope);
+          if (lowered != null) return lowered;
+        }
         return RawNode(
           kind: 'logic.Return',
           span: out.span(node),
