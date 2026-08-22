@@ -125,6 +125,9 @@ describe('a targeted reference to a project top-level field (M8-P)', () => {
       name: 'greet',
       returnType: { library: 'dart:core', name: 'String' },
       body: [],
+      // M8-U gives a supported FunctionDecl a real lowering — async keeps this one honestly refused, so
+      // this test still exercises the classification (BRG3013 vs BRG3006) it was written to prove.
+      isAsync: true,
     } as unknown as AnyUirNode;
     const nodes: AnyUirNode[] = [
       functionDeclNode,

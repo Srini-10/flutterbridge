@@ -1,0 +1,16 @@
+name: module_emission_utils
+description: >-
+  M8-U fixture: a shared utility package, played by continuum_ui_kit's own role in Continuum —
+  project-defined top-level functions consumed cross-package (docs/adr/0029-top-level-function-module-emission.md).
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

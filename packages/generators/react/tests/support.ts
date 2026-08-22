@@ -254,6 +254,12 @@ export function catchClauseRaw(): string {
   return readFileSync(path, 'utf8');
 }
 
+/** The real `fixtures/apps/module_emission` document, raw analyzer output (ADR-29, M8-U) — not yet normalized. */
+export function moduleEmissionRaw(): string {
+  const path = fileURLToPath(new URL('../../../../fixtures/uir/module_emission.ndjson', import.meta.url));
+  return readFileSync(path, 'utf8');
+}
+
 /** The real `fixtures/apps/transitive_actions` document, raw analyzer output (M8-O) — not yet normalized. */
 export function transitiveActionsRaw(): string {
   const path = fileURLToPath(new URL('../../../../fixtures/uir/transitive_actions.ndjson', import.meta.url));

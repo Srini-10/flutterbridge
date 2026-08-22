@@ -4,6 +4,8 @@
 // §A18). It was private to the component emitter until actions gained parameters and needed the same answer —
 // and two functions answering "what is `int` in TypeScript" would eventually answer differently.
 
+import { GeneratorDiagnosticCode } from '../diagnostics/codes.js';
+
 /** A `TypeRef`, loosely typed: nested values are not `AnyUirNode`. */
 type Node = Record<string, unknown>;
 
@@ -76,4 +78,36 @@ export function paramListOf(params: readonly Node[], identifier: (raw: string) =
       return `${name}${optional}: ${typeTextOf(param['type'] as Node | undefined)}`;
     })
     .join(', ');
+}
+
+/**
+ * Refuses Dart named parameters — shared by the store emitter (action params) and the top-level function
+ * emitter (ADR-29, M8-U), the same reason `paramListOf`/`typeTextOf` are shared.
+ *
+ * `toggle({required int id})` is called `toggle(id: 1)`. TypeScript has no named arguments: the honest
+ * lowering is an options object, and which shape that object has is a decision — one that changes every call
+ * site and that no evidence in the corpus yet supports. Emitting them as positional would compile and would
+ * silently reorder arguments at any call site that passed them out of declaration order.
+ *
+ * @param subject - what to call the thing that has them in the diagnostic — `'action'` or `'function'`.
+ * @param report - the scope's own `report`, bound; kept minimal (not the whole `EmitScope`) so this needs
+ *   no import of `expression.ts`'s own type here.
+ */
+export function refuseNamedParams(
+  params: readonly Node[],
+  id: string,
+  subject: string,
+  report: (code: string, severity: 'error' | 'warning' | 'info', message: string, nodeId?: string) => void,
+): boolean {
+  const named = params.filter((param) => param['named'] === true).map((param) => String(param['name']));
+  if (named.length === 0) return false;
+  report(
+    GeneratorDiagnosticCode.UnsupportedExpression,
+    'error',
+    `this ${subject} takes the named parameter(s) ${named.map((n) => `\`${n}\``).join(', ')}. TypeScript has ` +
+      `no named arguments, and lowering them to positional ones would silently reorder any call that passed ` +
+      `them out of declaration order.`,
+    id,
+  );
+  return true;
 }

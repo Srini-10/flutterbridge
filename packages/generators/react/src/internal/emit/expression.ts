@@ -163,6 +163,17 @@ export interface EmitScope {
    */
   readonly componentModules: ReadonlyMap<string, { readonly module: string; readonly name: string }>;
   /**
+   * Every reachable, self-contained project-defined top-level `logic.FunctionDecl` this program actually
+   * emits, keyed by its own declaration id (ADR-29, M8-U) — what a targeted `logic.Ref` to one needs to
+   * resolve to: the file it lives in (`path`, for telling a same-file call from a cross-file one), the
+   * `@/`-aliased specifier a *different* file imports it by (`module`), and its own reserved local name.
+   * Absent for a function this generator does not (yet) lower — async, no body, or a body that itself
+   * references something unsupported — which is not a failure of this lookup; it is the honest fact that
+   * lets the existing `logic.Ref` case fall through to its own, unchanged `BRG3013` refusal. Built once,
+   * before any component or function is finally committed, the same way `componentModules` already is.
+   */
+  readonly functionModules: ReadonlyMap<NodeId, { readonly path: string; readonly module: string; readonly name: string }>;
+  /**
    * The resolved expression for a `logic.PropertyAccess` whose `target` names a signal/derived member of
    * a *locally-owned* store instance (ADR-27) — `favorites.favoriteCount` where `favorites` is this
    * component's own `useLocalStore(...)`.
@@ -366,11 +377,22 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
         // M8-K found the generator has no lowering for the declaration it now correctly targets). This
         // is deliberately a check on the **resolved node's kind**, never on `name` — a table keyed by
         // function name cannot generalise to an arbitrary project's own top-level functions the way
-        // `MISSING_CAPABILITIES` can for a small, enumerable set of framework APIs. The declaration is
-        // real (a `logic.FunctionDecl` exists, with real params, a body, and a return type); what does
-        // not exist is anywhere in this generator that turns one into a module-level TypeScript
-        // function, so the honest diagnostic is a missing capability, not an unresolved reference.
+        // `MISSING_CAPABILITIES` can for a small, enumerable set of framework APIs.
         if (declaration !== undefined && declaration['kind'] === 'logic.FunctionDecl') {
+          // ADR-29 (M8-U): a reachable, self-contained function this generator already committed to a
+          // module resolves here — a same-file call needs no import at all (the two functions share one
+          // `ModuleBuilder`, so the local name alone is already in scope); a cross-file call goes through
+          // the same `module.use` every other cross-module reference already uses.
+          const emitted = scope.functionModules.get(target);
+          if (emitted !== undefined) {
+            if (emitted.path === scope.module.path) return emitted.name;
+            return scope.module.use(emitted.module, emitted.name);
+          }
+
+          // The declaration is real (a `logic.FunctionDecl` exists, with real params, a body, and a
+          // return type); what does not exist is a supported lowering for *this* one — async, no body, or
+          // a body that itself references something unsupported — so the honest diagnostic is a missing
+          // capability, not an unresolved reference.
           const fnName = typeof declaration['name'] === 'string' ? declaration['name'] : String(node['name'] ?? '');
           scope.report(
             GeneratorDiagnosticCode.UnsupportedCapability,

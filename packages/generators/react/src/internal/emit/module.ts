@@ -26,13 +26,20 @@
 import { GeneratorDiagnosticCode } from '../diagnostics/codes.js';
 
 /** Anything an emitted file needs from another module. */
-interface ImportRequest {
+export interface ImportRequest {
   /** The module specifier, e.g. `@bridge/runtime-react`. */
   readonly from: string;
   /** The exported name. */
   readonly name: string;
   /** Whether it is only a type. Type-only imports are grouped into `import type { ... }`. */
   readonly typeOnly: boolean;
+  /**
+   * The local identifier this import is bound to, when it differs from {@link name} — two different
+   * modules can export a same-named function (M8-U: two Dart files can each declare a top-level function
+   * with the identical name), and importing both into one consuming file needs `import { name as alias }`
+   * for the second. Absent when no collision required one.
+   */
+  readonly alias?: string;
 }
 
 /** Reserved words and globals a generated identifier must never be. */
@@ -131,27 +138,51 @@ export class ModuleBuilder {
     return this.declared.has(name);
   }
 
+  /** Every local name an import has already claimed, and which specifier claimed it — for `use`'s own collision check. */
+  private readonly importedAs = new Map<string, string>();
+
   /**
    * Declares a dependency on `name` from `from`, and returns the local name to write.
    *
-   * Idempotent: asking twice adds one import.
+   * Idempotent: asking twice for the identical `(from, name)` adds one import. Two **different** modules
+   * exporting the identical name (M8-U: two Dart source files can each declare a top-level function named
+   * the same thing, and both can be imported into one consuming file — `ModuleBuilder`'s own per-source-
+   * file module boundary is what makes the *declarations* collision-free; a shared *consumer* still needs
+   * every import it asks for to bind to a distinct local name) is resolved the same way {@link declare}
+   * already resolves a module-scope collision: the second asker gets a numbered alias,
+   * `import { name as name2 } from '...'`.
    *
    * @param from - the module specifier.
    * @param name - the exported name.
    * @param options - `typeOnly` when the name is only used in type position.
-   * @returns the local name.
+   * @returns the local name to write at the call site — `name` itself, unless a collision required an alias.
    */
   public use(from: string, name: string, options: { readonly typeOnly?: boolean } = {}): string {
     const typeOnly = options.typeOnly ?? false;
     const existing = this.imports.find((i) => i.from === from && i.name === name);
-    if (existing === undefined) {
-      this.imports.push({ from, name, typeOnly });
-    } else if (existing.typeOnly && !typeOnly) {
-      // Asked for as a type first and as a value later: it must be a value import, or the value is not there
-      // at runtime. Widening is safe; narrowing never happens.
-      this.imports.splice(this.imports.indexOf(existing), 1, { from, name, typeOnly: false });
+    if (existing !== undefined) {
+      if (existing.typeOnly && !typeOnly) {
+        // Asked for as a type first and as a value later: it must be a value import, or the value is not
+        // there at runtime. Widening is safe; narrowing never happens.
+        this.imports.splice(this.imports.indexOf(existing), 1, { ...existing, typeOnly: false });
+      }
+      return existing.alias ?? existing.name;
     }
-    return name;
+
+    const claimedBy = this.importedAs.get(name);
+    let local = name;
+    if (claimedBy !== undefined && claimedBy !== from) {
+      for (let suffix = 2; ; suffix++) {
+        const candidate = `${name}${suffix}`;
+        if (!this.importedAs.has(candidate) && !this.declared.has(candidate)) {
+          local = candidate;
+          break;
+        }
+      }
+    }
+    this.importedAs.set(local, from);
+    this.imports.push({ from, name, typeOnly, ...(local === name ? {} : { alias: local }) });
+    return local;
   }
 
   /**
@@ -167,6 +198,18 @@ export class ModuleBuilder {
    */
   public importLines(): readonly string[] {
     return renderImports(this.imports);
+  }
+
+  /**
+   * The imports this builder has accumulated so far, as structured requests rather than rendered text.
+   *
+   * For a caller that stages an emission attempt on a **temporary** builder (M8-U's function emitter:
+   * a function whose own body turns out to reference something unsupported must not leave the imports it
+   * asked for *before* hitting that construct behind in a module a sibling, successfully-lowered function
+   * shares) and, only once the attempt succeeds, replays them onto the real one via {@link use}.
+   */
+  public usedImports(): readonly ImportRequest[] {
+    return [...this.imports];
   }
 
   /** Sets the file's header comment. */
@@ -275,7 +318,10 @@ function renderImports(imports: readonly ImportRequest[]): string[] {
   const out: string[] = [];
   for (const specifier of sortSpecifiers([...bySpecifier.keys()])) {
     const group = [...(bySpecifier.get(specifier) ?? [])].sort((a, b) => (a.name < b.name ? -1 : 1));
-    const names = group.map((i) => (i.typeOnly ? `type ${i.name}` : i.name));
+    const names = group.map((i) => {
+      const spelled = i.alias === undefined ? i.name : `${i.name} as ${i.alias}`;
+      return i.typeOnly ? `type ${spelled}` : spelled;
+    });
     out.push(`import { ${names.join(', ')} } from '${specifier}';`);
   }
   out.push('');

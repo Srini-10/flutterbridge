@@ -31,6 +31,7 @@ import { isAppRoot, reportAppRoot } from './emit/app_root.js';
 import { assetManifestLines, collectAssets } from './emit/assets.js';
 import { emitBinding, emitComponent } from './emit/component.js';
 import { defaultStoreAccessRead, type EmitScope, type StoreMemberInfo } from './emit/expression.js';
+import { emitFunctionModules } from './emit/functions.js';
 import { ModuleBuilder, fileNameOf, identifierOf } from './emit/module.js';
 import { RUNTIME_MODULE } from './emit/runtime.js';
 import { banner, scaffold, type PageInput, type PageScreen } from './emit/project.js';
@@ -103,6 +104,18 @@ export function generateProject(context: GeneratorContext): GeneratorOutput {
       name: String(component['name'] ?? ''),
     });
   }
+
+  // Every reachable, self-contained top-level function this program emits, decided once, before any
+  // component or action is emitted (ADR-29, M8-U) — the sibling of the component pre-pass immediately
+  // above, for the identical forward-reference reason.
+  const { files: functionFiles, functionModules: resolvedFunctions } = emitFunctionModules(
+    context.program.nodes,
+    scope,
+  );
+  for (const [id, info] of resolvedFunctions) {
+    (scope.functionModules as Map<NodeId, { readonly path: string; readonly module: string; readonly name: string }>).set(id, info);
+  }
+  files.push(...functionFiles);
 
   // ── theme ──
   const themeModule = new ModuleBuilder('src/theme/tokens.ts');
@@ -527,6 +540,12 @@ function rootScope(
   // must still resolve.
   const componentModuleInfo = new Map<string, { readonly module: string; readonly name: string }>();
 
+  // Populated immediately after this function returns (ADR-29, M8-U) — the sibling of `componentModuleInfo`
+  // above, for the same forward-reference reason: `emitFunctionModules` runs once, before any component or
+  // action is emitted, and this map is handed out by reference so every scope in the chain sees the
+  // eventually-complete result.
+  const functionModuleInfo = new Map<NodeId, { readonly path: string; readonly module: string; readonly name: string }>();
+
   const scope: EmitScope = {
     module: new ModuleBuilder('<none>'),
     report,
@@ -534,6 +553,7 @@ function rootScope(
     storeMembers: storeMemberInfo,
     storeExports: storeExportInfo,
     componentModules: componentModuleInfo,
+    functionModules: functionModuleInfo,
     node: (id: NodeId) => context.program.get(id) as AnyUirNode | undefined,
     // A bare reference at the root resolves nothing — every store member reachable here is resolved
     // explicitly, per component, by `declareStoreConsumption` (M7-F), which is the only thing that knows

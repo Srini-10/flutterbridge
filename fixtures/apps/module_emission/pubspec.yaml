@@ -1,0 +1,19 @@
+name: module_emission
+description: >-
+  M8-U fixture: an application consuming project-defined top-level functions from a sibling `path:`
+  dependency, matching Continuum's own app + continuum_ui_kit architecture
+  (docs/adr/0029-top-level-function-module-emission.md).
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  module_emission_utils:
+    path: ../../packages/module_emission_utils
+
+flutter:
+  uses-material-design: true

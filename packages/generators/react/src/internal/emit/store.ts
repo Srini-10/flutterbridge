@@ -28,7 +28,7 @@ import { GeneratorDiagnosticCode } from '../diagnostics/codes.js';
 import { emitExpression, type EmitScope } from './expression.js';
 import { emitStatements } from './statement.js';
 import { identifierOf, type ModuleBuilder } from './module.js';
-import { paramListOf } from './types.js';
+import { paramListOf, refuseNamedParams } from './types.js';
 
 const RUNTIME = '@bridge/runtime-react';
 
@@ -109,7 +109,7 @@ export function emitStore(store: Node, module: ModuleBuilder, scope: EmitScope):
       const node = scope.node(id) as unknown as Node;
       const isAsync = node['isAsync'] === true;
       const params = Array.isArray(node['params']) ? (node['params'] as Node[]) : [];
-      refuseNamedParams(params, id, inner);
+      refuseNamedParams(params, id, 'action', inner.report);
 
       // The body is lowered in a scope that knows the parameters, so a `logic.Ref` to `id` resolves to `id`
       // rather than to nothing (Spec v2.5 §A18). The kit's facade already takes them —
@@ -149,26 +149,6 @@ function actionScope(parent: EmitScope, params: readonly Node[]): EmitScope {
   return { ...parent, paramInScope: (name) => names.get(name) ?? parent.paramInScope(name) };
 }
 
-/**
- * Refuses Dart named parameters.
- *
- * `toggle({required int id})` is called `toggle(id: 1)`. TypeScript has no named arguments: the honest
- * lowering is an options object, and which shape that object has is a decision — one that changes every call
- * site and that no evidence in the corpus yet supports. Emitting them as positional would compile and would
- * silently reorder arguments at any call site that passed them out of declaration order.
- */
-function refuseNamedParams(params: readonly Node[], id: string, scope: EmitScope): void {
-  const named = params.filter((param) => param['named'] === true).map((param) => String(param['name']));
-  if (named.length === 0) return;
-  scope.report(
-    GeneratorDiagnosticCode.UnsupportedExpression,
-    'error',
-    `this action takes the named parameter(s) ${named.map((n) => `\`${n}\``).join(', ')}. TypeScript has ` +
-      `no named arguments, and lowering them to positional ones would silently reorder any call that passed ` +
-      `them out of declaration order.`,
-    id,
-  );
-}
 
 /** A scope that resolves the store's own members. */
 function storeScope(
@@ -185,6 +165,7 @@ function storeScope(
     storeMembers: parent.storeMembers,
     storeExports: parent.storeExports,
     componentModules: parent.componentModules,
+    functionModules: parent.functionModules,
     storeAccessRead: (id) => parent.storeAccessRead(id),
     node: parent.node.bind(parent),
     isStoreOwned: (id) => parent.isStoreOwned(id),
