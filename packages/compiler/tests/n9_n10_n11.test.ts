@@ -154,6 +154,26 @@ function action(id: string, writes: string[]): AnyUirNode {
   return { id, kind: 'sig.Action', span, writes, body: [] } as unknown as AnyUirNode;
 }
 
+/** An action whose own body is given explicitly (M8-R: dependency-closure checks read it). */
+function actionWithBody(id: string, writes: string[], body: Record<string, unknown>[]): AnyUirNode {
+  return { id, kind: 'sig.Action', span, writes, body } as unknown as AnyUirNode;
+}
+
+/** A targeted (or untargeted) reference inside an action body. */
+function bodyRef(id: string, name: string, target?: string): Record<string, unknown> {
+  return { id, kind: 'logic.Ref', span, name, type: { name: 'int' }, ...(target ? { target } : {}) };
+}
+
+/** `<callee>()` as a statement. */
+function callStmt(id: string, callee: Record<string, unknown>): Record<string, unknown> {
+  return { id, kind: 'logic.ExprStmt', span, expr: { id: `${id}-c`, kind: 'logic.Call', span, callee, args: [] } };
+}
+
+/** `<target> = <value>` as a statement. */
+function assignStmt(id: string, target: Record<string, unknown>, value: Record<string, unknown>): Record<string, unknown> {
+  return { id, kind: 'logic.Assign', span, target, operator: 'assign', type: { name: 'int' }, value };
+}
+
 function route(id: string, path: string, component: string): AnyUirNode {
   return { id, kind: 'app.Route', span, path, component } as unknown as AnyUirNode;
 }
@@ -293,6 +313,142 @@ describe('N11 — promote cross-route state (ADR-11)', () => {
 
     expect(result.diagnostics.map((d) => d.code)).toEqual(['BRG2303']);
     expect(result.diagnostics[0]!.severity).toBe('error');
+  });
+
+  // ── M8-R: an action's own dependency closure, not just what it writes ────────────────────────────
+
+  it('a promoted action calling another action is refused (BRG2303), naming the callee — never silently promoted, never a downstream "not declared" surprise', () => {
+    const program = Program.of([
+      signal('sigA'),
+      action('actAnnounce', []), // writes nothing of its own — irrelevant, it is never itself promoted here
+      actionWithBody('actForget', ['sigA'], [
+        callStmt('s1', bodyRef('r1', 'announce', 'actAnnounce')),
+        assignStmt('s2', bodyRef('r2', 'a', 'sigA'), { id: 'v', kind: 'logic.Lit', span, type: { name: 'int' }, value: 1 }),
+      ]),
+      route('r1', '/home', 'compHome'),
+      transition('t1', 'r1', [
+        arg('onForget', {
+          id: 'b',
+          kind: 'bind.Expr',
+          span,
+          expr: { id: 'e', kind: 'logic.Ref', span, name: 'f', target: 'actForget', type: { name: 'Function' } },
+        }),
+      ]),
+    ]);
+
+    const result = manager().run(program, options);
+
+    expect(result.diagnostics.map((d) => d.code)).toEqual(['BRG2303']);
+    expect(result.diagnostics[0]!.severity).toBe('error');
+    expect(result.diagnostics[0]!.message).toContain('announce');
+    expect(result.diagnostics[0]!.message).toContain('another action this pass does not also promote');
+    expect(result.program.ofKind('app.Store')).toEqual([]);
+    // INV-18 is not violated here in the misleading way: the argument is *not* stripped either, because
+    // nothing was promoted — the callback stays exactly where it was, refused, not half-moved.
+    expect((result.program.get('t1') as unknown as Record<string, unknown>)['arguments']).toBeDefined();
+  });
+
+  it('a promoted action reading a component-scoped signal it never writes is refused (BRG2303), naming the read', () => {
+    const program = Program.of([
+      signal('sigWrite'),
+      signal('sigRead'), // component-scoped, never written by actForget — the `_env` shape
+      actionWithBody('actForget', ['sigWrite'], [
+        callStmt('s1', bodyRef('r1', 'read', 'sigRead')), // a read, wrapped as a call is irrelevant — target is what matters
+        assignStmt('s2', bodyRef('r2', 'w', 'sigWrite'), { id: 'v', kind: 'logic.Lit', span, type: { name: 'int' }, value: 1 }),
+      ]),
+      route('r1', '/home', 'compHome'),
+      transition('t1', 'r1', [
+        arg('onForget', {
+          id: 'b',
+          kind: 'bind.Expr',
+          span,
+          expr: { id: 'e', kind: 'logic.Ref', span, name: 'f', target: 'actForget', type: { name: 'Function' } },
+        }),
+      ]),
+    ]);
+
+    const result = manager().run(program, options);
+
+    expect(result.diagnostics.map((d) => d.code)).toEqual(['BRG2303']);
+    expect(result.diagnostics[0]!.message).toContain('read');
+    expect(result.diagnostics[0]!.message).toContain('component-scoped signal it does not write');
+    expect(result.program.ofKind('app.Store')).toEqual([]);
+  });
+
+  it('a promoted action reading an *already store-scoped* signal is unaffected — global state needs no promotion', () => {
+    const program = Program.of([
+      signal('sigWrite'),
+      signal('sigGlobal', 'store'), // already outlives any one component
+      actionWithBody('actForget', ['sigWrite'], [
+        callStmt('s1', bodyRef('r1', 'read', 'sigGlobal')),
+        assignStmt('s2', bodyRef('r2', 'w', 'sigWrite'), { id: 'v', kind: 'logic.Lit', span, type: { name: 'int' }, value: 1 }),
+      ]),
+      route('r1', '/home', 'compHome'),
+      transition('t1', 'r1', [
+        arg('onForget', {
+          id: 'b',
+          kind: 'bind.Expr',
+          span,
+          expr: { id: 'e', kind: 'logic.Ref', span, name: 'f', target: 'actForget', type: { name: 'Function' } },
+        }),
+      ]),
+    ]);
+
+    const result = manager().run(program, options);
+
+    expect(result.diagnostics.map((d) => d.code)).toEqual(['BRG2302']);
+    expect(result.program.ofKind('app.Store')).toHaveLength(1);
+    expect(result.program.ofKind('app.Store')[0]!.actions).toEqual(['actForget']);
+  });
+
+  it("a self-call (recursion) is not treated as an unowned dependency", () => {
+    const program = Program.of([
+      signal('sigA'),
+      actionWithBody('actLoop', ['sigA'], [
+        callStmt('s1', bodyRef('r1', 'loop', 'actLoop')), // calls itself
+        assignStmt('s2', bodyRef('r2', 'a', 'sigA'), { id: 'v', kind: 'logic.Lit', span, type: { name: 'int' }, value: 1 }),
+      ]),
+      route('r1', '/home', 'compHome'),
+      transition('t1', 'r1', [
+        arg('onLoop', {
+          id: 'b',
+          kind: 'bind.Expr',
+          span,
+          expr: { id: 'e', kind: 'logic.Ref', span, name: 'f', target: 'actLoop', type: { name: 'Function' } },
+        }),
+      ]),
+    ]);
+
+    const result = manager().run(program, options);
+
+    expect(result.diagnostics.map((d) => d.code)).toEqual(['BRG2302']);
+    expect(result.program.ofKind('app.Store')).toHaveLength(1);
+  });
+
+  it('an untargeted reference inside the body (a local, a parameter) is never guessed at by name — not this pass\' concern', () => {
+    const program = Program.of([
+      signal('sigA'),
+      actionWithBody('actForget', ['sigA'], [
+        // `total` has no `target` — a local or parameter ADR-28/N5 own, not N11. Same name as nothing
+        // in this program; must never be name-matched against `sigA`/an action to manufacture a refusal.
+        callStmt('s1', bodyRef('r1', 'total')),
+        assignStmt('s2', bodyRef('r2', 'a', 'sigA'), { id: 'v', kind: 'logic.Lit', span, type: { name: 'int' }, value: 1 }),
+      ]),
+      route('r1', '/home', 'compHome'),
+      transition('t1', 'r1', [
+        arg('onForget', {
+          id: 'b',
+          kind: 'bind.Expr',
+          span,
+          expr: { id: 'e', kind: 'logic.Ref', span, name: 'f', target: 'actForget', type: { name: 'Function' } },
+        }),
+      ]),
+    ]);
+
+    const result = manager().run(program, options);
+
+    expect(result.diagnostics.map((d) => d.code)).toEqual(['BRG2302']);
+    expect(result.program.ofKind('app.Store')).toHaveLength(1);
   });
 
   it('a primitive crosses a URL boundary fine, and is left alone', () => {

@@ -18,7 +18,10 @@
 //
 // 1. **A function-typed binding referencing a `sig.Action`** — promote the signals that action writes,
 //    and the action itself, into a synthesized `app.Store{origin: "promoted"}`. Remove the argument from
-//    the boundary. Emit `BRG2302` (info): promotion is **never silent**.
+//    the boundary. Emit `BRG2302` (info): promotion is **never silent**. This pass promotes one action at
+//    a time, and only what it *writes* — if the action's own body also *reads* another component-scoped
+//    signal, or *calls* another action, neither of which this pass also carries into the store, that is
+//    case 6 below (M8-R), not this one.
 // 2. **A binding reading a component-scoped signal** owned by a component that is not on the
 //    destination route — same promotion.
 // 3. **A non-primitive data object** — *not* promotion. `BRG2301` (error): a URL carries an identifier,
@@ -29,10 +32,17 @@
 //    the compiler cannot prove what such a reference resolves to without inferring from its name, which
 //    is disallowed. `BRG2305` (error): named, not guessed at.
 // 5. **A primitive** — unchanged. Primitives cross a URL boundary fine.
+// 6. **An otherwise-promotable action whose own body depends on a declaration this pass does not also
+//    promote** — a call to another `sig.Action`, or a read of a component-scoped `sig.Signal` it never
+//    writes (M8-R). Promoting such an action would synthesize a store whose action body still references
+//    a declaration the store can never resolve (a store module has no notion of "which component
+//    instance" — `packages/generators/react/src/internal/emit/store.ts` only knows the store's own
+//    contents), surfacing two generate stages later as a mis-attributed "not declared in this program."
+//    Refused here instead, honestly, naming the exact dependency: `BRG2303`.
 //
 // **A callback that closes over something unpromotable** — a context, a non-signal local, an opaque
-// expression — is `BRG2303` (error), routed to the override system. It is never dropped and never
-// guessed at.
+// expression, or (case 6) a dependency this pass cannot also carry with it — is `BRG2303` (error), routed
+// to the override system. It is never dropped and never guessed at.
 //
 // ## Interface rewriting (M7-E3, ADR-11 amendment)
 //
@@ -70,7 +80,7 @@ import { nodeIdOfContent } from '@bridge/uir';
 
 import { navGraph, type ComponentBoundary, type NavGraph } from '../analysis/nav_graph.js';
 import { Program } from '../program.js';
-import type { Analysis, Pass, PassContext } from '../normalize/pass.js';
+import { walkNode, type Analysis, type Pass, type PassContext } from '../normalize/pass.js';
 
 export class N11PromoteCrossRouteState implements Pass {
   readonly id = 'N11';
@@ -395,9 +405,27 @@ function classify(
         const writes = Array.isArray(declared) ? (declared as NodeId[]) : [];
         // An action that writes nothing has no state to promote — and a callback with no state behind
         // it is a callback whose behaviour lives entirely in its body. There is nothing to move.
-        return writes.length === 0
-          ? { kind: 'unpromotable', reason: 'no state that the compiler can name' }
-          : { kind: 'action', action: target, writes, ref: expr };
+        if (writes.length === 0) {
+          return { kind: 'unpromotable', reason: 'no state that the compiler can name' };
+        }
+        // This pass promotes an action's own id and the signals it *writes* (ADR-11) — never signals it
+        // merely reads, nor other actions it calls. Both are real, structural dependencies of the same
+        // action body, and this pass has no mechanism to move them too (M8-R: recursive/transitive
+        // promotion is the same "unscoped Option A" the ADR-11 amendment already declined to author for
+        // multi-hop parameter forwarding — proving it safe here would require knowing the dependency's
+        // own scope is not per-component-instance, which the amendment's own reasoning does not extend
+        // to). Left unchecked, the store this pass synthesizes would contain an action whose body still
+        // references a declaration the store can never resolve (`emitStore` only knows the store's own
+        // `signals`/`actions` — `packages/generators/react/src/internal/emit/store.ts`), and the failure
+        // would surface three normalize/generate stages later as an opaque "not declared in this
+        // program" (BRG3006) — not because the target is undeclared, but because the destination the
+        // compiler chose for it cannot reach it. Refusing here, honestly, is what BRG2303 already exists
+        // for.
+        const dependency = unownedDependency(action, target, new Set(writes), actions, signals);
+        if (dependency !== undefined) {
+          return { kind: 'unpromotable', reason: dependency };
+        }
+        return { kind: 'action', action: target, writes, ref: expr };
       }
       return { kind: 'primitive' };
     }
@@ -416,6 +444,41 @@ function classify(
   if (expr['kind'] === 'logic.New') return { kind: 'object' };
 
   return { kind: 'primitive' };
+}
+
+/**
+ * Finds the first thing `action`'s own body depends on that this pass' promotion does not also carry:
+ * a call to another `sig.Action` (this pass promotes one action at a time, never a callee alongside its
+ * caller), or a read of a component-scoped `sig.Signal` the action itself never writes. Target-based
+ * only — an untargeted `logic.Ref` (a local, a parameter) is not this pass' concern; ADR-28 and N5 own
+ * that identity, not N11.
+ */
+function unownedDependency(
+  action: AnyUirNode,
+  selfId: NodeId,
+  writes: ReadonlySet<NodeId>,
+  actions: ReadonlyMap<NodeId, AnyUirNode>,
+  signals: ReadonlyMap<NodeId, AnyUirNode>,
+): string | undefined {
+  const body = (action as unknown as Record<string, unknown>)['body'];
+  for (const node of walkNode(body)) {
+    if (node.kind !== 'logic.Ref') continue;
+    const record = node as unknown as Record<string, unknown>;
+    const target = record['target'];
+    if (typeof target !== 'string' || (target as NodeId) === selfId) continue;
+
+    if (actions.has(target as NodeId)) {
+      return `a call to \`${String(record['name'])}\`, another action this pass does not also promote`;
+    }
+
+    const signal = signals.get(target as NodeId);
+    if (signal === undefined || writes.has(target as NodeId)) continue;
+    const scope = (signal as unknown as Record<string, unknown>)['scope'];
+    if (scope === 'component') {
+      return `a read of \`${String(record['name'])}\`, a component-scoped signal it does not write and this pass does not also promote`;
+    }
+  }
+  return undefined;
 }
 
 /** Promotes the signals and actions into a synthesized store, strips arguments, and rewrites interfaces. */
