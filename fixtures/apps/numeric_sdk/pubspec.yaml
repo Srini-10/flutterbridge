@@ -1,0 +1,17 @@
+name: numeric_sdk
+description: >-
+  M8-V fixture: Dart Duration/numeric SDK member recognition — Duration parameters/getters, int.toDouble,
+  int.remainder, and double.toStringAsFixed, including the exact real shapes of Continuum's own
+  formatUptime/formatBytes (docs/m8/m8v-dart-numeric-sdk-method-recognition.md).
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

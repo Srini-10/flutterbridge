@@ -9,6 +9,7 @@ import type { AnyUirNode, NodeId } from '@bridge/uir';
 
 import { localBindingsIn, type EmitScope } from './expression.js';
 import { fileNameOf, identifierOf, ModuleBuilder } from './module.js';
+import { useRuntime } from './runtime.js';
 import { emitStatements } from './statement.js';
 import { paramListOf, refuseNamedParams } from './types.js';
 
@@ -224,7 +225,7 @@ export function emitFunctionModules(
           else scope.report(code, severity, message, nodeId);
         },
       };
-      const signature = `(${paramListOf(params, identifierOf)})`;
+      const signature = `(${paramListOf(params, identifierOf, (name) => useRuntime(scratch, name))})`;
       const lines = emitStatements(body, fnScope);
 
       if (hadError) continue; // try again next pass — a callee this pass hadn't resolved yet might resolve then

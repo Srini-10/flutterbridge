@@ -32,12 +32,28 @@ const PRIMITIVES: Readonly<Record<string, string>> = {
 };
 
 /**
+ * `dart:core`/`dart:async` value types the runtime kit provides, usable as a **type position** — the
+ * sibling of `runtime.ts`'s own `SDK_VALUE_TYPES` (M4-H), which answers the identical question for a
+ * *construction* (`logic.New`). Kept separate rather than imported, so this file does not need to import
+ * `runtime.ts` for one constant; both are keyed `library#name` by the identical convention.
+ *
+ * M8-V: `Duration` is the one member — the kit already exports the class (M7-L, `Future.delayed`), and
+ * `logic.New{typeName:'Duration'}` already resolves through it; only *reading* a `Duration`-typed
+ * parameter/property was still `unknown`, since nothing before this called `typeTextOf` with a way to
+ * register the import a resolved reference needs.
+ */
+const SDK_VALUE_TYPE_NAMES: ReadonlySet<string> = new Set(['dart:core#Duration']);
+
+/**
  * The TypeScript type for a `TypeRef`.
  *
  * @param type - the `TypeRef`, or `undefined`.
- * @returns the type text. `unknown` for anything not primitive.
+ * @param use - registers an import for a kit-provided SDK value type (M8-V) and returns the local name to
+ *   write; omitted by a caller with no module to import into, in which case a kit-provided type falls
+ *   back to `unknown` exactly as before — never a bare, unimported reference.
+ * @returns the type text. `unknown` for anything not primitive and not kit-provided.
  */
-export function typeTextOf(type: Node | undefined): string {
+export function typeTextOf(type: Node | undefined, use?: (name: string) => string): string {
   const declared = typeof type?.['name'] === 'string' ? type['name'] : 'unknown';
   const nullable = type?.['nullable'] === true;
 
@@ -51,6 +67,18 @@ export function typeTextOf(type: Node | undefined): string {
   // a callback taking one until a form did — `onChanged: (bool? value)` is Flutter's own signature for a
   // tristate checkbox.
   const name = declared.endsWith('?') ? declared.slice(0, -1) : declared;
+
+  // A `dart:core`/`dart:async` value type the kit exports (M8-V) — checked by the type's own resolved
+  // **library**, the identical test `runtime.ts`'s `isKitProvided` already uses for a construction, never
+  // by the bare name alone: a project-defined class also named `Duration` resolves to the project's own
+  // package URI, never `dart:core`, confirmed directly against real Continuum evidence (no such class
+  // exists there, but the check does not rely on that — it is sound regardless).
+  const library = type?.['library'];
+  if (use !== undefined && typeof library === 'string' && SDK_VALUE_TYPE_NAMES.has(`${library}#${name}`)) {
+    const base = use(name);
+    return nullable ? `${base} | null` : base;
+  }
+
   const base = PRIMITIVES[name] ?? 'unknown';
   // Dart's nullable `int?` is `number | null`, not `number | undefined`: Dart has one absent value and it is
   // `null`, and a Dart `null` crossing into JavaScript is still `null`.
@@ -64,9 +92,15 @@ export function typeTextOf(type: Node | undefined): string {
  *
  * @param params - the `ParamDecl`s, in order.
  * @param identifier - how to make a name safe.
+ * @param use - forwarded to `typeTextOf` (M8-V) — a kit-provided parameter type (`Duration`) needs an
+ *   import, and this is the one place a param list's own caller can supply one.
  * @returns the text between the parentheses.
  */
-export function paramListOf(params: readonly Node[], identifier: (raw: string) => string): string {
+export function paramListOf(
+  params: readonly Node[],
+  identifier: (raw: string) => string,
+  use?: (name: string) => string,
+): string {
   return params
     .map((param) => {
       const name = identifier(String(param['name'] ?? '_'));
@@ -75,7 +109,7 @@ export function paramListOf(params: readonly Node[], identifier: (raw: string) =
       // emitter reports it rather than quietly turning it into a positional one at a position the caller
       // would have to guess.
       const optional = param['required'] === false && param['defaultValue'] === undefined ? '?' : '';
-      return `${name}${optional}: ${typeTextOf(param['type'] as Node | undefined)}`;
+      return `${name}${optional}: ${typeTextOf(param['type'] as Node | undefined, use)}`;
     })
     .join(', ');
 }

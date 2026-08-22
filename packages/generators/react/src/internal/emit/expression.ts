@@ -234,6 +234,38 @@ function isHolderOf(holder: string, type: string): boolean {
 const REFUSED = 'undefined';
 
 /**
+ * Whether `type` is `dart:core`'s own `Duration`, `int`, `double`, or `num` — checked by the type's own
+ * **resolved library**, never by its bare name (M8-V). A project-defined class also named `Duration`
+ * resolves to the project's own package URI, never `dart:core`; confirmed directly against real
+ * Continuum evidence (no such class exists there) and against a dedicated negative-control fixture
+ * (`numeric_sdk_recognition.test.ts`) — the check does not rely on either,
+ * it is sound by construction, the identical test `runtime.ts`'s `isKitProvided` and `types.ts`'s
+ * `typeTextOf` already use for the same reason.
+ */
+function sdkTypeOf(type: Node | undefined): string | undefined {
+  const library = type?.['library'];
+  const rawName = type?.['name'];
+  if (typeof library !== 'string' || library !== 'dart:core' || typeof rawName !== 'string') return undefined;
+  return rawName.endsWith('?') ? rawName.slice(0, -1) : rawName;
+}
+
+/**
+ * `dart:core Duration`'s own getters this generator lowers (M8-V), and how — arithmetic on the runtime
+ * kit's own `Duration.inMilliseconds` (M7-L, the one field the kit's own `Duration` class exposes).
+ * `Math.trunc` matches Dart's own truncating-toward-zero division exactly (`Duration` stores whole
+ * microseconds internally and every getter divides, truncating — Dart's own SDK source states this).
+ * Scoped to exactly the four getters real Continuum evidence uses (`formatUptime`,
+ * `clipboard_staging.dart`, `clipboard_module.dart`) — not `inDays`/`inMicroseconds`/others, which no
+ * real site needs and which this milestone does not claim to have proven.
+ */
+const DURATION_GETTERS: Readonly<Record<string, (millis: string) => string>> = {
+  inMilliseconds: (millis) => millis,
+  inSeconds: (millis) => `Math.trunc(${millis} / 1000)`,
+  inMinutes: (millis) => `Math.trunc(${millis} / 60000)`,
+  inHours: (millis) => `Math.trunc(${millis} / 3600000)`,
+};
+
+/**
  * Lowers a statement list. Assigned by `statement.ts` at import.
  *
  * A lambda may have a **statement** body — `validator: (value) { if (value == null) return 'required'; … }`
@@ -608,6 +640,28 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
         const resolved = scope.storeAccessRead(id);
         if (resolved !== undefined) return resolved;
       }
+
+      // A `dart:core Duration`'s own getter (M8-V) — checked by the *receiver's* own resolved type,
+      // never by the property's bare name, so an unrelated `.inSeconds` on some other value (or a
+      // project-defined lookalike) is untouched and falls through to the ordinary lowering below.
+      const receiverNode = node['receiver'] as Node | undefined;
+      if (sdkTypeOf(receiverNode?.['type'] as Node | undefined) === 'Duration') {
+        const property = String(node['property'] ?? '');
+        const getter = DURATION_GETTERS[property];
+        const receiver = emitExpression(receiverNode, scope);
+        if (receiver === REFUSED) return REFUSED;
+        if (getter !== undefined) return getter(`${receiver}.inMilliseconds`);
+        scope.report(
+          GeneratorDiagnosticCode.UnsupportedExpression,
+          'error',
+          `\`Duration.${property}\` has no lowering. This generator supports ` +
+            `\`inMilliseconds\`/\`inSeconds\`/\`inMinutes\`/\`inHours\` (M8-V) — the getters real evidence has ` +
+            `needed so far. A different one needs its own evidence before it can be added.`,
+          idOf(node),
+        );
+        return REFUSED;
+      }
+
       const receiver = emitExpression(node['receiver'] as Node, scope);
       return `${receiver}.${identifierOf(String(node['property'] ?? ''))}`;
     }
@@ -629,6 +683,56 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
         if (args.length === 1) {
           return `${receiver}[${emitExpression(args[0] as Node, scope)}]`;
         }
+      }
+
+      // A `dart:core int`/`double`/`num` numeric method (M8-V) — checked by the *receiver's* own
+      // resolved type, never by the method's bare name, so a project-defined class's own same-named
+      // method (`FakeNumber.toDouble()`) is untouched and falls through to the ordinary lowering below.
+      const receiverType = sdkTypeOf((node['receiver'] as Node | undefined)?.['type'] as Node | undefined);
+      if (receiverType === 'int' || receiverType === 'double' || receiverType === 'num') {
+        const rawArgs = asArray(node['args']);
+
+        // `int.toDouble()`/`num.toDouble()` — a semantic no-op. JavaScript's `number` already IS the
+        // IEEE-754 double Dart's own `double` is; the value does not change representation crossing this
+        // call, for the same JS-safe-integer domain this project already restricts every Dart `int` to
+        // (D2/ADR-5 — an int beyond 2^53 is refused at the canonical-encoding layer, before this is ever
+        // reached). No cast, no wrapper: the receiver's own already-emitted text is the whole answer.
+        if (method === 'toDouble' && rawArgs.length === 0) return receiver;
+
+        // `int.remainder(other)`/`num.remainder(other)` — Dart's own truncating remainder (same sign as
+        // the dividend: `this == (this ~/ other) * other + this.remainder(other)`), which is exactly
+        // JavaScript's own `%` — *not* Dart's own `%` operator, which `logic.Assign`'s own doc already
+        // warns is different from JavaScript's (`-7 % 3` is `2` in Dart, `-1` in JS). `.remainder()` and
+        // `%` are two different Dart operations; only `.remainder()` matches JS's `%`, and that identity
+        // is what is used here, not an approximation of the other one.
+        if (method === 'remainder' && rawArgs.length === 1) {
+          const arg = emitExpression(rawArgs[0] as Node, scope);
+          if (arg === REFUSED) return REFUSED;
+          return `(${receiver} % ${arg})`;
+        }
+
+        // `double.toStringAsFixed(n)`/`num.toStringAsFixed(n)` → `.toFixed(n)`. Both Dart's `double` and
+        // JavaScript's `number` are IEEE-754 binary64 — the same bits, not merely similar ones — so for
+        // a finite, non-NaN value the two formatters diverge only at the same binary-representation
+        // rounding boundaries either language already has (documented, not silently assumed — M8-V's own
+        // milestone doc §14 records the comparison this claim rests on). `NaN`/`Infinity` are not
+        // specially handled: both languages already format them as `"NaN"`/`"Infinity"`, the identical
+        // text, so no extra branch is needed to keep that case honest.
+        if (method === 'toStringAsFixed' && rawArgs.length === 1) {
+          const arg = emitExpression(rawArgs[0] as Node, scope);
+          if (arg === REFUSED) return REFUSED;
+          return `${receiver}.toFixed(${arg})`;
+        }
+
+        scope.report(
+          GeneratorDiagnosticCode.UnsupportedExpression,
+          'error',
+          `\`${receiverType}.${method}\` has no lowering. This generator supports \`toDouble\`, ` +
+            `\`toStringAsFixed\`, and \`remainder\` on a \`dart:core\` numeric value (M8-V) — the methods ` +
+            `real evidence has needed so far. A different one needs its own evidence before it can be added.`,
+          idOf(node),
+        );
+        return REFUSED;
       }
 
       const args = emitArguments(node['args'], scope);
