@@ -72,11 +72,15 @@
         },
         "exceptionName": {
           "type": "string",
-          "description": "The bound exception variable."
+          "description": "The bound exception variable, by name only. `exceptionDecl` (ADR-28, amended M8-S) is the same binding's own declaration-tier identity — this field is retained unchanged, for description only."
+        },
+        "exceptionDecl": {
+          "$ref": "#/$defs/VarDecl",
+          "description": "The exception binding's own declaration (ADR-28, amended M8-S) — a real, declaration-tier `logic.VarDecl`, with no `initializer` (the runtime binds it, not an expression). A `logic.Ref` inside the clause body targets this node's own id, the same way any other local variable's read already does. Absent exactly when `exceptionName` is (no exception parameter at all)."
         },
         "stackTraceName": {
           "type": "string",
-          "description": "The bound stack-trace variable."
+          "description": "The bound stack-trace variable. Unlike `exceptionName`, this has no declaration-tier counterpart yet — a stack-trace binding has no JavaScript catch-parameter equivalent (the nearest analogue, `error.stack`, is a property read, not a second binding), a materially different mapping question this amendment does not resolve."
         },
         "body": {
           "$ref": "#/$defs/Block",

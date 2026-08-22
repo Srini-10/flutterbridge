@@ -14,7 +14,7 @@ import { createHash } from 'node:crypto';
 export const UIR_VERSION = '1.7.0' as const;
 
 /** A hash of the schema sources this module was generated from. */
-export const UIR_SCHEMA_HASH = 'd65d81e51738858e' as const;
+export const UIR_SCHEMA_HASH = '2a21751c86ba6c2a' as const;
 
 /** Node kind -> the fields of that node which hold `NodeId` references. */
 export const UIR_REFERENCE_FIELDS: Readonly<Record<string, readonly string[]>> = {
@@ -748,11 +748,13 @@ export function parseNodeId(value: unknown, path = 'NodeId'): NodeId {
 export interface CatchClause {
   /// The clause body.
   readonly body: Block;
-  /// The bound exception variable.
+  /// The exception binding's own declaration (ADR-28, amended M8-S) — a real, declaration-tier `logic.VarDecl`, with no `initializer` (the runtime binds it, not an expression). A `logic.Ref` inside the clause body targets this node's own id, the same way any other local variable's read already does. Absent exactly when `exceptionName` is (no exception parameter at all).
+  readonly exceptionDecl?: VarDecl;
+  /// The bound exception variable, by name only. `exceptionDecl` (ADR-28, amended M8-S) is the same binding's own declaration-tier identity — this field is retained unchanged, for description only.
   readonly exceptionName?: string;
   /// The type caught, if narrowed.
   readonly exceptionType?: TypeRef;
-  /// The bound stack-trace variable.
+  /// The bound stack-trace variable. Unlike `exceptionName`, this has no declaration-tier counterpart yet — a stack-trace binding has no JavaScript catch-parameter equivalent (the nearest analogue, `error.stack`, is a property read, not a second binding), a materially different mapping question this amendment does not resolve.
   readonly stackTraceName?: string;
 }
 
@@ -2276,6 +2278,7 @@ export function parseCatchClause(value: unknown, path = 'CatchClause'): CatchCla
   const o = asObject(value, path);
   return {
     body: parseBlock(req(o, 'body', path), `${path}.body`),
+    ...(own(o, 'exceptionDecl') === undefined || own(o, 'exceptionDecl') === null ? {} : { exceptionDecl: parseVarDecl(own(o, 'exceptionDecl'), `${path}.exceptionDecl`) }),
     ...(own(o, 'exceptionName') === undefined || own(o, 'exceptionName') === null ? {} : { exceptionName: asString(own(o, 'exceptionName'), `${path}.exceptionName`) }),
     ...(own(o, 'exceptionType') === undefined || own(o, 'exceptionType') === null ? {} : { exceptionType: parseTypeRef(own(o, 'exceptionType'), `${path}.exceptionType`) }),
     ...(own(o, 'stackTraceName') === undefined || own(o, 'stackTraceName') === null ? {} : { stackTraceName: asString(own(o, 'stackTraceName'), `${path}.stackTraceName`) }),

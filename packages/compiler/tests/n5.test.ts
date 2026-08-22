@@ -50,6 +50,33 @@ function varDecl(id: string, name: string, value: number): Record<string, unknow
   };
 }
 
+/** A catch clause's own exception binding (ADR-28, amended M8-S) — no initializer, bound by the runtime. */
+function catchExceptionDecl(id: string, name: string): Record<string, unknown> {
+  return { id, kind: 'logic.VarDecl', span, name, type: { name: 'Object' }, isFinal: true };
+}
+
+/** A `try { <tryBody> } on Object catch (<exceptionDecl.name>) { <catchBody> }`. */
+function tryCatch(
+  id: string,
+  tryBody: Record<string, unknown>[],
+  exceptionDecl: Record<string, unknown>,
+  catchBody: Record<string, unknown>[],
+): Record<string, unknown> {
+  return {
+    id,
+    kind: 'logic.TryCatch',
+    span,
+    body: { id: `${id}-body`, kind: 'logic.Block', span, statements: tryBody },
+    catches: [
+      {
+        exceptionName: String(exceptionDecl['name']),
+        exceptionDecl,
+        body: { id: `${id}-catch-body`, kind: 'logic.Block', span, statements: catchBody },
+      },
+    ],
+  };
+}
+
 /** A lambda. */
 function lambda(
   id: string,
@@ -289,6 +316,68 @@ describe('N5 treats a targeted local the same as an untargeted one (ADR-28)', ()
     // this is the exact shape every pre-existing N5 test above already exercises; pinned again here,
     // explicitly, alongside the new local-specific cases so the three read as one proof.
     const result = lift(app(lambda('l1', [stmt('s1', increment('a1', ref('r1', '_count', 'sig1')))])));
+
+    expect(result.program.ofKind('sig.Action')).toHaveLength(1);
+    expect(result.diagnostics).toEqual([]);
+  });
+
+  // M8-S: a catch clause's own exception binding is *also* a `logic.VarDecl` (ADR-28, amended) — nested
+  // inside a `logic.TryCatch`, not a bare statement. Proves the existing, unmodified `walk(program)`-
+  // based id set (M8-N's own generalisation) already covers it, with zero N5 code changes.
+
+  it('a closure capturing a catch-bound exception declared OUTSIDE it is refused, even though it has a target', () => {
+    const outerCatch = catchExceptionDecl('outer-e', 'e');
+    const result = lift(
+      Program.of([
+        signal('sig1'),
+        tryCatch('tc1', [], outerCatch, []) as unknown as AnyUirNode,
+        button(
+          'btn',
+          lambda('l1', [
+            stmt('s1', {
+              id: 'a1',
+              kind: 'logic.Assign',
+              span,
+              target: ref('r1', '_count', 'sig1'),
+              operator: 'assign',
+              value: ref('r3', 'e', 'outer-e'),
+              type: { name: 'int' },
+            }),
+          ]),
+        ),
+      ]),
+    );
+
+    expect(result.program.ofKind('sig.Action')).toHaveLength(0);
+    expect(result.diagnostics).toHaveLength(1);
+    expect(result.diagnostics[0]!.code).toBe('BRG2105');
+    expect(result.diagnostics[0]!.message).toContain('`e`');
+  });
+
+  it("a closure that catches its OWN exception and reads it lifts — that capture is bound, not free", () => {
+    const innerCatch = catchExceptionDecl('inner-e', 'e');
+    const result = lift(
+      app(
+        lambda('l1', [
+          tryCatch(
+            'tc1',
+            [],
+            innerCatch,
+            [
+              stmt('s1', {
+                id: 'a1',
+                kind: 'logic.Assign',
+                span,
+                target: ref('r1', '_count', 'sig1'),
+                operator: 'assign',
+                value: ref('r3', 'e', 'inner-e'),
+                type: { name: 'int' },
+              }),
+            ],
+          ),
+        ]),
+      ),
+    );
 
     expect(result.program.ofKind('sig.Action')).toHaveLength(1);
     expect(result.diagnostics).toEqual([]);

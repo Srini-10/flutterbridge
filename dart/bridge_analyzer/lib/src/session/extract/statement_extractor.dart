@@ -300,20 +300,45 @@ final class StatementExtractor implements StatementExtractorRef {
                   RawMap(<String, RawValue>{
                     if (clause.exceptionType != null)
                       'exceptionType': out.typeRef(clause.exceptionType!.type, at: clause),
-                    if (clause.exceptionParameter != null)
+                    if (clause.exceptionParameter != null) ...<String, RawValue>{
                       'exceptionName': RawLiteral(clause.exceptionParameter!.name.lexeme),
+                      // A real declaration-tier node (ADR-28, amended M8-S) — `exceptionName` above
+                      // stays, unchanged, as the plain descriptive string it always was; this is the
+                      // identity a `logic.Ref` inside the catch body now resolves against, the same way
+                      // any other local's own `logic.VarDecl` already does.
+                      'exceptionDecl': RawChild(
+                        RawNode(
+                          kind: 'logic.VarDecl',
+                          span: out.span(clause.exceptionParameter!),
+                          symbol: _catchExceptionSymbol(clause.exceptionParameter!, scope),
+                          fields: <String, RawValue>{
+                            'name': RawLiteral(clause.exceptionParameter!.name.lexeme),
+                            'type': out.typeRef(
+                              clause.exceptionParameter!.declaredFragment?.element.type ??
+                                  clause.exceptionType?.type,
+                              at: clause.exceptionParameter!,
+                            ),
+                            'isFinal': const RawLiteral(true),
+                          },
+                        ),
+                      ),
+                    },
                     if (clause.stackTraceParameter != null)
                       'stackTraceName': RawLiteral(clause.stackTraceParameter!.name.lexeme),
                     'body': RawChild(
                       extract(
                         clause.body,
                         // The exception and its stack trace are bound inside the catch body, and
-                        // nowhere else.
+                        // nowhere else. The exception binding carries the same symbol as its own
+                        // `exceptionDecl` node above (M8-S) — a pure lookup, computed twice, cannot
+                        // disagree with itself regardless of which call runs first. The stack-trace
+                        // binding remains nameless, unimplemented by design (M8-S's own doc).
                         scope.child(<Binding>[
                           if (clause.exceptionParameter != null)
                             Binding(
                               name: clause.exceptionParameter!.name.lexeme,
                               binds: Binds.local,
+                              symbol: _catchExceptionSymbol(clause.exceptionParameter!, scope),
                             ),
                           if (clause.stackTraceParameter != null)
                             Binding(
@@ -390,6 +415,22 @@ final class StatementExtractor implements StatementExtractorRef {
     final int? ordinal = scope.ordinalOf(element);
     if (ordinal == null) return null;
     return out.symbols.local(node.name.lexeme, owner: owner, ordinal: ordinal);
+  }
+
+  /// [param]'s own declaration-tier symbol (ADR-28, amended M8-S for a catch clause's exception
+  /// binding) — `null` on the same terms as [_localSymbol]: no enclosing owner, no resolved element, or
+  /// no ordinal (`scope.dart`'s `_OrdinalVisitor` numbers only the exception binding, never the
+  /// stack-trace one — a `catch (e, s)`'s own `s` correctly yields `null` here, unimplemented by design).
+  /// Called from both [_variable]'s own catch-clause analogue (the `exceptionDecl` node built below) and
+  /// the child scope's own `Binding`, on the *same* `CatchClauseParameter`, for the identical reason
+  /// [_localSymbol]'s own doc gives: a pure lookup cannot disagree with itself regardless of call order.
+  String? _catchExceptionSymbol(CatchClauseParameter param, Scope scope) {
+    final String? owner = scope.owner;
+    final Element? element = param.declaredFragment?.element;
+    if (owner == null || element == null) return null;
+    final int? ordinal = scope.ordinalOf(element);
+    if (ordinal == null) return null;
+    return out.symbols.local(param.name.lexeme, owner: owner, ordinal: ordinal);
   }
 
   RawNode _for(ForStatement node, Scope scope) {

@@ -1,0 +1,19 @@
+name: catch_clause
+description: >-
+  M8-S fixture: a catch clause's own exception binding (ADR-28, amended M8-S) — two unrelated actions
+  catching an exception under the identical name `e`, and an ordinary local sharing both a name and the
+  same per-owner ordinal sequence as a catch-bound exception — proving declaration-tier identity resolves
+  each read to the exact declaration in scope at that point, never by name
+  (docs/adr/0028-amendment-catch-clause-parameter-identity.md).
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

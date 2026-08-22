@@ -2619,6 +2619,136 @@ class _WState extends State<W> {
     });
   });
 
+  group('catch-clause exception binding identity (ADR-28, amended M8-S)', () {
+    // The exception binding of `on Object catch (e) { ... }` gets the identical treatment an ordinary
+    // `final`/`var` local already does — owner+ordinal-qualified, target-based, never a name match.
+
+    String? targetOfRead(Extracted app, String name, {required int occurrence}) {
+      final List<Map<String, dynamic>> refs = app
+          .ofKind('logic.Ref')
+          .where((Map<String, dynamic> r) => r['name'] == name)
+          .toList();
+      return refs[occurrence]['target'] as String?;
+    }
+
+    const String actionWrapper = r'''
+import 'package:flutter/material.dart';
+class W extends StatefulWidget {
+  const W({super.key});
+  @override
+  State<W> createState() => _WState();
+}
+class _WState extends State<W> {
+  int _log = 0;
+  {{BODY}}
+  @override
+  Widget build(BuildContext context) => Text('$_log');
+}
+''';
+
+    List<Map<String, dynamic>> catchExceptionDecls(Extracted app) => app
+        .ofKind('logic.TryCatch')
+        .expand((Map<String, dynamic> t) => (t['catches'] as List<dynamic>).cast<Map<String, dynamic>>())
+        .map((Map<String, dynamic> c) => c['exceptionDecl'] as Map<String, dynamic>)
+        .toList();
+
+    test('a caught exception, read inside its own clause, resolves to a real declaration', () async {
+      final Extracted app = await extract(
+        actionWrapper.replaceFirst('{{BODY}}', '''
+  void _risky() {
+    try {
+      _log = 1;
+    } on Object catch (e) {
+      _log = e.hashCode;
+    }
+  }
+'''),
+      );
+      expect(app.errors, isEmpty);
+
+      final List<Map<String, dynamic>> decls = catchExceptionDecls(app);
+      expect(decls, hasLength(1));
+      expect(decls.single['name'], 'e');
+      expect(decls.single['isFinal'], true);
+      expect(targetOfRead(app, 'e', occurrence: 0), decls.single['id']);
+    });
+
+    test('two unrelated catch clauses with the identical exception name never collide', () async {
+      final Extracted app = await extract(
+        actionWrapper.replaceFirst('{{BODY}}', '''
+  void _first() { try { _log = 1; } on Object catch (e) { _log = e.hashCode; } }
+  void _second() { try { _log = 2; } on Object catch (e) { _log = e.hashCode; } }
+'''),
+      );
+      expect(app.errors, isEmpty);
+
+      final List<Map<String, dynamic>> decls = catchExceptionDecls(app);
+      expect(decls, hasLength(2));
+      expect(decls[0]['id'], isNot(decls[1]['id']), reason: 'same content, different owners — must not collapse');
+      expect(targetOfRead(app, 'e', occurrence: 0), decls[0]['id']);
+      expect(targetOfRead(app, 'e', occurrence: 1), decls[1]['id']);
+    });
+
+    test('an ordinary local and a catch exception binding share one ordinal sequence — never collide even with the same name', () async {
+      // Both `total` (an ordinary local) and a same-named catch exception binding would occupy ordinal
+      // 0 under two *independent* counters; a shared, single per-owner counter (M8-S's own design
+      // choice) is what this test exists to prove necessary, not merely convenient.
+      final Extracted app = await extract(
+        actionWrapper.replaceFirst('{{BODY}}', '''
+  void _mixed() {
+    final int total = 1;
+    try {
+      _log = total;
+    } on Object catch (total) {
+      _log = total.hashCode;
+    }
+  }
+'''),
+      );
+      expect(app.errors, isEmpty);
+
+      // `ofKind('logic.VarDecl')` walks the whole document, so it returns both the ordinary local's own
+      // declaration and the catch clause's own `exceptionDecl` (also a `logic.VarDecl`) — the local is
+      // whichever one is not the catch binding.
+      final Map<String, dynamic> catchDecl = catchExceptionDecls(app).single;
+      final List<Map<String, dynamic>> allVarDecls = app.ofKind('logic.VarDecl');
+      expect(allVarDecls, hasLength(2));
+      final Map<String, dynamic> localDecl = allVarDecls.singleWhere((Map<String, dynamic> d) => d['id'] != catchDecl['id']);
+      expect(localDecl['id'], isNot(catchDecl['id']));
+      expect(targetOfRead(app, 'total', occurrence: 0), localDecl['id'], reason: 'the local read, before the try, targets the local');
+      expect(targetOfRead(app, 'total', occurrence: 1), catchDecl['id'], reason: 'the catch-body read targets the exception binding, not the outer local of the same name');
+    });
+
+    test('the stack-trace binding is not given this identity — a separate, unresolved mapping question', () async {
+      final Extracted app = await extract(
+        actionWrapper.replaceFirst('{{BODY}}', '''
+  void _risky() {
+    try {
+      _log = 1;
+    } on Object catch (e, s) {
+      _log = s.hashCode;
+    }
+  }
+'''),
+      );
+      expect(app.errors, isEmpty);
+      expect(targetOfRead(app, 's', occurrence: 0), isNull);
+      // The exception binding in the same clause is unaffected by the stack-trace binding's own
+      // exclusion — both are extracted from the same `CatchClause`, independently.
+      expect(catchExceptionDecls(app).single['name'], 'e');
+    });
+
+    test('the same source extracts to the same ids on a second, independent run (determinism)', () async {
+      final String source = actionWrapper.replaceFirst('{{BODY}}', '''
+  void _first() { try { _log = 1; } on Object catch (e) { _log = e.hashCode; } }
+  void _second() { try { _log = 2; } on Object catch (e) { _log = e.hashCode; } }
+''');
+      final Extracted first = await extract(source);
+      final Extracted second = await extract(source);
+      expect(first.bytes, second.bytes);
+    });
+  });
+
   group('paths in UIR are platform-independent (M5-F)', () {
     // `span.file` is not a filesystem path once it is written: it becomes an anchor —
     // `'${span.file}#$segment'` in `node_factory.dart` — and an anchor is hashed into the node's id

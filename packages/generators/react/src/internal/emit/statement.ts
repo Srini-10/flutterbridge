@@ -125,7 +125,17 @@ export function emitStatement(statement: Stmt | Node | undefined, scope: EmitSco
         // for every type. Rather than emit a chain that is right for classes and wrong for everything else,
         // the extra clauses are reported.
         const first = clauses[0] as Node;
-        const binding = identifierOf(String(first['exception'] ?? 'error'));
+        // `exceptionDecl` (ADR-28, amended M8-S) is the declaration-tier identity a `logic.Ref` inside the
+        // catch body resolves against via `localName` (populated by `localBindingsIn`, which walks this
+        // whole body generically — no change needed there). The emitted identifier here MUST be computed
+        // from the same `.name` that declaration carries, or a read that resolves to it would bind to a
+        // different identifier than the one this line actually declares. `exceptionName` is the fallback
+        // for a document without one (no exception parameter at all is the only remaining case, since the
+        // analyzer now always emits both together).
+        const exceptionDecl = first['exceptionDecl'] as Node | undefined;
+        const exceptionName =
+          exceptionDecl !== undefined ? String(exceptionDecl['name'] ?? 'error') : String(first['exceptionName'] ?? 'error');
+        const binding = identifierOf(exceptionName);
         lines.push(`} catch (${binding}) {`);
         lines.push(...indent(emitStatement(first['body'] as Node, scope)));
         if (clauses.length > 1) {

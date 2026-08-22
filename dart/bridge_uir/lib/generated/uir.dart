@@ -31,7 +31,7 @@ const String uirVersion = '1.7.0';
 /// A hash of the schema sources this library was generated from.
 ///
 /// Stamped into every emitted manifest: a UIR document always says which schema produced it.
-const String uirSchemaHash = 'd65d81e51738858e';
+const String uirSchemaHash = '2a21751c86ba6c2a';
 
 /// Node kind -> the fields of that node which hold `NodeId` references.
 ///
@@ -1003,6 +1003,7 @@ final class CatchClause {
   /// Creates a [CatchClause].
   const CatchClause({
     required this.body,
+    this.exceptionDecl,
     this.exceptionName,
     this.exceptionType,
     this.stackTraceName,
@@ -1013,6 +1014,7 @@ final class CatchClause {
     final Map<String, Object?> json = _asObject(value, path);
     return CatchClause(
       body: Block.fromJson(_req(json, 'body', path), '$path.body'),
+      exceptionDecl: json['exceptionDecl'] == null ? null : VarDecl.fromJson(json['exceptionDecl'], '$path.exceptionDecl'),
       exceptionName: json['exceptionName'] == null ? null : _asString(json['exceptionName'], '$path.exceptionName'),
       exceptionType: json['exceptionType'] == null ? null : TypeRef.fromJson(json['exceptionType'], '$path.exceptionType'),
       stackTraceName: json['stackTraceName'] == null ? null : _asString(json['stackTraceName'], '$path.stackTraceName'),
@@ -1022,18 +1024,22 @@ final class CatchClause {
   /// The clause body.
   final Block body;
 
-  /// The bound exception variable.
+  /// The exception binding's own declaration (ADR-28, amended M8-S) — a real, declaration-tier `logic.VarDecl`, with no `initializer` (the runtime binds it, not an expression). A `logic.Ref` inside the clause body targets this node's own id, the same way any other local variable's read already does. Absent exactly when `exceptionName` is (no exception parameter at all).
+  final VarDecl? exceptionDecl;
+
+  /// The bound exception variable, by name only. `exceptionDecl` (ADR-28, amended M8-S) is the same binding's own declaration-tier identity — this field is retained unchanged, for description only.
   final String? exceptionName;
 
   /// The type caught, if narrowed.
   final TypeRef? exceptionType;
 
-  /// The bound stack-trace variable.
+  /// The bound stack-trace variable. Unlike `exceptionName`, this has no declaration-tier counterpart yet — a stack-trace binding has no JavaScript catch-parameter equivalent (the nearest analogue, `error.stack`, is a property read, not a second binding), a materially different mapping question this amendment does not resolve.
   final String? stackTraceName;
 
   /// Serializes to canonical JSON: keys sorted, nulls omitted.
   Map<String, Object?> toJson() => canonicalJson(<String, Object?>{
     'body': body.toJson(),
+    'exceptionDecl': exceptionDecl?.toJson(),
     'exceptionName': exceptionName,
     'exceptionType': exceptionType?.toJson(),
     'stackTraceName': stackTraceName,
@@ -1045,12 +1051,14 @@ final class CatchClause {
   /// null. Construct a new node when that is what you mean.
   CatchClause copyWith({
     Block? body,
+    VarDecl? exceptionDecl,
     String? exceptionName,
     TypeRef? exceptionType,
     String? stackTraceName,
   }) {
     return CatchClause(
       body: body ?? this.body,
+      exceptionDecl: exceptionDecl ?? this.exceptionDecl,
       exceptionName: exceptionName ?? this.exceptionName,
       exceptionType: exceptionType ?? this.exceptionType,
       stackTraceName: stackTraceName ?? this.stackTraceName,
@@ -1062,6 +1070,7 @@ final class CatchClause {
     if (identical(this, other)) return true;
     return other is CatchClause &&
         _equality.equals(other.body, body) &&
+        _equality.equals(other.exceptionDecl, exceptionDecl) &&
         _equality.equals(other.exceptionName, exceptionName) &&
         _equality.equals(other.exceptionType, exceptionType) &&
         _equality.equals(other.stackTraceName, stackTraceName);
@@ -1071,6 +1080,7 @@ final class CatchClause {
   int get hashCode => Object.hashAll(<Object?>[
     'CatchClause',
     _equality.hash(body),
+    _equality.hash(exceptionDecl),
     _equality.hash(exceptionName),
     _equality.hash(exceptionType),
     _equality.hash(stackTraceName),

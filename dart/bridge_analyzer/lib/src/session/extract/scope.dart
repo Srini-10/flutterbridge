@@ -94,10 +94,11 @@ final class Binding {
 /// the analyzer's own resolved `Element` (stable and comparable within one compilation, never by name or
 /// span), is unambiguous no matter how many times or in what order it is asked.
 ///
-/// Scoped deliberately narrow (ADR-28 §17): only a `VariableDeclaration` that is a direct child of an
-/// ordinary `VariableDeclarationStatement` gets one. A `for`-loop-declared variable or a `catch` clause
-/// binding is a `VariableDeclaration`/parameter too, syntactically, but neither is numbered here — the
-/// same category of gap, measured only for `final`/`var` locals, not yet extended to those.
+/// Scoped deliberately narrow: only a `VariableDeclaration` that is a direct child of an ordinary
+/// `VariableDeclarationStatement`, or a `catch` clause's own exception binding, gets one (ADR-28 §17,
+/// amended M8-S — see `docs/adr/0028-amendment-catch-clause-parameter-identity.md`). A `for`-loop-
+/// declared variable and a `catch` clause's *stack-trace* binding remain unnumbered — the same category
+/// of gap, still measured only for what this amendment's own evidence covers.
 Map<Element, int> _ordinalsOf(AstNode body) {
   final _OrdinalVisitor visitor = _OrdinalVisitor();
   body.accept(visitor);
@@ -118,6 +119,19 @@ final class _OrdinalVisitor extends RecursiveAstVisitor<void> {
       }
     }
     super.visitVariableDeclaration(node);
+  }
+
+  @override
+  void visitCatchClause(CatchClause node) {
+    // The exception binding (`catch (e)`) is, architecturally, just another local declared within this
+    // owning body — numbered in the *same* monotonic sequence as ordinary locals, so an ordinary local
+    // and a catch binding can never collide on (owner, ordinal) regardless of name (M8-S). The
+    // stack-trace binding (`catch (e, s)`'s own `s`) is deliberately left unnumbered — a real, narrower,
+    // separately-evidenced gap (M8-S's own doc), not yet given the same treatment.
+    if (node.exceptionParameter?.declaredFragment?.element case final Element element) {
+      ordinals[element] = ordinals.length;
+    }
+    super.visitCatchClause(node);
   }
 }
 
@@ -168,8 +182,9 @@ final class Scope {
   String? get owner => _owner;
 
   /// [element]'s own ordinal within the enclosing body, precomputed by [Scope.forBody] — `null` if this
-  /// scope carries no ordinal map, or if [element] is not one [_ordinalsOf] numbered (a `for`/`catch`
-  /// binding, ADR-28 §17).
+  /// scope carries no ordinal map, or if [element] is not one [_ordinalsOf] numbered (a `for`-loop
+  /// variable, or a `catch` clause's own stack-trace binding — a catch clause's *exception* binding is
+  /// numbered, M8-S).
   int? ordinalOf(Element element) => _ordinals?[element];
 
   /// What [name] means here, or `null` if it means nothing in scope.
