@@ -17,7 +17,7 @@ class HomeScreen extends StatelessWidget {
   Widget build(BuildContext context) => Scaffold(
         body: Column(
           children: [
-            Text(describeTransferFailure(TransferFailureReason.hashMismatch)),
+            Text(describeFailureReason(FailureReason.hashMismatch)),
             Text(describeStage(null)),
             Text(describeStage(Stage.ready)),
             Text(describeSide(Side.left)),
@@ -26,20 +26,19 @@ class HomeScreen extends StatelessWidget {
       );
 }
 
-// ── The exact real Continuum shape (`continuum_ui_kit.dart:121-127`) ────────────────────
-enum TransferFailureReason { permissionDenied, hashMismatch, ioError, none }
+// ── An unguarded, exhaustive, enum-constant-pattern switch expression in direct-return
+// position (M8-Y's own proven-safe subset, exactly). ────────────────────────────────────
+enum FailureReason { permissionDenied, hashMismatch, ioError, none }
 
-/// `describeTransferFailure`'s own exact real body — an unguarded, exhaustive, enum-constant-pattern
-/// switch expression in direct-return position (M8-Y's own proven-safe subset, exactly).
-String describeTransferFailure(TransferFailureReason reason) => switch (reason) {
-      TransferFailureReason.permissionDenied => 'failed: permission denied',
-      TransferFailureReason.hashMismatch => 'failed: checksum mismatch',
-      TransferFailureReason.ioError => 'failed: storage error',
-      TransferFailureReason.none => 'failed',
+String describeFailureReason(FailureReason reason) => switch (reason) {
+      FailureReason.permissionDenied => 'failed: permission denied',
+      FailureReason.hashMismatch => 'failed: checksum mismatch',
+      FailureReason.ioError => 'failed: storage error',
+      FailureReason.none => 'failed',
     };
 
 // ── A second, independently-shaped enum switch — proves the subset is not hard-coded to
-// TransferFailureReason's own 4 members, and exercises the null-pattern rung. ───────────────
+// FailureReason's own 4 members, and exercises the null-pattern rung. ───────────────
 enum Stage { idle, ready }
 
 String describeStage(Stage? stage) => switch (stage) {

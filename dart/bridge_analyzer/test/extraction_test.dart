@@ -2793,18 +2793,17 @@ class _WState extends State<W> {
   });
 
   group('switch expression → logic.Switch (M8-Y)', () {
-    // Continuum's real `describeTransferFailure` (`continuum_ui_kit.dart:121-127`) is exactly
     // `return switch (reason) { EnumConstant => 'literal', ... };` — an unguarded, exhaustive,
     // enum-constant-pattern switch expression in direct-return position. M8-X found this reaches
     // `BRG1302` (opaque) unconditionally; these tests prove the narrow, evidence-bounded subset this
     // extractor now admits, and that every unsupported neighbouring shape stays exactly as opaque as
     // before.
 
-    test('the exact real describeTransferFailure shape lowers to logic.Switch, case order preserved', () async {
+    test('an unguarded, exhaustive, enum-constant-pattern switch expression lowers to logic.Switch, case order preserved', () async {
       final Extracted app = await extract('''
 import 'package:flutter/material.dart';
 enum Reason { permissionDenied, hashMismatch, ioError, none }
-String describeTransferFailure(Reason reason) => switch (reason) {
+String describeFailureReason(Reason reason) => switch (reason) {
       Reason.permissionDenied => 'failed: permission denied',
       Reason.hashMismatch => 'failed: checksum mismatch',
       Reason.ioError => 'failed: storage error',
@@ -2814,7 +2813,7 @@ class W extends StatelessWidget {
   const W({required this.r, super.key});
   final Reason r;
   @override
-  Widget build(BuildContext context) => Text(describeTransferFailure(r));
+  Widget build(BuildContext context) => Text(describeFailureReason(r));
 }
 ''');
       expect(app.errors, isEmpty);

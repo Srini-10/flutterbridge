@@ -17,6 +17,17 @@ carries amendments through v2.5 and ADRs run to 0024.
 Milestone reports live in `docs/m0/` … `docs/m5/` and are the best record of *why* things are as they are.
 `docs/m5/m5e-release-candidate.md` is the current state of play.
 
+## Project boundary
+
+FlutterBridge is a standalone, general-purpose Flutter/Dart → React/Next.js compiler. It is not scoped to
+any one application. Continuum (an unrelated Android ↔ macOS continuity app, in its own separate repo) was
+used during M8 as a real-world validation corpus — a useful source of genuine compiler gaps — but it is not
+part of this repository or this project's roadmap, and FlutterBridge must never require it to build, test,
+normalize, generate, or validate. A real application may expose a compiler gap; the resulting
+implementation must still be general (structural Dart/Flutter semantics, not the discovering app's names).
+`docs/m*/` milestone reports may cite a corpus application as evidence — that is provenance, not coupling —
+but active roadmap/spec documents must not describe compiling any one external application as the goal.
+
 ## Commands
 
 Use `just` (it bridges the pnpm/turbo and Dart/flutter domains). `just --list` for all recipes.

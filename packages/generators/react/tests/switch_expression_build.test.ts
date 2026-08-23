@@ -4,8 +4,7 @@ import { reactGenerator } from '../src/index.js';
 import { cleanupBuildProofTemporaries, compiledFrom, fileAt, harness, switchExpressionRaw, typecheckEmitted } from './support.js';
 
 // The M8-Y build-proof — a `return switch (subject) { EnumConstant => literal, ... }` in direct-return
-// position, the narrow, evidence-bounded subset this generator admits, including the exact real
-// Continuum shape of `describeTransferFailure`.
+// position, the narrow, evidence-bounded subset this generator admits.
 //
 // Real analyzer output in, real `bridge normalize` (N1–N11, unmodified), real generator, real `tsc`
 // against the real, unmocked `@bridge/runtime-react` — no hand-authored UIR anywhere, matching every
@@ -22,14 +21,14 @@ describe('M8-Y build-proof: Dart 3 switch-expression extraction, real analyzer t
     expect(reported.filter((d) => d.severity === 'error')).toEqual([]);
   });
 
-  it('the exact real describeTransferFailure shape lowers to a correct switch, case order preserved', () => {
+  it('an unguarded, exhaustive, enum-constant-pattern switch expression lowers to a correct switch, case order preserved', () => {
     const { context } = harness(after);
     const { files } = reactGenerator.generate(context);
     const source = fileAt(files, 'src/generated/dart/app/lib/main.ts') ?? '';
     // An explicit return type — not TS-inferred `string | undefined` — is what makes the switch's own
     // lack of a `default` case sound: Dart already proved every case is covered, and this makes `tsc`
     // check that same claim instead of silently widening the type at every call site.
-    expect(source).toContain('export function describeTransferFailure(reason: unknown): string {');
+    expect(source).toContain('export function describeFailureReason(reason: unknown): string {');
     expect(source).toContain("case 'permissionDenied': {\n      return 'failed: permission denied';\n    }");
     expect(source).toContain("case 'hashMismatch': {\n      return 'failed: checksum mismatch';\n    }");
     expect(source).toContain("case 'ioError': {\n      return 'failed: storage error';\n    }");

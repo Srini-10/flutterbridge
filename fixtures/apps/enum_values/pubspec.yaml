@@ -2,8 +2,8 @@ name: enum_values
 description: >-
   M8-Z fixture: Dart enum `.values` recognition — a project enum's own compiler-synthesized `values`
   getter, structurally identified (never by name alone) and lowered to an array literal built from the
-  same per-constant representation an individual enum reference already gets, including the exact real
-  shape of Continuum's own enhanced enum, ContinuumFeature (docs/m8/m8z-enum-values-recognition.md).
+  same per-constant representation an individual enum reference already gets, including an enhanced
+  enum with a constructor and a field (docs/m8/m8z-enum-values-recognition.md).
 publish_to: 'none'
 version: 1.0.0
 

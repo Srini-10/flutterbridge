@@ -54,24 +54,24 @@ enum G2 { ready, waiting }
 
 String gCollision() => '${G1.values.join()}${G2.values.join()}';
 
-// ── The exact real Continuum shape (`settings_repository.dart:6-16`) — an
-// enhanced enum, with a constructor and a field. `.values` itself is what this
-// milestone targets; per-element field access (`.id`) is a separate, already-
-// known gap (no runtime kit or generated declaration models a Dart enum's own
-// *type* today — M8-V's own finding) and is deliberately not exercised here. ──
-enum ContinuumFeature {
+// ── An enhanced enum, with a constructor and a field. `.values` itself is what
+// this milestone targets; per-element field access (`.id`) is a separate,
+// already-known gap (no runtime kit or generated declaration models a Dart
+// enum's own *type* today — M8-V's own finding) and is deliberately not
+// exercised here. ──
+enum Feature {
   notifications('notifications'),
   clipboard('clipboard'),
   files('files'),
   battery('battery');
 
-  const ContinuumFeature(this.id);
+  const Feature(this.id);
 
   /// Stable key used in storage.
   final String id;
 }
 
-String featureNames() => ContinuumFeature.values.join(',');
+String featureNames() => Feature.values.join(',');
 
 // ── N: enum values stored in a local ─────────────────────────────────────
 String nStoredInLocal() {

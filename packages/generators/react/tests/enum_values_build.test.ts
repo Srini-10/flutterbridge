@@ -4,8 +4,8 @@ import { reactGenerator } from '../src/index.js';
 import { cleanupBuildProofTemporaries, compiledFrom, enumValuesRaw, fileAt, harness, typecheckEmitted } from './support.js';
 
 // The M8-Z build-proof — a project enum's own compiler-synthesized `values` getter, recognized by
-// resolved element identity and lowered to an array literal, including the exact real Continuum shape of
-// `ContinuumFeature` (an enhanced enum with a constructor and a field). Per-element property access
+// resolved element identity and lowered to an array literal, including an enhanced enum with a
+// constructor and a field. Per-element property access
 // (`.id`, `.name`) on an individual enum-typed value is a separate, already-known gap (no runtime kit or
 // generated declaration models a Dart enum's own *type* today, M8-V's own finding) and is deliberately
 // not exercised by this fixture — this build-proof is scoped to `.values` itself.
@@ -32,7 +32,7 @@ describe('M8-Z build-proof: enum .values recognition, real analyzer to real tsc'
     expect(source).toContain("export function aSimplest() {\n  return ['idle', 'ready'].join();\n}");
   });
 
-  it('the exact real ContinuumFeature (enhanced enum) shape lowers correctly, declaration order preserved', () => {
+  it('an enhanced enum (constructor and field) shape lowers correctly, declaration order preserved', () => {
     const { context } = harness(after);
     const { files } = reactGenerator.generate(context);
     const source = fileAt(files, 'src/generated/dart/app/lib/main.ts') ?? '';
