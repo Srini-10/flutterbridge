@@ -283,3 +283,9 @@ export function enumValuesRaw(): string {
   const path = fileURLToPath(new URL('../../../../fixtures/uir/enum_values.ndjson', import.meta.url));
   return readFileSync(path, 'utf8');
 }
+
+/** The real `fixtures/apps/loop_variables` document, raw analyzer output (M9-A) — not yet normalized. */
+export function loopVariablesRaw(): string {
+  const path = fileURLToPath(new URL('../../../../fixtures/uir/loop_variables.ndjson', import.meta.url));
+  return readFileSync(path, 'utf8');
+}

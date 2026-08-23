@@ -31,7 +31,7 @@ const String uirVersion = '1.7.0';
 /// A hash of the schema sources this library was generated from.
 ///
 /// Stamped into every emitted manifest: a UIR document always says which schema produced it.
-const String uirSchemaHash = '2a21751c86ba6c2a';
+const String uirSchemaHash = 'c307ad5dfe6c3fc3';
 
 /// Node kind -> the fields of that node which hold `NodeId` references.
 ///
@@ -4212,6 +4212,7 @@ final class For extends Stmt {
     this.ext,
     this.init,
     this.iterable,
+    this.loopDecl,
     this.loopVariable,
     this.test,
     this.update,
@@ -4231,6 +4232,7 @@ final class For extends Stmt {
       id: _asString(_req(json, 'id', path), '$path.id'),
       init: json['init'] == null ? null : Stmt.fromJson(json['init'], '$path.init'),
       iterable: json['iterable'] == null ? null : Expr.fromJson(json['iterable'], '$path.iterable'),
+      loopDecl: json['loopDecl'] == null ? null : VarDecl.fromJson(json['loopDecl'], '$path.loopDecl'),
       loopVariable: json['loopVariable'] == null ? null : _asString(json['loopVariable'], '$path.loopVariable'),
       span: SourceSpan.fromJson(_req(json, 'span', path), '$path.span'),
       test: json['test'] == null ? null : Expr.fromJson(json['test'], '$path.test'),
@@ -4256,7 +4258,10 @@ final class For extends Stmt {
   /// The iterable, for a for-in loop.
   final Expr? iterable;
 
-  /// The loop variable, for a for-in loop.
+  /// The for-in loop variable's own declaration (ADR-28, amended M9-A) — a real, declaration-tier `logic.VarDecl`, with no `initializer` (the runtime binds it, once per iteration, not an expression). A `logic.Ref` inside the loop body targets this node's own id, the same way any other local variable's read already does. Absent exactly when `loopVariable` is (a C-style loop, not a for-in loop).
+  final VarDecl? loopDecl;
+
+  /// The loop variable's own name, for a for-in loop, by name only. `loopDecl` (ADR-28, amended M9-A) is the same binding's own declaration-tier identity — this field is retained unchanged, for description only.
   final String? loopVariable;
 
   /// Where the node came from.
@@ -4282,6 +4287,7 @@ final class For extends Stmt {
     'init': init?.toJson(),
     'iterable': iterable?.toJson(),
     'kind': 'logic.For',
+    'loopDecl': loopDecl?.toJson(),
     'loopVariable': loopVariable,
     'span': span.toJson(),
     'test': test?.toJson(),
@@ -4299,6 +4305,7 @@ final class For extends Stmt {
     NodeId? id,
     Stmt? init,
     Expr? iterable,
+    VarDecl? loopDecl,
     String? loopVariable,
     SourceSpan? span,
     Expr? test,
@@ -4311,6 +4318,7 @@ final class For extends Stmt {
       id: id ?? this.id,
       init: init ?? this.init,
       iterable: iterable ?? this.iterable,
+      loopDecl: loopDecl ?? this.loopDecl,
       loopVariable: loopVariable ?? this.loopVariable,
       span: span ?? this.span,
       test: test ?? this.test,
@@ -4331,6 +4339,7 @@ final class For extends Stmt {
         _equality.equals(other.id, id) &&
         _equality.equals(other.init, init) &&
         _equality.equals(other.iterable, iterable) &&
+        _equality.equals(other.loopDecl, loopDecl) &&
         _equality.equals(other.loopVariable, loopVariable) &&
         _equality.equals(other.span, span) &&
         _equality.equals(other.test, test) &&
@@ -4346,6 +4355,7 @@ final class For extends Stmt {
     _equality.hash(id),
     _equality.hash(init),
     _equality.hash(iterable),
+    _equality.hash(loopDecl),
     _equality.hash(loopVariable),
     _equality.hash(span),
     _equality.hash(test),

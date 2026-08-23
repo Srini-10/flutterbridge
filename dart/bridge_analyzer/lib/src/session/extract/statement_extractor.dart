@@ -444,21 +444,59 @@ final class StatementExtractor implements StatementExtractorRef {
     return out.symbols.local(param.name.lexeme, owner: owner, ordinal: ordinal);
   }
 
+  /// [node]'s own declaration-tier symbol (ADR-28, amended M9-A for a for-in loop's own declared
+  /// variable) — `null` on the same terms as [_localSymbol]: no enclosing owner, no resolved element, or
+  /// no ordinal. Called from both [_for]'s own `loopDecl` node and the loop body's own child scope, on
+  /// the *same* `DeclaredIdentifier`, for the identical reason [_localSymbol]'s own doc gives: a pure
+  /// lookup cannot disagree with itself regardless of call order.
+  String? _forEachLoopVariableSymbol(DeclaredIdentifier node, Scope scope) {
+    final String? owner = scope.owner;
+    final Element? element = node.declaredFragment?.element;
+    if (owner == null || element == null) return null;
+    final int? ordinal = scope.ordinalOf(element);
+    if (ordinal == null) return null;
+    return out.symbols.local(node.name.lexeme, owner: owner, ordinal: ordinal);
+  }
+
   RawNode _for(ForStatement node, Scope scope) {
     final ForLoopParts parts = node.forLoopParts;
 
     switch (parts) {
       // `for (final x in xs)`
       case ForEachPartsWithDeclaration():
-        final String name = parts.loopVariable.name.lexeme;
+        final DeclaredIdentifier loopVariable = parts.loopVariable;
+        final String name = loopVariable.name.lexeme;
+        final String? symbol = _forEachLoopVariableSymbol(loopVariable, scope);
         return RawNode(
           kind: 'logic.For',
           span: out.span(node),
           fields: <String, RawValue>{
             'loopVariable': RawLiteral(name),
+            // A real declaration-tier node (ADR-28, amended M9-A) — `loopVariable` above stays,
+            // unchanged, as the plain descriptive string it always was; this is the identity a
+            // `logic.Ref` inside the loop body now resolves against, the same way any other local's own
+            // `logic.VarDecl` already does.
+            'loopDecl': RawChild(
+              RawNode(
+                kind: 'logic.VarDecl',
+                span: out.span(loopVariable),
+                symbol: symbol,
+                fields: <String, RawValue>{
+                  'name': RawLiteral(name),
+                  'type': out.typeRef(
+                    loopVariable.declaredFragment?.element.type ?? loopVariable.type?.type,
+                    at: loopVariable,
+                  ),
+                  if (loopVariable.isFinal || loopVariable.isConst) 'isFinal': const RawLiteral(true),
+                },
+              ),
+            ),
             'iterable': RawChild(expressions.extract(parts.iterable, scope)),
             'body': RawChild(
-              extract(node.body, scope.withBinding(Binding(name: name, binds: Binds.local))),
+              extract(
+                node.body,
+                scope.withBinding(Binding(name: name, binds: Binds.local, symbol: symbol)),
+              ),
             ),
           },
         );
@@ -466,9 +504,18 @@ final class StatementExtractor implements StatementExtractorRef {
       // `for (var i = 0; i < n; i++)`
       case ForPartsWithDeclarations():
         final List<VariableDeclaration> declared = parts.variables.variables;
+        // A symbol is only ever minted when a real `logic.VarDecl` node exists to carry it (BRG1207,
+        // ADR-28 §9) — `_variable` below is only called for the single-declaration case, so a Binding's
+        // own symbol must be withheld on the same terms, or it would name a node the document never
+        // emits. `for (var i = 0, j = 0; ...)` therefore keeps its own pre-existing, unrelated
+        // limitation (no `init` at all) exactly as it was — a separate gap, not this milestone's to fix.
         final Scope inner = scope.child(<Binding>[
           for (final VariableDeclaration variable in declared)
-            Binding(name: variable.name.lexeme, binds: Binds.local),
+            Binding(
+              name: variable.name.lexeme,
+              binds: Binds.local,
+              symbol: declared.length == 1 ? _localSymbol(variable, scope) : null,
+            ),
         ]);
         return RawNode(
           kind: 'logic.For',

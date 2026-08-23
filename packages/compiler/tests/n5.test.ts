@@ -55,6 +55,29 @@ function catchExceptionDecl(id: string, name: string): Record<string, unknown> {
   return { id, kind: 'logic.VarDecl', span, name, type: { name: 'Object' }, isFinal: true };
 }
 
+/** A for-in loop's own declared variable (ADR-28, amended M9-A) — no initializer, bound by the runtime, once per iteration. */
+function loopVarDecl(id: string, name: string): Record<string, unknown> {
+  return { id, kind: 'logic.VarDecl', span, name, type: { name: 'int' }, isFinal: true };
+}
+
+/** A `for (final <loopDecl.name> in <iterable>) { <body> }`. */
+function forIn(
+  id: string,
+  loopDecl: Record<string, unknown>,
+  iterable: Record<string, unknown>,
+  body: Record<string, unknown>[],
+): Record<string, unknown> {
+  return {
+    id,
+    kind: 'logic.For',
+    span,
+    loopVariable: String(loopDecl['name']),
+    loopDecl,
+    iterable,
+    body: { id: `${id}-body`, kind: 'logic.Block', span, statements: body },
+  };
+}
+
 /** A `try { <tryBody> } on Object catch (<exceptionDecl.name>) { <catchBody> }`. */
 function tryCatch(
   id: string,
@@ -375,6 +398,68 @@ describe('N5 treats a targeted local the same as an untargeted one (ADR-28)', ()
               }),
             ],
           ),
+        ]),
+      ),
+    );
+
+    expect(result.program.ofKind('sig.Action')).toHaveLength(1);
+    expect(result.diagnostics).toEqual([]);
+  });
+
+  // M9-A: a for-in loop's own declared variable is *also* a `logic.VarDecl` (ADR-28, amended) — nested
+  // inside a `logic.For`'s own `loopDecl` field, not a bare statement. Proves the existing, unmodified
+  // `walk(program)`-based id set (M8-N's own generalisation) already covers it too, with zero N5 code
+  // changes — the identical shape M8-S already proved for a catch clause's own exception binding.
+
+  it('a closure capturing an enclosing loop variable is refused, even though it has a target', () => {
+    const outerLoop = loopVarDecl('outer-item', 'item');
+    const result = lift(
+      Program.of([
+        signal('sig1'),
+        forIn('for1', outerLoop, ref('r-items', 'items'), []) as unknown as AnyUirNode,
+        button(
+          'btn',
+          lambda('l1', [
+            stmt('s1', {
+              id: 'a1',
+              kind: 'logic.Assign',
+              span,
+              target: ref('r1', '_count', 'sig1'),
+              operator: 'assign',
+              value: ref('r3', 'item', 'outer-item'),
+              type: { name: 'int' },
+            }),
+          ]),
+        ),
+      ]),
+    );
+
+    expect(result.program.ofKind('sig.Action')).toHaveLength(0);
+    expect(result.diagnostics).toHaveLength(1);
+    expect(result.diagnostics[0]!.code).toBe('BRG2105');
+    expect(result.diagnostics[0]!.message).toContain('`item`');
+  });
+
+  it('a closure that declares its OWN for-in loop and reads that loop variable lifts — that capture is bound, not free', () => {
+    const innerLoop = loopVarDecl('inner-item', 'item');
+    // A list literal, not a `Ref` to an outer local — this test is isolating whether the loop variable's
+    // OWN capture is safe, not whether the iterable expression is; a bare, untargeted `Ref` here would be
+    // free for an unrelated reason (nothing declares `items`) and would refuse the lift for the wrong cause.
+    const iterable = { id: 'r-items', kind: 'logic.ListLit', span, elements: [], type: { name: 'List<int>' } };
+    const result = lift(
+      app(
+        lambda('l1', [
+          forIn('for1', innerLoop, iterable, [
+            stmt('s1', {
+              id: 'a1',
+              kind: 'logic.Assign',
+              span,
+              target: ref('r1', '_count', 'sig1'),
+              operator: 'assign',
+              value: ref('r3', 'item', 'inner-item'),
+              type: { name: 'int' },
+            }),
+          ]) as unknown as Record<string, unknown>,
         ]),
       ),
     );

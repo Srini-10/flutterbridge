@@ -2603,20 +2603,9 @@ class _WState extends State<W> {
       expect(first.bytes, second.bytes);
     });
 
-    test('a for-loop-declared variable is not given this identity (ADR-28 §17, out of scope)', () async {
-      final Extracted app = await extract(
-        actionWrapper.replaceFirst('{{BODY}}', '''
-  void _loop() {
-    for (var i = 0; i < 3; i++) {
-      _log = i;
-    }
-  }
-'''),
-      );
-      expect(app.errors, isEmpty);
-      expect(targetOfRead(app, 'i', occurrence: 0), isNull);
-      expect(targetOfRead(app, 'i', occurrence: 1), isNull);
-    });
+    // A for-loop-declared variable now gets this identity too (ADR-28 §17, amended M9-A) — see the
+    // dedicated 'for-loop variable declaration identity (ADR-28, amended M9-A)' group below, the same
+    // division this file already uses for the catch-clause amendment (M8-S).
   });
 
   group('catch-clause exception binding identity (ADR-28, amended M8-S)', () {
@@ -2742,6 +2731,281 @@ class _WState extends State<W> {
       final String source = actionWrapper.replaceFirst('{{BODY}}', '''
   void _first() { try { _log = 1; } on Object catch (e) { _log = e.hashCode; } }
   void _second() { try { _log = 2; } on Object catch (e) { _log = e.hashCode; } }
+''');
+      final Extracted first = await extract(source);
+      final Extracted second = await extract(source);
+      expect(first.bytes, second.bytes);
+    });
+  });
+
+  group('for-loop variable declaration identity (ADR-28, amended M9-A)', () {
+    // A `for-in` loop's own declared variable, and a C-style loop's own declared variable, get the
+    // identical treatment an ordinary `final`/`var` local (ADR-28) and a catch clause's own exception
+    // binding (M8-S) already do — owner+ordinal-qualified, target-based, never a name match.
+
+    String? targetOfRead(Extracted app, String name, {required int occurrence}) {
+      final List<Map<String, dynamic>> refs = app
+          .ofKind('logic.Ref')
+          .where((Map<String, dynamic> r) => r['name'] == name)
+          .toList();
+      return refs[occurrence]['target'] as String?;
+    }
+
+    const String actionWrapper = r'''
+import 'package:flutter/material.dart';
+class W extends StatefulWidget {
+  const W({super.key});
+  @override
+  State<W> createState() => _WState();
+}
+class _WState extends State<W> {
+  int _log = 0;
+  {{BODY}}
+  @override
+  Widget build(BuildContext context) => Text('$_log');
+}
+''';
+
+    List<Map<String, dynamic>> forNodes(Extracted app) => app.ofKind('logic.For');
+
+    test('a for-in loop variable, read inside its own body, resolves to a real declaration', () async {
+      final Extracted app = await extract(
+        actionWrapper.replaceFirst('{{BODY}}', '''
+  void _run() {
+    for (final item in <int>[1, 2, 3]) {
+      _log = item;
+    }
+  }
+'''),
+      );
+      expect(app.errors, isEmpty);
+
+      final Map<String, dynamic> loopDecl = forNodes(app).single['loopDecl'] as Map<String, dynamic>;
+      expect(loopDecl['kind'], 'logic.VarDecl');
+      expect(loopDecl['name'], 'item');
+      expect(loopDecl['isFinal'], true);
+      expect(targetOfRead(app, 'item', occurrence: 0), loopDecl['id']);
+    });
+
+    test('a for-in loop variable declared with `var` gets identity too, not only `final`', () async {
+      final Extracted app = await extract(
+        actionWrapper.replaceFirst('{{BODY}}', '''
+  void _run() {
+    for (var item in <int>[1, 2, 3]) {
+      _log = item;
+    }
+  }
+'''),
+      );
+      expect(app.errors, isEmpty);
+
+      final Map<String, dynamic> loopDecl = forNodes(app).single['loopDecl'] as Map<String, dynamic>;
+      expect(loopDecl['isFinal'], isNot(true));
+      expect(targetOfRead(app, 'item', occurrence: 0), loopDecl['id']);
+    });
+
+    test('a C-style loop’s own declared variable resolves in its test, update, and body alike', () async {
+      final Extracted app = await extract(
+        actionWrapper.replaceFirst('{{BODY}}', '''
+  void _run() {
+    for (var i = 0; i < 3; i++) {
+      _log = i;
+    }
+  }
+'''),
+      );
+      expect(app.errors, isEmpty);
+
+      final Map<String, dynamic> init = forNodes(app).single['init'] as Map<String, dynamic>;
+      expect(init['kind'], 'logic.VarDecl');
+      expect(init['name'], 'i');
+      // occurrence 0: the test (`i < 3`); 1: the update (`i++`); 2: the body (`_log = i`).
+      expect(targetOfRead(app, 'i', occurrence: 0), init['id']);
+      expect(targetOfRead(app, 'i', occurrence: 1), init['id']);
+      expect(targetOfRead(app, 'i', occurrence: 2), init['id']);
+    });
+
+    test('two unrelated actions declaring a for-in loop variable under the identical name never collide', () async {
+      final Extracted app = await extract(
+        actionWrapper.replaceFirst('{{BODY}}', '''
+  void _first() { for (final item in <int>[1]) { _log = item; } }
+  void _second() { for (final item in <int>[2]) { _log = item; } }
+'''),
+      );
+      expect(app.errors, isEmpty);
+
+      final List<Map<String, dynamic>> decls =
+          forNodes(app).map((Map<String, dynamic> f) => f['loopDecl'] as Map<String, dynamic>).toList();
+      expect(decls, hasLength(2));
+      expect(decls[0]['id'], isNot(decls[1]['id']), reason: 'same content, different owners — must not collapse');
+      expect(targetOfRead(app, 'item', occurrence: 0), decls[0]['id']);
+      expect(targetOfRead(app, 'item', occurrence: 1), decls[1]['id']);
+    });
+
+    test('nested loops with distinct names never conflate the inner and outer declaration', () async {
+      final Extracted app = await extract(
+        actionWrapper.replaceFirst('{{BODY}}', '''
+  void _run() {
+    for (final outer in <int>[1]) {
+      for (final inner in <int>[2]) {
+        _log = outer + inner;
+      }
+    }
+  }
+'''),
+      );
+      expect(app.errors, isEmpty);
+
+      final List<Map<String, dynamic>> decls =
+          forNodes(app).map((Map<String, dynamic> f) => f['loopDecl'] as Map<String, dynamic>).toList();
+      final Map<String, dynamic> outerDecl = decls.singleWhere((Map<String, dynamic> d) => d['name'] == 'outer');
+      final Map<String, dynamic> innerDecl = decls.singleWhere((Map<String, dynamic> d) => d['name'] == 'inner');
+      expect(targetOfRead(app, 'outer', occurrence: 0), outerDecl['id']);
+      expect(targetOfRead(app, 'inner', occurrence: 0), innerDecl['id']);
+    });
+
+    test('same-name nested shadowing: an inner read resolves to the inner declaration, and the read after the inner loop resolves back to the outer one', () async {
+      final Extracted app = await extract(
+        actionWrapper.replaceFirst('{{BODY}}', '''
+  void _run() {
+    for (final value in <int>[1]) {
+      for (final value in <int>[2]) {
+        _log = value;
+      }
+      _log = value;
+    }
+  }
+'''),
+      );
+      expect(app.errors, isEmpty);
+
+      final List<Map<String, dynamic>> decls =
+          forNodes(app).map((Map<String, dynamic> f) => f['loopDecl'] as Map<String, dynamic>).toList();
+      expect(decls, hasLength(2));
+      expect(decls[0]['id'], isNot(decls[1]['id']));
+      // occurrence 0: inside the inner loop, must target the inner declaration (the second `logic.For`
+      // extracted, since extraction visits the outer loop before descending into its own body).
+      expect(targetOfRead(app, 'value', occurrence: 0), decls[1]['id']);
+      // occurrence 1: after the inner loop ends, back in the outer loop's own body — must target the
+      // outer declaration, never the inner one that just went out of scope.
+      expect(targetOfRead(app, 'value', occurrence: 1), decls[0]['id']);
+    });
+
+    test('a loop variable and an ordinary local sharing a name share one ordinal sequence — never collide', () async {
+      final Extracted app = await extract(
+        actionWrapper.replaceFirst('{{BODY}}', '''
+  void _run() {
+    for (final item in <int>[1]) {
+      _log = item;
+    }
+    final int item = 9;
+    _log = item;
+  }
+'''),
+      );
+      expect(app.errors, isEmpty);
+
+      final Map<String, dynamic> loopDecl = forNodes(app).single['loopDecl'] as Map<String, dynamic>;
+      final List<Map<String, dynamic>> allVarDecls = app.ofKind('logic.VarDecl');
+      expect(allVarDecls, hasLength(2));
+      final Map<String, dynamic> localDecl =
+          allVarDecls.singleWhere((Map<String, dynamic> d) => d['id'] != loopDecl['id']);
+      expect(localDecl['id'], isNot(loopDecl['id']));
+      expect(targetOfRead(app, 'item', occurrence: 0), loopDecl['id'], reason: 'the loop-body read targets the loop variable');
+      expect(targetOfRead(app, 'item', occurrence: 1), localDecl['id'], reason: 'the read after the loop targets the later, ordinary local of the same name');
+    });
+
+    test('a loop variable and a catch exception binding sharing a name never collide', () async {
+      final Extracted app = await extract(
+        actionWrapper.replaceFirst('{{BODY}}', '''
+  void _run() {
+    for (final e in <int>[1]) {
+      _log = e;
+    }
+    try {
+      _log = 1;
+    } on Object catch (e) {
+      _log = e.hashCode;
+    }
+  }
+'''),
+      );
+      expect(app.errors, isEmpty);
+
+      final Map<String, dynamic> loopDecl = forNodes(app).single['loopDecl'] as Map<String, dynamic>;
+      final Map<String, dynamic> catchDecl = app
+          .ofKind('logic.TryCatch')
+          .expand((Map<String, dynamic> t) => (t['catches'] as List<dynamic>).cast<Map<String, dynamic>>())
+          .single['exceptionDecl'] as Map<String, dynamic>;
+      expect(loopDecl['id'], isNot(catchDecl['id']));
+      expect(targetOfRead(app, 'e', occurrence: 0), loopDecl['id']);
+      expect(targetOfRead(app, 'e', occurrence: 1), catchDecl['id']);
+    });
+
+    test('repeated reads of one loop variable share the same target', () async {
+      final Extracted app = await extract(
+        actionWrapper.replaceFirst('{{BODY}}', '''
+  void _run() {
+    for (final item in <int>[1]) {
+      _log = item;
+      _log = item;
+    }
+  }
+'''),
+      );
+      expect(app.errors, isEmpty);
+
+      final Map<String, dynamic> loopDecl = forNodes(app).single['loopDecl'] as Map<String, dynamic>;
+      expect(targetOfRead(app, 'item', occurrence: 0), loopDecl['id']);
+      expect(targetOfRead(app, 'item', occurrence: 1), loopDecl['id']);
+    });
+
+    test('a C-style loop declaring more than one variable keeps its own pre-existing, unrelated refusal — no `init`, no identity, unchanged by this milestone', () async {
+      final Extracted app = await extract(
+        actionWrapper.replaceFirst('{{BODY}}', '''
+  void _run() {
+    for (var i = 0, j = 0; i < 3; i++) {
+      _log = i;
+    }
+  }
+'''),
+      );
+      expect(app.errors, isEmpty);
+      expect(forNodes(app).single.containsKey('init'), isFalse, reason: 'unchanged pre-existing limitation — not this milestone’s to fix');
+      expect(targetOfRead(app, 'i', occurrence: 0), isNull);
+    });
+
+    test('a for-in loop reusing an already-declared variable (no declaration) stays honestly refused', () async {
+      final Extracted app = await extract(
+        actionWrapper.replaceFirst('{{BODY}}', '''
+  void _run() {
+    int item = 0;
+    for (item in <int>[1, 2, 3]) {
+      _log = item;
+    }
+  }
+'''),
+      );
+      expect(app.errors, isEmpty);
+      expect(
+        forNodes(app),
+        isEmpty,
+        reason: 'no declaration in this loop header — the existing opaque-statement refusal, untouched by M9-A',
+      );
+    });
+
+    test('the same source extracts to the same ids on a second, independent run (determinism)', () async {
+      final String source = actionWrapper.replaceFirst('{{BODY}}', '''
+  void _run() {
+    for (final outer in <int>[1]) {
+      for (final inner in <int>[2]) {
+        _log = outer + inner;
+      }
+    }
+    for (var i = 0; i < 3; i++) {
+      _log = i;
+    }
+  }
 ''');
       final Extracted first = await extract(source);
       final Extracted second = await extract(source);

@@ -155,7 +155,12 @@ export function emitStatement(statement: Stmt | Node | undefined, scope: EmitSco
       }
       const init = node['init'] === undefined ? '' : emitStatement(node['init'] as Node, scope).join(' ');
       const condition = node['test'] === undefined ? '' : emitExpression(node['test'] as Node, scope);
-      const update = node['update'] === undefined ? '' : emitExpression(node['update'] as Node, scope);
+      // `update` is an *array* of expressions in the schema (Dart's own `for (...; ...; a, b)` admits a
+      // comma-separated list) — not a single node. Passing the array straight to `emitExpression` treated
+      // it as a malformed node with no `kind`, unconditionally hitting the `<unknown>` default case
+      // (`BRG3002`) whenever a C-style loop had any update clause at all — a pre-existing defect this
+      // milestone's own identity work exposed while proving a classic-for build-proof end to end.
+      const update = asArray(node['update']).map((u) => emitExpression(u, scope)).join(', ');
       const lines = [`for (${init.replace(/;$/, '')}; ${condition}; ${update}) {`];
       lines.push(...indent(emitStatement(node['body'] as Node, scope)));
       lines.push('}');

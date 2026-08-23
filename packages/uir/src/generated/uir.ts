@@ -14,7 +14,7 @@ import { createHash } from 'node:crypto';
 export const UIR_VERSION = '1.7.0' as const;
 
 /** A hash of the schema sources this module was generated from. */
-export const UIR_SCHEMA_HASH = '2a21751c86ba6c2a' as const;
+export const UIR_SCHEMA_HASH = 'c307ad5dfe6c3fc3' as const;
 
 /** Node kind -> the fields of that node which hold `NodeId` references. */
 export const UIR_REFERENCE_FIELDS: Readonly<Record<string, readonly string[]>> = {
@@ -1286,7 +1286,9 @@ export interface For {
   readonly iterable?: Expr;
   /// Discriminant.
   readonly kind: 'logic.For';
-  /// The loop variable, for a for-in loop.
+  /// The for-in loop variable's own declaration (ADR-28, amended M9-A) — a real, declaration-tier `logic.VarDecl`, with no `initializer` (the runtime binds it, once per iteration, not an expression). A `logic.Ref` inside the loop body targets this node's own id, the same way any other local variable's read already does. Absent exactly when `loopVariable` is (a C-style loop, not a for-in loop).
+  readonly loopDecl?: VarDecl;
+  /// The loop variable's own name, for a for-in loop, by name only. `loopDecl` (ADR-28, amended M9-A) is the same binding's own declaration-tier identity — this field is retained unchanged, for description only.
   readonly loopVariable?: string;
   /// Where the node came from.
   readonly span: SourceSpan;
@@ -3201,6 +3203,7 @@ export function parseFor(value: unknown, path = 'For'): For {
     ...(own(o, 'init') === undefined || own(o, 'init') === null ? {} : { init: parseStmt(own(o, 'init'), `${path}.init`) }),
     ...(own(o, 'iterable') === undefined || own(o, 'iterable') === null ? {} : { iterable: parseExpr(own(o, 'iterable'), `${path}.iterable`) }),
     kind: 'logic.For',
+    ...(own(o, 'loopDecl') === undefined || own(o, 'loopDecl') === null ? {} : { loopDecl: parseVarDecl(own(o, 'loopDecl'), `${path}.loopDecl`) }),
     ...(own(o, 'loopVariable') === undefined || own(o, 'loopVariable') === null ? {} : { loopVariable: asString(own(o, 'loopVariable'), `${path}.loopVariable`) }),
     span: parseSourceSpan(req(o, 'span', path), `${path}.span`),
     ...(own(o, 'test') === undefined || own(o, 'test') === null ? {} : { test: parseExpr(own(o, 'test'), `${path}.test`) }),

@@ -62,11 +62,12 @@ final class Binding {
 
   /// The symbol it resolves to, when it is something another record can refer to.
   ///
-  /// An ordinary local (ADR-28) has one too, despite nothing outside its own function ever naming
-  /// it — it is needed *within* the function, by a later reference to the same declaration, and
-  /// `Symbols.local`'s owner+ordinal scheme is what keeps two lexically distinct locals from
-  /// colliding merely because they look alike (a plain `var`/`for`/`catch` binding does not yet;
-  /// ADR-28 §17 scopes this to ordinary `final`/`var` declarations only).
+  /// An ordinary local (ADR-28), a `catch` clause's own exception binding (M8-S), and a `for`-loop's own
+  /// declared variable (M9-A) all have one, despite nothing outside its own function ever naming it — it
+  /// is needed *within* the function, by a later reference to the same declaration, and `Symbols.local`'s
+  /// owner+ordinal scheme is what keeps two lexically distinct locals from colliding merely because they
+  /// look alike. A `catch` clause's stack-trace binding does not yet — a real, narrower, separately-
+  /// evidenced gap left unimplemented by design.
   final String? symbol;
 
   /// A build-method local's own initializer, substituted at every reference instead of named
@@ -94,11 +95,12 @@ final class Binding {
 /// the analyzer's own resolved `Element` (stable and comparable within one compilation, never by name or
 /// span), is unambiguous no matter how many times or in what order it is asked.
 ///
-/// Scoped deliberately narrow: only a `VariableDeclaration` that is a direct child of an ordinary
-/// `VariableDeclarationStatement`, or a `catch` clause's own exception binding, gets one (ADR-28 §17,
-/// amended M8-S — see `docs/adr/0028-amendment-catch-clause-parameter-identity.md`). A `for`-loop-
-/// declared variable and a `catch` clause's *stack-trace* binding remain unnumbered — the same category
-/// of gap, still measured only for what this amendment's own evidence covers.
+/// Scoped deliberately narrow: an ordinary `VariableDeclarationStatement`'s own declaration, a `catch`
+/// clause's own exception binding, a `for-in` loop's own declared variable, and a C-style `for` loop's
+/// own declared variable(s) all get one (ADR-28 §17, amended M8-S and M9-A — see
+/// `docs/adr/0028-amendment-catch-clause-parameter-identity.md` and
+/// `docs/adr/0028-amendment-for-loop-variable-identity.md`). A `catch` clause's *stack-trace* binding
+/// remains unnumbered — a real, narrower, separately-evidenced gap, not yet given the same treatment.
 Map<Element, int> _ordinalsOf(AstNode body) {
   final _OrdinalVisitor visitor = _OrdinalVisitor();
   body.accept(visitor);
@@ -112,8 +114,12 @@ final class _OrdinalVisitor extends RecursiveAstVisitor<void> {
   void visitVariableDeclaration(VariableDeclaration node) {
     // `node.parent` is the `VariableDeclarationList`; its own parent distinguishes an ordinary
     // `final x = 1;` (a `VariableDeclarationStatement`) from a `for (var i = 0; ...)` declaration (a
-    // `ForPartsWithDeclarations`) — only the former is numbered (ADR-28 §17).
-    if (node.parent?.parent is VariableDeclarationStatement) {
+    // `ForPartsWithDeclarations`) — ADR-28 originally numbered only the former; M9-A extends the same
+    // shared sequence to the latter, on the identical reasoning M8-S already applied to a catch clause's
+    // own exception binding (§3 of that amendment): a structural pre-pass numbers every declaration by
+    // AST shape alone, regardless of which of them extraction currently gives a real node to.
+    if (node.parent?.parent is VariableDeclarationStatement ||
+        node.parent?.parent is ForPartsWithDeclarations) {
       if (node.declaredFragment?.element case final Element element) {
         ordinals[element] = ordinals.length;
       }
@@ -132,6 +138,21 @@ final class _OrdinalVisitor extends RecursiveAstVisitor<void> {
       ordinals[element] = ordinals.length;
     }
     super.visitCatchClause(node);
+  }
+
+  @override
+  void visitDeclaredIdentifier(DeclaredIdentifier node) {
+    // A `for (final item in items)`'s own loop variable — a `DeclaredIdentifier`, not a
+    // `VariableDeclaration` (Dart's own grammar gives it a distinct AST node), but architecturally the
+    // same kind of binding: a value bound once per owning body's declaration-tier scheme, numbered in
+    // the *same* shared sequence for the identical collision-freedom reason M8-S already proved for catch
+    // bindings (M9-A). `DeclaredIdentifier` is used exclusively for a for-in loop's own declared
+    // variable — nothing else in Dart's grammar constructs one — so no parent-shape guard is needed here,
+    // unlike `visitVariableDeclaration` above.
+    if (node.declaredFragment?.element case final Element element) {
+      ordinals[element] = ordinals.length;
+    }
+    super.visitDeclaredIdentifier(node);
   }
 }
 
@@ -182,9 +203,9 @@ final class Scope {
   String? get owner => _owner;
 
   /// [element]'s own ordinal within the enclosing body, precomputed by [Scope.forBody] — `null` if this
-  /// scope carries no ordinal map, or if [element] is not one [_ordinalsOf] numbered (a `for`-loop
-  /// variable, or a `catch` clause's own stack-trace binding — a catch clause's *exception* binding is
-  /// numbered, M8-S).
+  /// scope carries no ordinal map, or if [element] is not one [_ordinalsOf] numbered (a `catch` clause's
+  /// own stack-trace binding — a catch clause's *exception* binding is numbered, M8-S, and a `for`-loop's
+  /// own declared variable(s) are numbered, M9-A).
   int? ordinalOf(Element element) => _ordinals?[element];
 
   /// What [name] means here, or `null` if it means nothing in scope.

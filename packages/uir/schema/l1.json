@@ -1051,7 +1051,11 @@
             },
             "loopVariable": {
               "type": "string",
-              "description": "The loop variable, for a for-in loop."
+              "description": "The loop variable's own name, for a for-in loop, by name only. `loopDecl` (ADR-28, amended M9-A) is the same binding's own declaration-tier identity — this field is retained unchanged, for description only."
+            },
+            "loopDecl": {
+              "$ref": "#/$defs/VarDecl",
+              "description": "The for-in loop variable's own declaration (ADR-28, amended M9-A) — a real, declaration-tier `logic.VarDecl`, with no `initializer` (the runtime binds it, once per iteration, not an expression). A `logic.Ref` inside the loop body targets this node's own id, the same way any other local variable's read already does. Absent exactly when `loopVariable` is (a C-style loop, not a for-in loop)."
             },
             "body": {
               "$ref": "l1.json#/$defs/Stmt",
