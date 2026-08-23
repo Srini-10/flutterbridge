@@ -295,3 +295,9 @@ export function multiLoopVariablesRaw(): string {
   const path = fileURLToPath(new URL('../../../../fixtures/uir/multi_loop_variables.ndjson', import.meta.url));
   return readFileSync(path, 'utf8');
 }
+
+/** The real `fixtures/apps/growing_scope` document, raw analyzer output (M9-C) — not yet normalized. */
+export function growingScopeRaw(): string {
+  const path = fileURLToPath(new URL('../../../../fixtures/uir/growing_scope.ndjson', import.meta.url));
+  return readFileSync(path, 'utf8');
+}

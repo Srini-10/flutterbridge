@@ -556,6 +556,99 @@ describe('N5 treats a targeted local the same as an untargeted one (ADR-28)', ()
     expect(result.program.ofKind('sig.Action')).toHaveLength(1);
     expect(result.diagnostics).toEqual([]);
   });
+
+  // M9-C: a declaration list's own later member resolves an earlier one via sequential, growing scope —
+  // `b`'s own initializer now carries a real `target` at `a`. Proves the existing, unmodified
+  // `walk(program)`-based id set still finds every declaration regardless of which declaration's own
+  // initializer references which, with zero N5 code changes.
+
+  it('a closure capturing the SECOND member of an enclosing, cross-initializer-resolved declaration list is refused', () => {
+    const aDecl = varDecl('outer-a', 'a', 1);
+    const bDecl = {
+      id: 'outer-b',
+      kind: 'logic.VarDecl',
+      span,
+      name: 'b',
+      type: { name: 'int' },
+      isFinal: true,
+      initializer: {
+        id: 'outer-b-init',
+        kind: 'logic.Binary',
+        span,
+        left: ref('outer-b-left', 'a', 'outer-a'),
+        operator: '+',
+        right: { id: 'outer-b-one', kind: 'logic.Lit', span, value: 1, type: { name: 'int' } },
+        type: { name: 'int' },
+      },
+    };
+    const declList = { id: 'block1', kind: 'logic.Block', span, statements: [aDecl, bDecl] };
+    const result = lift(
+      Program.of([
+        signal('sig1'),
+        declList as unknown as AnyUirNode,
+        button(
+          'btn',
+          lambda('l1', [
+            stmt('s1', {
+              id: 'a1',
+              kind: 'logic.Assign',
+              span,
+              target: ref('r1', '_count', 'sig1'),
+              operator: 'assign',
+              value: ref('r3', 'b', 'outer-b'),
+              type: { name: 'int' },
+            }),
+          ]),
+        ),
+      ]),
+    );
+
+    expect(result.program.ofKind('sig.Action')).toHaveLength(0);
+    expect(result.diagnostics).toHaveLength(1);
+    expect(result.diagnostics[0]!.code).toBe('BRG2105');
+    expect(result.diagnostics[0]!.message).toContain('`b`');
+  });
+
+  it('a closure that declares its OWN cross-initializer-resolved declaration list and reads both members lifts — both captures are bound, not free', () => {
+    const aDecl = varDecl('inner-a', 'a', 1);
+    const bDecl = {
+      id: 'inner-b',
+      kind: 'logic.VarDecl',
+      span,
+      name: 'b',
+      type: { name: 'int' },
+      isFinal: true,
+      initializer: {
+        id: 'inner-b-init',
+        kind: 'logic.Binary',
+        span,
+        left: ref('inner-b-left', 'a', 'inner-a'),
+        operator: '+',
+        right: { id: 'inner-b-one', kind: 'logic.Lit', span, value: 1, type: { name: 'int' } },
+        type: { name: 'int' },
+      },
+    };
+    const result = lift(
+      app(
+        lambda('l1', [
+          aDecl,
+          bDecl,
+          stmt('s1', {
+            id: 'a1',
+            kind: 'logic.Assign',
+            span,
+            target: ref('r1', '_count', 'sig1'),
+            operator: 'assign',
+            value: ref('r3', 'b', 'inner-b'),
+            type: { name: 'int' },
+          }),
+        ] as unknown as Record<string, unknown>[]),
+      ),
+    );
+
+    expect(result.program.ofKind('sig.Action')).toHaveLength(1);
+    expect(result.diagnostics).toEqual([]);
+  });
 });
 
 describe('N5 is deterministic, idempotent and identity-correct', () => {

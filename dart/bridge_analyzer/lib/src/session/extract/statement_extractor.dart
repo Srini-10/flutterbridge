@@ -14,6 +14,7 @@ import 'package:analyzer/dart/ast/ast.dart';
 import 'package:analyzer/dart/element/element.dart';
 import 'package:bridge_analyzer/src/diagnostics/codes.dart';
 import 'package:bridge_analyzer/src/model/raw_node.dart';
+import 'package:bridge_analyzer/src/model/source_span.dart';
 import 'package:bridge_analyzer/src/session/adapters/adapter_context.dart';
 import 'package:bridge_analyzer/src/session/adapters/adapter_registry.dart';
 import 'package:bridge_analyzer/src/session/adapters/adapter_result.dart';
@@ -202,21 +203,10 @@ final class StatementExtractor implements StatementExtractorRef {
       case VariableDeclarationStatement():
         // `var a = 1, b = 2;` is several declarations in one statement. The schema has one node per
         // declaration, so a multi-declaration statement becomes a Block of them — the same program,
-        // in the shape the schema can hold.
-        final List<VariableDeclaration> variables = node.variables.variables;
-        if (variables.length == 1) {
-          return _variable(variables.single, node.variables, scope);
-        }
-        return RawNode(
-          kind: 'logic.Block',
-          span: out.span(node),
-          fields: <String, RawValue>{
-            'statements': RawList(<RawValue>[
-              for (final VariableDeclaration variable in variables)
-                RawChild(_variable(variable, node.variables, scope)),
-            ]),
-          },
-        );
+        // in the shape the schema can hold. Extracted sequentially (M9-C): `b`'s own initializer sees
+        // `a`, the identical growing-scope pattern [_declarationList] documents.
+        final (List<RawNode> nodes, _) = _declarationList(node.variables.variables, node.variables, scope);
+        return _asStatement(nodes, out.span(node));
 
       case IfStatement():
         return RawNode(
@@ -504,20 +494,15 @@ final class StatementExtractor implements StatementExtractorRef {
       // `for (var i = 0; i < n; i++)` and `for (var i = 0, j = 10; i < j; i++, j--)`
       case ForPartsWithDeclarations():
         final List<VariableDeclaration> declared = parts.variables.variables;
-        // `scope.dart`'s `_OrdinalVisitor` numbers every `VariableDeclaration` structurally, by AST
-        // shape alone, regardless of how many share one `ForPartsWithDeclarations` — a single
-        // declaration and several are numbered identically (M9-A, M9-B). A symbol is therefore available
-        // here on the same terms `_localSymbol` already uses everywhere else: an owner, a resolved
-        // element, and an ordinal. No length-based gating is needed any more.
-        final Scope inner = scope.child(<Binding>[
-          for (final VariableDeclaration variable in declared)
-            Binding(name: variable.name.lexeme, binds: Binds.local, symbol: _localSymbol(variable, scope)),
-        ]);
+        // Sequential (M9-C): `j`'s own initializer is extracted against a scope that already has `i` in
+        // it, the same way `i`'s test/update/body reads already do — [_declarationList]'s own doc
+        // explains why this is sound and why it does not fabricate a forward reference.
+        final (List<RawNode> initNodes, Scope inner) = _declarationList(declared, parts.variables, scope);
         return RawNode(
           kind: 'logic.For',
           span: out.span(node),
           fields: <String, RawValue>{
-            'init': RawChild(_forInit(declared, parts.variables, scope)),
+            'init': RawChild(_asStatement(initNodes, out.span(parts.variables))),
             if (parts.condition != null)
               'test': RawChild(expressions.extract(parts.condition!, inner)),
             if (parts.updaters.isNotEmpty)
@@ -534,31 +519,58 @@ final class StatementExtractor implements StatementExtractorRef {
     }
   }
 
-  /// A C-style loop's own `init` — one real `logic.VarDecl` for a single declared variable, unchanged
-  /// from before M9-B, or several wrapped in a `logic.Block` (M9-B) when the loop declares more than
-  /// one, the identical shape [_declaring]'s own sibling case above already uses for an ordinary
-  /// multi-declaration `VariableDeclarationStatement` (`var a = 1, b = 2;`) — the schema's own `init:
-  /// Stmt` already admits a `Block` (the same union every other statement position does), so no schema
-  /// change is needed to hold more than one declaration losslessly.
+  /// Extracts a declaration list — `var a = 1, b = 2;`'s own `variables`, or a C-style loop's own —
+  /// **sequentially** (M9-C): each declaration's own initializer is extracted against the scope *before*
+  /// it, and only afterward does that declaration itself enter scope, one at a time.
   ///
-  /// [scope] is the scope *before* any of [declared] — the same one every declaration's own initializer
-  /// is extracted against, unchanged from this method's own pre-M9-B behaviour for the single-declaration
-  /// case, and matching [VariableDeclarationStatement]'s own sibling case exactly: a later declaration's
-  /// own initializer reading an earlier one in the same list (`var i = 0, j = i + 1;`, legal Dart) is
-  /// left exactly as unresolved as it already is for an ordinary multi-declaration statement — a
-  /// pre-existing, shared characteristic this method does not change, not a regression this milestone
-  /// introduces.
-  RawNode _forInit(List<VariableDeclaration> declared, VariableDeclarationList list, Scope scope) {
-    if (declared.length == 1) {
-      return _variable(declared.single, list, scope);
+  /// This is the identical growing-scope pattern [statementsOf] already threads one statement to the
+  /// next (this file's own top), applied one level deeper, inside a single declaration list — not a new
+  /// scoping concept. It is what makes `var a = 1, b = a + 1;` resolve `a` inside `b`'s own initializer
+  /// (real Dart; the two `dart analyze` probes this milestone ran first confirm it), and, just as
+  /// importantly, what makes it structurally *impossible* to fabricate a resolution Dart itself refuses:
+  /// `var a = a;` and `var a = b, b = 1;` are real Dart errors
+  /// (`referenced_before_declaration`) precisely because neither name is in scope yet at the point its
+  /// own initializer runs — and neither is it here, because a declaration's own binding is added to the
+  /// running scope only *after* [_variable] has already read its initializer against the scope before it.
+  ///
+  /// The ordinal pre-pass (`scope.dart`'s `_OrdinalVisitor`) already numbers every declaration in the
+  /// list structurally, before any of this runs — knowing a declaration's own eventual identity is not
+  /// the same thing as that declaration being lexically visible yet, and this method is what keeps the
+  /// two separate: [_localSymbol] is a pure function of the *declaration itself* (owner + ordinal), so
+  /// computing it early costs nothing, but a `logic.Ref` only ever resolves against a name [Scope.lookup]
+  /// actually finds — and an as-yet-undeclared name is not found, on exactly the same terms an ordinary,
+  /// single declaration already refuses an out-of-scope read on.
+  ///
+  /// Returns each declaration's own `logic.VarDecl` (source order) and the scope *after* the whole list
+  /// — what every following statement ([_declaring], independently) or a C-style loop's own test/update/
+  /// body should resolve reads against.
+  (List<RawNode>, Scope) _declarationList(
+    List<VariableDeclaration> declared,
+    VariableDeclarationList list,
+    Scope scope,
+  ) {
+    Scope current = scope;
+    final List<RawNode> nodes = <RawNode>[];
+    for (final VariableDeclaration variable in declared) {
+      nodes.add(_variable(variable, list, current));
+      current = current.child(<Binding>[
+        Binding(name: variable.name.lexeme, binds: Binds.local, symbol: _localSymbol(variable, current)),
+      ]);
     }
+    return (nodes, current);
+  }
+
+  /// [nodes] as a single statement — the node itself if there is exactly one, or all of them wrapped in
+  /// a `logic.Block` (the schema's own `Stmt` union already admits a `Block` anywhere a `Stmt` is
+  /// expected, M9-B) — the shape both a multi-declaration `var a = 1, b = 2;` and a C-style loop's own
+  /// multi-declaration `init` need.
+  RawNode _asStatement(List<RawNode> nodes, SourceSpan span) {
+    if (nodes.length == 1) return nodes.single;
     return RawNode(
       kind: 'logic.Block',
-      span: out.span(list),
+      span: span,
       fields: <String, RawValue>{
-        'statements': RawList(<RawValue>[
-          for (final VariableDeclaration variable in declared) RawChild(_variable(variable, list, scope)),
-        ]),
+        'statements': RawList(<RawValue>[for (final RawNode node in nodes) RawChild(node)]),
       },
     );
   }

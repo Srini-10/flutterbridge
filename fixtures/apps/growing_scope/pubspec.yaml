@@ -1,0 +1,20 @@
+name: growing_scope
+description: >-
+  M9-C fixture: sequential declaration-list scope (ADR-28, amended M9-C) — a later declaration in
+  `var a = 1, b = a + 1;`, or a C-style loop's own `for (var i = 0, j = i + 1; ...)`, now resolves an
+  earlier declaration in the same list, the same declaration-tier identity every other local already has,
+  proving two- and three-declaration chains, outer-scope interaction, an ordinary local sharing a name,
+  and cross-action collisions all resolve each read to the exact declaration in scope at that point, never
+  by name (docs/m9/m9c-growing-declaration-list-scope.md).
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true
