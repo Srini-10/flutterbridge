@@ -402,6 +402,17 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
         if (declaration !== undefined && declaration['kind'] === 'logic.EnumDecl') {
           const dotted = typeof node['name'] === 'string' ? node['name'] : '';
           const member = dotted.split('.').at(-1) ?? '';
+          // `Reason.values` (M8-Z) — Dart reserves `values` as a member name for every enum, so no real
+          // enum constant is ever named this; the analyzer already only resolves a Ref to this branch
+          // when the resolved element structurally *is* the compiler-synthesized `values` getter
+          // (`_enumValuesTarget`, never by matching this string), so checking the name's tail here is
+          // safe and unambiguous, not a second, weaker recognition of the same thing. `declaration.values`
+          // is this same `EnumDecl`'s own already-ordered member list — the one place declaration order
+          // is recorded — so the array is built from it directly, never re-derived or re-sorted.
+          if (member === 'values') {
+            const values = Array.isArray(declaration['values']) ? (declaration['values'] as unknown[]) : [];
+            return `[${values.map((v) => stringLiteral(String(v))).join(', ')}]`;
+          }
           return stringLiteral(member);
         }
 

@@ -161,7 +161,9 @@ final class ExpressionExtractor {
               : '${node.prefix.name}.${node.identifier.name}',
           scope,
           staticTarget:
-              _enumConstantTarget(node.identifier.element) ?? _topLevelTarget(node.identifier.element),
+              _enumConstantTarget(node.identifier.element) ??
+              _enumValuesTarget(node.identifier.element) ??
+              _topLevelTarget(node.identifier.element),
         );
 
       case PrefixedIdentifier():
@@ -199,7 +201,9 @@ final class ExpressionExtractor {
             '${target.name}.${node.propertyName.name}',
             scope,
             staticTarget:
-                _enumConstantTarget(node.propertyName.element) ?? _topLevelTarget(node.propertyName.element),
+                _enumConstantTarget(node.propertyName.element) ??
+                _enumValuesTarget(node.propertyName.element) ??
+                _topLevelTarget(node.propertyName.element),
           );
         }
         if (registry.mountedIntrinsicOf(node) case final MountedKind kind) {
@@ -1012,6 +1016,41 @@ final class ExpressionExtractor {
       return null;
     }
     final InstanceElement owner = field.enclosingElement;
+    final String? name = owner.name;
+    final String library = owner.library.identifier;
+    if (name == null) {
+      return null;
+    }
+    return Symbols.typeIn(
+      library,
+      name,
+      packageName: out.packageName,
+      localPackages: out.localPackageNames,
+      extractedDependencyFiles: out.extractedDependencyFiles,
+    );
+  }
+
+  /// The enum declaration [element] belongs to, when [element] is the `values` getter Dart's own
+  /// compiler synthesizes for every enum (M8-Z) — never a user-declared member.
+  ///
+  /// `field.name == 'values'` looks like a name check, but it is not the same class of thing this
+  /// project otherwise refuses to do (M8-V's own rule): Dart's own language grammar *reserves* `values`
+  /// on an enum specifically — a user cannot declare an enum constant, or any other static member, with
+  /// that name (a compile error). So the combination checked here — a *static* field named `values`
+  /// whose *enclosing element is structurally an `EnumElement`* — cannot be satisfied by anything other
+  /// than the one member the compiler itself puts there; there is no real Dart program this could ever
+  /// misidentify. A project-defined **class** (not an enum) with its own `.values` static getter fails
+  /// the `owner is EnumElement` check and is left completely alone, falling through exactly as it always
+  /// did — proven directly, not assumed (§ reduction ladder).
+  String? _enumValuesTarget(Element? element) {
+    final Element? field = element is GetterElement && element.isOriginVariable ? element.variable : element;
+    if (field is! FieldElement || !field.isStatic || field.name != 'values') {
+      return null;
+    }
+    final InstanceElement owner = field.enclosingElement;
+    if (owner is! EnumElement) {
+      return null;
+    }
     final String? name = owner.name;
     final String library = owner.library.identifier;
     if (name == null) {

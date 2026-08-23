@@ -277,3 +277,9 @@ export function switchExpressionRaw(): string {
   const path = fileURLToPath(new URL('../../../../fixtures/uir/switch_expression.ndjson', import.meta.url));
   return readFileSync(path, 'utf8');
 }
+
+/** The real `fixtures/apps/enum_values` document, raw analyzer output (M8-Z) — not yet normalized. */
+export function enumValuesRaw(): string {
+  const path = fileURLToPath(new URL('../../../../fixtures/uir/enum_values.ndjson', import.meta.url));
+  return readFileSync(path, 'utf8');
+}

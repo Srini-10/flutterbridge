@@ -3051,4 +3051,134 @@ class W extends StatelessWidget {
       expect(app.ofKind('logic.OpaqueExpr'), hasLength(1));
     });
   });
+
+  group('enum .values recognition (M8-Z)', () {
+    // Real Continuum's own `SettingsRepository.featureStates()` (`settings_repository.dart:60`) reads
+    // `ContinuumFeature.values` — the member every Dart enum's own compiler synthesizes, resolved to the
+    // *getter* `element.isOriginVariable`/`.variable` already unwraps for an ordinary constant read
+    // (`_enumConstantTarget`'s own comment). `.values` itself is never an enum *constant*
+    // (`field.isEnumConstant` is false for it), so before M8-Z it fell through to `_topLevelTarget`,
+    // which also returns null — an enum member with no target at all, reported `BRG3006` as though
+    // nothing in the program declared it.
+
+    test('a project enum\u2019s own .values carries a target to its own EnumDecl', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+enum E { a, b }
+String f() => E.values.join();
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => Text(f());
+}
+''');
+      expect(app.errors, isEmpty);
+      final Map<String, dynamic> decl = app.only('logic.EnumDecl');
+      final Map<String, dynamic> ref = app.ofKind('logic.Ref').singleWhere((Map<String, dynamic> r) => r['name'] == 'E.values');
+      expect(ref['target'], decl['id']);
+    });
+
+    test('two different enums\u2019 own .values never share identity, even with identical members', () async {
+      final Extracted app = await extract(r'''
+import 'package:flutter/material.dart';
+enum EnumA { ready, waiting }
+enum EnumB { ready, waiting }
+String fa() => EnumA.values.join();
+String fb() => EnumB.values.join();
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => Text('${fa()}${fb()}');
+}
+''');
+      expect(app.errors, isEmpty);
+      final List<dynamic> decls = app.ofKind('logic.EnumDecl');
+      final String declA = (decls.singleWhere((dynamic d) => (d as Map<String, dynamic>)['name'] == 'EnumA') as Map<String, dynamic>)['id'] as String;
+      final String declB = (decls.singleWhere((dynamic d) => (d as Map<String, dynamic>)['name'] == 'EnumB') as Map<String, dynamic>)['id'] as String;
+      final Map<String, dynamic> refA = app.ofKind('logic.Ref').singleWhere((Map<String, dynamic> r) => r['name'] == 'EnumA.values');
+      final Map<String, dynamic> refB = app.ofKind('logic.Ref').singleWhere((Map<String, dynamic> r) => r['name'] == 'EnumB.values');
+      expect(refA['target'], declA);
+      expect(refB['target'], declB);
+      expect(refA['target'], isNot(refB['target']));
+    });
+
+    test('an enhanced enum (constructor, field) resolves .values exactly like a plain one', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+enum Feature {
+  notifications('n'),
+  clipboard('c');
+  const Feature(this.id);
+  final String id;
+}
+String f() => Feature.values.map((x) => x.id).join();
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => Text(f());
+}
+''');
+      expect(app.errors, isEmpty);
+      final Map<String, dynamic> decl = app.only('logic.EnumDecl');
+      expect(decl['values'], <String>['notifications', 'clipboard']);
+      final Map<String, dynamic> ref = app.ofKind('logic.Ref').singleWhere((Map<String, dynamic> r) => r['name'] == 'Feature.values');
+      expect(ref['target'], decl['id']);
+    });
+
+    test('a cross-file enum\u2019s own .values resolves to the declaring file, not the referring one', () async {
+      final Extracted app = await extract(
+        '''
+import 'package:flutter/material.dart';
+import 'reason.dart';
+String f() => Reason.values.join();
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => Text(f());
+}
+''',
+        extra: <String, String>{'reason.dart': 'enum Reason { a, b }'},
+      );
+      expect(app.errors, isEmpty);
+      final Map<String, dynamic> decl = app.only('logic.EnumDecl');
+      final Map<String, dynamic> ref = app.ofKind('logic.Ref').singleWhere((Map<String, dynamic> r) => r['name'] == 'Reason.values');
+      expect(ref['target'], decl['id']);
+      expect((decl['span'] as Map<String, dynamic>)['file'], 'lib/reason.dart');
+    });
+
+    test('a project-defined CLASS with its own .values static getter is never recognized — negative control', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class FakeEnumish {
+  static List<String> get values => ['not', 'real'];
+}
+String f() => FakeEnumish.values.join();
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => Text(f());
+}
+''');
+      final Map<String, dynamic> ref = app.ofKind('logic.Ref').singleWhere((Map<String, dynamic> r) => r['name'] == 'FakeEnumish.values');
+      expect(
+        ref['target'],
+        isNull,
+        reason: 'a class is not an EnumElement — the owner check must exclude it, never matched by the name "values" alone',
+      );
+    });
+
+    test('an SDK enum\u2019s own .values is left unresolved, same as an SDK enum constant already is', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+String f() => Brightness.values.map((b) => b.name).join();
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => Text(f());
+}
+''');
+      final Map<String, dynamic> ref = app.ofKind('logic.Ref').singleWhere((Map<String, dynamic> r) => r['name'] == 'Brightness.values');
+      expect(ref['target'], isNull, reason: 'an SDK enum is outside this project — the same exclusion _enumConstantTarget already has');
+    });
+  });
 }
