@@ -501,28 +501,23 @@ final class StatementExtractor implements StatementExtractorRef {
           },
         );
 
-      // `for (var i = 0; i < n; i++)`
+      // `for (var i = 0; i < n; i++)` and `for (var i = 0, j = 10; i < j; i++, j--)`
       case ForPartsWithDeclarations():
         final List<VariableDeclaration> declared = parts.variables.variables;
-        // A symbol is only ever minted when a real `logic.VarDecl` node exists to carry it (BRG1207,
-        // ADR-28 §9) — `_variable` below is only called for the single-declaration case, so a Binding's
-        // own symbol must be withheld on the same terms, or it would name a node the document never
-        // emits. `for (var i = 0, j = 0; ...)` therefore keeps its own pre-existing, unrelated
-        // limitation (no `init` at all) exactly as it was — a separate gap, not this milestone's to fix.
+        // `scope.dart`'s `_OrdinalVisitor` numbers every `VariableDeclaration` structurally, by AST
+        // shape alone, regardless of how many share one `ForPartsWithDeclarations` — a single
+        // declaration and several are numbered identically (M9-A, M9-B). A symbol is therefore available
+        // here on the same terms `_localSymbol` already uses everywhere else: an owner, a resolved
+        // element, and an ordinal. No length-based gating is needed any more.
         final Scope inner = scope.child(<Binding>[
           for (final VariableDeclaration variable in declared)
-            Binding(
-              name: variable.name.lexeme,
-              binds: Binds.local,
-              symbol: declared.length == 1 ? _localSymbol(variable, scope) : null,
-            ),
+            Binding(name: variable.name.lexeme, binds: Binds.local, symbol: _localSymbol(variable, scope)),
         ]);
         return RawNode(
           kind: 'logic.For',
           span: out.span(node),
           fields: <String, RawValue>{
-            if (declared.length == 1)
-              'init': RawChild(_variable(declared.single, parts.variables, scope)),
+            'init': RawChild(_forInit(declared, parts.variables, scope)),
             if (parts.condition != null)
               'test': RawChild(expressions.extract(parts.condition!, inner)),
             if (parts.updaters.isNotEmpty)
@@ -537,6 +532,35 @@ final class StatementExtractor implements StatementExtractorRef {
       case ForLoopParts():
         return out.opaqueStmt(node, 'for loop');
     }
+  }
+
+  /// A C-style loop's own `init` — one real `logic.VarDecl` for a single declared variable, unchanged
+  /// from before M9-B, or several wrapped in a `logic.Block` (M9-B) when the loop declares more than
+  /// one, the identical shape [_declaring]'s own sibling case above already uses for an ordinary
+  /// multi-declaration `VariableDeclarationStatement` (`var a = 1, b = 2;`) — the schema's own `init:
+  /// Stmt` already admits a `Block` (the same union every other statement position does), so no schema
+  /// change is needed to hold more than one declaration losslessly.
+  ///
+  /// [scope] is the scope *before* any of [declared] — the same one every declaration's own initializer
+  /// is extracted against, unchanged from this method's own pre-M9-B behaviour for the single-declaration
+  /// case, and matching [VariableDeclarationStatement]'s own sibling case exactly: a later declaration's
+  /// own initializer reading an earlier one in the same list (`var i = 0, j = i + 1;`, legal Dart) is
+  /// left exactly as unresolved as it already is for an ordinary multi-declaration statement — a
+  /// pre-existing, shared characteristic this method does not change, not a regression this milestone
+  /// introduces.
+  RawNode _forInit(List<VariableDeclaration> declared, VariableDeclarationList list, Scope scope) {
+    if (declared.length == 1) {
+      return _variable(declared.single, list, scope);
+    }
+    return RawNode(
+      kind: 'logic.Block',
+      span: out.span(list),
+      fields: <String, RawValue>{
+        'statements': RawList(<RawValue>[
+          for (final VariableDeclaration variable in declared) RawChild(_variable(variable, list, scope)),
+        ]),
+      },
+    );
   }
 
   /// Whether [statement] is the last statement reachable in its own function's top-level body —

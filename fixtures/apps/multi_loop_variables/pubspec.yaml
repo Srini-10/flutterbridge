@@ -1,0 +1,20 @@
+name: multi_loop_variables
+description: >-
+  M9-B fixture: a C-style loop declaring more than one variable
+  (`for (var i = 0, j = 10; i < j; i++, j--)`) — every declared variable gets the same declaration-tier
+  identity a single-declaration C-style loop already has (M9-A), proving two and three declarations,
+  same-content declarations, nested loops with identical names, and an ordinary local sharing a name all
+  resolve each read to the exact declaration in scope at that point, never by name
+  (docs/adr/0028-amendment-for-loop-variable-identity.md, docs/m9/m9b-c-style-multi-declaration-loop-identity.md).
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

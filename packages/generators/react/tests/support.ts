@@ -289,3 +289,9 @@ export function loopVariablesRaw(): string {
   const path = fileURLToPath(new URL('../../../../fixtures/uir/loop_variables.ndjson', import.meta.url));
   return readFileSync(path, 'utf8');
 }
+
+/** The real `fixtures/apps/multi_loop_variables` document, raw analyzer output (M9-B) — not yet normalized. */
+export function multiLoopVariablesRaw(): string {
+  const path = fileURLToPath(new URL('../../../../fixtures/uir/multi_loop_variables.ndjson', import.meta.url));
+  return readFileSync(path, 'utf8');
+}

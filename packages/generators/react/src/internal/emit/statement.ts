@@ -24,6 +24,33 @@ function asArray(value: unknown): Node[] {
 }
 
 /**
+ * A C-style loop's own `init` clause — `let i = 0`, or, since M9-B, `let i = 0, j = 10` for several
+ * declared variables.
+ *
+ * `logic.For.init` holds a single `logic.VarDecl` for one declared variable (unchanged since before
+ * M9-B), or a `logic.Block` of several (M9-B) — the identical shape `logic.VarDecl` emission's own
+ * sibling case already uses for an ordinary multi-declaration `VariableDeclarationStatement`. Both are
+ * flattened to one `Node[]` here and emitted as one comma-separated declarator list under a single
+ * `const`/`let` keyword — Dart's own grammar allows exactly one keyword per declaration list, so every
+ * declaration in the list shares `isFinal`, and reading it from the first is sound for all of them.
+ */
+function initClauseOf(init: unknown, scope: EmitScope): string {
+  if (init === undefined) return '';
+  const node = init as Node;
+  const decls = kindOf(node) === 'logic.Block' ? asArray(node['statements']) : [node];
+  if (decls.length === 0) return '';
+  const keyword = decls[0]!['isFinal'] === true ? 'const' : 'let';
+  return `${keyword} ${decls.map((d) => declaratorOf(d, scope)).join(', ')}`;
+}
+
+/** One declarator inside a `let`/`const` declaration list — `name` alone, or `name = <expr>`. */
+function declaratorOf(decl: Node, scope: EmitScope): string {
+  const name = identifierOf(String(decl['name'] ?? '_'));
+  const initializer = decl['initializer'];
+  return initializer === undefined ? name : `${name} = ${emitExpression(initializer as Node, scope)}`;
+}
+
+/**
  * Whether `node` (a `logic.Switch` with no `default`/`defaultCase`) is structurally *provable* to be
  * exhaustive — every one of a single enum's own declared members is covered by exactly one case, and, if
  * the subject's own resolved type is nullable, a `null` case covers that too (M8-Y).
@@ -153,15 +180,15 @@ export function emitStatement(statement: Stmt | Node | undefined, scope: EmitSco
         lines.push('}');
         return lines;
       }
-      const init = node['init'] === undefined ? '' : emitStatement(node['init'] as Node, scope).join(' ');
+      const init = initClauseOf(node['init'], scope);
       const condition = node['test'] === undefined ? '' : emitExpression(node['test'] as Node, scope);
       // `update` is an *array* of expressions in the schema (Dart's own `for (...; ...; a, b)` admits a
       // comma-separated list) — not a single node. Passing the array straight to `emitExpression` treated
       // it as a malformed node with no `kind`, unconditionally hitting the `<unknown>` default case
-      // (`BRG3002`) whenever a C-style loop had any update clause at all — a pre-existing defect this
-      // milestone's own identity work exposed while proving a classic-for build-proof end to end.
+      // (`BRG3002`) whenever a C-style loop had any update clause at all — a pre-existing defect M9-A
+      // exposed while proving a classic-for build-proof end to end.
       const update = asArray(node['update']).map((u) => emitExpression(u, scope)).join(', ');
-      const lines = [`for (${init.replace(/;$/, '')}; ${condition}; ${update}) {`];
+      const lines = [`for (${init}; ${condition}; ${update}) {`];
       lines.push(...indent(emitStatement(node['body'] as Node, scope)));
       lines.push('}');
       return lines;

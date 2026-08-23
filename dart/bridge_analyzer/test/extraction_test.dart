@@ -2960,20 +2960,8 @@ class _WState extends State<W> {
       expect(targetOfRead(app, 'item', occurrence: 1), loopDecl['id']);
     });
 
-    test('a C-style loop declaring more than one variable keeps its own pre-existing, unrelated refusal — no `init`, no identity, unchanged by this milestone', () async {
-      final Extracted app = await extract(
-        actionWrapper.replaceFirst('{{BODY}}', '''
-  void _run() {
-    for (var i = 0, j = 0; i < 3; i++) {
-      _log = i;
-    }
-  }
-'''),
-      );
-      expect(app.errors, isEmpty);
-      expect(forNodes(app).single.containsKey('init'), isFalse, reason: 'unchanged pre-existing limitation — not this milestone’s to fix');
-      expect(targetOfRead(app, 'i', occurrence: 0), isNull);
-    });
+    // A C-style loop declaring more than one variable now gets this identity too (M9-B) — see the
+    // dedicated 'C-style multi-declaration loop variable identity (ADR-28, amended M9-B)' group below.
 
     test('a for-in loop reusing an already-declared variable (no declaration) stays honestly refused', () async {
       final Extracted app = await extract(
@@ -3004,6 +2992,271 @@ class _WState extends State<W> {
     }
     for (var i = 0; i < 3; i++) {
       _log = i;
+    }
+  }
+''');
+      final Extracted first = await extract(source);
+      final Extracted second = await extract(source);
+      expect(first.bytes, second.bytes);
+    });
+  });
+
+  group('C-style multi-declaration loop variable identity (ADR-28, amended M9-B)', () {
+    // `for (var i = 0, j = 10; i < j; i++, j--)` — every declared variable gets the identical
+    // declaration-tier identity a single-declaration C-style loop already has (M9-A): the ordinal
+    // pre-pass already numbers each `VariableDeclaration` under one `ForPartsWithDeclarations`
+    // structurally, regardless of count, so only the `_for` extraction's own length-gating needed to be
+    // lifted — no new identity concept, no schema change (`init: Stmt` already admits the `logic.Block`
+    // this milestone reuses, the identical shape an ordinary multi-declaration
+    // `VariableDeclarationStatement` already uses).
+
+    String? targetOfRead(Extracted app, String name, {required int occurrence}) {
+      final List<Map<String, dynamic>> refs = app
+          .ofKind('logic.Ref')
+          .where((Map<String, dynamic> r) => r['name'] == name)
+          .toList();
+      return refs[occurrence]['target'] as String?;
+    }
+
+    const String actionWrapper = r'''
+import 'package:flutter/material.dart';
+class W extends StatefulWidget {
+  const W({super.key});
+  @override
+  State<W> createState() => _WState();
+}
+class _WState extends State<W> {
+  int _log = 0;
+  {{BODY}}
+  @override
+  Widget build(BuildContext context) => Text('$_log');
+}
+''';
+
+    List<Map<String, dynamic>> forNodes(Extracted app) => app.ofKind('logic.For');
+
+    /// The `logic.VarDecl` children of a `logic.For.init`, whether `init` is a single declaration or a
+    /// `logic.Block` of several (M9-B).
+    List<Map<String, dynamic>> initDecls(Map<String, dynamic> forNode) {
+      final Map<String, dynamic> init = forNode['init'] as Map<String, dynamic>;
+      if (init['kind'] == 'logic.Block') {
+        return (init['statements'] as List<dynamic>).cast<Map<String, dynamic>>();
+      }
+      return <Map<String, dynamic>>[init];
+    }
+
+    test('two declarations both resolve in the condition, the updaters, and the body', () async {
+      final Extracted app = await extract(
+        actionWrapper.replaceFirst('{{BODY}}', '''
+  void _run() {
+    for (var i = 0, j = 10; i < j; i++, j--) {
+      _log = i + j;
+    }
+  }
+'''),
+      );
+      expect(app.errors, isEmpty);
+
+      final List<Map<String, dynamic>> decls = initDecls(forNodes(app).single);
+      expect(decls, hasLength(2));
+      final Map<String, dynamic> iDecl = decls.singleWhere((Map<String, dynamic> d) => d['name'] == 'i');
+      final Map<String, dynamic> jDecl = decls.singleWhere((Map<String, dynamic> d) => d['name'] == 'j');
+      expect(iDecl['id'], isNot(jDecl['id']));
+
+      // Document field order is canonical (alphabetical — `canonical_sort.dart`'s own `SplayTreeMap`,
+      // "a map's key order carries no meaning"), not source order: `body`, then `test`, then `update`.
+      expect(targetOfRead(app, 'i', occurrence: 0), iDecl['id'], reason: 'body');
+      expect(targetOfRead(app, 'j', occurrence: 0), jDecl['id'], reason: 'body');
+      expect(targetOfRead(app, 'i', occurrence: 1), iDecl['id'], reason: 'condition');
+      expect(targetOfRead(app, 'j', occurrence: 1), jDecl['id'], reason: 'condition');
+      expect(targetOfRead(app, 'i', occurrence: 2), iDecl['id'], reason: 'updater');
+      expect(targetOfRead(app, 'j', occurrence: 2), jDecl['id'], reason: 'updater');
+    });
+
+    test('three declarations all resolve, distinctly', () async {
+      final Extracted app = await extract(
+        actionWrapper.replaceFirst('{{BODY}}', '''
+  void _run() {
+    for (var i = 0, j = 1, k = 2; i < 3; i++, j++, k++) {
+      _log = i + j + k;
+    }
+  }
+'''),
+      );
+      expect(app.errors, isEmpty);
+
+      final List<Map<String, dynamic>> decls = initDecls(forNodes(app).single);
+      expect(decls, hasLength(3));
+      expect(decls.map((Map<String, dynamic> d) => d['id']).toSet(), hasLength(3), reason: 'three distinct ids');
+      final Map<String, dynamic> kDecl = decls.singleWhere((Map<String, dynamic> d) => d['name'] == 'k');
+      expect(targetOfRead(app, 'k', occurrence: 0), kDecl['id'], reason: 'update');
+      expect(targetOfRead(app, 'k', occurrence: 1), kDecl['id'], reason: 'body');
+    });
+
+    test('two declarations with byte-identical initializer content never collapse to one id', () async {
+      final Extracted app = await extract(
+        actionWrapper.replaceFirst('{{BODY}}', '''
+  void _run() {
+    for (var i = 0, j = 0; i < j; i++, j++) {
+      _log = i + j;
+    }
+  }
+'''),
+      );
+      expect(app.errors, isEmpty);
+
+      final List<Map<String, dynamic>> decls = initDecls(forNodes(app).single);
+      expect(decls, hasLength(2));
+      expect(decls[0]['id'], isNot(decls[1]['id']), reason: 'identical content, different ordinals — must not collapse');
+      expect(targetOfRead(app, 'i', occurrence: 0), decls[0]['id'], reason: 'body');
+      expect(targetOfRead(app, 'j', occurrence: 0), decls[1]['id'], reason: 'body');
+    });
+
+    test('repeated reads of one declaration in the multi-declaration case share the same target', () async {
+      final Extracted app = await extract(
+        actionWrapper.replaceFirst('{{BODY}}', '''
+  void _run() {
+    for (var i = 0, j = 10; i < j; i++, j--) {
+      _log = i;
+      _log = i;
+    }
+  }
+'''),
+      );
+      expect(app.errors, isEmpty);
+
+      final Map<String, dynamic> iDecl = initDecls(forNodes(app).single).singleWhere((Map<String, dynamic> d) => d['name'] == 'i');
+      expect(targetOfRead(app, 'i', occurrence: 1), iDecl['id']);
+      expect(targetOfRead(app, 'i', occurrence: 2), iDecl['id']);
+    });
+
+    test('nested multi-declaration loops with the same variable names never collide', () async {
+      final Extracted app = await extract(
+        actionWrapper.replaceFirst('{{BODY}}', '''
+  void _run() {
+    for (var i = 0, j = 10; i < j; i++, j--) {
+      for (var i = 0, j = 1; i < j; i++, j--) {
+        _log = i + j;
+      }
+      _log = i + j;
+    }
+  }
+'''),
+      );
+      expect(app.errors, isEmpty);
+
+      final List<Map<String, dynamic>> loops = forNodes(app);
+      expect(loops, hasLength(2));
+      final List<Map<String, dynamic>> outerDecls = initDecls(loops[0]);
+      final List<Map<String, dynamic>> innerDecls = initDecls(loops[1]);
+      final Set<String> allIds = <String>{
+        for (final Map<String, dynamic> d in <Map<String, dynamic>>[...outerDecls, ...innerDecls]) d['id'] as String,
+      };
+      expect(allIds, hasLength(4), reason: 'four distinct declarations, none shared between the two loops');
+
+      final Map<String, dynamic> outerI = outerDecls.singleWhere((Map<String, dynamic> d) => d['name'] == 'i');
+      final Map<String, dynamic> innerI = innerDecls.singleWhere((Map<String, dynamic> d) => d['name'] == 'i');
+      // Canonical (alphabetical) field order, nested: inner's own body, test, update, THEN the outer
+      // loop's own trailing statement (after the inner loop ends), then the outer's own test, update.
+      // occurrence 0: inner body; 1: inner test — both must target the inner declaration.
+      expect(targetOfRead(app, 'i', occurrence: 0), innerI['id'], reason: 'inner body');
+      expect(targetOfRead(app, 'i', occurrence: 1), innerI['id'], reason: 'inner test');
+      // occurrence 3: back in the outer loop's own body, after the inner loop ends — must target outer,
+      // never the inner declaration that just went out of scope.
+      expect(targetOfRead(app, 'i', occurrence: 3), outerI['id'], reason: 'outer body, after the inner loop');
+    });
+
+    test('an ordinary local sharing a name with a loop declaration shares one ordinal sequence — never collides', () async {
+      final Extracted app = await extract(
+        actionWrapper.replaceFirst('{{BODY}}', '''
+  void _run() {
+    for (var i = 0, j = 10; i < j; i++, j--) {
+      _log = i;
+    }
+    final int i = 99;
+    _log = i;
+  }
+'''),
+      );
+      expect(app.errors, isEmpty);
+
+      final Map<String, dynamic> loopI = initDecls(forNodes(app).single).singleWhere((Map<String, dynamic> d) => d['name'] == 'i');
+      final List<Map<String, dynamic>> allVarDecls = app.ofKind('logic.VarDecl');
+      final Map<String, dynamic> localI = allVarDecls.singleWhere((Map<String, dynamic> d) => d['id'] != loopI['id'] && d['name'] == 'i');
+      expect(localI['id'], isNot(loopI['id']));
+      // Canonical field order: the loop's own body(0), test(1), update(2), then — a separate top-level
+      // statement — the ordinary local's own read(3).
+      expect(targetOfRead(app, 'i', occurrence: 0), loopI['id'], reason: 'the loop-body read targets the loop declaration');
+      expect(targetOfRead(app, 'i', occurrence: 3), localI['id'], reason: 'the read after the loop targets the later, ordinary local');
+    });
+
+    test('a catch exception binding sharing a name with a loop declaration never collides', () async {
+      final Extracted app = await extract(
+        actionWrapper.replaceFirst('{{BODY}}', '''
+  void _run() {
+    for (var i = 0, e = 10; i < e; i++, e--) {
+      _log = i;
+    }
+    try {
+      _log = 1;
+    } on Object catch (e) {
+      _log = e.hashCode;
+    }
+  }
+'''),
+      );
+      expect(app.errors, isEmpty);
+
+      final Map<String, dynamic> loopE = initDecls(forNodes(app).single).singleWhere((Map<String, dynamic> d) => d['name'] == 'e');
+      final Map<String, dynamic> catchDecl = app
+          .ofKind('logic.TryCatch')
+          .expand((Map<String, dynamic> t) => (t['catches'] as List<dynamic>).cast<Map<String, dynamic>>())
+          .single['exceptionDecl'] as Map<String, dynamic>;
+      expect(loopE['id'], isNot(catchDecl['id']));
+    });
+
+    test('a later declaration reading an earlier one in the same initializer list is left exactly as unresolved as an ordinary multi-declaration statement already leaves it — a pre-existing, shared characteristic, not a regression', () async {
+      final Extracted app = await extract(
+        actionWrapper.replaceFirst('{{BODY}}', '''
+  void _run() {
+    for (var i = 0, j = i + 1; i < j; i++, j--) {
+      _log = i + j;
+    }
+  }
+'''),
+      );
+      expect(app.errors, isEmpty, reason: 'Dart itself resolves this reference; only this extractor’s own scope choice leaves it untargeted');
+      // Canonical field order: body(0, resolved — `i` is in scope for the loop's own body), then
+      // init(1) — `j`'s own initializer read of `i`, the same, pre-existing, shared scope choice
+      // `VariableDeclarationStatement`'s own multi-declaration sibling case already makes — then
+      // test(2)/update(3), both resolved.
+      expect(targetOfRead(app, 'i', occurrence: 0), isNotNull, reason: 'the loop body sees i, which is in the inner scope');
+      expect(targetOfRead(app, 'i', occurrence: 1), isNull, reason: 'j’s own initializer, extracted against the outer (pre-loop) scope');
+    });
+
+    test('the condition and updaters may be omitted, unchanged by this milestone', () async {
+      final Extracted app = await extract(
+        actionWrapper.replaceFirst('{{BODY}}', '''
+  void _run() {
+    for (var i = 0, j = 10;;) {
+      _log = i + j;
+      break;
+    }
+  }
+'''),
+      );
+      expect(app.errors, isEmpty);
+      final Map<String, dynamic> forNode = forNodes(app).single;
+      expect(forNode.containsKey('test'), isFalse);
+      expect(forNode.containsKey('update'), isFalse);
+      expect(initDecls(forNode), hasLength(2));
+    });
+
+    test('the same source extracts to the same ids on a second, independent run (determinism)', () async {
+      final String source = actionWrapper.replaceFirst('{{BODY}}', '''
+  void _run() {
+    for (var i = 0, j = 10, k = 20; i < j; i++, j--, k--) {
+      _log = i + j + k;
     }
   }
 ''');

@@ -78,6 +78,25 @@ function forIn(
   };
 }
 
+/**
+ * A C-style loop declaring more than one variable (M9-B) —
+ * `for (let <decls[0].name> = ..., <decls[1].name> = ...; ; ) { <body> }`. `init` is a `logic.Block` of
+ * [decls], the same shape an ordinary multi-declaration `VariableDeclarationStatement` already uses.
+ */
+function classicForMulti(
+  id: string,
+  decls: Record<string, unknown>[],
+  body: Record<string, unknown>[] = [],
+): Record<string, unknown> {
+  return {
+    id,
+    kind: 'logic.For',
+    span,
+    init: { id: `${id}-init`, kind: 'logic.Block', span, statements: decls },
+    body: { id: `${id}-body`, kind: 'logic.Block', span, statements: body },
+  };
+}
+
 /** A `try { <tryBody> } on Object catch (<exceptionDecl.name>) { <catchBody> }`. */
 function tryCatch(
   id: string,
@@ -457,6 +476,76 @@ describe('N5 treats a targeted local the same as an untargeted one (ADR-28)', ()
               target: ref('r1', '_count', 'sig1'),
               operator: 'assign',
               value: ref('r3', 'item', 'inner-item'),
+              type: { name: 'int' },
+            }),
+          ]) as unknown as Record<string, unknown>,
+        ]),
+      ),
+    );
+
+    expect(result.program.ofKind('sig.Action')).toHaveLength(1);
+    expect(result.diagnostics).toEqual([]);
+  });
+
+  // M9-B: a C-style loop declaring more than one variable represents `init` as a `logic.Block` of
+  // `logic.VarDecl`s (the same shape an ordinary multi-declaration `VariableDeclarationStatement`
+  // already uses) — nested one level deeper than M9-A's own `loopDecl`/single-`init` case. Proves the
+  // existing, unmodified `walk(program)`-based id set still finds every declaration regardless, with
+  // zero N5 code changes.
+
+  it('a closure capturing the SECOND declaration of an enclosing multi-declaration loop is refused', () => {
+    const iDecl = loopVarDecl('outer-i', 'i');
+    const jDecl = loopVarDecl('outer-j', 'j');
+    const outerLoop = classicForMulti('for1', [iDecl, jDecl]);
+    const result = lift(
+      Program.of([
+        signal('sig1'),
+        outerLoop as unknown as AnyUirNode,
+        button(
+          'btn',
+          lambda('l1', [
+            stmt('s1', {
+              id: 'a1',
+              kind: 'logic.Assign',
+              span,
+              target: ref('r1', '_count', 'sig1'),
+              operator: 'assign',
+              value: ref('r3', 'j', 'outer-j'),
+              type: { name: 'int' },
+            }),
+          ]),
+        ),
+      ]),
+    );
+
+    expect(result.program.ofKind('sig.Action')).toHaveLength(0);
+    expect(result.diagnostics).toHaveLength(1);
+    expect(result.diagnostics[0]!.code).toBe('BRG2105');
+    expect(result.diagnostics[0]!.message).toContain('`j`');
+  });
+
+  it('a closure that declares its OWN multi-declaration loop and reads both declarations lifts — both captures are bound, not free', () => {
+    const iDecl = loopVarDecl('inner-i', 'i');
+    const jDecl = loopVarDecl('inner-j', 'j');
+    const result = lift(
+      app(
+        lambda('l1', [
+          classicForMulti('for1', [iDecl, jDecl], [
+            stmt('s1', {
+              id: 'a1',
+              kind: 'logic.Assign',
+              span,
+              target: ref('r1', '_count', 'sig1'),
+              operator: 'assign',
+              value: {
+                id: 'v1',
+                kind: 'logic.Binary',
+                span,
+                left: ref('r2', 'i', 'inner-i'),
+                operator: '+',
+                right: ref('r3', 'j', 'inner-j'),
+                type: { name: 'int' },
+              },
               type: { name: 'int' },
             }),
           ]) as unknown as Record<string, unknown>,
