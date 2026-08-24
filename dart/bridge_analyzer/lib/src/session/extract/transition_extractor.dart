@@ -31,6 +31,7 @@ import 'package:bridge_analyzer/src/session/adapters/adapter_result.dart';
 import 'package:bridge_analyzer/src/session/extract/binding_extractor.dart';
 import 'package:bridge_analyzer/src/session/extract/raw_node_emitter.dart';
 import 'package:bridge_analyzer/src/session/extract/scope.dart';
+import 'package:bridge_analyzer/src/session/extract/widget_extractor.dart';
 
 /// Turns the navigations adapters find into `app.RouteTransition` records.
 final class TransitionExtractor {
@@ -45,6 +46,12 @@ final class TransitionExtractor {
 
   /// What the adapters run in.
   final AdapterContext context;
+
+  /// For extracting an inline destination's own widget tree (M9-D) — the same mechanism a normal
+  /// `build()` render tree already uses. Wired after construction, like `expressions.transitions`
+  /// (`extractor.dart`): `WidgetExtractor` needs the annotation extractor, which is built after this
+  /// one, so neither can construct the other first.
+  late final WidgetExtractor widgets;
 
   /// For turning an argument's value expression into a `bind.*`.
   final BindingExtractor bindings;
@@ -92,10 +99,11 @@ final class TransitionExtractor {
       return null;
     }
 
-    // Exactly one of the two destinations, mirroring the schema (§A17). The adapter's own constructors
-    // make this exclusive — `toPath` sets `path`, `toWidget` sets `widget` — so this reads whichever
-    // one it set.
-    final RawValue? destination = _destination(declaration);
+    // Exactly one of the three destinations, mirroring the schema (§A17, amended M9-D). The adapter's
+    // own constructors make the path/widget half exclusive — `toPath` sets `path`, `toWidget` sets
+    // `widget` — so this reads whichever one it set; which of `component`/`inline` a widget destination
+    // becomes is decided here, by whether it resolves to a project-declared component.
+    final ({String field, RawValue value})? destination = _destination(declaration, scope);
     if (destination == null) {
       // The inline destination is not a component this project declares (an inline `Container`, a
       // widget from a package). It was reported where that was discovered; there is no edge to emit —
@@ -134,7 +142,8 @@ final class TransitionExtractor {
     // larger weakening of BRG1207 than the case deserves. The real decision is upstream: either an
     // unresolved path is an error rather than a warning, or a departure gains a representable form for
     // a path it could not resolve. Both are spec decisions and neither is improvised here.
-    final String? symbol = toRoute ? null : out.symbols.navigation(_ordinal++);
+    final int ordinal = _ordinal++;
+    final String? symbol = toRoute ? null : out.symbols.navigation(ordinal);
     _seen[node] = symbol;
 
     out.emit(
@@ -142,11 +151,27 @@ final class TransitionExtractor {
         kind: 'app.RouteTransition',
         symbol: symbol,
         span: out.span(declaration.at),
+        // An `inline` destination (M9-D) embeds a widget subtree (`inline`, `RawChild`) the same way
+        // `ui.Component`'s own `render` does, and needs the same thing `ui.Component` already gets from
+        // `component_extractor.dart` (`anchorSegment: name`): a private anchor namespace. Without one,
+        // two structurally identical dialogs — two `showDialog` calls in one file, each building
+        // `AlertDialog(title: Text(...), ...)` — both claim the bare anchor
+        // `lib/main.dart#AlertDialog/title:Text` and trip BRG1205 ("two nodes claim the anchor"), because
+        // an unset `anchorSegment` here leaves the anchor path exactly as empty as it started, and a
+        // fresh, empty anchor path is what "this is a root" means to `node_factory.dart`. A `target`/
+        // `component` destination embeds no subtree, so it needs no such namespace.
+        anchorSegment: destination.field == 'inline' ? 'transition[$ordinal]' : null,
         fields: <String, RawValue>{
-          if (toRoute) 'target': destination else 'component': destination,
-          if (_arguments(declaration.arguments, scope) case final List<RawValue> args
-              when args.isNotEmpty)
-            'arguments': RawList(args),
+          destination.field: destination.value,
+          // `arguments` names constructor parameters crossing to a *separate* destination — the shape
+          // N11 (ADR-11) promotes across a route boundary. An `inline` destination has no such boundary:
+          // its own values are already embedded directly in the tree `inline` carries (M9-D), so
+          // recording them again here would offer N11 a promotion that does not correspond to any real
+          // prop interface — nothing receives a promoted value, because nothing is generated separately.
+          if (destination.field != 'inline')
+            if (_arguments(declaration.arguments, scope) case final List<RawValue> args
+                when args.isNotEmpty)
+              'arguments': RawList(args),
           if (enclosingComponent != null) 'source': RawRef(enclosingComponent!),
         },
       ),
@@ -154,16 +179,17 @@ final class TransitionExtractor {
     return symbol;
   }
 
-  /// The transition's destination: a route named by path, or a component constructed inline.
+  /// The transition's destination: a route named by path, a project component constructed inline, or —
+  /// M9-D — an inline widget tree, for a destination that does not resolve to a project component.
   ///
-  /// Returns null only for an inline destination that does not resolve to a project component — the one
-  /// case with nothing legal to point at. A path always yields a `RawRouteRef`; whether that path names
-  /// a route the program declares is the builder's question, answered against the whole route table
-  /// (§A17), and an unmatched path is `BRG1308` there rather than a guess here.
-  RawValue? _destination(TransitionDeclaration declaration) {
+  /// Returns null only when nothing here is legal to point at (§A17.5). A path always yields a
+  /// `RawRouteRef`; whether that path names a route the program declares is the builder's question,
+  /// answered against the whole route table (§A17), and an unmatched path is `BRG1308` there rather
+  /// than a guess here.
+  ({String field, RawValue value})? _destination(TransitionDeclaration declaration, Scope scope) {
     final String? path = declaration.path;
     if (path != null) {
-      return RawRouteRef(path);
+      return (field: 'target', value: RawRouteRef(path));
     }
 
     final Expression widget = declaration.widget!;
@@ -183,18 +209,18 @@ final class TransitionExtractor {
 
     final String name = widget.constructorName.type.name.lexeme;
     final String? symbol = out.componentSymbolOf(widget.staticType, name);
-    if (symbol == null) {
-      out.report(
-        Codes.unsupportedWrapper,
-        'This navigation pushes `$name`, which is not a component this project declares — an inline '
-        'tree, or a widget from a package. `app.RouteTransition.component` refers to a component by id, '
-        'and inventing a symbol nothing declares would be a dangling reference (BRG1201). The edge is '
-        'left out of the route graph, so cross-route state promotion (N11) will not see it.',
-        widget,
-      );
-      return null;
+    if (symbol != null) {
+      return (field: 'component', value: RawRef(symbol));
     }
-    return RawRef(symbol);
+
+    // Not a component the project declares — a route overlay whose destination is a framework widget,
+    // `showDialog(builder: (_) => AlertDialog(...))` being the evidenced shape (M8-X, M9-D). Extracted
+    // as an ordinary widget tree, the identical mechanism a normal `build()` render tree already uses
+    // (`WidgetExtractor`, the material catalog under ADR-18) — `AlertDialog` needed a catalog entry
+    // (title/content slots, an `actions` child list), not new extraction logic. Embedded directly
+    // (`inline`), not referenced: there is no declaration for a `RawRef` to name, so inventing a symbol
+    // would be exactly the dangling reference (BRG1201) the component branch above refuses.
+    return (field: 'inline', value: RawChild(widgets.extract(widget, scope)));
   }
 
   /// The arguments the navigation carries, each as `{name, transport, binding}`.

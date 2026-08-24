@@ -120,6 +120,7 @@ abstract final class MaterialCatalog {
   'CustomScrollView': WidgetEntry(name: 'CustomScrollView', childrenProp: 'slivers'),
   'SliverList': WidgetEntry(name: 'SliverList', childrenProp: 'children'),
   'MultiSliver': WidgetEntry(name: 'MultiSliver', childrenProp: 'children'),
+  'AlertDialog': WidgetEntry(name: 'AlertDialog', slots: <String>{'title', 'content'}),
   'AppBar': WidgetEntry(name: 'AppBar', slots: <String>{'title', 'leading', 'flexibleSpace', 'bottom'}, childrenProp: 'actions'),
   'SliverAppBar': WidgetEntry(name: 'SliverAppBar', slots: <String>{'title', 'leading', 'flexibleSpace', 'bottom'}, childrenProp: 'actions'),
   'Scaffold': WidgetEntry(name: 'Scaffold', slots: <String>{'appBar', 'body', 'bottomNavigationBar', 'bottomSheet', 'drawer', 'endDrawer', 'floatingActionButton'}, childrenProp: 'persistentFooterButtons'),

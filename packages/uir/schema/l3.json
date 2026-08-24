@@ -581,7 +581,7 @@
       ]
     },
     "RouteTransition": {
-      "description": "A navigation from one place in the application to another — a `Navigator.push`, or a `go_router` navigation.\n\nThis is the input to N11 (ADR-11). C1 found that `go_router` is the dominant navigation shape in real apps and our first analyzer saw none of it; with an empty nav-graph, N11 silently does nothing — a pass that looks like it works because it never fires.\n\n**Exactly one of `target` and `component` is present** (Spec v2.4 §A17). A navigation either names a route that exists, or constructs its destination inline — and the second is not a route: it has no path, and none is invented for it. The dialect cannot express that exclusivity (a `NodeId` is a string; nothing about its shape says what it points at), so it is checked in code at emit and again at load — `BRG1307`.\n\nA `Navigator.pop()` is **not** a transition: it returns along an edge that already exists rather than creating one.",
+      "description": "A navigation from one place in the application to another — a `Navigator.push`, or a `go_router` navigation.\n\nThis is the input to N11 (ADR-11). C1 found that `go_router` is the dominant navigation shape in real apps and our first analyzer saw none of it; with an empty nav-graph, N11 silently does nothing — a pass that looks like it works because it never fires.\n\n**Exactly one of `target`, `component` and `inline` is present** (Spec v2.4 §A17, amended ADR-0025-amendment-inline-overlay-destinations, M9-D). A navigation either names a route that exists, constructs a project-declared component inline, or — a route overlay whose destination is a framework widget no project declares, `showDialog(builder: (_) => AlertDialog(...))` — renders an inline widget tree directly. The dialect cannot express that exclusivity (a `NodeId` is a string; nothing about its shape says what it points at), so it is checked in code at emit and again at load — `BRG1307`.\n\nA `Navigator.pop()` is **not** a transition: it returns along an edge that already exists rather than creating one.",
       "x-uir-kind": "app.RouteTransition",
       "allOf": [
         {
@@ -605,7 +605,11 @@
             },
             "component": {
               "$ref": "shared.json#/$defs/NodeId",
-              "description": "The `ui.Component` rendered, when the navigation constructs its destination inline — `Navigator.push(context, MaterialPageRoute(builder: (_) => HomeScreen()))`.\n\nThere is no path here and none is invented: which URL such a push *becomes* on a path-based target is a legalization decision, made in the layer that knows the target (Spec v2.4 §A17.6).\n\nAbsent when the navigation names a route; see `target`."
+              "description": "The `ui.Component` rendered, when the navigation constructs its destination inline — `Navigator.push(context, MaterialPageRoute(builder: (_) => HomeScreen()))`.\n\nThere is no path here and none is invented: which URL such a push *becomes* on a path-based target is a legalization decision, made in the layer that knows the target (Spec v2.4 §A17.6).\n\nAbsent when the navigation names a route or renders an inline widget tree; see `target`, `inline`."
+            },
+            "inline": {
+              "$ref": "l2.json#/$defs/UiNode",
+              "description": "The widget tree rendered directly, when the navigation's destination does not resolve to a project-declared `ui.Component` — `showDialog(context: context, builder: (context) => AlertDialog(title: Text('...'), content: ...))`. `AlertDialog` is a framework widget, not something the project declares, so there is no `ui.Component` id to point `component` at; the tree is embedded here instead, the same way `ui.Cond.then`/`ui.List.template` already embed a subtree rather than referencing one (M9-D, ADR-0025 amendment).\n\nAbsent when the navigation names a route or a declared component; see `target`, `component`."
             },
             "arguments": {
               "type": "array",

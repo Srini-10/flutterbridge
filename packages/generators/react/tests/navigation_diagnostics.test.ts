@@ -204,7 +204,11 @@ describe('M6-E — the capability registry is well formed (Phase 3)', () => {
     // They had the same text and the same owner until M6-E, and they do not have the same blocker: a
     // dialog/sheet/menu pushes a `Route` (ADR-0024 cites the SDK), so ADR-0025 D2 closes it and the owner
     // is the schema. A snack bar is enqueued on a `ScaffoldMessenger` and no ADR models that yet.
-    const routeOverlays = ['showDialog', 'showModalBottomSheet', 'showMenu', 'AlertDialog', 'PopupMenuButton'];
+    //
+    // `AlertDialog` is deliberately absent from this list (M9-D): the schema blocker ADR-0025 D2 named is
+    // closed for exactly this destination now (`app.RouteTransition.inline`), so it is a real `WIDGET_MAP`
+    // entry, not a registry entry — `unsupported.ts`'s own comment at its old position explains why.
+    const routeOverlays = ['showDialog', 'showModalBottomSheet', 'showMenu', 'PopupMenuButton'];
     for (const key of routeOverlays) {
       const entry = MISSING_CAPABILITIES[key];
       expect(entry, `${key} is missing from the registry`).toBeDefined();

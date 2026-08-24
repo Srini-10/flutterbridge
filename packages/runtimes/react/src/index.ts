@@ -520,6 +520,15 @@ export {
   type ScaffoldProps,
 } from './internal/widgets/shell.js';
 
+// ── M9-D: a route overlay's own inline destination ──────────────────────────────────────────────────
+export {
+  AlertDialog,
+  DialogHost,
+  type AlertDialogProps,
+  type DialogHostHandle,
+  type DialogHostProps,
+} from './internal/widgets/dialog.js';
+
 export {
   BottomNavigationBar,
   BottomNavigationBarItem,

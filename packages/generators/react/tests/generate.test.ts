@@ -778,6 +778,34 @@ describe('M4-B declared capabilities are checked before emission', () => {
   });
 });
 
+// ── M9-D: AlertDialog.actions is not rendered ────────────────────────────────────────────────────
+
+describe('M9-D — AlertDialog.actions is refused rather than silently dropped', () => {
+  function appWith(widget: unknown): AnyUirNode[] {
+    return [
+      component('c1', 'HomeScreen', widget as ReturnType<typeof element>),
+      { id: 'r1', kind: 'app.Route', span, path: '/', component: 'c1' } as unknown as AnyUirNode,
+    ];
+  }
+
+  it('BRG3013 — an AlertDialog with children (actions:) is refused, not silently rendered without them', () => {
+    const dialog = element('ad1', 'AlertDialog', {}, [element('btn1', 'TextButton', {}, [])]);
+    const { context, reported } = harness(appWith(dialog));
+    const { files } = reactGenerator.generate(context);
+    const errors = reported.filter((d) => d.severity === 'error');
+    expect(errors.some((d) => d.code === 'BRG3013')).toBe(true);
+    expect(errors.find((d) => d.code === 'BRG3013')?.message).toContain('AlertDialog.actions');
+    expect(files).toEqual([]);
+  });
+
+  it('an AlertDialog with no children is not refused', () => {
+    const dialog = element('ad1', 'AlertDialog', {}, []);
+    const { context, reported } = harness(appWith(dialog));
+    reactGenerator.generate(context);
+    expect(reported.filter((d) => d.severity === 'error')).toEqual([]);
+  });
+});
+
 // ── M4-C: the asset pipeline ──────────────────────────────────────────────────────────────────────
 
 describe('M4-C asset collection', () => {

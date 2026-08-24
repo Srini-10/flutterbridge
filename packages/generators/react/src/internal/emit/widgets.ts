@@ -596,6 +596,16 @@ export const WIDGET_MAP: Readonly<Record<string, WidgetMapping>> = {
     },
     roles: ['surface'],
   },
+  // M9-D: a route overlay's own inline destination (`app.RouteTransition.inline`) — never a normal
+  // in-tree widget (Flutter does not render `AlertDialog` inline either), but the same lookup that
+  // renders every other catalogued widget renders it correctly wherever it is actually reached: inside
+  // a `DialogHost`, which `component.ts`'s own inline-transition pass emits (never at an ordinary tree
+  // position, because no source shape puts one there — a route overlay's destination is always this
+  // node's own root).
+  AlertDialog: {
+    component: 'AlertDialog',
+    slots: { title: 'title', content: 'content' },
+  },
   AppBar: {
     component: 'AppBar',
     props: { centerTitle: 'centerTitle', toolbarHeight: 'toolbarHeight' },

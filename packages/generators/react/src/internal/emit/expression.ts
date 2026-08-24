@@ -58,6 +58,16 @@ export interface EmitScope {
    */
   readonly mountedLocal?: string;
   /**
+   * The `DialogHostHandle` ref local for the `app.RouteTransition` (an inline route-overlay destination,
+   * M9-D) named by `id`, if the component reaches one.
+   *
+   * A lookup by transition id, not a bare local like {@link routerLocal} — a component may reach more
+   * than one inline destination (two different `showDialog` calls), and each needs its own ref. Declared
+   * and rendered together in `component.ts`'s own `declareDialogHosts`, for the identical
+   * rules-of-hooks/one-name-answers-every-read reason `routerLocal` is.
+   */
+  dialogRefFor?(id: NodeId): string | undefined;
+  /**
    * The local expression that reads a signal declared by `id`, if one is in scope.
    *
    * A `logic.Ref` whose target is a `sig.Signal` must become `count.get()`, not `count` — the signal is an

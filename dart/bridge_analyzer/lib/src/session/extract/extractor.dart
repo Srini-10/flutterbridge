@@ -108,6 +108,10 @@ final class Extractor {
       adapters,
       context,
     );
+    // Wired after construction, like `expressions.transitions` above and for the same reason: an
+    // inline route-overlay destination (M9-D) needs the widget extractor, which needs the annotation
+    // extractor, which is built after the transition extractor — neither can construct the other first.
+    transitions.widgets = widgets;
     final SignalExtractor signals = SignalExtractor(out, expressions, adapters);
     final ComponentExtractor components = ComponentExtractor(
       out,

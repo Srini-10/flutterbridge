@@ -383,6 +383,14 @@
       "childrenProp": "children"
     },
     {
+      "$comment": "M9-D: a route overlay's own inline destination (`showDialog(builder: (_) => AlertDialog(...))`) — `title`/`content` are single-widget slots. `actions` is deliberately NOT catalogued yet: an action button's own `onPressed` commonly calls `Navigator.pop(context)` to dismiss the dialog, and this milestone's own generator lowers every pop as a page-router pop (unchanged) — correct for a real page, silently wrong for a dialog with no page to pop. Representing 'dismiss the dialog I'm inside' is a genuine, unresolved architectural question (docs/m9/m9d-dialog-destination-architecture.md §9), not a recognition gap, so it is left out rather than guessed at.",
+      "name": "AlertDialog",
+      "slots": [
+        "title",
+        "content"
+      ]
+    },
+    {
       "$comment": "`actions` is an ordered child list. One buried in hello_bridge's own props.",
       "name": "AppBar",
       "slots": [

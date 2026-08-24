@@ -80,6 +80,17 @@ Object? showModalBottomSheet<T>({
   required Widget Function(BuildContext) builder,
 }) => null;
 
+/// A minimal stand-in matching the real `AlertDialog`'s own shape closely enough for the material
+/// catalog's own `AlertDialog` entry (`title`/`content` slots, `actions` child list) to apply
+/// structurally — recognition is by resolved type against a `package:flutter/` library, never by name,
+/// so this must be a real, resolvable class there, exactly like every other stand-in in this file.
+class AlertDialog extends Widget {
+  const AlertDialog({this.title, this.content, this.actions = const <Widget>[], super.key});
+  final Widget? title;
+  final Widget? content;
+  final List<Widget> actions;
+}
+
 class Navigator {
   static Object? push<T>(BuildContext context, Route<T> route) => null;
   static Object? pushReplacement<T, R>(BuildContext context, Route<T> route) => null;
@@ -246,7 +257,8 @@ void main() {
   m7cGeneratedRoutes();
   m7bTransitionIdentity();
   m7hAsyncNavigation();
-  group('inline MaterialPageRoute — the destination is a component (§A17)', () {
+  inlineOverlayDestinations();
+  group('inline MaterialPageRoute — the destination is a component, or, since M9-D, an inline widget tree (§A17)', () {
     test('a push targets the ui.Component it constructs, not a route', () async {
       final Extracted app = await extractNav(
         screen('Navigator.push(context, MaterialPageRoute(builder: (BuildContext c) => const Detail()));'),
@@ -276,15 +288,23 @@ void main() {
       expect(app.argumentBindings, <String, String>{'id': 'bind.Const', 'count': 'bind.Signal'});
     });
 
-    test('a push to a widget the project does not declare is reported, and drops the edge', () async {
-      // `Text` is a framework widget, not a component this project emits. There is no id to point at,
-      // and inventing one would be a dangling reference. Reported (BRG1304), edge omitted.
+    test('a push to a widget the project does not declare renders it inline (M9-D)', () async {
+      // `Text` is a framework widget, not a component this project emits — there is no id to point a
+      // `component` reference at. Rather than dropping the edge, the destination is embedded directly
+      // (`inline`), extracted by the same widget-tree mechanism a normal `build()` render tree already
+      // uses (`WidgetExtractor`, ADR-18's catalog) — the identical mechanism this milestone's own
+      // `showDialog(builder: (_) => AlertDialog(...))` shape uses, proven here on a simpler widget.
       final Extracted app = await extractNav(
         screen("Navigator.push(context, MaterialPageRoute(builder: (BuildContext c) => const Text('x')));"),
       );
 
-      expect(app.ofKind('app.RouteTransition'), isEmpty);
-      expect(app.codes(Severity.warning), contains('BRG1304'));
+      expect(app.errors, isEmpty);
+      final Map<String, dynamic> transition = app.transition;
+      expect(transition.containsKey('target'), isFalse);
+      expect(transition.containsKey('component'), isFalse);
+      final Map<String, dynamic> inline = transition['inline'] as Map<String, dynamic>;
+      expect(inline['kind'], 'ui.Text');
+      expect((inline['value'] as Map<String, dynamic>)['value'], 'x');
     });
   });
 
@@ -1447,6 +1467,151 @@ class Home extends StatelessWidget {
 ''');
       expect(extracted.errors, isEmpty);
       expect(extracted.ofKind('logic.Intrinsic'), isEmpty);
+    });
+  });
+}
+
+void inlineOverlayDestinations() {
+  group('inline overlay destinations — a route overlay renders a framework widget directly (M9-D)', () {
+    // `showDialog(builder: (_) => AlertDialog(title: ..., content: ...))` — the evidenced shape (M8-X's
+    // own A1 reduction rung). `AlertDialog` is a framework widget, not something the project declares,
+    // so there is no `ui.Component` id for `component` to name; the tree is embedded in `inline`
+    // instead, extracted by the same mechanism a normal `build()` render tree already uses.
+    String app(String navigation) =>
+        '''
+import 'package:flutter/material.dart';
+
+class Home extends StatefulWidget {
+  const Home({super.key});
+  @override
+  State<Home> createState() => _HomeState();
+}
+
+class _HomeState extends State<Home> {
+  @override
+  Widget build(BuildContext context) => ElevatedButton(
+    onPressed: () {
+      $navigation
+    },
+    child: const Text('open'),
+  );
+}
+
+class App extends StatelessWidget {
+  const App({super.key});
+  @override
+  Widget build(BuildContext context) => const MaterialApp(home: Home());
+}
+''';
+
+    Map<String, dynamic> slotOf(Map<String, dynamic> element, String slot) =>
+        (element['slots'] as Map<String, dynamic>)[slot] as Map<String, dynamic>;
+
+    test('an AlertDialog destination embeds a real ui.Element, title/content in their own slots', () async {
+      final Extracted extracted = await extractNav(
+        app(
+          'showDialog<void>(context: context, builder: (BuildContext c) => '
+          "const AlertDialog(title: Text('Delete item?'), content: Text('This cannot be undone.')));",
+        ),
+      );
+
+      expect(extracted.errors, isEmpty);
+      final Map<String, dynamic> edge = extracted.transition;
+      expect(edge.containsKey('target'), isFalse);
+      expect(edge.containsKey('component'), isFalse);
+      final Map<String, dynamic> inline = edge['inline'] as Map<String, dynamic>;
+      expect(inline['kind'], 'ui.Element');
+      expect((inline['component'] as Map<String, dynamic>)['name'], 'AlertDialog');
+
+      final Map<String, dynamic> title = slotOf(inline, 'title');
+      expect(title['kind'], 'ui.Text');
+      expect((title['value'] as Map<String, dynamic>)['value'], 'Delete item?');
+
+      final Map<String, dynamic> content = slotOf(inline, 'content');
+      expect(content['kind'], 'ui.Text');
+      expect((content['value'] as Map<String, dynamic>)['value'], 'This cannot be undone.');
+    });
+
+    test('an AlertDialog with actions carries them as an ordered child list', () async {
+      final Extracted extracted = await extractNav(
+        app(
+          'showDialog<void>(context: context, builder: (BuildContext c) => AlertDialog(title: '
+          "const Text('Confirm'), actions: [TextButton(onPressed: () {}, child: const Text('Cancel')), "
+          "TextButton(onPressed: () {}, child: const Text('OK'))]));",
+        ),
+      );
+
+      expect(extracted.errors, isEmpty);
+      final Map<String, dynamic> inline = extracted.transition['inline'] as Map<String, dynamic>;
+      final List<dynamic> children = inline['children'] as List<dynamic>;
+      expect(children, hasLength(2));
+    });
+
+    test('arguments is absent for an inline destination — nothing is promoted across a boundary that does not exist', () async {
+      final Extracted extracted = await extractNav(
+        app(
+          'showDialog<void>(context: context, builder: (BuildContext c) => '
+          "const AlertDialog(title: Text('t'), content: Text('c')));",
+        ),
+      );
+
+      expect(extracted.errors, isEmpty);
+      expect(extracted.transition.containsKey('arguments'), isFalse);
+    });
+
+    test('two unrelated showDialog calls never collide', () async {
+      final Extracted extracted = await extractNav(
+        app(
+          "showDialog<void>(context: context, builder: (BuildContext c) => const AlertDialog(title: Text('a')));"
+          "\n      showDialog<void>(context: context, builder: (BuildContext c) => const AlertDialog(title: Text('b')));",
+        ),
+      );
+
+      expect(extracted.errors, isEmpty);
+      final List<Map<String, dynamic>> transitions = extracted.ofKind('app.RouteTransition');
+      expect(transitions, hasLength(2));
+      expect(transitions[0]['id'], isNot(transitions[1]['id']));
+      final List<Map<String, dynamic>> navigates = extracted.ofKind('logic.Navigate');
+      expect(navigates, hasLength(2));
+      expect(navigates[0]['transition'], isNot(navigates[1]['transition']));
+    });
+
+    test('an ordinary Navigator.push to a framework widget (not just an overlay opener) renders it inline too — the mechanism is general, not special-cased to showDialog', () async {
+      final Extracted extracted = await extractNav(
+        app("Navigator.push(context, MaterialPageRoute(builder: (BuildContext c) => const Text('hi')));"),
+      );
+
+      expect(extracted.errors, isEmpty);
+      final Map<String, dynamic> inline = extracted.transition['inline'] as Map<String, dynamic>;
+      expect(inline['kind'], 'ui.Text');
+    });
+
+    test('a builder that does more than return a widget stays refused, unchanged by this milestone', () async {
+      final Extracted extracted = await extractNav(
+        app('''
+      showDialog<void>(
+        context: context,
+        builder: (BuildContext c) {
+          debugPrint('building');
+          return const AlertDialog(title: Text('t'));
+        },
+      );
+'''),
+      );
+
+      expect(extracted.ofKind('app.RouteTransition'), isEmpty);
+      expect(extracted.ofKind('logic.Navigate'), isEmpty);
+      expect(extracted.codes(Severity.warning), contains('BRG1304'));
+    });
+
+    test('the same source extracts to the same bytes on a second, independent run (determinism)', () async {
+      final String source = app(
+        'showDialog<void>(context: context, builder: (BuildContext c) => '
+        "const AlertDialog(title: Text('Delete item?'), content: Text('This cannot be undone.')));",
+      );
+      final Extracted first = await extractNav(source);
+      final Extracted second = await extractNav(source);
+      expect(first.bytes, second.bytes);
     });
   });
 }

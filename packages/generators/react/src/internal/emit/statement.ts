@@ -305,6 +305,24 @@ export function emitStatement(statement: Stmt | Node | undefined, scope: EmitSco
       // *stack effect* and never learns which package the author wrote — a `go_router` `context.go` and
       // a `Navigator.pushNamed` arrive identically. That is the property ADR-0025 §5 exists to protect.
       const action = String(node['action'] ?? '');
+
+      // A route overlay's own destination (M9-D) is not a page at all — `component.ts`'s own
+      // `declareDialogHosts` already rendered it behind a ref, keyed by this same transition id, so
+      // showing it is that ref's `show()`, never a router call. Checked *before* `router` is required
+      // below: a component whose only navigation opens a dialog declares no router at all
+      // (`needsRouter`), so requiring one first would refuse a program this generator now supports.
+      if (action === 'push' || action === 'replace') {
+        const transitionId = node['transition'];
+        const transition =
+          typeof transitionId === 'string' ? (scope.node(transitionId) as unknown as Node | undefined) : undefined;
+        if (transition !== undefined && transition['inline'] !== undefined && typeof transitionId === 'string') {
+          const dialogRef = scope.dialogRefFor?.(transitionId);
+          if (dialogRef !== undefined) {
+            return [`${dialogRef}.current?.show();`];
+          }
+        }
+      }
+
       const router = scope.routerLocal;
       if (router === undefined) {
         // The component emitter declares the router whenever the component contains one of these, so

@@ -78,17 +78,22 @@ final class EmitValidator {
 
   /// Every `NodeId` a node refers to is present in the document.
   ///
-  /// Every `app.RouteTransition` names exactly one destination, of the right kind (Spec v2.4 §A17).
+  /// Every `app.RouteTransition` names exactly one destination, of the right kind (Spec v2.4 §A17,
+  /// amended M9-D).
   ///
-  /// A transition either names a route that exists (`target` -> an `app.Route`) or constructs its
-  /// destination inline (`component` -> a `ui.Component`). Both, or neither, is meaningless.
+  /// A transition either names a route that exists (`target` -> an `app.Route`), constructs a
+  /// project-declared component inline (`component` -> a `ui.Component`), or renders an inline widget
+  /// tree directly (`inline`, embedded, for a destination — `AlertDialog(...)` — no project component
+  /// declares). Exactly one, never zero, never more than one.
   ///
   /// **This is checked here because the schema cannot state it** (§A17.4). The dialect has no way to
-  /// say "exactly one of these two properties", and it could not help with the kinds either: a
-  /// `NodeId` is a `String`, and nothing about a string's shape says what it points at. That is not a
-  /// gap to apologise for — it is the same reason `_checkReferencesResolve` and
-  /// `_checkIdsAreFunctional` exist. An invariant the type system cannot hold is held here, at the
-  /// serialization boundary, before anything downstream can believe it.
+  /// say "exactly one of these three properties", and it could not help with `target`/`component`'s own
+  /// kinds either: a `NodeId` is a `String`, and nothing about a string's shape says what it points at
+  /// (`inline` needs no such check — it is embedded, not referenced, so its own shape is already
+  /// schema-validated as a `UiNode` by construction). That is not a gap to apologise for — it is the
+  /// same reason `_checkReferencesResolve` and `_checkIdsAreFunctional` exist. An invariant the type
+  /// system cannot hold is held here, at the serialization boundary, before anything downstream can
+  /// believe it.
   void _checkTransitionDestinations(List<uir.UirNode> nodes, DiagnosticSink diagnostics) {
     final Map<String, String> kindOf = <String, String>{};
 
@@ -109,18 +114,22 @@ final class EmitValidator {
       if (json['kind'] == 'app.RouteTransition') {
         final Object? target = json['target'];
         final Object? component = json['component'];
+        final Object? inline = json['inline'];
         final String id = json['id'] as String? ?? '(no id)';
+        final int present = <bool>[target != null, component != null, inline != null]
+            .where((bool b) => b)
+            .length;
 
-        if ((target == null) == (component == null)) {
+        if (present != 1) {
           diagnostics.add(
             Diagnostic(
               code: Codes.malformedTransition,
               message:
-                  target == null
+                  present == 0
                       ? 'The route transition "$id" names no destination. A transition with nowhere '
                           'to go is not an edge.'
-                      : 'The route transition "$id" names both a route ("$target") and a component '
-                          '("$component"). It goes to one place.',
+                      : 'The route transition "$id" names more than one of `target`, `component` and '
+                          '`inline`. It goes to one place.',
             ),
           );
         } else if (target is String && kindOf[target] != null && kindOf[target] != 'app.Route') {

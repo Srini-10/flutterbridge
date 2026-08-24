@@ -288,7 +288,10 @@ export const MISSING_CAPABILITIES: Readonly<Record<string, MissingCapability>> =
       'the transient overlay a call puts on screen',
   },
   PopupMenuButton: { capability: OVERLAY_ROUTE, owner: 'schema' },
-  AlertDialog: { capability: OVERLAY_ROUTE, owner: 'schema' },
+  // `AlertDialog` is gone from this table (M9-D): it is a real `WIDGET_MAP` entry now, reached wherever
+  // an `app.RouteTransition.inline` destination is — `DialogHost`'s own child, never an ordinary tree
+  // position. `PopupMenuButton` and the overlay-opener calls below remain here; only the one destination
+  // this milestone's own evidence covers (`showDialog` → `AlertDialog`) is unblocked.
   SnackBarAction: { capability: OVERLAY_MESSENGER, owner: 'adr' },
 
   // The **calls** that open a route overlay. Widget names alone never matched these: a program writes

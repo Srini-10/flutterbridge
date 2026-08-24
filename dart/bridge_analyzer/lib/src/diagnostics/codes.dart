@@ -240,7 +240,7 @@ abstract final class Codes {
         'resolved by giving one adapter a higher priority, deliberately.',
   );
 
-  /// A route transition names both destinations, or neither.
+  /// A route transition names more than one destination, or none.
   static const DiagnosticCode malformedTransition = DiagnosticCode(
     id: 'BRG1307',
     category: DiagnosticCategory.extraction,
@@ -249,14 +249,15 @@ abstract final class Codes {
     title: 'A route transition must have exactly one destination',
     explanation:
         'An `app.RouteTransition` carries exactly one of `target` (a declared `app.Route`, when the '
-        'navigation names one) and `component` (the `ui.Component` rendered, when the navigation '
-        'constructs its destination inline). This one has both, or neither, or names a node of the '
-        'wrong kind.\n'
+        'navigation names one), `component` (the `ui.Component` rendered, when the navigation '
+        'constructs a project-declared destination inline), and `inline` (a widget tree rendered '
+        'directly, when the destination does not resolve to a project-declared component — M9-D). This '
+        'one has more than one, or none, or `target`/`component` name a node of the wrong kind.\n'
         '\n'
         'That is a bug in the compiler, not in your code.\n'
         '\n'
         'The rule is checked here because the schema cannot state it (Spec v2.4 §A17.4): the dialect '
-        'has no way to say "exactly one of these two properties", and a NodeId is a string — nothing '
+        'has no way to say "exactly one of these three properties", and a NodeId is a string — nothing '
         'about its shape says what it points at. So it is enforced where the other unstateable '
         'invariants are enforced: in code, at emit, before anything downstream can believe it.',
   );

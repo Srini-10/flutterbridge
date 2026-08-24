@@ -14,7 +14,7 @@ import { createHash } from 'node:crypto';
 export const UIR_VERSION = '1.7.0' as const;
 
 /** A hash of the schema sources this module was generated from. */
-export const UIR_SCHEMA_HASH = 'c307ad5dfe6c3fc3' as const;
+export const UIR_SCHEMA_HASH = '5261979188d2a188' as const;
 
 /** Node kind -> the fields of that node which hold `NodeId` references. */
 export const UIR_REFERENCE_FIELDS: Readonly<Record<string, readonly string[]>> = {
@@ -1714,7 +1714,7 @@ export interface Route {
 ///
 /// This is the input to N11 (ADR-11). C1 found that `go_router` is the dominant navigation shape in real apps and our first analyzer saw none of it; with an empty nav-graph, N11 silently does nothing — a pass that looks like it works because it never fires.
 ///
-/// **Exactly one of `target` and `component` is present** (Spec v2.4 §A17). A navigation either names a route that exists, or constructs its destination inline — and the second is not a route: it has no path, and none is invented for it. The dialect cannot express that exclusivity (a `NodeId` is a string; nothing about its shape says what it points at), so it is checked in code at emit and again at load — `BRG1307`.
+/// **Exactly one of `target`, `component` and `inline` is present** (Spec v2.4 §A17, amended ADR-0025-amendment-inline-overlay-destinations, M9-D). A navigation either names a route that exists, constructs a project-declared component inline, or — a route overlay whose destination is a framework widget no project declares, `showDialog(builder: (_) => AlertDialog(...))` — renders an inline widget tree directly. The dialect cannot express that exclusivity (a `NodeId` is a string; nothing about its shape says what it points at), so it is checked in code at emit and again at load — `BRG1307`.
 ///
 /// A `Navigator.pop()` is **not** a transition: it returns along an edge that already exists rather than creating one.
 export interface RouteTransition {
@@ -1726,12 +1726,16 @@ export interface RouteTransition {
   ///
   /// There is no path here and none is invented: which URL such a push *becomes* on a path-based target is a legalization decision, made in the layer that knows the target (Spec v2.4 §A17.6).
   ///
-  /// Absent when the navigation names a route; see `target`.
+  /// Absent when the navigation names a route or renders an inline widget tree; see `target`, `inline`.
   readonly component?: NodeId;
   /// Plugin extension data, namespaced `x-<plugin>`. Core passes round-trip it untouched (Spec §2.6).
   readonly ext?: Readonly<Record<string, unknown>>;
   /// The node's stable, content-addressed identity.
   readonly id: NodeId;
+  /// The widget tree rendered directly, when the navigation's destination does not resolve to a project-declared `ui.Component` — `showDialog(context: context, builder: (context) => AlertDialog(title: Text('...'), content: ...))`. `AlertDialog` is a framework widget, not something the project declares, so there is no `ui.Component` id to point `component` at; the tree is embedded here instead, the same way `ui.Cond.then`/`ui.List.template` already embed a subtree rather than referencing one (M9-D, ADR-0025 amendment).
+  ///
+  /// Absent when the navigation names a route or a declared component; see `target`, `component`.
+  readonly inline?: UiNode;
   /// Discriminant.
   readonly kind: 'app.RouteTransition';
   /// The component the navigation happens from.
@@ -3871,6 +3875,7 @@ export function parseRouteTransition(value: unknown, path = 'RouteTransition'): 
     ...(own(o, 'component') === undefined || own(o, 'component') === null ? {} : { component: parseNodeId(own(o, 'component'), `${path}.component`) }),
     ...(own(o, 'ext') === undefined || own(o, 'ext') === null ? {} : { ext: asMap(own(o, 'ext'), `${path}.ext`, (v) => v) }),
     id: parseNodeId(req(o, 'id', path), `${path}.id`),
+    ...(own(o, 'inline') === undefined || own(o, 'inline') === null ? {} : { inline: parseUiNode(own(o, 'inline'), `${path}.inline`) }),
     kind: 'app.RouteTransition',
     ...(own(o, 'source') === undefined || own(o, 'source') === null ? {} : { source: parseNodeId(own(o, 'source'), `${path}.source`) }),
     span: parseSourceSpan(req(o, 'span', path), `${path}.span`),

@@ -31,7 +31,7 @@ const String uirVersion = '1.7.0';
 /// A hash of the schema sources this library was generated from.
 ///
 /// Stamped into every emitted manifest: a UIR document always says which schema produced it.
-const String uirSchemaHash = 'c307ad5dfe6c3fc3';
+const String uirSchemaHash = '5261979188d2a188';
 
 /// Node kind -> the fields of that node which hold `NodeId` references.
 ///
@@ -6781,7 +6781,7 @@ final class Route extends UirNode {
 ///
 /// This is the input to N11 (ADR-11). C1 found that `go_router` is the dominant navigation shape in real apps and our first analyzer saw none of it; with an empty nav-graph, N11 silently does nothing — a pass that looks like it works because it never fires.
 ///
-/// **Exactly one of `target` and `component` is present** (Spec v2.4 §A17). A navigation either names a route that exists, or constructs its destination inline — and the second is not a route: it has no path, and none is invented for it. The dialect cannot express that exclusivity (a `NodeId` is a string; nothing about its shape says what it points at), so it is checked in code at emit and again at load — `BRG1307`.
+/// **Exactly one of `target`, `component` and `inline` is present** (Spec v2.4 §A17, amended ADR-0025-amendment-inline-overlay-destinations, M9-D). A navigation either names a route that exists, constructs a project-declared component inline, or — a route overlay whose destination is a framework widget no project declares, `showDialog(builder: (_) => AlertDialog(...))` — renders an inline widget tree directly. The dialect cannot express that exclusivity (a `NodeId` is a string; nothing about its shape says what it points at), so it is checked in code at emit and again at load — `BRG1307`.
 ///
 /// A `Navigator.pop()` is **not** a transition: it returns along an edge that already exists rather than creating one.
 @immutable
@@ -6794,6 +6794,7 @@ final class RouteTransition extends UirNode {
     this.arguments,
     this.component,
     this.ext,
+    this.inline,
     this.source,
     this.target,
   });
@@ -6811,6 +6812,7 @@ final class RouteTransition extends UirNode {
       component: json['component'] == null ? null : _asString(json['component'], '$path.component'),
       ext: json['ext'] == null ? null : _asMap<Object?>(json['ext'], '$path.ext', (Object? v, String p) => v),
       id: _asString(_req(json, 'id', path), '$path.id'),
+      inline: json['inline'] == null ? null : UiNode.fromJson(json['inline'], '$path.inline'),
       source: json['source'] == null ? null : _asString(json['source'], '$path.source'),
       span: SourceSpan.fromJson(_req(json, 'span', path), '$path.span'),
       target: json['target'] == null ? null : _asString(json['target'], '$path.target'),
@@ -6827,7 +6829,7 @@ final class RouteTransition extends UirNode {
   ///
   /// There is no path here and none is invented: which URL such a push *becomes* on a path-based target is a legalization decision, made in the layer that knows the target (Spec v2.4 §A17.6).
   ///
-  /// Absent when the navigation names a route; see `target`.
+  /// Absent when the navigation names a route or renders an inline widget tree; see `target`, `inline`.
   final NodeId? component;
 
   /// Plugin extension data, namespaced `x-<plugin>`. Core passes round-trip it untouched (Spec §2.6).
@@ -6835,6 +6837,11 @@ final class RouteTransition extends UirNode {
 
   /// The node's stable, content-addressed identity.
   final NodeId id;
+
+  /// The widget tree rendered directly, when the navigation's destination does not resolve to a project-declared `ui.Component` — `showDialog(context: context, builder: (context) => AlertDialog(title: Text('...'), content: ...))`. `AlertDialog` is a framework widget, not something the project declares, so there is no `ui.Component` id to point `component` at; the tree is embedded here instead, the same way `ui.Cond.then`/`ui.List.template` already embed a subtree rather than referencing one (M9-D, ADR-0025 amendment).
+  ///
+  /// Absent when the navigation names a route or a declared component; see `target`, `component`.
+  final UiNode? inline;
 
   /// The component the navigation happens from.
   final NodeId? source;
@@ -6859,6 +6866,7 @@ final class RouteTransition extends UirNode {
     'component': component,
     'ext': ext,
     'id': id,
+    'inline': inline?.toJson(),
     'kind': 'app.RouteTransition',
     'source': source,
     'span': span.toJson(),
@@ -6875,6 +6883,7 @@ final class RouteTransition extends UirNode {
     NodeId? component,
     Map<String, Object?>? ext,
     NodeId? id,
+    UiNode? inline,
     NodeId? source,
     SourceSpan? span,
     NodeId? target,
@@ -6885,6 +6894,7 @@ final class RouteTransition extends UirNode {
       component: component ?? this.component,
       ext: ext ?? this.ext,
       id: id ?? this.id,
+      inline: inline ?? this.inline,
       source: source ?? this.source,
       span: span ?? this.span,
       target: target ?? this.target,
@@ -6900,6 +6910,7 @@ final class RouteTransition extends UirNode {
         _equality.equals(other.component, component) &&
         _equality.equals(other.ext, ext) &&
         _equality.equals(other.id, id) &&
+        _equality.equals(other.inline, inline) &&
         _equality.equals(other.source, source) &&
         _equality.equals(other.span, span) &&
         _equality.equals(other.target, target);
@@ -6913,6 +6924,7 @@ final class RouteTransition extends UirNode {
     _equality.hash(component),
     _equality.hash(ext),
     _equality.hash(id),
+    _equality.hash(inline),
     _equality.hash(source),
     _equality.hash(span),
     _equality.hash(target),

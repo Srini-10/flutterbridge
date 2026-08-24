@@ -30,7 +30,7 @@ import { emitExpression, localBindingsIn, stringLiteral, type EmitScope } from '
 import { emitStatements } from './statement.js';
 import { identifierOf, type ModuleBuilder } from './module.js';
 import { typeTextOf } from './types.js';
-import { useRuntime } from './runtime.js';
+import { useRuntime, useRuntimeType } from './runtime.js';
 import { missingCapabilityOf, OWNER_LABEL } from './unsupported.js';
 import {
   UNSUPPORTED_PARAMETERS,
@@ -90,15 +90,25 @@ export function emitComponent(component: Node, module: ModuleBuilder, scope: Emi
     const withRouter: EmitScope = routerLocal === undefined ? scope : { ...scope, routerLocal };
     const mountedLocal = declareMounted(component, module, withRouter);
     const withMounted: EmitScope = mountedLocal === undefined ? withRouter : { ...withRouter, mountedLocal };
+    // Every inline route-overlay destination (M9-D) this component reaches, declared and rendered here
+    // — before the tree that shows one, for the same rules-of-hooks reason `router`/`mounted` are.
+    const { refs: dialogRefs, hosts: dialogHosts } = declareDialogHosts(component, module, withMounted);
+    const withDialogs: EmitScope =
+      dialogRefs.size === 0
+        ? withMounted
+        : {
+            ...withMounted,
+            dialogRefFor: (id: NodeId) => dialogRefs.get(id) ?? withMounted.dialogRefFor?.(id),
+          };
     // This component's own locally-owned store instances (ADR-27), before store *consumption* — a
     // `.member` access on one of these must never also trigger `declareStoreConsumption`'s `useStore()`
     // acquisition for the same store, and `localName` has to resolve the instance's own receiver
     // (`favorites`) before anything downstream asks for it.
-    const storeInstances = declareLocalStoreInstances(component, module, withMounted);
+    const storeInstances = declareLocalStoreInstances(component, module, withDialogs);
     const withInstances: EmitScope =
       storeInstances.size === 0
-        ? withMounted
-        : { ...withMounted, localName: (id) => storeInstances.get(id) ?? withMounted.localName(id) };
+        ? withDialogs
+        : { ...withDialogs, localName: (id) => storeInstances.get(id) ?? withDialogs.localName(id) };
     // Store consumption next, before this component's own signals/actions — a `useStore`/`useSignal` pair
     // is exactly the same kind of hoisted hook `declareLocalSignals` emits next, and both must run before
     // the tree that needs them is ever walked (M7-F).
@@ -114,7 +124,16 @@ export function emitComponent(component: Node, module: ModuleBuilder, scope: Emi
       return;
     }
     const body = emitUiNode(tree as Node, module, inner, 0);
-    module.line(`return ${body};`);
+    if (dialogHosts.length === 0) {
+      module.line(`return ${body};`);
+    } else {
+      // Every `DialogHost` this component reaches (M9-D) renders as a sibling of the main tree — a
+      // fragment, the same shape `ui.List`'s own key-per-item expansion already wraps in
+      // (`emitUiNode`'s own `ui.List` case) — never inside it, so a dialog exists whether or not it is
+      // currently shown.
+      const fragment = module.use('react', 'Fragment');
+      module.line(`return <${fragment}>${body}${dialogHosts.join('')}</${fragment}>;`);
+    }
   });
   module.line('}');
   module.line();
@@ -189,7 +208,26 @@ function declareMounted(component: Node, module: ModuleBuilder, scope: EmitScope
  * navigation this document already represents correctly (M7-H) still could not be emitted.
  */
 function navigatesSomewhere(component: Node, scope: EmitScope): boolean {
-  return componentReaches(component, scope, (node) => node['kind'] === 'logic.Navigate');
+  return componentReaches(component, scope, (node) => node['kind'] === 'logic.Navigate' && needsRouter(node, scope));
+}
+
+/**
+ * Whether a `logic.Navigate` node needs `router` in scope to lower (M9-D).
+ *
+ * `pop`/`popUntil` always do — there is no other way to leave. A `push`/`replace` does too, *unless* the
+ * edge it performs names an inline route-overlay destination: `statement.ts`'s own `logic.Navigate` case
+ * lowers that shape to `dialogRef.current?.show()`, which never touches `router` at all. Without this
+ * check, a component whose only navigation opens a dialog still declared `const router = useRouter();`
+ * and never read it — a real, if harmless, dead hook call this milestone's own new destination shape
+ * introduced, not a pre-existing gap.
+ */
+function needsRouter(node: Node, scope: EmitScope): boolean {
+  const action = node['action'];
+  if (action !== 'push' && action !== 'replace') return true;
+  const transitionId = node['transition'];
+  if (typeof transitionId !== 'string') return true;
+  const transition = scope.node(transitionId) as unknown as Node | undefined;
+  return transition === undefined || transition['inline'] === undefined;
 }
 
 /**
@@ -214,6 +252,95 @@ function containsNode(value: unknown, matches: (node: Node) => boolean): boolean
   const node = value as Node;
   if (matches(node)) return true;
   return Object.values(node).some((child) => containsNode(child, matches));
+}
+
+/**
+ * Every `app.RouteTransition` with an `inline` destination (M9-D) reachable from `component` — its own
+ * render tree, or a `sig.Action` it references (the same reachability {@link navigatesSomewhere} already
+ * proves is needed, M7-H: a navigation is as often inside a named action as written inline).
+ *
+ * A `logic.Navigate` names its edge by `NodeId` (M7-B); this resolves each one once and keeps only the
+ * ones the edge is actually a dialog for, deduplicated by id — two `logic.Navigate`s cannot share one
+ * transition (`TransitionExtractor`'s own `_seen` map, one call site is one edge), but a component could
+ * still reach a navigation more than once if the same action is called from two callbacks.
+ */
+function inlineTransitionsOf(component: Node, scope: EmitScope): Node[] {
+  const navigates = collectNodes(component, scope, (node) => node['kind'] === 'logic.Navigate');
+  const found: Node[] = [];
+  const seen = new Set<string>();
+  for (const navigate of navigates) {
+    const transitionId = navigate['transition'];
+    if (typeof transitionId !== 'string' || seen.has(transitionId)) continue;
+    const transition = scope.node(transitionId) as unknown as Node | undefined;
+    if (transition === undefined || transition['inline'] === undefined) continue;
+    seen.add(transitionId);
+    found.push(transition);
+  }
+  return found;
+}
+
+/** Every node `matches` accepts in `component`'s own render tree, or a `sig.Action` it references. */
+function collectNodes(component: Node, scope: EmitScope, matches: (node: Node) => boolean): Node[] {
+  const found: Node[] = [];
+  collectInto(component, matches, found);
+  for (const id of referencedActions(component['render'], scope)) {
+    const action = scope.node(id) as unknown as Node | undefined;
+    if (action !== undefined) collectInto(action, matches, found);
+  }
+  return found;
+}
+
+/** Appends every node in `value` that `matches` accepts to `into`. The collecting sibling of {@link containsNode}. */
+function collectInto(value: unknown, matches: (node: Node) => boolean, into: Node[]): void {
+  if (Array.isArray(value)) {
+    for (const item of value) collectInto(item, matches, into);
+    return;
+  }
+  if (value === null || typeof value !== 'object') return;
+  const node = value as Node;
+  if (matches(node)) into.push(node);
+  for (const child of Object.values(node)) collectInto(child, matches, into);
+}
+
+/**
+ * Declares one `useRef` per inline route-overlay destination `component` reaches (M9-D), and renders
+ * each one's own `DialogHost`, ready but hidden — a sibling of the component's own render tree, not
+ * inside it, so it exists whether or not it is currently shown (a `logic.Navigate` push, wherever it is
+ * in the component, shows it later by calling `.current?.show()` on the same ref — `statement.ts`'s own
+ * `logic.Navigate` case, via {@link EmitScope.dialogRefFor}).
+ *
+ * Declared and rendered in the same pass, unlike {@link declareRouter} — a `DialogHost` needs to be *in
+ * the tree*, not just declared, and the two are one loop over the same list rather than two.
+ *
+ * @returns a lookup from a transition's own id to its ref's local name, and the JSX for every
+ * `DialogHost` to render as a sibling of the component's own tree — empty when the component reaches no
+ * inline destination, so a component that never shows a dialog emits neither an import nor a ref.
+ */
+function declareDialogHosts(
+  component: Node,
+  module: ModuleBuilder,
+  scope: EmitScope,
+): { readonly refs: ReadonlyMap<NodeId, string>; readonly hosts: readonly string[] } {
+  const transitions = inlineTransitionsOf(component, scope);
+  if (transitions.length === 0) return { refs: new Map(), hosts: [] };
+
+  const useRef = module.use('react', 'useRef');
+  const dialogHost = useRuntime(module, 'DialogHost');
+  const handleType = useRuntimeType(module, 'DialogHostHandle');
+
+  const refs = new Map<NodeId, string>();
+  const hosts: string[] = [];
+  transitions.forEach((transition, index) => {
+    const id = idOf(transition);
+    if (id === undefined) return;
+    const local = transitions.length === 1 ? 'dialogRef' : `dialogRef${index}`;
+    module.line(`const ${local} = ${useRef}<${handleType}>(null);`);
+    refs.set(id as NodeId, local);
+    const content = emitUiNode(transition['inline'] as Node, module, scope, 1);
+    hosts.push(`<${dialogHost} ref={${local}}>${content}</${dialogHost}>`);
+  });
+  module.line();
+  return { refs, hosts };
 }
 
 /**
@@ -838,6 +965,10 @@ function childScope(
     // Same reasoning, same shape, for `useMounted()`'s ref (ADR-0026) — declared once per component, and
     // every render-tree read of `mounted`/`context.mounted` must resolve to that same instance.
     ...(parent.mountedLocal === undefined ? {} : { mountedLocal: parent.mountedLocal }),
+    // Same reasoning again, for every inline route-overlay destination's own ref (M9-D) — declared once
+    // per component (`declareDialogHosts`), and a `logic.Navigate` push reached from any nested scope
+    // (an action body, a callback) must resolve to that same ref, never a second one.
+    ...(parent.dialogRefFor === undefined ? {} : { dialogRefFor: parent.dialogRefFor }),
     // Program-wide, so a child scope forwards it unchanged rather than rebuilding it per component.
     themeRoles: parent.themeRoles,
     node: parent.node.bind(parent),
@@ -1200,6 +1331,24 @@ function checkCapabilities(
       GeneratorDiagnosticCode.UnsupportedParameter,
       'error',
       `\`${widgetName}\` renders, but not with \`${parameter}\` set: ${reason}`,
+      idOf(node),
+    );
+  }
+
+  // M9-D: `AlertDialog.actions` is not catalogued (`catalog/widgets/material.json`'s own comment), but a
+  // generic fallback elsewhere in the analyzer still extracts an unrecognised widget-list argument as
+  // `children` regardless — so a program that supplies `actions:` reaches here with real children,
+  // which `AlertDialogProps` has no place for. Refused here, with a name and a reason, rather than left
+  // to fail as a raw, unexplained `tsc` error in the generated file (an unknown JSX prop) — the same
+  // "no silent drop" discipline the parameter check above already applies, extended to children.
+  if (widgetName === 'AlertDialog' && asArray(node['children']).length > 0) {
+    scope.report(
+      GeneratorDiagnosticCode.UnsupportedCapability,
+      'error',
+      "`AlertDialog.actions` is not rendered. Dismissing the dialog from inside an action button " +
+        '(`Navigator.pop(context)`) needs a way to say "pop the dialog I\'m inside," not "pop the page ' +
+        'router" — a genuine, unresolved architectural question (docs/m9/m9d-dialog-destination-' +
+        'architecture.md §9), not a recognition gap. `title`/`content` render; `actions` does not, yet.',
       idOf(node),
     );
   }

@@ -30,6 +30,7 @@ const WIDGETS: readonly WidgetSpec[] = [
   { name: "CustomScrollView", library: LIBRARY, childrenProp: "slivers" },
   { name: "SliverList", library: LIBRARY, childrenProp: "children" },
   { name: "MultiSliver", library: LIBRARY, childrenProp: "children" },
+  { name: "AlertDialog", library: LIBRARY, slots: ["title","content"] },
   { name: "AppBar", library: LIBRARY, slots: ["title","leading","flexibleSpace","bottom"], childrenProp: "actions" },
   { name: "SliverAppBar", library: LIBRARY, slots: ["title","leading","flexibleSpace","bottom"], childrenProp: "actions" },
   { name: "Scaffold", library: LIBRARY, slots: ["appBar","body","bottomNavigationBar","bottomSheet","drawer","endDrawer","floatingActionButton"], childrenProp: "persistentFooterButtons" },

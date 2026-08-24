@@ -301,3 +301,9 @@ export function growingScopeRaw(): string {
   const path = fileURLToPath(new URL('../../../../fixtures/uir/growing_scope.ndjson', import.meta.url));
   return readFileSync(path, 'utf8');
 }
+
+/** The real `fixtures/apps/dialog_destinations` document, raw analyzer output (M9-D) — not yet normalized. */
+export function dialogDestinationsRaw(): string {
+  const path = fileURLToPath(new URL('../../../../fixtures/uir/dialog_destinations.ndjson', import.meta.url));
+  return readFileSync(path, 'utf8');
+}
