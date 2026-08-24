@@ -155,10 +155,19 @@ final class ComponentExtractor {
           Binding(name: parameter.name!.lexeme, binds: Binds.parameter),
     ]);
 
+    // A separate owner/ordinal pair for the render tree's own collection-for items (M9-F,
+    // `Scope.forWidgetTree`'s own doc explains why this is not `Scope.forBody` reused) — numbered once,
+    // over the *whole* build method body (never just `rendered`: a structured build body — a preceding
+    // `final items = [...]` before the `return`, or an `if`-branching one, §"structured build-method
+    // extraction" above — still has its own collection-fors extracted from `build.body`, not from a
+    // single returned expression), the same "one pre-order pass, keyed by resolved Element" scheme M9-A
+    // already proved collision-free for statement-level for-loops. Used for both branches below.
+    final Scope renderScope = Scope.forWidgetTree(buildScope, owner: symbol, body: build.body);
+
     final Expression? rendered = _returnedWidget(build.body);
     final RawNode render = rendered != null
-        ? widgets.extract(rendered, buildScope)
-        : _structuredBody(build.body, buildScope) ??
+        ? widgets.extract(rendered, renderScope)
+        : _structuredBody(build.body, renderScope) ??
               out.opaqueUi(build.body, 'build body with statements');
 
     out.emit(

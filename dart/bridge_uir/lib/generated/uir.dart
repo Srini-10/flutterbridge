@@ -31,7 +31,7 @@ const String uirVersion = '1.7.0';
 /// A hash of the schema sources this library was generated from.
 ///
 /// Stamped into every emitted manifest: a UIR document always says which schema produced it.
-const String uirSchemaHash = '699ae56311edc86b';
+const String uirSchemaHash = 'b4e7b195414fcef9';
 
 /// Node kind -> the fields of that node which hold `NodeId` references.
 ///
@@ -73,7 +73,7 @@ const Map<String, List<String>> uirReferenceFields = <String, List<String>>{
   'logic.OpaqueDecl': <String>['id'],
   'logic.OpaqueExpr': <String>['id'],
   'logic.OpaqueStmt': <String>['id'],
-  'bind.Param': <String>['id'],
+  'bind.Param': <String>['id', 'target'],
   'logic.PropertyAccess': <String>['id', 'target'],
   'logic.Ref': <String>['id', 'target'],
   'logic.Return': <String>['id'],
@@ -6175,6 +6175,7 @@ final class ParamBinding extends Binding {
     required this.span,
     this.anchor,
     this.ext,
+    this.target,
   });
 
   /// Parses a [ParamBinding] from JSON, validating as it goes.
@@ -6190,6 +6191,7 @@ final class ParamBinding extends Binding {
       id: _asString(_req(json, 'id', path), '$path.id'),
       param: _asString(_req(json, 'param', path), '$path.param'),
       span: SourceSpan.fromJson(_req(json, 'span', path), '$path.span'),
+      target: json['target'] == null ? null : _asString(json['target'], '$path.target'),
     );
   }
 
@@ -6208,6 +6210,9 @@ final class ParamBinding extends Binding {
   /// Where the node came from.
   final SourceSpan span;
 
+  /// The declaration this parameter read resolves to, when one is known (ADR-28, amended M9-F) — a widget-tree collection-for's own `item`, naming its `ui.List.itemDecl`. A reader must not treat absence as an incomplete document: most `bind.Param` reads name an ordinary widget/builder constructor parameter, which has no declaration-tier identity at all (ADR-28 §4, still deferred) and never carries this field.
+  final NodeId? target;
+
   /// The node's discriminant.
   @override
   String get kind => 'bind.Param';
@@ -6221,6 +6226,7 @@ final class ParamBinding extends Binding {
     'kind': 'bind.Param',
     'param': param,
     'span': span.toJson(),
+    'target': target,
   })! as Map<String, Object?>;
 
   /// Returns a copy with the given fields replaced. The original is never mutated.
@@ -6233,6 +6239,7 @@ final class ParamBinding extends Binding {
     NodeId? id,
     String? param,
     SourceSpan? span,
+    NodeId? target,
   }) {
     return ParamBinding(
       anchor: anchor ?? this.anchor,
@@ -6240,6 +6247,7 @@ final class ParamBinding extends Binding {
       id: id ?? this.id,
       param: param ?? this.param,
       span: span ?? this.span,
+      target: target ?? this.target,
     );
   }
 
@@ -6254,7 +6262,8 @@ final class ParamBinding extends Binding {
         _equality.equals(other.ext, ext) &&
         _equality.equals(other.id, id) &&
         _equality.equals(other.param, param) &&
-        _equality.equals(other.span, span);
+        _equality.equals(other.span, span) &&
+        _equality.equals(other.target, target);
   }
 
   @override
@@ -6265,6 +6274,7 @@ final class ParamBinding extends Binding {
     _equality.hash(id),
     _equality.hash(param),
     _equality.hash(span),
+    _equality.hash(target),
   ]);
 }
 
@@ -8725,6 +8735,7 @@ final class UiList extends UiNode {
     this.anchor,
     this.ext,
     this.indexParam,
+    this.itemDecl,
     this.key,
   });
 
@@ -8740,6 +8751,7 @@ final class UiList extends UiNode {
       ext: json['ext'] == null ? null : _asMap<Object?>(json['ext'], '$path.ext', (Object? v, String p) => v),
       id: _asString(_req(json, 'id', path), '$path.id'),
       indexParam: json['indexParam'] == null ? null : _asString(json['indexParam'], '$path.indexParam'),
+      itemDecl: json['itemDecl'] == null ? null : VarDecl.fromJson(json['itemDecl'], '$path.itemDecl'),
       itemParam: _asString(_req(json, 'itemParam', path), '$path.itemParam'),
       key: json['key'] == null ? null : Binding.fromJson(json['key'], '$path.key'),
       source: Binding.fromJson(_req(json, 'source', path), '$path.source'),
@@ -8760,7 +8772,12 @@ final class UiList extends UiNode {
   /// The name bound to each index, if the builder takes one.
   final String? indexParam;
 
-  /// The name bound to each item inside the template.
+  /// The item's own declaration (ADR-28, amended M9-F) — a real, declaration-tier `logic.VarDecl`, with no `initializer` (the runtime binds it, once per iteration, not an expression). A `bind.Param` inside the template targets this node's own id, the same way a `logic.Ref` inside a for-in loop's own body already targets `logic.For.loopDecl`.
+  ///
+  /// Absent when this `ui.List` was not extracted from a real Dart `for (final x in xs) ...` collection-for — a `ListView.builder(itemBuilder: (context, i) => ...)`-shaped source names its item by its own builder closure's parameter, which carries no comparable declaration-tier identity (a separate, still-deferred gap; see ADR-28 §4).
+  final VarDecl? itemDecl;
+
+  /// The name bound to each item inside the template, by name only. `itemDecl` (ADR-28, amended M9-F) is the same binding's own declaration-tier identity, when one exists — this field is retained unchanged, for description only.
   final String itemParam;
 
   /// The per-item key, inferred when Flutter gave none (pass N9).
@@ -8786,6 +8803,7 @@ final class UiList extends UiNode {
     'ext': ext,
     'id': id,
     'indexParam': indexParam,
+    'itemDecl': itemDecl?.toJson(),
     'itemParam': itemParam,
     'key': key?.toJson(),
     'kind': 'ui.List',
@@ -8803,6 +8821,7 @@ final class UiList extends UiNode {
     Map<String, Object?>? ext,
     NodeId? id,
     String? indexParam,
+    VarDecl? itemDecl,
     String? itemParam,
     Binding? key,
     Binding? source,
@@ -8814,6 +8833,7 @@ final class UiList extends UiNode {
       ext: ext ?? this.ext,
       id: id ?? this.id,
       indexParam: indexParam ?? this.indexParam,
+      itemDecl: itemDecl ?? this.itemDecl,
       itemParam: itemParam ?? this.itemParam,
       key: key ?? this.key,
       source: source ?? this.source,
@@ -8833,6 +8853,7 @@ final class UiList extends UiNode {
         _equality.equals(other.ext, ext) &&
         _equality.equals(other.id, id) &&
         _equality.equals(other.indexParam, indexParam) &&
+        _equality.equals(other.itemDecl, itemDecl) &&
         _equality.equals(other.itemParam, itemParam) &&
         _equality.equals(other.key, key) &&
         _equality.equals(other.source, source) &&
@@ -8847,6 +8868,7 @@ final class UiList extends UiNode {
     _equality.hash(ext),
     _equality.hash(id),
     _equality.hash(indexParam),
+    _equality.hash(itemDecl),
     _equality.hash(itemParam),
     _equality.hash(key),
     _equality.hash(source),

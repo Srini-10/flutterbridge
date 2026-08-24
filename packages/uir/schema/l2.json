@@ -128,6 +128,10 @@
             "param": {
               "type": "string",
               "description": "The parameter name."
+            },
+            "target": {
+              "$ref": "shared.json#/$defs/NodeId",
+              "description": "The declaration this parameter read resolves to, when one is known (ADR-28, amended M9-F) — a widget-tree collection-for's own `item`, naming its `ui.List.itemDecl`. A reader must not treat absence as an incomplete document: most `bind.Param` reads name an ordinary widget/builder constructor parameter, which has no declaration-tier identity at all (ADR-28 §4, still deferred) and never carries this field."
             }
           }
         }
@@ -343,7 +347,11 @@
             },
             "itemParam": {
               "type": "string",
-              "description": "The name bound to each item inside the template."
+              "description": "The name bound to each item inside the template, by name only. `itemDecl` (ADR-28, amended M9-F) is the same binding's own declaration-tier identity, when one exists — this field is retained unchanged, for description only."
+            },
+            "itemDecl": {
+              "$ref": "l1.json#/$defs/VarDecl",
+              "description": "The item's own declaration (ADR-28, amended M9-F) — a real, declaration-tier `logic.VarDecl`, with no `initializer` (the runtime binds it, once per iteration, not an expression). A `bind.Param` inside the template targets this node's own id, the same way a `logic.Ref` inside a for-in loop's own body already targets `logic.For.loopDecl`.\n\nAbsent when this `ui.List` was not extracted from a real Dart `for (final x in xs) ...` collection-for — a `ListView.builder(itemBuilder: (context, i) => ...)`-shaped source names its item by its own builder closure's parameter, which carries no comparable declaration-tier identity (a separate, still-deferred gap; see ADR-28 §4)."
             },
             "indexParam": {
               "type": "string",

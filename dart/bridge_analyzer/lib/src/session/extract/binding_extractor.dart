@@ -70,7 +70,13 @@ final class BindingExtractor {
           return RawNode(
             kind: 'bind.Param',
             span: out.span(expression),
-            fields: <String, RawValue>{'param': RawLiteral(expression.name)},
+            fields: <String, RawValue>{
+              'param': RawLiteral(expression.name),
+              // A widget-tree collection-for's own declared item carries one (ADR-28, amended M9-F); an
+              // ordinary widget/builder constructor parameter does not (ADR-28 §4, still deferred) — the
+              // same absent-means-unresolved-not-incomplete rule `logic.Ref.target`'s own doc states.
+              if (binding!.symbol != null) 'target': RawRef(binding.symbol!),
+            },
           );
         case _:
           break;

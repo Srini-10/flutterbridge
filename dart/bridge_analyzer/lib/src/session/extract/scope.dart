@@ -159,7 +159,14 @@ final class _OrdinalVisitor extends RecursiveAstVisitor<void> {
 /// A lexical scope: a set of names, and the scope enclosing it.
 @immutable
 final class Scope {
-  const Scope._(this._bindings, this._parent, this._owner, this._ordinals);
+  const Scope._(
+    this._bindings,
+    this._parent,
+    this._owner,
+    this._ordinals, [
+    this._widgetOwner,
+    this._widgetOrdinals,
+  ]);
 
   /// The empty scope, enclosing nothing.
   factory Scope.root() => const Scope._(<String, Binding>{}, null, null, null);
@@ -171,8 +178,38 @@ final class Scope {
   /// reached from this body reuse the *same* map (they are extracted via ordinary [child]/[withBinding]
   /// calls, which carry [_owner]/[_ordinals] through unchanged) — a closure does not start its own local
   /// numbering, because it is not its own declaration-tier owner.
-  factory Scope.forBody(Scope enclosing, {required String owner, required AstNode body}) =>
-      Scope._(const <String, Binding>{}, enclosing, owner, _ordinalsOf(body));
+  factory Scope.forBody(Scope enclosing, {required String owner, required AstNode body}) => Scope._(
+    const <String, Binding>{},
+    enclosing,
+    owner,
+    _ordinalsOf(body),
+    enclosing._widgetOwner,
+    enclosing._widgetOrdinals,
+  );
+
+  /// A fresh scope for a `ui.Component`'s own render tree, named [owner] (M9-F).
+  ///
+  /// A **separate** owner/ordinal pair from [_owner]/[_ordinals] — never [Scope.forBody] itself, and
+  /// never exposed through [owner]/[ordinalOf] — so this carries no risk of also, as a side effect,
+  /// giving an ordinary local or a statement-level `for`/`catch` binding declared inside an inline
+  /// callback *found within this same render tree* a declaration-tier identity it does not have today.
+  /// That would be a real, separately-evidenced fix this milestone did not investigate or validate;
+  /// [widgetOwner]/[ordinalOfInWidgetTree] are read by exactly one call site
+  /// (`widget_extractor.dart`'s own collection-for handling), never by `statement_extractor.dart`'s own
+  /// `_localSymbol`-family helpers, which continue to read only [owner]/[ordinalOf], unchanged.
+  ///
+  /// Runs [_ordinalsOf] over [body] (the component's own render tree) once, the same "one pre-order pass,
+  /// keyed by resolved `Element`" scheme [Scope.forBody] already uses — nested/sibling collection-fors,
+  /// however deep, are numbered by the identical mechanism that already proved collision-free for
+  /// statement-level `for`-loops (M9-A).
+  factory Scope.forWidgetTree(Scope enclosing, {required String owner, required AstNode body}) => Scope._(
+    const <String, Binding>{},
+    enclosing,
+    enclosing._owner,
+    enclosing._ordinals,
+    owner,
+    _ordinalsOf(body),
+  );
 
   final Map<String, Binding> _bindings;
   final Scope? _parent;
@@ -182,16 +219,23 @@ final class Scope {
   final String? _owner;
   final Map<Element, int>? _ordinals;
 
+  /// The symbol of the nearest enclosing `ui.Component` this scope's collection-for items belong to
+  /// (M9-F) — a deliberately separate pair from [_owner]/[_ordinals]; see [Scope.forWidgetTree].
+  final String? _widgetOwner;
+  final Map<Element, int>? _widgetOrdinals;
+
   /// A new scope enclosed by this one, containing [bindings].
   ///
   /// A name in [bindings] shadows the same name outside, which is what `lookup` walking innermost-out
-  /// already means. [_owner]/[_ordinals] carry through unchanged — only the body-entry point
-  /// ([Scope.forBody]) ever starts a new one.
+  /// already means. [_owner]/[_ordinals]/[_widgetOwner]/[_widgetOrdinals] carry through unchanged — only
+  /// [Scope.forBody]/[Scope.forWidgetTree] ever start a new one of their own pair.
   Scope child(Iterable<Binding> bindings) => Scope._(
     <String, Binding>{for (final Binding binding in bindings) binding.name: binding},
     this,
     _owner,
     _ordinals,
+    _widgetOwner,
+    _widgetOrdinals,
   );
 
   /// A new scope enclosed by this one, containing one more name.
@@ -201,6 +245,15 @@ final class Scope {
   /// never entered via [Scope.forBody] (there is no enclosing action/function, so no local can be
   /// declared here; a caller that reaches this outside such a body has a bug elsewhere).
   String? get owner => _owner;
+
+  /// The symbol of the enclosing `ui.Component`, for minting a collection-for item's own symbol (M9-F)
+  /// — `null` if this scope was never entered via [Scope.forWidgetTree].
+  String? get widgetOwner => _widgetOwner;
+
+  /// [element]'s own ordinal within the enclosing render tree, precomputed by [Scope.forWidgetTree]
+  /// (M9-F) — `null` if this scope carries no such map, or if [element] is not a collection-for's own
+  /// declared item. The [widgetOwner]/[ordinalOfInWidgetTree] sibling of [owner]/[ordinalOf].
+  int? ordinalOfInWidgetTree(Element element) => _widgetOrdinals?[element];
 
   /// [element]'s own ordinal within the enclosing body, precomputed by [Scope.forBody] — `null` if this
   /// scope carries no ordinal map, or if [element] is not one [_ordinalsOf] numbered (a `catch` clause's

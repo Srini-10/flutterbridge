@@ -14,7 +14,7 @@ import { createHash } from 'node:crypto';
 export const UIR_VERSION = '1.7.0' as const;
 
 /** A hash of the schema sources this module was generated from. */
-export const UIR_SCHEMA_HASH = '699ae56311edc86b' as const;
+export const UIR_SCHEMA_HASH = 'b4e7b195414fcef9' as const;
 
 /** Node kind -> the fields of that node which hold `NodeId` references. */
 export const UIR_REFERENCE_FIELDS: Readonly<Record<string, readonly string[]>> = {
@@ -53,7 +53,7 @@ export const UIR_REFERENCE_FIELDS: Readonly<Record<string, readonly string[]>> =
   'logic.OpaqueDecl': ['id'],
   'logic.OpaqueExpr': ['id'],
   'logic.OpaqueStmt': ['id'],
-  'bind.Param': ['id'],
+  'bind.Param': ['id', 'target'],
   'logic.PropertyAccess': ['id', 'target'],
   'logic.Ref': ['id', 'target'],
   'logic.Return': ['id'],
@@ -1624,6 +1624,8 @@ export interface ParamBinding {
   readonly param: string;
   /// Where the node came from.
   readonly span: SourceSpan;
+  /// The declaration this parameter read resolves to, when one is known (ADR-28, amended M9-F) — a widget-tree collection-for's own `item`, naming its `ui.List.itemDecl`. A reader must not treat absence as an incomplete document: most `bind.Param` reads name an ordinary widget/builder constructor parameter, which has no declaration-tier identity at all (ADR-28 §4, still deferred) and never carries this field.
+  readonly target?: NodeId;
 }
 
 /// Reading a property of a value.
@@ -2064,7 +2066,11 @@ export interface UiList {
   readonly id: NodeId;
   /// The name bound to each index, if the builder takes one.
   readonly indexParam?: string;
-  /// The name bound to each item inside the template.
+  /// The item's own declaration (ADR-28, amended M9-F) — a real, declaration-tier `logic.VarDecl`, with no `initializer` (the runtime binds it, once per iteration, not an expression). A `bind.Param` inside the template targets this node's own id, the same way a `logic.Ref` inside a for-in loop's own body already targets `logic.For.loopDecl`.
+  ///
+  /// Absent when this `ui.List` was not extracted from a real Dart `for (final x in xs) ...` collection-for — a `ListView.builder(itemBuilder: (context, i) => ...)`-shaped source names its item by its own builder closure's parameter, which carries no comparable declaration-tier identity (a separate, still-deferred gap; see ADR-28 §4).
+  readonly itemDecl?: VarDecl;
+  /// The name bound to each item inside the template, by name only. `itemDecl` (ADR-28, amended M9-F) is the same binding's own declaration-tier identity, when one exists — this field is retained unchanged, for description only.
   readonly itemParam: string;
   /// The per-item key, inferred when Flutter gave none (pass N9).
   readonly key?: Binding;
@@ -3717,6 +3723,7 @@ export function parseParamBinding(value: unknown, path = 'ParamBinding'): ParamB
     kind: 'bind.Param',
     param: asString(req(o, 'param', path), `${path}.param`),
     span: parseSourceSpan(req(o, 'span', path), `${path}.span`),
+    ...(own(o, 'target') === undefined || own(o, 'target') === null ? {} : { target: parseNodeId(own(o, 'target'), `${path}.target`) }),
   };
 }
 
@@ -4383,6 +4390,7 @@ export function parseUiList(value: unknown, path = 'UiList'): UiList {
     ...(own(o, 'ext') === undefined || own(o, 'ext') === null ? {} : { ext: asMap(own(o, 'ext'), `${path}.ext`, (v) => v) }),
     id: parseNodeId(req(o, 'id', path), `${path}.id`),
     ...(own(o, 'indexParam') === undefined || own(o, 'indexParam') === null ? {} : { indexParam: asString(own(o, 'indexParam'), `${path}.indexParam`) }),
+    ...(own(o, 'itemDecl') === undefined || own(o, 'itemDecl') === null ? {} : { itemDecl: parseVarDecl(own(o, 'itemDecl'), `${path}.itemDecl`) }),
     itemParam: asString(req(o, 'itemParam', path), `${path}.itemParam`),
     ...(own(o, 'key') === undefined || own(o, 'key') === null ? {} : { key: parseBinding(own(o, 'key'), `${path}.key`) }),
     kind: 'ui.List',

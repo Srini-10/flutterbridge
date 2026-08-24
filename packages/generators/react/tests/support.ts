@@ -307,3 +307,11 @@ export function dialogDestinationsRaw(): string {
   const path = fileURLToPath(new URL('../../../../fixtures/uir/dialog_destinations.ndjson', import.meta.url));
   return readFileSync(path, 'utf8');
 }
+
+/** The real `fixtures/apps/widget_collection_for_identity` document, raw analyzer output (M9-F) — not yet normalized. */
+export function widgetCollectionForIdentityRaw(): string {
+  const path = fileURLToPath(
+    new URL('../../../../fixtures/uir/widget_collection_for_identity.ndjson', import.meta.url),
+  );
+  return readFileSync(path, 'utf8');
+}

@@ -1098,6 +1098,18 @@ export function emitUiNode(node: Node, module: ModuleBuilder, scope: EmitScope, 
       // The template's scope binds the two names the emitted `.map()` introduces. It did not until M4-H —
       // the third defect in this dead path — so a template that read its item or its index reported
       // `BRG3006` for a name the very next line of output declares.
+      //
+      // `paramInScope` alone is a **name-equality** fallback — correct only when nothing carries a real
+      // declaration-tier identity for this item to resolve by (a `ListView.builder`-shaped `ui.List`,
+      // whose `itemBuilder` closure parameter has none, ADR-28 §4, still deferred). Once one exists
+      // (`itemDecl`, ADR-28 amended M9-F), `localName` resolves it directly, by id — the same mechanism
+      // any other declaration-tier local already uses — which is what makes `bind.Param.target` (below)
+      // resolve to this ref's own local name rather than falling through to `props.item`, a real,
+      // pre-existing defect this milestone found: nothing before it had ever generated a real `ui.List`
+      // from real analyzer output (this case's own header comment), so no fixture had ever proven the
+      // template's own item read resolves to anything but an undefined `props`.
+      const itemDecl = node['itemDecl'];
+      const itemDeclId = itemDecl === undefined ? undefined : idOf(itemDecl as Node);
       const listScope: EmitScope = {
         ...scope,
         paramInScope: (name: string) =>
@@ -1106,6 +1118,7 @@ export function emitUiNode(node: Node, module: ModuleBuilder, scope: EmitScope, 
             : name === String(node['indexParam'] ?? '')
               ? indexName
               : scope.paramInScope(name),
+        localName: (id: NodeId) => (itemDeclId !== undefined && id === itemDeclId ? itemName : scope.localName(id)),
       };
       const inner = emitUiNode(body as Node, module, listScope, depth + 1);
       // N9 infers keys. If it produced one, it is on the node; if not, the index is used and that is stated
@@ -1540,6 +1553,17 @@ export function emitBinding(
           idOf(binding),
         );
         return 'undefined';
+      }
+      // A widget-tree collection-for's own declared item carries `target` (ADR-28, amended M9-F) — a
+      // real, provable link to `ui.List.itemDecl`, resolved the same way any other declaration-tier
+      // local already is (`scope.localName`), never `props.${name}`: the item is a `.map()` callback's
+      // own parameter, already in local scope, not something the enclosing component was ever handed as
+      // a prop. Absent `target` (an ordinary widget/builder constructor parameter, ADR-28 §4, still
+      // deferred), this is unchanged — a real prop read.
+      const target = binding['target'];
+      if (typeof target === 'string') {
+        const local = scope.localName(target);
+        if (local !== undefined) return local;
       }
       return `props.${identifierOf(name)}`;
     }

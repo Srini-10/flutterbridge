@@ -3539,6 +3539,390 @@ class _WState extends State<W> {
     });
   });
 
+  group('widget-tree collection-for item declaration identity (ADR-28, amended M9-F)', () {
+    // `for (final item in items) Text(item)`, inside a widget tree, is architecturally the same kind of
+    // binding a statement-level `for (final item in items) { ... }` already gets declaration-tier
+    // identity for (M9-A): `item` is a real, resolvable `DeclaredIdentifier`, numbered by the same
+    // `_OrdinalVisitor` pass that already numbers a for-in loop's own declared variable, unconditionally,
+    // regardless of which parent shape it appears under. What was missing was not a new identity concept
+    // — it was that `WidgetExtractor`'s own scope was never wired to any owner/ordinal source at all
+    // (`Scope.forBody` is only ever entered for an action/function body, never a `build()` render tree).
+    //
+    // `Scope.forWidgetTree` is a *separate* owner/ordinal pair from the one `Scope.forBody` populates —
+    // never `Scope.forBody` reused — so this carries no risk of also, as a side effect, giving an
+    // ordinary local or a statement-level for/catch binding declared inside an inline callback found
+    // within the same render tree an identity it does not have today (a real, separately-evidenced,
+    // pre-existing gap this milestone found and left exactly as it was, documented not fixed).
+    //
+    // `item` stays a `bind.Param` (a real generated `.map()` callback parameter — not a `let`, unlike an
+    // ordinary local, which is exactly why M9-A's own `Binds.local` choice does not transfer here) — but
+    // now carries `target`, and `ui.List` carries a real `itemDecl` alongside the unchanged, descriptive
+    // `itemParam` string, mirroring `logic.For`'s own `loopVariable`/`loopDecl` pair exactly.
+
+    const String widgetWrapper = '''
+import 'package:flutter/material.dart';
+class Home extends StatelessWidget {
+  const Home({super.key});
+  @override
+  Widget build(BuildContext context) {
+    {{BODY}}
+  }
+}
+''';
+
+    Map<String, dynamic> onlyList(Extracted app) => app.only('ui.List');
+
+    Map<String, dynamic>? itemDeclOf(Map<String, dynamic> list) => list['itemDecl'] as Map<String, dynamic>?;
+
+    List<Map<String, dynamic>> paramsNamed(Extracted app, String name) =>
+        app.ofKind('bind.Param').where((Map<String, dynamic> p) => p['param'] == name).toList();
+
+    List<Map<String, dynamic>> refsNamed(Extracted app, String name) =>
+        app.ofKind('logic.Ref').where((Map<String, dynamic> r) => r['name'] == name).toList();
+
+    // ── F1 — primitive item read ──────────────────────────────────────────────────────────────────
+
+    test('F1 — a primitive item read gets a real itemDecl, and the read targets it', () async {
+      final Extracted app = await extract(
+        widgetWrapper.replaceFirst('{{BODY}}', '''
+    final items = ['A', 'B'];
+    return Column(children: [for (final item in items) Text(item)]);
+'''),
+      );
+      expect(app.errors, isEmpty);
+      final Map<String, dynamic> list = onlyList(app);
+      expect(list['itemParam'], 'item', reason: 'the plain descriptive string stays, unchanged');
+      final Map<String, dynamic>? decl = itemDeclOf(list);
+      expect(decl, isNotNull);
+      expect(decl!['kind'], 'logic.VarDecl');
+      expect(decl['name'], 'item');
+      expect(decl['isFinal'], true);
+      final Map<String, dynamic> param = paramsNamed(app, 'item').single;
+      expect(param['target'], decl['id']);
+    });
+
+    // ── F2 — property read ────────────────────────────────────────────────────────────────────────
+
+    test('F2 — item.name (a compound expression, not a bare identifier) is a logic.Ref targeting itemDecl', () async {
+      final Extracted app = await extract(
+        widgetWrapper.replaceFirst('{{BODY}}', '''
+    final items = ['A', 'B'];
+    return Column(children: [for (final item in items) Text(item.length.toString())]);
+'''),
+      );
+      expect(app.errors, isEmpty);
+      final Map<String, dynamic> decl = itemDeclOf(onlyList(app))!;
+      final Map<String, dynamic> ref = refsNamed(app, 'item').single;
+      expect(ref['target'], decl['id']);
+    });
+
+    // ── F3 — repeated reads ───────────────────────────────────────────────────────────────────────
+
+    test('F3 — two reads of the same item target the same declaration', () async {
+      final Extracted app = await extract(
+        widgetWrapper.replaceFirst('{{BODY}}', '''
+    final items = ['A', 'B'];
+    return Column(children: [
+      for (final item in items) Row(children: [Text(item), Text(item)]),
+    ]);
+'''),
+      );
+      expect(app.errors, isEmpty);
+      final Map<String, dynamic> decl = itemDeclOf(onlyList(app))!;
+      final List<Map<String, dynamic>> params = paramsNamed(app, 'item');
+      expect(params, hasLength(2));
+      expect(params.every((Map<String, dynamic> p) => p['target'] == decl['id']), isTrue);
+    });
+
+    // ── F4 — outer local interaction ──────────────────────────────────────────────────────────────
+
+    test('F4 — an outer local and the item remain distinct declarations', () async {
+      final Extracted app = await extract(
+        widgetWrapper.replaceFirst('{{BODY}}', r'''
+    final items = ['A', 'B'];
+    final prefix = 'Item';
+    return Column(children: [for (final item in items) Text('$prefix $item')]);
+'''),
+      );
+      expect(app.errors, isEmpty);
+      final Map<String, dynamic> decl = itemDeclOf(onlyList(app))!;
+      final Map<String, dynamic> itemRef = refsNamed(app, 'item').single;
+      expect(itemRef['target'], decl['id']);
+      // `prefix` is an ordinary build-method local — inlined at its own reference site (M8-B), not
+      // represented as a `logic.Ref` at all, so there is nothing here that could collide with `item`.
+      expect(refsNamed(app, 'prefix'), isEmpty);
+      expect(app.bytes.contains('"value":"Item "'), isFalse);
+    });
+
+    // ── F5/F6 — nested collection-for, same-name shadowing ────────────────────────────────────────
+
+    test('F5/F6 — a nested collection-for with the same variable name: outer and inner declarations stay distinct, and the inner read resolves to the inner one', () async {
+      final Extracted app = await extract(
+        widgetWrapper.replaceFirst('{{BODY}}', '''
+    final groups = [['A', 'B'], ['C', 'D']];
+    return Column(children: [
+      for (final item in groups)
+        Column(children: [for (final item in item) Text(item)]),
+    ]);
+'''),
+      );
+      expect(app.errors, isEmpty);
+      final List<Map<String, dynamic>> lists = app.ofKind('ui.List');
+      expect(lists, hasLength(2));
+      final Map<String, dynamic> outerDecl = itemDeclOf(lists[0])!;
+      final Map<String, dynamic> innerDecl = itemDeclOf(lists[1])!;
+      expect(outerDecl['id'], isNot(innerDecl['id']), reason: 'same name, distinct declarations');
+
+      // The inner loop's own iterable — `item` naming the *outer* declaration — is a bare identifier, so
+      // it is extracted the same way the template's own read is (`bind.Param`, via `BindingExtractor`'s
+      // own bare-identifier special case for `Binds.parameter` — the iterable position is not special).
+      // It is evaluated outside the inner item's own scope (F13): it must target the outer, not the
+      // inner (which is not yet bound).
+      final List<Map<String, dynamic>> params = paramsNamed(app, 'item');
+      expect(params, hasLength(2), reason: 'the inner loop’s own iterable, and the template’s own read');
+      final Set<String?> targets = params.map((Map<String, dynamic> p) => p['target'] as String?).toSet();
+      expect(targets, <String?>{outerDecl['id'] as String, innerDecl['id'] as String});
+    });
+
+    // ── F7 — sibling collection-for, same variable name ───────────────────────────────────────────
+
+    test('F7 — two sibling collection-fors with the same variable name never collide', () async {
+      final Extracted app = await extract(
+        widgetWrapper.replaceFirst('{{BODY}}', '''
+    final items = ['A', 'B'];
+    return Column(children: [
+      for (final item in items) Text(item),
+      for (final item in items) Text(item),
+    ]);
+'''),
+      );
+      expect(app.errors, isEmpty);
+      final List<Map<String, dynamic>> lists = app.ofKind('ui.List');
+      expect(lists, hasLength(2));
+      final Map<String, dynamic> declA = itemDeclOf(lists[0])!;
+      final Map<String, dynamic> declB = itemDeclOf(lists[1])!;
+      expect(declA['id'], isNot(declB['id']));
+      final List<Map<String, dynamic>> params = paramsNamed(app, 'item');
+      expect(params, hasLength(2));
+      expect(params[0]['target'], declA['id']);
+      expect(params[1]['target'], declB['id']);
+    });
+
+    // ── F8 — ordinary-local collision ─────────────────────────────────────────────────────────────
+
+    test('F8 — an ordinary build-method local named "item", outside any loop, is inlined and never collides with a collection-for item', () async {
+      final Extracted app = await extract(
+        widgetWrapper.replaceFirst('{{BODY}}', '''
+    final items = ['A', 'B'];
+    final item = 'not-a-loop-var';
+    return Column(children: [
+      for (final entry in items) Text(entry),
+      Text(item),
+    ]);
+'''),
+      );
+      expect(app.errors, isEmpty);
+      // `item` here is M8-B's own inlined ordinary local — it never reaches this document as a
+      // `logic.Ref`/`bind.Param` at all, so there is structurally nothing for it to collide with.
+      expect(refsNamed(app, 'item'), isEmpty);
+      expect(paramsNamed(app, 'item'), isEmpty);
+      expect(app.bytes.contains('not-a-loop-var'), isTrue);
+    });
+
+    // ── F9 — statement-loop interaction ───────────────────────────────────────────────────────────
+
+    test('F9 — a statement-level for-in loop and a widget-tree collection-for sharing a name never collide', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Home extends StatelessWidget {
+  const Home({super.key});
+  @override
+  Widget build(BuildContext context) {
+    final items = ['A', 'B'];
+    return Column(children: [
+      for (final item in items) Text(item),
+      ElevatedButton(
+        onPressed: () {
+          for (final item in items) {
+            print(item);
+          }
+        },
+        child: const Text('go'),
+      ),
+    ]);
+  }
+}
+''',
+      );
+      expect(app.errors, isEmpty);
+      final Map<String, dynamic> widgetDecl = itemDeclOf(onlyList(app))!;
+      final Map<String, dynamic> param = paramsNamed(app, 'item').single;
+      expect(param['target'], widgetDecl['id']);
+      // The statement-level loop's own symbol namespace is untouched by this milestone (a real,
+      // pre-existing, separately-evidenced gap — declared inside an inline render-tree callback, whose
+      // own `owner` is null exactly as it was before this milestone) — but critically, it does not
+      // collide with the widget-tree item's own id either way. Two `logic.VarDecl` nodes exist in this
+      // document: the widget-tree item's own `itemDecl` (found above) and the statement-level loop's own
+      // `loopDecl` — both `logic.VarDecl`-kind, found by the same `ofKind` walk.
+      final List<Map<String, dynamic>> allDecls = app.ofKind('logic.VarDecl');
+      expect(allDecls, hasLength(2));
+      final Map<String, dynamic> statementDecl = allDecls.singleWhere(
+        (Map<String, dynamic> d) => d['id'] != widgetDecl['id'],
+      );
+      expect(statementDecl['name'], 'item');
+      expect(statementDecl['id'], isNot(widgetDecl['id']));
+    });
+
+    // ── F11 — closure capture ─────────────────────────────────────────────────────────────────────
+
+    test('F11 — an inline callback capturing the item resolves the same target as the template’s own read', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Home extends StatefulWidget {
+  const Home({super.key});
+  @override
+  State<Home> createState() => _HomeState();
+}
+class _HomeState extends State<Home> {
+  String _selected = '';
+  @override
+  Widget build(BuildContext context) {
+    final items = ['A', 'B'];
+    return Column(children: [
+      for (final item in items)
+        ElevatedButton(
+          onPressed: () { setState(() { _selected = item; }); },
+          child: Text(item),
+        ),
+    ]);
+  }
+}
+''');
+      expect(app.errors, isEmpty);
+      final Map<String, dynamic> decl = itemDeclOf(onlyList(app))!;
+      final Map<String, dynamic> param = paramsNamed(app, 'item').single;
+      expect(param['target'], decl['id']);
+    });
+
+    // ── F13 — iterable expression scope ───────────────────────────────────────────────────────────
+
+    test('F13 — the iterable expression is evaluated outside the new item’s own scope, never a premature self-reference', () async {
+      final Extracted app = await extract(
+        widgetWrapper.replaceFirst('{{BODY}}', '''
+    final items = ['A', 'B'];
+    return Column(children: [for (final item in items) Text(item)]);
+'''),
+      );
+      expect(app.errors, isEmpty);
+      // `items` (the iterable) is a plain, ordinary local — inlined by M8-B, never a `bind.Param`, and
+      // never influenced by the item binding that does not exist yet when it is extracted.
+      expect(paramsNamed(app, 'items'), isEmpty);
+      expect(app.bytes.contains('"value":"A"'), isTrue);
+    });
+
+    // ── F14 — negative visibility control ─────────────────────────────────────────────────────────
+
+    test('F14 — the item is not visible in its own iterable expression (a real Dart error, left unresolved, not fabricated)', () async {
+      final Extracted app = await extract(
+        widgetWrapper.replaceFirst('{{BODY}}', '''
+    return Column(children: [for (final item in item) Text(item)]);
+'''),
+      );
+      // A real Dart compile error (`item` used before its own declaration in the very expression that
+      // declares it) — BridgeAnalyzer's own diagnostics do not surface the underlying analyzer's
+      // resolution errors (a separate, pre-existing, unrelated characteristic, established in M9-C), but
+      // this extractor must never fabricate a resolution Dart itself does not license. Not asserting on
+      // `app.errors` here for that reason; asserting on the shape instead.
+      final List<Map<String, dynamic>> lists = app.ofKind('ui.List');
+      if (lists.isNotEmpty) {
+        final Map<String, dynamic>? decl = itemDeclOf(lists.single);
+        // The iterable position is a bare identifier, so it is extracted as `bind.Param` (the same
+        // bare-identifier special case F5/F6's own iterable read goes through), not `logic.Ref` — checked
+        // here too, not just `logic.Ref`, for the identical reason F5/F6 needed both.
+        final List<Map<String, dynamic>> refs = refsNamed(app, 'item');
+        final List<Map<String, dynamic>> params = paramsNamed(app, 'item');
+        // Neither a `logic.Ref` nor a `bind.Param` for `item`, if extracted at all inside the iterable
+        // position, may target the declaration it is itself part of declaring.
+        for (final Map<String, dynamic> ref in refs) {
+          if (decl != null) {
+            expect(ref['target'], isNot(decl['id']));
+          }
+        }
+        for (final Map<String, dynamic> param in params) {
+          if (decl != null) {
+            expect(param['target'], isNot(decl['id']));
+          }
+        }
+      }
+    });
+
+    // ── F15 — project-defined object item ─────────────────────────────────────────────────────────
+
+    test('F15 — identity does not depend on primitive type: a project-defined class works identically', () async {
+      final Extracted app = await extract(
+        widgetWrapper.replaceFirst('{{BODY}}', '''
+    final items = <Widget>[const Text('A'), const Text('B')];
+    return Column(children: [for (final item in items) item]);
+'''),
+      );
+      expect(app.errors, isEmpty);
+      final Map<String, dynamic> list = onlyList(app);
+      // The template *is* the item itself here (`for (final item in items) item`), extracted directly —
+      // still proves the mechanism is type-agnostic (it operates on the `Element`, never the value).
+      expect(list['itemParam'], 'item');
+      expect(itemDeclOf(list), isNotNull);
+    });
+
+    // ── F16 — renamed item ────────────────────────────────────────────────────────────────────────
+
+    test('F16 — the variable name is irrelevant to the mechanism', () async {
+      final Extracted app = await extract(
+        widgetWrapper.replaceFirst('{{BODY}}', '''
+    final items = ['A', 'B'];
+    return Column(children: [for (final entry in items) Text(entry)]);
+'''),
+      );
+      expect(app.errors, isEmpty);
+      final Map<String, dynamic> list = onlyList(app);
+      expect(list['itemParam'], 'entry');
+      final Map<String, dynamic>? decl = itemDeclOf(list);
+      expect(decl, isNotNull);
+      expect(decl!['name'], 'entry');
+      expect(paramsNamed(app, 'entry').single['target'], decl['id']);
+    });
+
+    // ── negative control — a `ListView.builder`-shaped ui.List gets no itemDecl at all ────────────
+
+    test('negative control — `ListView.builder`’s own itemBuilder parameter gets no itemDecl (a genuinely different, still-deferred gap)', () async {
+      final Extracted app = await extract(
+        widgetWrapper.replaceFirst('{{BODY}}', '''
+    final items = ['A', 'B'];
+    return ListView.builder(
+      itemCount: items.length,
+      itemBuilder: (BuildContext context, int index) => Text(items[index]),
+    );
+'''),
+      );
+      expect(app.errors, isEmpty);
+      final Map<String, dynamic> list = onlyList(app);
+      expect(
+        itemDeclOf(list),
+        isNull,
+        reason: 'a builder closure parameter is not a for-in declaration; ADR-28 §4 remains deferred for it',
+      );
+    });
+
+    test('the same source extracts to the same bytes on a second, independent run (determinism)', () async {
+      final String source = widgetWrapper.replaceFirst('{{BODY}}', '''
+    final items = ['A', 'B'];
+    return Column(children: [for (final item in items) Text(item)]);
+''');
+      final Extracted first = await extract(source);
+      final Extracted second = await extract(source);
+      expect(first.bytes, second.bytes);
+    });
+  });
+
   group('paths in UIR are platform-independent (M5-F)', () {
     // `span.file` is not a filesystem path once it is written: it becomes an anchor —
     // `'${span.file}#$segment'` in `node_factory.dart` — and an anchor is hashed into the node's id

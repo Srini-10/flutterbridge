@@ -21,6 +21,7 @@ library;
 
 import 'package:analyzer/dart/ast/ast.dart';
 import 'package:analyzer/dart/ast/visitor.dart';
+import 'package:analyzer/dart/element/element.dart';
 import 'package:analyzer/dart/element/type.dart';
 import 'package:bridge_analyzer/src/diagnostics/codes.dart';
 import 'package:bridge_analyzer/src/model/raw_node.dart';
@@ -77,6 +78,22 @@ final class WidgetExtractor {
       return '$slot:$name';
     }
     return index == null ? name : '$name[$index]';
+  }
+
+  /// [loopVariable]'s own declaration-tier symbol (ADR-28, amended M9-F for a widget-tree collection-
+  /// for's own declared item) — `null` on the same terms as `statement_extractor.dart`'s own
+  /// `_forEachLoopVariableSymbol`: no enclosing widget-tree owner (this scope was never entered via
+  /// `Scope.forWidgetTree`), no resolved element, or no ordinal. Called from both the `ui.List.itemDecl`
+  /// node built above and the template's own child scope, on the *same* `DeclaredIdentifier`, for the
+  /// identical reason `_forEachLoopVariableSymbol`'s own doc gives: a pure lookup cannot disagree with
+  /// itself regardless of call order.
+  String? _itemSymbol(DeclaredIdentifier loopVariable, Scope scope) {
+    final String? owner = scope.widgetOwner;
+    final Element? element = loopVariable.declaredFragment?.element;
+    if (owner == null || element == null) return null;
+    final int? ordinal = scope.ordinalOfInWidgetTree(element);
+    if (ordinal == null) return null;
+    return out.symbols.local(loopVariable.name.lexeme, owner: owner, ordinal: ordinal);
   }
 
   /// Extracts the widget [node] produces.
@@ -678,7 +695,9 @@ final class WidgetExtractor {
       case ForElement():
         final ForLoopParts parts = element.forLoopParts;
         if (parts is ForEachPartsWithDeclaration) {
-          final String name = parts.loopVariable.name.lexeme;
+          final DeclaredIdentifier loopVariable = parts.loopVariable;
+          final String name = loopVariable.name.lexeme;
+          final String? symbol = _itemSymbol(loopVariable, scope);
           return RawNode(
             kind: 'ui.List',
             span: out.span(element),
@@ -686,10 +705,30 @@ final class WidgetExtractor {
             fields: <String, RawValue>{
               'source': RawChild(bindings.extract(parts.iterable, scope)),
               'itemParam': RawLiteral(name),
+              // A real declaration-tier node (ADR-28, amended M9-F) — `itemParam` above stays, unchanged,
+              // as the plain descriptive string it always was; this is the identity a `bind.Param` inside
+              // the template now resolves against, the same way `logic.For.loopDecl` already lets a
+              // statement-level for-in loop's own body resolve a `logic.Ref` (M9-A).
+              if (symbol != null)
+                'itemDecl': RawChild(
+                  RawNode(
+                    kind: 'logic.VarDecl',
+                    span: out.span(loopVariable),
+                    symbol: symbol,
+                    fields: <String, RawValue>{
+                      'name': RawLiteral(name),
+                      'type': out.typeRef(
+                        loopVariable.declaredFragment?.element.type ?? loopVariable.type?.type,
+                        at: loopVariable,
+                      ),
+                      if (loopVariable.isFinal || loopVariable.isConst) 'isFinal': const RawLiteral(true),
+                    },
+                  ),
+                ),
               'template': RawChild(
                 _childElement(
                   element.body,
-                  scope.withBinding(Binding(name: name, binds: Binds.parameter)),
+                  scope.withBinding(Binding(name: name, binds: Binds.parameter, symbol: symbol)),
                 ),
               ),
             },

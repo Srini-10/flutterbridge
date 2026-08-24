@@ -1,0 +1,20 @@
+name: widget_collection_for_identity
+description: >-
+  M9-F fixture: a widget-tree collection-for's own declared item (ADR-28, amended M9-F) — the same
+  declaration-tier identity a statement-level for-in loop's own variable already has (M9-A), now
+  extended to `for (final item in items) Text(item)` inside a widget tree, proving repeated reads,
+  nested/sibling shadowing, an outer-local collision, and a closure capture all resolve each read to
+  the exact declaration in scope at that point, never by name
+  (docs/adr/0028-amendment-widget-collection-for-item-identity.md).
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true
