@@ -3923,6 +3923,192 @@ class _HomeState extends State<Home> {
     });
   });
 
+  group('ScaffoldMessenger / SnackBar presentation (ADR-0030)', () {
+    // `ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(...)))` is recognized by
+    // resolved identity only (the receiver's own resolved type is Flutter's real `ScaffoldMessengerState`
+    // — never the bare name `ScaffoldMessenger`, never `showSnackBar`'s own spelling alone), and its
+    // `content:` argument is routed through the real widget-tree extractor and embedded as
+    // `presentedContent` — a genuine `ui.Element`, not the generic, unrendered `logic.New` every other
+    // constructor argument gets. Each recognized call's own embedded content gets a unique anchor
+    // namespace (`snackbar[n]`), the same `anchorSegment` idiom `TransitionExtractor` uses for M9-D's own
+    // inline route-overlay destinations — without it, two structurally identical snack bars collide
+    // (BRG1205), which is exactly the defect a real fixture build caught during this milestone.
+
+    final Map<String, String> snackbarFlutter = <String, String>{
+      ...flutterPackage,
+      'widgets.dart':
+          '${flutterPackage['widgets.dart']!}\n'
+          '''
+class SnackBarAction {
+  const SnackBarAction({required this.label, required this.onPressed, this.textColor});
+  final String label;
+  final void Function() onPressed;
+  final Color? textColor;
+}
+
+class SnackBar extends Widget {
+  const SnackBar({required this.content, this.action, this.duration, this.backgroundColor});
+  final Widget content;
+  final SnackBarAction? action;
+  final Duration? duration;
+  final Color? backgroundColor;
+}
+
+class ScaffoldMessengerState {
+  void showSnackBar(SnackBar snackBar) {}
+  void hideCurrentSnackBar() {}
+  void removeCurrentSnackBar() {}
+  void clearSnackBars() {}
+}
+
+class ScaffoldMessenger extends Widget {
+  const ScaffoldMessenger({required this.child});
+  final Widget child;
+  static ScaffoldMessengerState of(BuildContext context) => ScaffoldMessengerState();
+}
+''',
+    };
+
+    const String widgetWrapper = '''
+import 'package:flutter/material.dart';
+class Home extends StatelessWidget {
+  const Home({super.key});
+  @override
+  Widget build(BuildContext context) {
+    {{BODY}}
+  }
+}
+''';
+
+    Future<Extracted> extractSnackbar(String body) => extract(
+      widgetWrapper.replaceFirst('{{BODY}}', body),
+      dependencies: <String, Map<String, String>>{'flutter': snackbarFlutter},
+    );
+
+    List<Map<String, dynamic>> snackBarConstructions(Extracted app) =>
+        app.ofKind('logic.New').where((Map<String, dynamic> n) => n['typeName'] == 'SnackBar').toList();
+
+    test('a direct call is recognized: presentedContent is a real ui.Element, content is not duplicated into namedArgs', () async {
+      final Extracted app = await extractSnackbar('''
+    return ElevatedButton(
+      onPressed: () { ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Saved'))); },
+      child: const Text('go'),
+    );
+''');
+      expect(app.errors, isEmpty);
+      final Map<String, dynamic> snackBar = snackBarConstructions(app).single;
+      final Map<String, dynamic>? presented = snackBar['presentedContent'] as Map<String, dynamic>?;
+      expect(presented, isNotNull, reason: 'content: must be routed through the real widget-tree extractor');
+      expect(presented!['kind'], 'ui.Text', reason: 'a real, catalog-extracted widget, not generic logic.New');
+      final Map<String, dynamic>? namedArgs = snackBar['namedArgs'] as Map<String, dynamic>?;
+      expect(
+        namedArgs?.containsKey('content'),
+        isNot(true),
+        reason: 'content is extracted exactly once — never duplicated into namedArgs alongside presentedContent',
+      );
+    });
+
+    test('two structurally identical snack bars never collide on anchor (regression guard)', () async {
+      final Extracted app = await extractSnackbar('''
+    return Column(children: [
+      ElevatedButton(
+        onPressed: () { ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Saved'))); },
+        child: const Text('a'),
+      ),
+      ElevatedButton(
+        onPressed: () { ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Saved'))); },
+        child: const Text('b'),
+      ),
+    ]);
+''');
+      expect(app.errors, isEmpty, reason: 'BRG1205 (duplicate anchor) is exactly the defect this guards against');
+      final List<Map<String, dynamic>> bars = snackBarConstructions(app);
+      expect(bars, hasLength(2));
+      final List<String> anchors = bars.map((Map<String, dynamic> b) => b['anchor'] as String).toList();
+      expect(anchors.toSet(), hasLength(2), reason: 'each recognized call gets its own anchor namespace');
+    });
+
+    test('a messenger reached through one local-variable indirection is still recognized (G13)', () async {
+      final Extracted app = await extractSnackbar('''
+    return ElevatedButton(
+      onPressed: () {
+        final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
+        messenger.showSnackBar(const SnackBar(content: Text('Saved')));
+      },
+      child: const Text('go'),
+    );
+''');
+      expect(app.errors, isEmpty);
+      final Map<String, dynamic> snackBar = snackBarConstructions(app).single;
+      expect(snackBar['presentedContent'], isNotNull);
+    });
+
+    test('a project-defined ScaffoldMessenger, genuinely in scope, is never recognized as the real one (G11, negative control)', () async {
+      const String source = '''
+class MySnackBar {
+  const MySnackBar({required this.content});
+  final Object content;
+}
+
+class MyScaffoldMessengerState {
+  void showSnackBar(MySnackBar snackBar) {}
+}
+
+class MyScaffoldMessenger {
+  static MyScaffoldMessengerState of(Object context) => MyScaffoldMessengerState();
+}
+
+void useIt(Object context) {
+  MyScaffoldMessenger.of(context).showSnackBar(const MySnackBar(content: 'Saved'));
+}
+''';
+      final Extracted app = await extract(source, dependencies: <String, Map<String, String>>{'flutter': snackbarFlutter});
+      expect(app.errors, isEmpty);
+      // Structurally identical to the real shape — a static `.of(context)` returning a state object whose
+      // own `showSnackBar` takes a content-bearing widget — but resolved to `package:app/main.dart`, not
+      // `package:flutter/`. No `presentedContent` anywhere: this project's own class is never routed
+      // through the widget-tree extractor by spelling alone.
+      expect(app.ofKind('ui.Element').where((Map<String, dynamic> e) => e['presentedContent'] != null), isEmpty);
+      final List<Map<String, dynamic>> constructions =
+          app.ofKind('logic.New').where((Map<String, dynamic> n) => n['typeName'] == 'MySnackBar').toList();
+      expect(constructions, hasLength(1));
+      expect(constructions.single.containsKey('presentedContent'), isFalse);
+    });
+
+    test('an indirect SnackBar reference is never recognized — only a direct inline literal is (G17, negative control)', () async {
+      final Extracted app = await extractSnackbar('''
+    return ElevatedButton(
+      onPressed: () {
+        final bar = const SnackBar(content: Text('Saved'));
+        ScaffoldMessenger.of(context).showSnackBar(bar);
+      },
+      child: const Text('go'),
+    );
+''');
+      expect(app.errors, isEmpty);
+      final Map<String, dynamic> snackBar = snackBarConstructions(app).single;
+      expect(
+        snackBar.containsKey('presentedContent'),
+        isFalse,
+        reason: 'an indirect reference has no anchor namespace to embed content under at extraction time',
+      );
+      final Map<String, dynamic>? namedArgs = snackBar['namedArgs'] as Map<String, dynamic>?;
+      expect(namedArgs?['content'], isNotNull, reason: 'falls through to the ordinary, generic extraction');
+    });
+
+    test('the same source extracts to the same bytes on a second, independent run (determinism)', () async {
+      final String source = widgetWrapper.replaceFirst('{{BODY}}', '''
+    return ElevatedButton(
+      onPressed: () { ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Saved'))); },
+      child: const Text('go'),
+    );
+''');
+      final Extracted first = await extract(source, dependencies: <String, Map<String, String>>{'flutter': snackbarFlutter});
+      final Extracted second = await extract(source, dependencies: <String, Map<String, String>>{'flutter': snackbarFlutter});
+      expect(first.bytes, second.bytes);
+    });
+  });
+
   group('paths in UIR are platform-independent (M5-F)', () {
     // `span.file` is not a filesystem path once it is written: it becomes an anchor —
     // `'${span.file}#$segment'` in `node_factory.dart` — and an anchor is hashed into the node's id

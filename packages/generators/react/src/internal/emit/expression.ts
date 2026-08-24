@@ -47,6 +47,24 @@ export interface EmitScope {
    */
   readonly routerLocal?: string;
   /**
+   * The identifier of this component's `useSnackbarHost()`, when its tree (or an action it references)
+   * calls a recognized `ScaffoldMessenger`-family method (ADR-0030) — hoisted for the same rules-of-hooks
+   * reason {@link routerLocal} is: the call is almost always inside a callback (`onPressed: () {
+   * ScaffoldMessenger.of(context).showSnackBar(...); }`), and `useSnackbarHost()` is a hook.
+   *
+   * Absent when the component presents no snack bar, so such a component declares no hook and imports
+   * nothing for one.
+   */
+  readonly snackbarHostLocal?: string;
+  /**
+   * Whether this program constructs a `ScaffoldMessenger` widget anywhere (ADR-0030 §10) — computed once,
+   * program-wide, in `pipeline.ts`'s `rootScope`. `true` makes every recognized `ScaffoldMessenger`-family
+   * call refuse: a nested messenger is an observably distinct Flutter scope this decision does not model,
+   * and the analyzer has no structural way to tell which particular call site it affects (reduction-ladder
+   * rung G14), so the refusal is whole-program rather than an unsound guess at which calls are "near" it.
+   */
+  readonly hasNestedScaffoldMessenger?: boolean;
+  /**
    * The identifier of the component's `useMounted()` ref, when its tree reads `logic.Intrinsic`
    * (ADR-0026) — `mounted` or `context.mounted`, however many times.
    *
@@ -67,6 +85,23 @@ export interface EmitScope {
    * rules-of-hooks/one-name-answers-every-read reason `routerLocal` is.
    */
   dialogRefFor?(id: NodeId): string | undefined;
+  /**
+   * Renders [node] — a `ui.Element` — as JSX, for a widget reached *outside* the ordinary component
+   * render tree (ADR-0030): a `SnackBar`'s own `content:` argument, extracted through the real
+   * widget-tree extractor the same way M9-D's inline dialog destinations already are (`component.ts`'s
+   * own `emitUiNode`, which this forwards to).
+   *
+   * A method taking the *caller's own* `scope` back as an explicit argument, rather than a closure that
+   * captures one at wiring time, because `module` is replaced per component/file (`{ ...scope, module
+   * }`, `pipeline.ts`) — a closure fixed at root-scope construction would forward stale imports to the
+   * wrong file. `expression.ts` cannot import `emitUiNode` directly (`component.ts` imports
+   * `expression.ts`, not the reverse), so this is wired once, in `pipeline.ts`'s `rootScope`, as a bare
+   * forwarding call — the same import-direction reason {@link dialogRefFor}'s own sibling hooks on the
+   * Dart side of this decision are functions rather than fields.
+   *
+   * Absent when the hook is unwired (a unit test of this emitter alone).
+   */
+  renderWidget?(node: Node, depth: number, scope: EmitScope): string;
   /**
    * The local expression that reads a signal declared by `id`, if one is in scope.
    *
@@ -688,6 +723,14 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
     }
 
     case 'logic.MethodCall': {
+      // A `ScaffoldMessenger`-family call (ADR-0030) — checked, and lowered, *before* the receiver is
+      // emitted: there is no runtime component for `.of(context)` itself (the messenger collapses into
+      // "the one root host"), so emitting the receiver here would spuriously refuse it
+      // (`missingCapabilityOf('ScaffoldMessenger.of', ...)`) even on a call this generator does support.
+      if (isScaffoldMessengerCall(node)) {
+        return lowerScaffoldMessengerCall(node, scope);
+      }
+
       const receiver = emitExpression(node['receiver'] as Node, scope);
       refuseNamedArgs(node, scope);
       const method = String(node['method'] ?? '');
@@ -761,6 +804,30 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
     }
 
     case 'logic.Call': {
+      // `ScaffoldMessenger.of(context)` (ADR-0030) — checked, and lowered, *before* the callee is
+      // emitted, for the identical reason `logic.MethodCall`'s own check runs first: there is no kit
+      // export for `ScaffoldMessengerState`, so emitting the callee would spuriously refuse a call this
+      // generator does support (`final m = ScaffoldMessenger.of(context); m.showSnackBar(...)`, one
+      // level of local-variable indirection, ADR-0030 §6/G13). Recognized by the call's own *resolved
+      // return type* alone — `ScaffoldMessengerState` has no public constructor and no other factory in
+      // real Flutter, so any expression of this type is this call, whatever its own callee's shape.
+      if (isFlutterType(node['type'] as Node | undefined, 'ScaffoldMessengerState')) {
+        const snackbarHost = scope.snackbarHostLocal;
+        if (snackbarHost !== undefined) return snackbarHost;
+        // Defensive only, mirroring `lowerScaffoldMessengerCall`'s own fallback: `declareSnackbarHost`
+        // hoists this hook whenever *any* recognized call is reachable, and this expression only ever
+        // reaches generated output alongside at least one (this milestone does not support acquiring a
+        // messenger and never calling anything on it).
+        scope.report(
+          GeneratorDiagnosticCode.UnsupportedCapability,
+          'error',
+          'this needs the snack bar host, which this component did not hoist. That is a defect in the ' +
+            'generator, not in the program.',
+          idOf(node),
+        );
+        return REFUSED;
+      }
+
       const target = node['callee'];
       const callee = emitExpression(target as Node, scope);
       // A refused callee stops the call. Emitting the arguments anyway produced one diagnostic per argument
@@ -1070,6 +1137,266 @@ function refuseNamedArgs(node: Node, scope: EmitScope): void {
 
 function asArray(value: unknown): Node[] {
   return Array.isArray(value) ? (value as Node[]) : [];
+}
+
+// ── ADR-0030: ScaffoldMessenger / SnackBar presentation ─────────────────────────────────────────────
+
+/** The four `ScaffoldMessengerState` methods this decision recognizes (ADR-0030 §8). */
+const SCAFFOLD_MESSENGER_METHODS: ReadonlySet<string> = new Set([
+  'showSnackBar',
+  'hideCurrentSnackBar',
+  'removeCurrentSnackBar',
+  'clearSnackBars',
+]);
+
+/** `SnackBar`'s own supported named arguments (ADR-0030 §8) — anything else is refused, not dropped (§12). */
+const SNACKBAR_ALLOWED_ARGS: ReadonlySet<string> = new Set(['content', 'action', 'duration']);
+
+/** `SnackBarAction`'s own supported named arguments (ADR-0030 §11) — anything else is refused, not dropped. */
+const SNACKBAR_ACTION_ALLOWED_ARGS: ReadonlySet<string> = new Set(['label', 'onPressed']);
+
+/**
+ * Whether a resolved type is Flutter's real `name` — the type's own **library**, not a hand-kept full
+ * path, the identical check `isKitProvided` already uses (`runtime.ts`). Real Flutter SDK evidence (this
+ * milestone's own build-proof fixture) is what this exists for: `ScaffoldMessengerState`/`SnackBar`
+ * resolve to `package:flutter/src/material/scaffold.dart`/`.../snack_bar.dart`, not the more guessable
+ * `package:flutter/widgets.dart` an earlier investigation pass assumed from a hand-written test stand-in
+ * — an internal-file path the real SDK is free to reorganize across versions, which a full-path match
+ * would have silently broken on. `name` is still checked exactly: the prefix alone would also match an
+ * unrelated Flutter class of the same generic shape.
+ */
+function isFlutterType(type: Node | undefined, name: string): boolean {
+  const library = type?.['library'];
+  return typeof library === 'string' && library.startsWith('package:flutter/') && type?.['name'] === name;
+}
+
+/**
+ * Whether `node` is a recognized `ScaffoldMessenger`-family call (ADR-0030 §6) — checked by the
+ * *receiver's* own resolved type, never by the method's bare name alone (the M8-V numeric-method
+ * pattern, extended past `dart:core`), so a project-defined class's own same-named method is untouched
+ * and falls through to the ordinary lowering (a required negative control, ADR-0030 §6). Survives one
+ * level of local-variable indirection (`final m = ScaffoldMessenger.of(context); m.showSnackBar(...)`,
+ * ADR-0030 §6/G13) because the receiver's *resolved type* — not its shape — is what is checked.
+ *
+ * Exported so `component.ts`'s own `declareSnackbarHost` and `pipeline.ts`'s own program-wide scan can
+ * ask the identical question, rather than three call sites drifting into three different definitions of
+ * "recognized".
+ */
+export function isScaffoldMessengerCall(node: Node): boolean {
+  const method = node['method'];
+  if (typeof method !== 'string' || !SCAFFOLD_MESSENGER_METHODS.has(method)) return false;
+  const receiver = node['receiver'] as Node | undefined;
+  return isFlutterType(receiver?.['type'] as Node | undefined, 'ScaffoldMessengerState');
+}
+
+/** What a program-wide scan for `ScaffoldMessenger`-family shapes found (ADR-0030 §10). */
+export interface ScaffoldMessengerSurvey {
+  /** Whether the program calls a recognized `ScaffoldMessenger`-family method anywhere. */
+  readonly needsHost: boolean;
+  /** Whether the program constructs a `ScaffoldMessenger` widget anywhere — see {@link EmitScope.hasNestedScaffoldMessenger}. */
+  readonly hasNestedMessenger: boolean;
+}
+
+/**
+ * Walks the whole program once for both facts `pipeline.ts`'s `rootScope`/`generate` need before any
+ * component is emitted: whether `providers.tsx` should declare a `SnackbarHostProvider` at all, and
+ * whether every recognized call must refuse (ADR-0030 §10). One walk, not two — the same node can answer
+ * both questions, and a document large enough for this to matter is exactly the case worth not walking
+ * twice for.
+ *
+ * @param nodes - every node in the canonical program (`context.program.nodes` — top-level declarations;
+ * this recurses into each one's own fields to reach the nested `logic.MethodCall`/`ui.Element` nodes a
+ * component's render tree or an action's body actually carries).
+ */
+export function surveyScaffoldMessenger(nodes: readonly unknown[]): ScaffoldMessengerSurvey {
+  let needsHost = false;
+  let hasNestedMessenger = false;
+
+  const visit = (value: unknown): void => {
+    if (needsHost && hasNestedMessenger) return; // both already known; nothing left to learn
+    if (Array.isArray(value)) {
+      for (const item of value) visit(item);
+      return;
+    }
+    if (value === null || typeof value !== 'object') return;
+    const node = value as Node;
+    if (node['kind'] === 'logic.MethodCall' && isScaffoldMessengerCall(node)) {
+      needsHost = true;
+    } else if (node['kind'] === 'ui.Element') {
+      const component = node['component'] as Node | undefined;
+      const library = component?.['library'];
+      if (
+        component?.['name'] === 'ScaffoldMessenger' &&
+        typeof library === 'string' &&
+        library.startsWith('package:flutter/')
+      ) {
+        hasNestedMessenger = true;
+      }
+    }
+    for (const child of Object.values(node)) visit(child);
+  };
+
+  for (const node of nodes) visit(node);
+  return { needsHost, hasNestedMessenger };
+}
+
+/**
+ * Lowers a recognized `ScaffoldMessenger`-family call (ADR-0030) to the runtime kit's own snack bar
+ * host — a hook the generator hoists to the top of this component's render body
+ * (`component.ts`'s `declareSnackbarHost`), exactly the rules-of-hooks reason `routerLocal` is hoisted
+ * rather than read at the call site. Never reaches an ordinary `MISSING_CAPABILITIES` refusal: every
+ * shape this decision does not authorize is refused explicitly, here, with its own reason.
+ */
+function lowerScaffoldMessengerCall(node: Node, scope: EmitScope): string {
+  const method = String(node['method'] ?? '');
+
+  // §10: no nested-messenger semantics. Checked once, program-wide (`hasNestedScaffoldMessenger`,
+  // `pipeline.ts`'s `rootScope`) — an explicit nested `ScaffoldMessenger` widget makes *every*
+  // `.of(context)` in the program unprovable, not just the ones lexically near it (ADR-0030 §10, G14:
+  // the analyzer has no structural link between a nested widget and a distant call site).
+  if (scope.hasNestedScaffoldMessenger === true) {
+    scope.report(
+      GeneratorDiagnosticCode.UnsupportedCapability,
+      'error',
+      'this program constructs a `ScaffoldMessenger` widget explicitly, somewhere. Flutter resolves ' +
+        '`ScaffoldMessenger.of(context)` to whichever messenger is nearest in the widget tree, and this ' +
+        "generator cannot prove which messenger any *particular* call resolves to once more than one " +
+        'exists — so every `ScaffoldMessenger`-family call in this program is refused, not just the ones ' +
+        'textually near the nested widget (ADR-0030). Owner: an ADR extending root-messenger-only support.',
+      idOf(node),
+    );
+    return REFUSED;
+  }
+
+  if (scope.snackbarHostLocal === undefined) {
+    // Defensive only — `declareSnackbarHost` hoists this hook in every component that reaches a
+    // recognized call, so a real generated program never observes this branch.
+    scope.report(
+      GeneratorDiagnosticCode.UnsupportedCapability,
+      'error',
+      'this call needs the snack bar host, which this component did not hoist. That is a defect in the ' +
+        'generator, not in the program.',
+      idOf(node),
+    );
+    return REFUSED;
+  }
+
+  // The receiver's own emitted text, not `scope.snackbarHostLocal` directly: for a direct call
+  // (`ScaffoldMessenger.of(context).showSnackBar(...)`) the receiver *is* a recognized `logic.Call`
+  // that already lowers to the hoisted host (this file's own `logic.Call` case, ADR-0030 §6/G13); for
+  // one local-variable indirection (`final m = ScaffoldMessenger.of(context); m.showSnackBar(...)`) the
+  // receiver is an ordinary `logic.Ref` to `m`, which already resolves to `m`'s own local name. Reading
+  // `scope.snackbarHostLocal` here directly would bypass that local entirely, leaving `const m =
+  // snackbarHost;` declared and never read — a real defect the build proof's own `tsc` step does not
+  // catch (this generator's tsconfig sets no `noUnusedLocals`), so this is not a redundant precaution.
+  const host = emitExpression(node['receiver'] as Node, scope);
+  if (host === REFUSED) return REFUSED;
+
+  switch (method) {
+    case 'hideCurrentSnackBar':
+      return `${host}.hide()`;
+    case 'removeCurrentSnackBar':
+      return `${host}.remove()`;
+    case 'clearSnackBars':
+      return `${host}.clear()`;
+    case 'showSnackBar':
+      return lowerShowSnackBar(node, scope, host);
+    default:
+      // Unreachable: `isScaffoldMessengerCall` only matches `SCAFFOLD_MESSENGER_METHODS`.
+      return REFUSED;
+  }
+}
+
+/**
+ * `ScaffoldMessenger.of(context).showSnackBar(SnackBar(...))` — the one member of the family that
+ * carries content (ADR-0030 §7/§8).
+ */
+function lowerShowSnackBar(node: Node, scope: EmitScope, snackbarHost: string): string {
+  const args = asArray(node['args']);
+  const snackBar = args[0];
+  if (args.length !== 1 || snackBar === undefined || snackBar['kind'] !== 'logic.New') {
+    // G17: an indirect reference (`final bar = SnackBar(...); ...showSnackBar(bar)`) — never recognized
+    // (ADR-0030 §12). This generator only reaches a bare `logic.New` here in the first place because
+    // extraction only ever set `presentedContent` on a *direct inline* construction (ADR-0030 §7); an
+    // indirect reference is a `logic.Ref` here instead, which fails this check on its own `kind`.
+    scope.report(
+      GeneratorDiagnosticCode.UnsupportedCapability,
+      'error',
+      '`showSnackBar` is only supported with a direct, inline `SnackBar(...)` argument — a stored ' +
+        'reference is not (ADR-0030). Write the `SnackBar(...)` directly in the call.',
+      idOf(node),
+    );
+    return REFUSED;
+  }
+
+  const namedArgs = (snackBar['namedArgs'] as Record<string, Node> | undefined) ?? {};
+  for (const key of Object.keys(namedArgs)) {
+    if (!SNACKBAR_ALLOWED_ARGS.has(key)) {
+      scope.report(
+        GeneratorDiagnosticCode.UnsupportedCapability,
+        'error',
+        `\`SnackBar.${key}\` has no lowering. This generator supports \`content\`, \`action\` and ` +
+          '`duration` (ADR-0030) — the narrow subset real Flutter/Dart-SDK evidence proved safe. A ' +
+          'different property needs its own evidence before it can be added.',
+        idOf(node),
+      );
+      return REFUSED;
+    }
+  }
+
+  const contentNode = snackBar['presentedContent'] as Node | undefined;
+  if (contentNode === undefined || scope.renderWidget === undefined) {
+    // Extraction only sets `presentedContent` on the recognized direct-literal shape (ADR-0030 §7); its
+    // absence here means this `SnackBar(...)` was reached some other way this generator does not (yet)
+    // support, or (a unit test of this emitter alone) the widget-render hook is simply unwired.
+    scope.report(
+      GeneratorDiagnosticCode.UnsupportedCapability,
+      'error',
+      'this `SnackBar`’s own `content:` was not extracted as a real widget subtree — a defect in the ' +
+        'compiler, not in the program, unless this `SnackBar` was reached some way other than a direct ' +
+        '`ScaffoldMessenger.of(context).showSnackBar(SnackBar(...))` call (ADR-0030).',
+      idOf(node),
+    );
+    return REFUSED;
+  }
+  const contentJsx = scope.renderWidget(contentNode, 1, scope);
+
+  const options: string[] = [];
+
+  const actionNode = namedArgs['action'];
+  if (actionNode !== undefined) {
+    const actionArgs = (actionNode['namedArgs'] as Record<string, Node> | undefined) ?? {};
+    for (const key of Object.keys(actionArgs)) {
+      if (!SNACKBAR_ACTION_ALLOWED_ARGS.has(key)) {
+        scope.report(
+          GeneratorDiagnosticCode.UnsupportedCapability,
+          'error',
+          `\`SnackBarAction.${key}\` has no lowering. This generator supports \`label\` and \`onPressed\` ` +
+            'only (ADR-0030).',
+          idOf(node),
+        );
+        return REFUSED;
+      }
+    }
+    const label = actionArgs['label'];
+    const onPressed = actionArgs['onPressed'];
+    if (label !== undefined && onPressed !== undefined) {
+      const labelText = emitExpression(label, scope);
+      const onPressedText = emitExpression(onPressed, scope);
+      if (labelText === REFUSED || onPressedText === REFUSED) return REFUSED;
+      options.push(`action: { label: ${labelText}, onPress: ${onPressedText} }`);
+    }
+  }
+
+  const durationNode = namedArgs['duration'];
+  if (durationNode !== undefined) {
+    const durationText = emitExpression(durationNode, scope);
+    if (durationText === REFUSED) return REFUSED;
+    options.push(`duration: ${durationText}`);
+  }
+
+  const optionsArg = options.length === 0 ? '' : `, { ${options.join(', ')} }`;
+  return `${snackbarHost}.show(${contentJsx}${optionsArg})`;
 }
 
 /**

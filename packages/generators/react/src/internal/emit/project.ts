@@ -113,6 +113,14 @@ export interface ScaffoldInput {
   readonly assetsName: string;
   /** Store definitions to provide: `{ module, name }`. */
   readonly stores: readonly { readonly module: string; readonly name: string }[];
+  /**
+   * Whether the program calls a recognized `ScaffoldMessenger`-family method anywhere (ADR-0030) — when
+   * `true`, `providers.tsx` declares a `SnackbarHostProvider` at the application root, the same way
+   * `RouterProvider`/`ThemeProvider` always are; when `false`, a program that never presents a snack bar
+   * imports nothing for one, matching this generator's existing "declared only when needed" discipline
+   * for `DialogHost`/`useRouter`/`useMounted`.
+   */
+  readonly needsSnackbarHost: boolean;
   /** Everything `app/page.tsx` needs. Built by the pipeline, because lowering a value needs the emit scope. */
   readonly page: PageInput;
 }
@@ -296,9 +304,10 @@ function providers(input: ScaffoldInput): string {
   const lines: string[] = ["'use client';", '', banner('the program'), ''];
   // Same order the module builder produces: packages first, then the project's own modules, each
   // lexicographic. `sortSpecifiers` is the rule; this file is checked against it like any other.
-  lines.push(
-    "import { AssetProvider, RouterProvider, StoreProvider, ThemeProvider } from '@bridge/runtime-react';",
-  );
+  const runtimeImports = ['AssetProvider', 'RouterProvider', 'StoreProvider', 'ThemeProvider'];
+  if (input.needsSnackbarHost) runtimeImports.push('SnackbarHostProvider');
+  runtimeImports.sort();
+  lines.push(`import { ${runtimeImports.join(', ')} } from '@bridge/runtime-react';`);
   lines.push("import type { ReactNode } from 'react';");
   const local = [
     { specifier: input.assetsModule, name: input.assetsName },
@@ -315,12 +324,17 @@ function providers(input: ScaffoldInput): string {
 
   // Nested providers, innermost last. Built as text rather than by folding a tree: the nesting is fixed and
   // shallow, and a fold would make the indentation a function of the store count.
-  const open: string[] = [
-    `<ThemeProvider descriptor={${input.themeName}}>`,
-    `<AssetProvider manifest={${input.assetsName}}>`,
-    `<RouterProvider descriptor={${input.routesName}}>`,
-  ];
-  const close: string[] = ['</RouterProvider>', '</AssetProvider>', '</ThemeProvider>'];
+  const open: string[] = [`<ThemeProvider descriptor={${input.themeName}}>`];
+  const close: string[] = ['</ThemeProvider>'];
+  // `SnackbarHostProvider` (ADR-0030) renders the current presentation's own surface, which reads the
+  // theme (`useThemeSurface`) — it must nest *inside* `ThemeProvider`, but nothing else here depends on
+  // it or is depended on by it, so it goes right after, as outer as it can be.
+  if (input.needsSnackbarHost) {
+    open.push('<SnackbarHostProvider>');
+    close.unshift('</SnackbarHostProvider>');
+  }
+  open.push(`<AssetProvider manifest={${input.assetsName}}>`, `<RouterProvider descriptor={${input.routesName}}>`);
+  close.unshift('</RouterProvider>', '</AssetProvider>');
   for (const store of input.stores) {
     open.push(`<StoreProvider definition={${store.name}}>`);
     close.unshift('</StoreProvider>');

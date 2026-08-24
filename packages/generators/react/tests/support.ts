@@ -315,3 +315,9 @@ export function widgetCollectionForIdentityRaw(): string {
   );
   return readFileSync(path, 'utf8');
 }
+
+/** The real `fixtures/apps/snackbar_presentation` document, raw analyzer output (M9-G, ADR-0030) — not yet normalized. */
+export function snackbarPresentationRaw(): string {
+  const path = fileURLToPath(new URL('../../../../fixtures/uir/snackbar_presentation.ndjson', import.meta.url));
+  return readFileSync(path, 'utf8');
+}

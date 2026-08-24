@@ -31,7 +31,7 @@ const String uirVersion = '1.7.0';
 /// A hash of the schema sources this library was generated from.
 ///
 /// Stamped into every emitted manifest: a UIR document always says which schema produced it.
-const String uirSchemaHash = 'b4e7b195414fcef9';
+const String uirSchemaHash = '4e92e2cb1b62a36e';
 
 /// Node kind -> the fields of that node which hold `NodeId` references.
 ///
@@ -5551,6 +5551,7 @@ final class New extends Expr {
     this.ext,
     this.isConst,
     this.namedArgs,
+    this.presentedContent,
   });
 
   /// Parses a [New] from JSON, validating as it goes.
@@ -5568,6 +5569,7 @@ final class New extends Expr {
       id: _asString(_req(json, 'id', path), '$path.id'),
       isConst: json['isConst'] == null ? null : _asBool(json['isConst'], '$path.isConst'),
       namedArgs: json['namedArgs'] == null ? null : _asMap<Expr>(json['namedArgs'], '$path.namedArgs', Expr.fromJson),
+      presentedContent: json['presentedContent'] == null ? null : UiNode.fromJson(json['presentedContent'], '$path.presentedContent'),
       span: SourceSpan.fromJson(_req(json, 'span', path), '$path.span'),
       type: TypeRef.fromJson(_req(json, 'type', path), '$path.type'),
       typeName: _asString(_req(json, 'typeName', path), '$path.typeName'),
@@ -5595,6 +5597,13 @@ final class New extends Expr {
   /// Named arguments.
   final Map<String, Expr>? namedArgs;
 
+  /// This construction's own widget content, embedded (ADR-0030).
+  ///
+  /// **Present only on a `SnackBar`'s own `logic.New` node, and only when extraction recognized `ScaffoldMessenger.of(context).showSnackBar(SnackBar(...))` as a direct inline construction** — never inferred from the class name alone; recognition is by the resolved receiver/constructed type (ADR-0030 §6). The real, catalog-extracted widget subtree for the `content:` argument, embedded here the same way `ui.Cond.then`/`ui.List.template`/`app.RouteTransition.inline` already embed a subtree rather than referencing one (M9-D) — an id is not available to reference by at the point extraction runs. Replaces, rather than duplicates, the argument's own entry under `namedArgs`: a recognized `SnackBar`'s own `namedArgs` carries no `content` key at all, so the same expression is never extracted twice under two different anchors.
+  ///
+  /// Absent on every other `logic.New` node in the document, including a `SnackBar(...)` reached any other way (stored in a variable, never passed to `showSnackBar`, or passed by reference rather than as a direct literal — ADR-0030 §12), in which case `content` stays an ordinary `namedArgs` entry.
+  final UiNode? presentedContent;
+
   /// Where the node came from.
   final SourceSpan span;
 
@@ -5619,6 +5628,7 @@ final class New extends Expr {
     'isConst': isConst,
     'kind': 'logic.New',
     'namedArgs': namedArgs?.map((String k, Expr v) => MapEntry<String, Object?>(k, v.toJson())),
+    'presentedContent': presentedContent?.toJson(),
     'span': span.toJson(),
     'type': type.toJson(),
     'typeName': typeName,
@@ -5636,6 +5646,7 @@ final class New extends Expr {
     NodeId? id,
     bool? isConst,
     Map<String, Expr>? namedArgs,
+    UiNode? presentedContent,
     SourceSpan? span,
     TypeRef? type,
     String? typeName,
@@ -5648,6 +5659,7 @@ final class New extends Expr {
       id: id ?? this.id,
       isConst: isConst ?? this.isConst,
       namedArgs: namedArgs ?? this.namedArgs,
+      presentedContent: presentedContent ?? this.presentedContent,
       span: span ?? this.span,
       type: type ?? this.type,
       typeName: typeName ?? this.typeName,
@@ -5668,6 +5680,7 @@ final class New extends Expr {
         _equality.equals(other.id, id) &&
         _equality.equals(other.isConst, isConst) &&
         _equality.equals(other.namedArgs, namedArgs) &&
+        _equality.equals(other.presentedContent, presentedContent) &&
         _equality.equals(other.span, span) &&
         _equality.equals(other.type, type) &&
         _equality.equals(other.typeName, typeName);
@@ -5683,6 +5696,7 @@ final class New extends Expr {
     _equality.hash(id),
     _equality.hash(isConst),
     _equality.hash(namedArgs),
+    _equality.hash(presentedContent),
     _equality.hash(span),
     _equality.hash(type),
     _equality.hash(typeName),

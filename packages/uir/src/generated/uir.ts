@@ -14,7 +14,7 @@ import { createHash } from 'node:crypto';
 export const UIR_VERSION = '1.7.0' as const;
 
 /** A hash of the schema sources this module was generated from. */
-export const UIR_SCHEMA_HASH = 'b4e7b195414fcef9' as const;
+export const UIR_SCHEMA_HASH = '4e92e2cb1b62a36e' as const;
 
 /** Node kind -> the fields of that node which hold `NodeId` references. */
 export const UIR_REFERENCE_FIELDS: Readonly<Record<string, readonly string[]>> = {
@@ -1522,6 +1522,12 @@ export interface New {
   readonly kind: 'logic.New';
   /// Named arguments.
   readonly namedArgs?: Readonly<Record<string, Expr>>;
+  /// This construction's own widget content, embedded (ADR-0030).
+  ///
+  /// **Present only on a `SnackBar`'s own `logic.New` node, and only when extraction recognized `ScaffoldMessenger.of(context).showSnackBar(SnackBar(...))` as a direct inline construction** — never inferred from the class name alone; recognition is by the resolved receiver/constructed type (ADR-0030 §6). The real, catalog-extracted widget subtree for the `content:` argument, embedded here the same way `ui.Cond.then`/`ui.List.template`/`app.RouteTransition.inline` already embed a subtree rather than referencing one (M9-D) — an id is not available to reference by at the point extraction runs. Replaces, rather than duplicates, the argument's own entry under `namedArgs`: a recognized `SnackBar`'s own `namedArgs` carries no `content` key at all, so the same expression is never extracted twice under two different anchors.
+  ///
+  /// Absent on every other `logic.New` node in the document, including a `SnackBar(...)` reached any other way (stored in a variable, never passed to `showSnackBar`, or passed by reference rather than as a direct literal — ADR-0030 §12), in which case `content` stays an ordinary `namedArgs` entry.
+  readonly presentedContent?: UiNode;
   /// Where the node came from.
   readonly span: SourceSpan;
   /// Resolved type.
@@ -3559,6 +3565,7 @@ export function parseNew(value: unknown, path = 'New'): New {
     ...(own(o, 'isConst') === undefined || own(o, 'isConst') === null ? {} : { isConst: asBool(own(o, 'isConst'), `${path}.isConst`) }),
     kind: 'logic.New',
     ...(own(o, 'namedArgs') === undefined || own(o, 'namedArgs') === null ? {} : { namedArgs: asMap(own(o, 'namedArgs'), `${path}.namedArgs`, (v, p) => parseExpr(v, p)) }),
+    ...(own(o, 'presentedContent') === undefined || own(o, 'presentedContent') === null ? {} : { presentedContent: parseUiNode(own(o, 'presentedContent'), `${path}.presentedContent`) }),
     span: parseSourceSpan(req(o, 'span', path), `${path}.span`),
     type: parseTypeRef(req(o, 'type', path), `${path}.type`),
     typeName: asString(req(o, 'typeName', path), `${path}.typeName`),

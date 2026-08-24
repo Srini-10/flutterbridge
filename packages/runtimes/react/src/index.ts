@@ -529,6 +529,16 @@ export {
   type DialogHostProps,
 } from './internal/widgets/dialog.js';
 
+// ── ADR-0030: ScaffoldMessenger / SnackBar presentation ─────────────────────────────────────────────
+export {
+  SnackbarHostProvider,
+  useSnackbarHost,
+  type SnackbarAction,
+  type SnackbarHostHandle,
+  type SnackbarHostProviderProps,
+  type ShowSnackbarOptions,
+} from './internal/widgets/snackbar.js';
+
 export {
   BottomNavigationBar,
   BottomNavigationBarItem,

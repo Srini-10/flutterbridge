@@ -114,6 +114,9 @@ final class Extractor {
     // inline route-overlay destination (M9-D) needs the widget extractor, which needs the annotation
     // extractor, which is built after the transition extractor — neither can construct the other first.
     transitions.widgets = widgets;
+    // A recognized `SnackBar`'s own `content:` argument (ADR-0030) needs the same widget-tree extractor,
+    // for the same reason and wired the same way.
+    expressions.presentedContentOf = widgets.extract;
     final SignalExtractor signals = SignalExtractor(out, expressions, adapters);
     final ComponentExtractor components = ComponentExtractor(
       out,

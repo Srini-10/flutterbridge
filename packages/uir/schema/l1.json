@@ -755,6 +755,10 @@
             "constructorName": {
               "type": "string",
               "description": "The named constructor, if any."
+            },
+            "presentedContent": {
+              "$ref": "l2.json#/$defs/UiNode",
+              "description": "This construction's own widget content, embedded (ADR-0030).\n\n**Present only on a `SnackBar`'s own `logic.New` node, and only when extraction recognized `ScaffoldMessenger.of(context).showSnackBar(SnackBar(...))` as a direct inline construction** — never inferred from the class name alone; recognition is by the resolved receiver/constructed type (ADR-0030 §6). The real, catalog-extracted widget subtree for the `content:` argument, embedded here the same way `ui.Cond.then`/`ui.List.template`/`app.RouteTransition.inline` already embed a subtree rather than referencing one (M9-D) — an id is not available to reference by at the point extraction runs. Replaces, rather than duplicates, the argument's own entry under `namedArgs`: a recognized `SnackBar`'s own `namedArgs` carries no `content` key at all, so the same expression is never extracted twice under two different anchors.\n\nAbsent on every other `logic.New` node in the document, including a `SnackBar(...)` reached any other way (stored in a variable, never passed to `showSnackBar`, or passed by reference rather than as a direct literal — ADR-0030 §12), in which case `content` stays an ordinary `namedArgs` entry."
             }
           }
         }

@@ -1,0 +1,19 @@
+name: snackbar_presentation
+description: >-
+  M9-G fixture: ScaffoldMessenger/SnackBar presentation (ADR-0030) — a direct inline
+  `ScaffoldMessenger.of(context).showSnackBar(SnackBar(...))`, a variable-content snack bar, a
+  duration-and-action snack bar, the messenger reached through one local-variable indirection, and
+  `hideCurrentSnackBar`/`removeCurrentSnackBar`/`clearSnackBars`, all through the real analyzer,
+  normalizer, generator and a real `tsc` build against the real, unmocked `@bridge/runtime-react`.
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

@@ -29,8 +29,13 @@ import type { AnyUirNode, NodeId } from '@bridge/uir';
 import { GeneratorDiagnosticCode } from './diagnostics/codes.js';
 import { isAppRoot, reportAppRoot } from './emit/app_root.js';
 import { assetManifestLines, collectAssets } from './emit/assets.js';
-import { emitBinding, emitComponent } from './emit/component.js';
-import { defaultStoreAccessRead, type EmitScope, type StoreMemberInfo } from './emit/expression.js';
+import { emitBinding, emitComponent, emitUiNode } from './emit/component.js';
+import {
+  defaultStoreAccessRead,
+  surveyScaffoldMessenger,
+  type EmitScope,
+  type StoreMemberInfo,
+} from './emit/expression.js';
 import { emitFunctionModules } from './emit/functions.js';
 import { ModuleBuilder, fileNameOf, identifierOf } from './emit/module.js';
 import { RUNTIME_MODULE } from './emit/runtime.js';
@@ -85,7 +90,11 @@ export function generateProject(context: GeneratorContext): GeneratorOutput {
   }
 
   const files: EmittedFile[] = [];
-  const scope = rootScope(context, report);
+  // One program-wide walk (ADR-0030) — whether `providers.tsx` needs `SnackbarHostProvider` at all, and
+  // whether every recognized `ScaffoldMessenger`-family call must refuse (§10). Computed once, up front,
+  // rather than inside `rootScope` and again at the `scaffold()` call site below.
+  const scaffoldMessenger = surveyScaffoldMessenger(context.program.nodes);
+  const scope = rootScope(context, report, scaffoldMessenger.hasNestedMessenger);
 
   // Every non-app-root component's own output path and export name, decided once, before any component
   // is emitted (M8-F) — so a component processed earlier in the program's fixed order can still
@@ -240,6 +249,7 @@ export function generateProject(context: GeneratorContext): GeneratorOutput {
       assetsModule: '@/assets/manifest',
       assetsName: 'assetManifest',
       stores,
+      needsSnackbarHost: scaffoldMessenger.needsHost,
       page: pageOf(
         table,
         allRoutes,
@@ -510,6 +520,7 @@ function firstRouteName(components: ReadonlyMap<string, string>, routes: readonl
 function rootScope(
   context: GeneratorContext,
   report: (code: string, severity: 'error' | 'warning' | 'info', message: string, nodeId?: string) => void,
+  hasNestedScaffoldMessenger: boolean,
 ): EmitScope {
   // Store members resolve program-wide: a component reading `favorites.count` names a signal the store owns,
   // and the component emitter must resolve it to a read even though it did not declare it. Populated by the
@@ -571,6 +582,11 @@ function rootScope(
     // The generic (`.get()`) fallback (ADR-27) — correct anywhere that is not a component's own
     // render position, which overrides this with a subscribed local (`declareStoreInstanceReads`).
     storeAccessRead: (id) => defaultStoreAccessRead(id, scope),
+    // A bare forwarding call (ADR-0030) — takes the caller's own, already-current `scope` back as an
+    // argument rather than closing over this function's own `scope`/`module`, which would still be this
+    // root's placeholder `<none>` builder by the time any component calls it.
+    renderWidget: (node, depth, current) => emitUiNode(node, current.module, current, depth),
+    hasNestedScaffoldMessenger,
   };
   return scope;
 }

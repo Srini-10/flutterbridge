@@ -20,6 +20,7 @@ import 'package:analyzer/dart/element/element.dart';
 import 'package:analyzer/dart/element/type.dart';
 import 'package:bridge_analyzer/src/diagnostics/codes.dart';
 import 'package:bridge_analyzer/src/model/raw_node.dart';
+import 'package:bridge_analyzer/src/session/adapters/adapter_context.dart';
 import 'package:bridge_analyzer/src/session/adapters/adapter_registry.dart';
 import 'package:bridge_analyzer/src/session/adapters/adapter_result.dart';
 import 'package:bridge_analyzer/src/session/colour_constants.dart';
@@ -553,6 +554,61 @@ final class ExpressionExtractor {
   void noteConstruction(InstanceCreationExpression node, Scope scope) =>
       constructions?.call(node, scope);
 
+  /// The widget-tree extractor's own hook (ADR-0030), set once by the orchestrator. Null in a build that
+  /// extracts expressions without widget-tree support (a unit test of this extractor alone) — in which
+  /// case `SnackBar.content` stays the ordinary, generic `logic.New` every other constructor argument
+  /// gets, exactly as it did before this decision.
+  WidgetContentHook? presentedContentOf;
+
+  /// The direct `SnackBar(...)` literal currently recognized as a `ScaffoldMessenger.showSnackBar`
+  /// argument, if any (ADR-0030 §7) — identity-tracked (never by spelling) so only *this* exact AST node,
+  /// reached from *this* exact recognized call, has its own `content:` argument redirected through
+  /// [presentedContentOf]. Consumed (reset to null) the instant `_construction` reaches it, so a `content:`
+  /// key on any other, unrelated construction anywhere else — including deeper inside this same
+  /// `SnackBar`'s own `content:` subtree, or inside its `action:` callback — never matches.
+  InstanceCreationExpression? _recognizedSnackbarLiteral;
+
+  /// Recognizes `ScaffoldMessenger.of(...).showSnackBar(SnackBar(...))` — or the same call one local
+  /// variable removed (`final m = ScaffoldMessenger.of(context); m.showSnackBar(...)`) — by resolved
+  /// identity only (ADR-0030 §6): the receiver's own resolved static type must be Flutter's real
+  /// `ScaffoldMessengerState` (`package:flutter/`), never by the spelling `ScaffoldMessenger` or
+  /// `showSnackBar` alone, so a project's own same-named class or method (a required negative control,
+  /// ADR-0030 §6) is never confused with it. The single argument must be a *direct* `SnackBar(...)`
+  /// literal, resolved to Flutter's real `SnackBar` — a stored reference (`final bar = SnackBar(...);
+  /// ...showSnackBar(bar)`) is deliberately not recognized (ADR-0030 §12): there is no existing mechanism
+  /// in this compiler that traces a `logic.Ref` back to its own initializer, and building one is out of
+  /// this decision's scope.
+  void _recognizeSnackbarPresentation(MethodInvocation node) {
+    if (node.methodName.name != 'showSnackBar') {
+      return;
+    }
+    final DartType? receiverType = node.realTarget?.staticType;
+    if (!AdapterContext.isA(receiverType, 'ScaffoldMessengerState', package: _flutterPackage)) {
+      return;
+    }
+    final List<Expression> positional = <Expression>[
+      for (final Argument argument in node.argumentList.arguments)
+        if (argument is Expression) argument,
+    ];
+    if (positional.length != 1) {
+      return;
+    }
+    final Expression sole = positional.single;
+    if (sole is! InstanceCreationExpression) {
+      return;
+    }
+    if (!AdapterContext.isA(sole.staticType, 'SnackBar', package: _flutterPackage)) {
+      return;
+    }
+    _recognizedSnackbarLiteral = sole;
+  }
+
+  /// The package prefix Flutter's own SDK types resolve under — `AdapterContext.isA`'s own `package:`
+  /// argument, named here rather than repeated, matching `MaterialRouteAdapter._package` (ADR-0030
+  /// recognizes Flutter's real `ScaffoldMessengerState`/`SnackBar` the same resolved-identity way that
+  /// file recognizes `MaterialPageRoute` and friends).
+  static const String _flutterPackage = 'package:flutter/';
+
   // ── assignment ────────────────────────────────────────────────────────────────────────────────
 
   RawNode _assignment(AssignmentExpression node, Scope scope) {
@@ -957,6 +1013,7 @@ final class ExpressionExtractor {
     // record — the imperative call still becomes the `logic.MethodCall` below, because the code does
     // both: it navigates, and that navigation is a statement in the method's body.
     transitions?.call(node, scope);
+    _recognizeSnackbarPresentation(node);
 
     Expression? target = node.realTarget;
 
@@ -1198,27 +1255,75 @@ final class ExpressionExtractor {
     // such a construction is reached with the scope its arguments bind against.
     noteConstruction(node, scope);
 
+    // Consumed by identity, not merely read, the instant this node is reached — so a `content:` key on
+    // any other construction (including one nested inside this very `content:`/`action:` subtree) can
+    // never accidentally match a stale recognition (ADR-0030 §7).
+    final bool recognizedSnackbar = identical(node, _recognizedSnackbarLiteral);
+    if (recognizedSnackbar) {
+      _recognizedSnackbarLiteral = null;
+    }
+    final RawValue? presentedContent = recognizedSnackbar ? _presentedSnackbarContent(node, scope) : null;
+
+    // `content:` is extracted exactly once — through `presentedContentOf` above when recognized, through
+    // the ordinary path below otherwise — never both, which would extract the same expression twice
+    // under two different anchors and collide (BRG1205).
     final String? constructorName = node.constructorName.name?.name;
     return RawNode(
       kind: 'logic.New',
       span: out.span(node),
+      // A unique namespace for `presentedContent`'s own embedded subtree (ADR-0030), the same
+      // `anchorSegment` idiom `TransitionExtractor` uses for an inline route-overlay destination
+      // (M9-D) — without it, two structurally identical snack bars (`SnackBar(content: Text('Saved'))`
+      // written twice) both claim the bare anchor `<file>#Text` and trip BRG1205.
+      anchorSegment: presentedContent != null ? 'snackbar[${_snackbarOrdinal++}]' : null,
       fields: <String, RawValue>{
         'typeName': RawLiteral(node.constructorName.type.name.lexeme),
         if (constructorName != null) 'constructorName': RawLiteral(constructorName),
-        ..._arguments(node.argumentList, scope),
+        ..._arguments(node.argumentList, scope, omit: presentedContent != null ? const {'content'} : const {}),
+        'presentedContent': ?presentedContent,
         if (node.isConst) 'isConst': const RawLiteral(true),
         'type': out.typeRef(node.staticType, at: node),
       },
     );
   }
 
+  /// The next unused ordinal for a recognized `SnackBar`'s own `anchorSegment` (ADR-0030) — mirrors
+  /// `TransitionExtractor._ordinal` exactly, one counter per file, incremented once per recognized call.
+  int _snackbarOrdinal = 0;
+
+  /// `presentedContent` (ADR-0030 §7) for a recognized `SnackBar(...)`'s own `content:` argument — the
+  /// real, embedded `ui.Element` [presentedContentOf] gives it, in place of the ordinary, generic
+  /// `logic.New` the argument would otherwise become.
+  ///
+  /// Absent (not an error) when the hook is unwired (a unit test of this extractor alone) or `content:`
+  /// itself is missing — `SnackBar`'s own required-ness is a Dart-level fact this extractor does not
+  /// re-enforce; either way `content` simply falls through to the ordinary `namedArgs` extraction, since
+  /// the caller only omits it from that path when this returns non-null.
+  RawValue? _presentedSnackbarContent(InstanceCreationExpression node, Scope scope) {
+    final WidgetContentHook? hook = presentedContentOf;
+    if (hook == null) {
+      return null;
+    }
+    for (final Argument argument in node.argumentList.arguments) {
+      if (argument is NamedArgument && argument.name.lexeme == 'content') {
+        return RawChild(hook(argument.argumentExpression, scope));
+      }
+    }
+    return null;
+  }
+
   /// Positional and named arguments, split as the schema splits them.
-  Map<String, RawValue> _arguments(ArgumentList list, Scope scope) {
+  ///
+  /// [omit] excludes named-argument keys already extracted some other way (ADR-0030's `presentedContent`,
+  /// for `content`) — extracting the same expression twice would give it two different anchors and one of
+  /// them would collide with a sibling call's own (BRG1205).
+  Map<String, RawValue> _arguments(ArgumentList list, Scope scope, {Set<String> omit = const {}}) {
     final List<RawValue> positional = <RawValue>[];
     final Map<String, RawValue> named = <String, RawValue>{};
 
     for (final Argument argument in list.arguments) {
       if (argument is NamedArgument) {
+        if (omit.contains(argument.name.lexeme)) continue;
         named[argument.name.lexeme] = RawChild(extract(argument.argumentExpression, scope));
       } else if (argument is Expression) {
         positional.add(RawChild(extract(argument, scope)));
@@ -1404,3 +1509,13 @@ typedef PresentingTransitionHook = String? Function();
 /// Routes are emitted from a walk that visits the whole unit once and therefore sees a route's page
 /// *after* the router that declares it; the scope has to be banked at the moment it exists.
 typedef ConstructionHook = void Function(InstanceCreationExpression node, Scope scope);
+
+/// Extracts [widget] through the real widget-tree extractor, the same way an ordinary `build()` render
+/// tree already is (ADR-0030) — offered so a recognized presentation call's own inline widget argument
+/// (a `SnackBar`'s `content:`) gets a genuine `ui.Element` rather than the generic `logic.New` every
+/// other constructor argument gets.
+///
+/// A function rather than an interface, for the same reason [TransitionHook] is: the widget extractor
+/// imports this one (for the leaf expressions inside a widget's own properties), so this extractor
+/// cannot import it back.
+typedef WidgetContentHook = RawNode Function(Expression widget, Scope scope);

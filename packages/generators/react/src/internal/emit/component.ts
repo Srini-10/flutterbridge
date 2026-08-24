@@ -26,7 +26,7 @@
 import type { NodeId } from '@bridge/uir';
 
 import { GeneratorDiagnosticCode } from '../diagnostics/codes.js';
-import { emitExpression, localBindingsIn, stringLiteral, type EmitScope } from './expression.js';
+import { emitExpression, isScaffoldMessengerCall, localBindingsIn, stringLiteral, type EmitScope } from './expression.js';
 import { emitStatements } from './statement.js';
 import { identifierOf, type ModuleBuilder } from './module.js';
 import { typeTextOf } from './types.js';
@@ -90,15 +90,20 @@ export function emitComponent(component: Node, module: ModuleBuilder, scope: Emi
     const withRouter: EmitScope = routerLocal === undefined ? scope : { ...scope, routerLocal };
     const mountedLocal = declareMounted(component, module, withRouter);
     const withMounted: EmitScope = mountedLocal === undefined ? withRouter : { ...withRouter, mountedLocal };
+    // The snack bar host (ADR-0030), before the tree that presents one, for the same rules-of-hooks
+    // reason `router`/`mounted` are.
+    const snackbarHostLocal = declareSnackbarHost(component, module, withMounted);
+    const withSnackbarHost: EmitScope =
+      snackbarHostLocal === undefined ? withMounted : { ...withMounted, snackbarHostLocal };
     // Every inline route-overlay destination (M9-D) this component reaches, declared and rendered here
     // — before the tree that shows one, for the same rules-of-hooks reason `router`/`mounted` are.
-    const { refs: dialogRefs, hosts: dialogHosts } = declareDialogHosts(component, module, withMounted);
+    const { refs: dialogRefs, hosts: dialogHosts } = declareDialogHosts(component, module, withSnackbarHost);
     const withDialogs: EmitScope =
       dialogRefs.size === 0
-        ? withMounted
+        ? withSnackbarHost
         : {
-            ...withMounted,
-            dialogRefFor: (id: NodeId) => dialogRefs.get(id) ?? withMounted.dialogRefFor?.(id),
+            ...withSnackbarHost,
+            dialogRefFor: (id: NodeId) => dialogRefs.get(id) ?? withSnackbarHost.dialogRefFor?.(id),
           };
     // This component's own locally-owned store instances (ADR-27), before store *consumption* — a
     // `.member` access on one of these must never also trigger `declareStoreConsumption`'s `useStore()`
@@ -189,6 +194,37 @@ function declareMounted(component: Node, module: ModuleBuilder, scope: EmitScope
   const useMounted = useRuntime(module, 'useMounted');
   const local = 'mounted';
   module.line(`const ${local} = ${useMounted}();`);
+  module.line();
+  return local;
+}
+
+/**
+ * Declares the component's snack bar host, if its tree (or an action it references) calls a recognized
+ * `ScaffoldMessenger`-family method (ADR-0030).
+ *
+ * Hoisted for the same rules-of-hooks reason {@link declareRouter} is: `useSnackbarHost()` is a hook, and
+ * the call is almost always inside a callback (`onPressed: () { ScaffoldMessenger.of(context)
+ * .showSnackBar(...); }`). Declared **only when needed**, so a component that never presents a snack bar
+ * emits no `useSnackbarHost` and imports nothing for one.
+ *
+ * @param component - the `ui.Component` node.
+ * @param module - the file to write into.
+ * @param scope - resolution, to reach a `sig.Action` the tree references by id (as {@link declareRouter}).
+ * @returns the identifier holding the host, or undefined when the component presents no snack bar.
+ */
+function declareSnackbarHost(component: Node, module: ModuleBuilder, scope: EmitScope): string | undefined {
+  if (
+    !componentReaches(
+      component,
+      scope,
+      (node) => node['kind'] === 'logic.MethodCall' && isScaffoldMessengerCall(node),
+    )
+  ) {
+    return undefined;
+  }
+  const useSnackbarHost = useRuntime(module, 'useSnackbarHost');
+  const local = 'snackbarHost';
+  module.line(`const ${local} = ${useSnackbarHost}();`);
   module.line();
   return local;
 }
@@ -993,9 +1029,17 @@ function childScope(
     // per component (`declareDialogHosts`), and a `logic.Navigate` push reached from any nested scope
     // (an action body, a callback) must resolve to that same ref, never a second one.
     ...(parent.dialogRefFor === undefined ? {} : { dialogRefFor: parent.dialogRefFor }),
+    // Same reasoning again, for the snack bar host (ADR-0030) — declared once per component
+    // (`declareSnackbarHost`), and a recognized call reached from any nested scope must resolve to that
+    // same host, never a second one.
+    ...(parent.snackbarHostLocal === undefined ? {} : { snackbarHostLocal: parent.snackbarHostLocal }),
     // Program-wide, so a child scope forwards it unchanged rather than rebuilding it per component.
     themeRoles: parent.themeRoles,
     node: parent.node.bind(parent),
+    ...(parent.renderWidget === undefined ? {} : { renderWidget: parent.renderWidget }),
+    ...(parent.hasNestedScaffoldMessenger === undefined
+      ? {}
+      : { hasNestedScaffoldMessenger: parent.hasNestedScaffoldMessenger }),
     // The **subscribed** local. This is render position, so the value has to come from the thing that
     // re-renders the component when it changes — see `declareLocalSignals` for the defect this fixes.
     // A store subscription is already the full, hoisted name (`declareStoreConsumption` owns its own
