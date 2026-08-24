@@ -1416,6 +1416,10 @@
             "transition": {
               "$ref": "shared.json#/$defs/NodeId",
               "description": "The `app.RouteTransition` this performs, for a departure.\n\n**Absent for a return** (`pop`, `popUntil`, `maybePop`): §A17.3 rules that a pop is not a transition, so there is no edge to name. A reader must not treat its absence as an incomplete document — `action` says which case it is."
+            },
+            "dismisses": {
+              "$ref": "shared.json#/$defs/NodeId",
+              "description": "The `app.RouteTransition` (with an `inline` destination) this `pop` dismisses (M9-E, ADR-0025 amendment `0025-amendment-dialog-dismissal-scope.md`).\n\n**Present only for `action: 'pop'`, and only when extraction proved the pop is lexically inside that transition's own presentation** — `Navigator.pop(dialogContext)`, or any other `Navigator.pop(...)`/`maybePop(...)`, reached anywhere inside a `showDialog(builder: ...)`'s own extracted widget subtree (e.g. `AlertDialog.actions`). Never present for an ordinary page-level pop, and never inferred from *which* `BuildContext` expression was written — only from where extraction found the call. `action` alone does not distinguish a dialog dismissal from a route pop; a reader checks whether this field is present.\n\n`popUntil` is unaffected and never carries this field — its own predicate remains unmodelled (§A17.3)."
             }
           }
         }

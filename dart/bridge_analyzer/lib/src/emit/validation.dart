@@ -79,7 +79,8 @@ final class EmitValidator {
   /// Every `NodeId` a node refers to is present in the document.
   ///
   /// Every `app.RouteTransition` names exactly one destination, of the right kind (Spec v2.4 §A17,
-  /// amended M9-D).
+  /// amended M9-D). A `logic.Navigate.dismisses` (M9-E) names an `app.RouteTransition` with an `inline`
+  /// destination, and only ever appears on a `pop`.
   ///
   /// A transition either names a route that exists (`target` -> an `app.Route`), constructs a
   /// project-declared component inline (`component` -> a `ui.Component`), or renders an inline widget
@@ -96,11 +97,20 @@ final class EmitValidator {
   /// believe it.
   void _checkTransitionDestinations(List<uir.UirNode> nodes, DiagnosticSink diagnostics) {
     final Map<String, String> kindOf = <String, String>{};
+    // Which `app.RouteTransition` ids have an `inline` destination — the only kind `logic.Navigate.
+    // dismisses` (M9-E) may ever point at (§ below). Built in the same index pass as `kindOf`, for the
+    // same reason: one walk, not two.
+    final Set<String> hasInlineDestination = <String>{};
 
     void index(Map<String, Object?> json) {
       final Object? id = json['id'];
       final Object? kind = json['kind'];
-      if (id is String && kind is String) kindOf[id] = kind;
+      if (id is String && kind is String) {
+        kindOf[id] = kind;
+        if (kind == 'app.RouteTransition' && json['inline'] != null) {
+          hasInlineDestination.add(id);
+        }
+      }
       for (final Object? value in json.values) {
         _forEachNode(value, index);
       }
@@ -153,6 +163,38 @@ final class EmitValidator {
               message:
                   'The route transition "$id" names "$component" as the component it renders, but '
                   'that node is a ${kindOf[component]}.',
+            ),
+          );
+        }
+      }
+
+      // `logic.Navigate.dismisses` (M9-E): present only for a `pop`, and only naming an
+      // `app.RouteTransition` that has an `inline` destination — the one shape a dismissal can mean
+      // anything about. A dangling id is `_checkReferencesResolve`'s to report, as above; this is about
+      // a *resolving* reference naming the wrong thing, which is silently wrong rather than a crash.
+      if (json['kind'] == 'logic.Navigate' && json['dismisses'] != null) {
+        final String navigateId = json['id'] as String? ?? '(no id)';
+        final Object? dismisses = json['dismisses'];
+        final Object? action = json['action'];
+        if (action != 'pop') {
+          diagnostics.add(
+            Diagnostic(
+              code: Codes.malformedTransition,
+              message:
+                  'The navigation "$navigateId" names `dismisses`, but its own action is "$action", '
+                  'not "pop". Only a return can dismiss a presentation.',
+            ),
+          );
+        } else if (dismisses is String &&
+            kindOf[dismisses] != null &&
+            !hasInlineDestination.contains(dismisses)) {
+          diagnostics.add(
+            Diagnostic(
+              code: Codes.malformedTransition,
+              message:
+                  'The navigation "$navigateId" names "$dismisses" as the presentation it dismisses, '
+                  'but that node is a ${kindOf[dismisses]}${kindOf[dismisses] == 'app.RouteTransition' ? ' with no inline destination' : ''}. '
+                  'Only an inline route-overlay destination can be dismissed this way.',
             ),
           );
         }

@@ -174,6 +174,10 @@ abstract final class GapCatalog {
   /// The `RouteSettings` property an `onGenerateRoute` switch selects on.
   static const String navigationSettingsNameProp = '';
 
+  /// The overlay-opener parameter that picks a different `Navigator` than the calling `BuildContext`
+  /// resolves to (M9-E). A call that sets it is refused rather than silently trusted.
+  static const String navigationUseRootNavigatorProp = '';
+
   /// Widgets whose only purpose is to scope a rebuild. See [RebuildBuilder].
   static const Map<String, RebuildBuilder> rebuildBuilders = <String, RebuildBuilder>{
 

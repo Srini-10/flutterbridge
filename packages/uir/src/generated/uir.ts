@@ -14,7 +14,7 @@ import { createHash } from 'node:crypto';
 export const UIR_VERSION = '1.7.0' as const;
 
 /** A hash of the schema sources this module was generated from. */
-export const UIR_SCHEMA_HASH = '5261979188d2a188' as const;
+export const UIR_SCHEMA_HASH = '699ae56311edc86b' as const;
 
 /** Node kind -> the fields of that node which hold `NodeId` references. */
 export const UIR_REFERENCE_FIELDS: Readonly<Record<string, readonly string[]>> = {
@@ -47,7 +47,7 @@ export const UIR_REFERENCE_FIELDS: Readonly<Record<string, readonly string[]>> =
   'logic.Lit': ['id'],
   'logic.MapLit': ['id'],
   'logic.MethodCall': ['id', 'target'],
-  'logic.Navigate': ['id', 'transition'],
+  'logic.Navigate': ['dismisses', 'id', 'transition'],
   'logic.New': ['id'],
   'logic.NullCheck': ['id'],
   'logic.OpaqueDecl': ['id'],
@@ -1484,6 +1484,12 @@ export interface Navigate {
   readonly action: NavigateAction;
   /// The override key, when the node is addressable by a human.
   readonly anchor?: Anchor;
+  /// The `app.RouteTransition` (with an `inline` destination) this `pop` dismisses (M9-E, ADR-0025 amendment `0025-amendment-dialog-dismissal-scope.md`).
+  ///
+  /// **Present only for `action: 'pop'`, and only when extraction proved the pop is lexically inside that transition's own presentation** — `Navigator.pop(dialogContext)`, or any other `Navigator.pop(...)`/`maybePop(...)`, reached anywhere inside a `showDialog(builder: ...)`'s own extracted widget subtree (e.g. `AlertDialog.actions`). Never present for an ordinary page-level pop, and never inferred from *which* `BuildContext` expression was written — only from where extraction found the call. `action` alone does not distinguish a dialog dismissal from a route pop; a reader checks whether this field is present.
+  ///
+  /// `popUntil` is unaffected and never carries this field — its own predicate remains unmodelled (§A17.3).
+  readonly dismisses?: NodeId;
   /// Plugin extension data, namespaced `x-<plugin>`. Core passes round-trip it untouched (Spec §2.6).
   readonly ext?: Readonly<Record<string, unknown>>;
   /// The node's stable, content-addressed identity.
@@ -3508,6 +3514,7 @@ export function parseNavigate(value: unknown, path = 'Navigate'): Navigate {
   return {
     action: parseNavigateAction(req(o, 'action', path), `${path}.action`),
     ...(own(o, 'anchor') === undefined || own(o, 'anchor') === null ? {} : { anchor: parseAnchor(own(o, 'anchor'), `${path}.anchor`) }),
+    ...(own(o, 'dismisses') === undefined || own(o, 'dismisses') === null ? {} : { dismisses: parseNodeId(own(o, 'dismisses'), `${path}.dismisses`) }),
     ...(own(o, 'ext') === undefined || own(o, 'ext') === null ? {} : { ext: asMap(own(o, 'ext'), `${path}.ext`, (v) => v) }),
     id: parseNodeId(req(o, 'id', path), `${path}.id`),
     kind: 'logic.Navigate',

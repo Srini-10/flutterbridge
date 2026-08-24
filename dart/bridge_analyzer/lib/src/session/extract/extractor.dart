@@ -97,7 +97,9 @@ final class Extractor {
     // extractor rather than the standalone route/token walk: it needs the scope a navigation's
     // arguments bind against, and that exists only on the scoped walk.
     final TransitionExtractor transitions = TransitionExtractor(out, adapters, context, bindings);
-    expressions.transitions = transitions.maybeExtract;
+    expressions
+      ..transitions = transitions.maybeExtract
+      ..presentingTransition = () => transitions.presentingTransition;
 
     final AnnotationExtractor annotations = AnnotationExtractor(adapters, context);
     final WidgetExtractor widgets = WidgetExtractor(

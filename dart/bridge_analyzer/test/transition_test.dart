@@ -91,6 +91,15 @@ class AlertDialog extends Widget {
   final List<Widget> actions;
 }
 
+/// A minimal stand-in for `AlertDialog.actions`'s own evidenced shape (M9-E) — a resolvable class so its
+/// own `onPressed` callback (containing `Navigator.pop(...)`) is actually extracted, not silently dropped
+/// as an unresolved prop on an unresolved type the way an undeclared `TextButton` construction would be.
+class TextButton extends Widget {
+  const TextButton({required this.onPressed, required this.child, super.key});
+  final void Function()? onPressed;
+  final Widget child;
+}
+
 class Navigator {
   static Object? push<T>(BuildContext context, Route<T> route) => null;
   static Object? pushReplacement<T, R>(BuildContext context, Route<T> route) => null;
@@ -258,6 +267,7 @@ void main() {
   m7bTransitionIdentity();
   m7hAsyncNavigation();
   inlineOverlayDestinations();
+  dialogDismissal();
   group('inline MaterialPageRoute — the destination is a component, or, since M9-D, an inline widget tree (§A17)', () {
     test('a push targets the ui.Component it constructs, not a route', () async {
       final Extracted app = await extractNav(
@@ -1608,6 +1618,375 @@ class App extends StatelessWidget {
       final String source = app(
         'showDialog<void>(context: context, builder: (BuildContext c) => '
         "const AlertDialog(title: Text('Delete item?'), content: Text('This cannot be undone.')));",
+      );
+      final Extracted first = await extractNav(source);
+      final Extracted second = await extractNav(source);
+      expect(first.bytes, second.bytes);
+    });
+  });
+}
+
+/// M9-E — dialog-local dismissal (`logic.Navigate.dismisses`), the reduction ladder
+/// (`0025-amendment-dialog-dismissal-scope.md`).
+void dialogDismissal() {
+  group('dialog-local dismissal — Navigator.pop inside an AlertDialog action (M9-E)', () {
+    // The reachable shape: a `showDialog` whose own `builder:` returns an `AlertDialog` with one or more
+    // `actions:`, each a supported button widget whose `onPressed` may call `Navigator.pop(...)`.
+    String app(String actionsBody, {String extra = ''}) =>
+        '''
+import 'package:flutter/material.dart';
+$extra
+
+class Home extends StatelessWidget {
+  const Home({super.key});
+  @override
+  Widget build(BuildContext context) => ElevatedButton(
+    onPressed: () {
+      showDialog<void>(
+        context: context,
+        builder: (BuildContext dialogContext) => AlertDialog(
+          title: const Text('Confirm'),
+          actions: $actionsBody,
+        ),
+      );
+    },
+    child: const Text('open'),
+  );
+}
+
+class App extends StatelessWidget {
+  const App({super.key});
+  @override
+  Widget build(BuildContext context) => const MaterialApp(home: Home());
+}
+''';
+
+    Map<String, dynamic> navigateOf(Extracted extracted) {
+      final List<Map<String, dynamic>> navigates = extracted.ofKind('logic.Navigate');
+      final Iterable<Map<String, dynamic>> pops = navigates.where((n) => n['action'] == 'pop');
+      expect(pops, hasLength(1), reason: 'expected exactly one pop, found ${pops.length}');
+      return pops.single;
+    }
+
+    // ── E1 — one action, void dismissal ────────────────────────────────────────────────────────────
+
+    test('E1 — Navigator.pop(dialogContext), a lone action, is tagged dismisses on the dialog it is inside', () async {
+      final Extracted extracted = await extractNav(
+        app("[TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Close'))]"),
+      );
+
+      expect(extracted.errors, isEmpty);
+      final Map<String, dynamic> transition = extracted.transition;
+      final Map<String, dynamic> pop = navigateOf(extracted);
+      expect(pop['dismisses'], transition['id']);
+    });
+
+    // ── E2–E5 — result values are safely dropped, dismissal is unaffected ─────────────────────────────
+
+    test('E2/E5 — a result value (bool or string) passed to pop does not appear anywhere, and dismissal still tags correctly', () async {
+      final Extracted extracted = await extractNav(
+        app("[TextButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Yes'))]"),
+      );
+
+      expect(extracted.errors, isEmpty);
+      final Map<String, dynamic> pop = navigateOf(extracted);
+      expect(pop['dismisses'], extracted.transition['id']);
+      // The pop node itself carries only `action`/`dismisses`/`id`/`span` — no `result`/`value`/
+      // `arguments` key exists on it at all; the discarded value is not represented anywhere on this
+      // node, checked precisely rather than by a whole-document substring search (which would also
+      // false-positive on unrelated `true`s elsewhere in the document's own JSON metadata).
+      expect(pop.keys.toSet(), <String>{'kind', 'id', 'span', 'action', 'dismisses'});
+
+      final Extracted stringResult = await extractNav(
+        app("[TextButton(onPressed: () => Navigator.pop(dialogContext, 'accepted'), child: const Text('Yes'))]"),
+      );
+      expect(stringResult.errors, isEmpty);
+      final Map<String, dynamic> stringPop = navigateOf(stringResult);
+      expect(stringPop['dismisses'], stringResult.transition['id']);
+      expect(stringPop.keys.toSet(), <String>{'kind', 'id', 'span', 'action', 'dismisses'});
+    });
+
+    // ── E6 — multiple actions, each independently dismissing ──────────────────────────────────────────
+
+    test('E6 — two actions (Cancel/Confirm) each independently tag dismisses on the same dialog', () async {
+      final Extracted extracted = await extractNav(
+        app(
+          "[TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancel')), "
+          "TextButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Confirm'))]",
+        ),
+      );
+
+      expect(extracted.errors, isEmpty);
+      final List<Map<String, dynamic>> pops = extracted
+          .ofKind('logic.Navigate')
+          .where((n) => n['action'] == 'pop')
+          .toList();
+      expect(pops, hasLength(2));
+      final String transitionId = extracted.transition['id'] as String;
+      expect(pops.every((p) => p['dismisses'] == transitionId), isTrue);
+    });
+
+    // ── E7 — an action that does not dismiss ───────────────────────────────────────────────────────
+
+    test('E7 — an action with no Navigator.pop carries no logic.Navigate at all; the dialog stays open by construction', () async {
+      final Extracted extracted = await extractNav(app("[TextButton(onPressed: () {}, child: const Text('Note'))]"));
+
+      expect(extracted.errors, isEmpty);
+      // The showDialog push itself still produces one logic.Navigate (unrelated to this action) — what
+      // matters is that the action with no Navigator.pop contributes no pop node at all.
+      final Iterable<Map<String, dynamic>> pops = extracted
+          .ofKind('logic.Navigate')
+          .where((n) => n['action'] == 'pop');
+      expect(pops, isEmpty);
+    });
+
+    // ── E8/E10 — identity-independence: outer context, and a renamed parameter ────────────────────────
+
+    test('E8 — Navigator.pop(context), the OUTER page context, from inside a dialog action, still tags dismisses (not a page pop)', () async {
+      final Extracted extracted = await extractNav(
+        app("[TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close'))]"),
+      );
+
+      expect(extracted.errors, isEmpty);
+      expect(navigateOf(extracted)['dismisses'], extracted.transition['id']);
+    });
+
+    test('E10 — renaming the builder parameter changes nothing; dismissal is never name-based', () async {
+      const String renamed =
+          '''
+import 'package:flutter/material.dart';
+
+class Home extends StatelessWidget {
+  const Home({super.key});
+  @override
+  Widget build(BuildContext context) => ElevatedButton(
+    onPressed: () {
+      showDialog<void>(
+        context: context,
+        builder: (BuildContext modalScope) => AlertDialog(
+          title: const Text('Confirm'),
+          actions: [TextButton(onPressed: () => Navigator.pop(modalScope), child: const Text('Close'))],
+        ),
+      );
+    },
+    child: const Text('open'),
+  );
+}
+
+class App extends StatelessWidget {
+  const App({super.key});
+  @override
+  Widget build(BuildContext context) => const MaterialApp(home: Home());
+}
+''';
+      final Extracted extracted = await extractNav(renamed);
+      expect(extracted.errors, isEmpty);
+      expect(navigateOf(extracted)['dismisses'], extracted.transition['id']);
+    });
+
+    // ── negative control — an unrelated, ordinary page-level pop is never tagged ──────────────────────
+
+    test('negative control — an ordinary page-level pop, in a completely separate action, is never tagged dismisses', () async {
+      final Extracted extracted = await extractNav('''
+import 'package:flutter/material.dart';
+
+class Home extends StatelessWidget {
+  const Home({super.key});
+  @override
+  Widget build(BuildContext context) => Column(
+    children: [
+      ElevatedButton(
+        onPressed: () {
+          showDialog<void>(
+            context: context,
+            builder: (BuildContext dialogContext) => AlertDialog(
+              title: const Text('Confirm'),
+              actions: [TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Close'))],
+            ),
+          );
+        },
+        child: const Text('open'),
+      ),
+      ElevatedButton(onPressed: () => Navigator.pop(context), child: const Text('back')),
+    ],
+  );
+}
+
+class App extends StatelessWidget {
+  const App({super.key});
+  @override
+  Widget build(BuildContext context) => const MaterialApp(home: Home());
+}
+''');
+
+      expect(extracted.errors, isEmpty);
+      final List<Map<String, dynamic>> pops = extracted
+          .ofKind('logic.Navigate')
+          .where((n) => n['action'] == 'pop')
+          .toList();
+      expect(pops, hasLength(2));
+      final int tagged = pops.where((p) => p['dismisses'] != null).length;
+      expect(tagged, 1, reason: 'exactly the dialog-local pop is tagged; the page-level one is not');
+    });
+
+    // ── negative controls (§17) — an application's own lookalikes never trigger this mechanism ─────────
+
+    test("negative control — a project's own function named showDialog is not Flutter's, and its own pop is never tagged", () async {
+      final Extracted extracted = await extractNav(
+        '''
+import 'package:flutter/material.dart';
+
+Object? showDialog<T>({required BuildContext context, required Widget Function(BuildContext) builder}) {
+  return null;
+}
+
+class Home extends StatelessWidget {
+  const Home({super.key});
+  @override
+  Widget build(BuildContext context) => ElevatedButton(
+    onPressed: () {
+      showDialog<void>(
+        context: context,
+        builder: (BuildContext dialogContext) => AlertDialog(
+          title: const Text('Confirm'),
+          actions: [TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Close'))],
+        ),
+      );
+    },
+    child: const Text('open'),
+  );
+}
+
+class App extends StatelessWidget {
+  const App({super.key});
+  @override
+  Widget build(BuildContext context) => const MaterialApp(home: Home());
+}
+''',
+      );
+
+      // The project's own `showDialog` is not recognised as a navigation at all (ISSUE-18: resolved
+      // element, never spelling) — so no transition, and the pop inside it is an ordinary, untagged one.
+      expect(extracted.ofKind('app.RouteTransition'), isEmpty);
+      final List<Map<String, dynamic>> pops = extracted
+          .ofKind('logic.Navigate')
+          .where((n) => n['action'] == 'pop')
+          .toList();
+      expect(pops, hasLength(1));
+      expect(pops.single['dismisses'], isNull);
+    });
+
+    // ── useRootNavigator: false — refused, not silently trusted ─────────────────────────────────────
+
+    test('useRootNavigator: false is refused — the "one shared Navigator" premise does not hold', () async {
+      final Extracted extracted = await extractNav(
+        app(
+          "[TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Close'))]",
+        ).replaceFirst('context: context,', 'context: context,\n          useRootNavigator: false,'),
+      );
+
+      // The overlay itself is refused — no transition, no edge for it.
+      expect(extracted.ofKind('app.RouteTransition'), isEmpty);
+      expect(extracted.codes(Severity.warning), contains('BRG1304'));
+      // `Navigator.pop(dialogContext)` is still, separately, an ordinary recognised call — Navigator.pop's
+      // own recognition does not depend on its enclosing showDialog having succeeded — but it is never
+      // tagged `dismisses`: `presentingTransition` is only ever set by a *successful* inline-destination
+      // extraction, which this refusal prevented from happening at all.
+      final List<Map<String, dynamic>> pops = extracted
+          .ofKind('logic.Navigate')
+          .where((n) => n['action'] == 'pop')
+          .toList();
+      expect(pops, hasLength(1));
+      expect(pops.single['dismisses'], isNull);
+    });
+
+    test('useRootNavigator: true (explicit default) is unaffected', () async {
+      final Extracted extracted = await extractNav(
+        app(
+          "[TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Close'))]",
+        ).replaceFirst('context: context,', 'context: context,\n          useRootNavigator: true,'),
+      );
+
+      expect(extracted.errors, isEmpty);
+      expect(navigateOf(extracted)['dismisses'], extracted.transition['id']);
+    });
+
+    // ── E13/E14 — a result awaited/assigned stays refused end to end (pre-existing, unrelated; §5 ADR) ──
+
+    test('E13 — final result = await showDialog<bool>(...) extracts without an analyzer error, but the edge is unreferenced (pre-existing, documented, not fixed by this milestone)', () async {
+      final Extracted extracted = await extractNav(
+        '''
+import 'package:flutter/material.dart';
+
+class Home extends StatelessWidget {
+  const Home({super.key});
+  @override
+  Widget build(BuildContext context) => ElevatedButton(
+    onPressed: () async {
+      final result = await showDialog<bool>(
+        context: context,
+        builder: (BuildContext dialogContext) => AlertDialog(
+          title: const Text('Confirm'),
+          actions: [TextButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Yes'))],
+        ),
+      );
+      result?.toString();
+    },
+    child: const Text('open'),
+  );
+}
+
+class App extends StatelessWidget {
+  const App({super.key});
+  @override
+  Widget build(BuildContext context) => const MaterialApp(home: Home());
+}
+''',
+      );
+
+      // No analyzer-level error — a real, pre-existing, orthogonal gap this milestone found and
+      // documented (ADR amendment §5) rather than fixed: the transition is minted (`maybeExtract` fires
+      // for every recognised `MethodInvocation` regardless of statement shape, unmodified since before
+      // this milestone) but no `push` `logic.Navigate` ever references it, because a `VariableDeclaration`
+      // initializer is not one of the three statement shapes `navigateOf` recognises for a departure.
+      //
+      // The dismiss pop *inside* the dialog's own actions is a different story: `_destination()` still
+      // ran (it does not care what statement shape called it) and still set `presentingTransition` for
+      // the duration of extracting the dialog's own subtree — so a pop reached that way still correctly
+      // tags `dismisses` at the transition it is really inside, even though nothing ever shows that same
+      // dialog. Still safe: the generator's own `inlineTransitionsOf` (M9-D/M9-E) only ever discovers a
+      // dialog to declare a ref for via its *push*'s own `transition` reference — which does not exist
+      // here — so no ref is ever declared, `dialogRefFor` never resolves for this dismiss, and the
+      // fallback `router.pop()` path refuses honestly (no router in scope either, since nothing else in
+      // this component navigates) rather than silently doing something wrong.
+      //
+      // A second, *untagged* pop at the same source span is also present — a further symptom of the same
+      // pre-existing gap: because the outer `showDialog(...)` call is not itself statement-shaped here,
+      // it falls through to the generic expression walk, which independently re-visits the same builder
+      // subtree (as an ordinary, unrecognised expression tree, never through `widgets.extract`) and
+      // re-discovers the same `Navigator.pop` there too, this time with `presentingTransition` never set.
+      // Not this milestone's to fix (it would mean widening general expression lowering so the push
+      // itself becomes representable, eliminating the double walk at the source) — recorded, not fixed,
+      // and safe regardless: the containing program is refused end to end either way (proven separately,
+      // via the real generator, not re-proven here).
+      expect(extracted.errors, isEmpty);
+      expect(extracted.ofKind('app.RouteTransition'), hasLength(1));
+      final String transitionId = extracted.transition['id'] as String;
+      final List<Map<String, dynamic>> navigates = extracted.ofKind('logic.Navigate');
+      final bool anyPushReferencesIt = navigates.any((n) => n['transition'] == transitionId);
+      expect(anyPushReferencesIt, isFalse, reason: 'no push references the orphaned transition');
+      final Iterable<Map<String, dynamic>> pops = navigates.where((n) => n['action'] == 'pop');
+      expect(pops, isNotEmpty);
+      expect(
+        pops.any((p) => p['dismisses'] == transitionId),
+        isTrue,
+        reason: 'at least the properly widget-extracted pop still correctly tags the transition it is inside',
+      );
+    });
+
+    test('the same source extracts to the same bytes on a second, independent run (determinism)', () async {
+      final String source = app(
+        "[TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Close'))]",
       );
       final Extracted first = await extractNav(source);
       final Extracted second = await extractNav(source);

@@ -114,6 +114,13 @@ export interface NavigationMeta {
    * `onGenerateRoute`, so without this the largest application's whole routing surface is invisible.
    */
   readonly settingsNameProp: string;
+  /**
+   * The overlay-opener parameter that picks a different `Navigator` than the calling `BuildContext`
+   * resolves to (M9-E). `false` breaks the "the dialog and the page share one Navigator" premise
+   * `logic.Navigate.dismisses` relies on (`0025-amendment-dialog-dismissal-scope.md` §2) — a call that
+   * sets it is refused rather than silently trusted.
+   */
+  readonly useRootNavigatorProp: string;
 }
 
 /**

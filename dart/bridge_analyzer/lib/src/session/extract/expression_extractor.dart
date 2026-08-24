@@ -527,6 +527,12 @@ final class ExpressionExtractor {
   /// which imports it — the orchestrator wires the two by passing a bound method.
   TransitionHook? transitions;
 
+  /// The transition extractor's own query for whether a dialog's own presentation is currently being
+  /// extracted, and which one (M9-E) — the same import-direction reason [transitions] is a function
+  /// rather than a field access to `TransitionExtractor.presentingTransition` directly. Read by
+  /// `StatementExtractor.navigateOf`'s own `pop` case to tag `logic.Navigate.dismisses`.
+  PresentingTransitionHook? presentingTransition;
+
   /// The route extractor's hook, offered every construction so it can learn the scope it sits in.
   ///
   /// Routes are emitted from a standalone walk that has no scope (see `extractor.dart`), but a route's
@@ -1384,6 +1390,13 @@ abstract interface class StatementExtractorRef {
 /// extractor asks for an edge and is told what that edge is called, so a `logic.Navigate` can name it
 /// without anything ever searching for it.
 typedef TransitionHook = String? Function(MethodInvocation node, Scope scope);
+
+/// Reads the transition extractor's own `presentingTransition` field at the moment it is called (M9-E) —
+/// the symbol of the `app.RouteTransition` whose own inline destination is currently being extracted, or
+/// null when extraction is not currently inside one. A function, not a snapshotted value, because the
+/// field it reads changes for the duration of a single `widgets.extract` call and must be read fresh at
+/// the exact point a `Navigator.pop` is reached, not once at wiring time.
+typedef PresentingTransitionHook = String? Function();
 
 /// Offers a construction to the route extractor, with the scope its arguments bind against.
 ///

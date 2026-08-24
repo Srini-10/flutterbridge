@@ -243,6 +243,10 @@ ${lifecycle}
   /// The \`RouteSettings\` property an \`onGenerateRoute\` switch selects on.
   static const String navigationSettingsNameProp = '${catalog.navigation?.settingsNameProp ?? ''}';
 
+  /// The overlay-opener parameter that picks a different \`Navigator\` than the calling \`BuildContext\`
+  /// resolves to (M9-E). A call that sets it is refused rather than silently trusted.
+  static const String navigationUseRootNavigatorProp = '${catalog.navigation?.useRootNavigatorProp ?? ''}';
+
   /// Widgets whose only purpose is to scope a rebuild. See [RebuildBuilder].
   static const Map<String, RebuildBuilder> rebuildBuilders = <String, RebuildBuilder>{
 ${rebuildBuilders}

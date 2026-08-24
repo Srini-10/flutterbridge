@@ -92,7 +92,8 @@
       "PageRouteBuilder"
     ],
     "builderProp": "builder",
-    "settingsNameProp": "name"
+    "settingsNameProp": "name",
+    "useRootNavigatorProp": "useRootNavigator"
   },
   "semantics": {
     "labelProps": [

@@ -323,6 +323,20 @@ export function emitStatement(statement: Stmt | Node | undefined, scope: EmitSco
         }
       }
 
+      // A return proved to dismiss a specific presentation (M9-E, `logic.Navigate.dismisses`) closes that
+      // ref rather than calling a router — the same check, same shape, same "before `router` is required"
+      // reasoning as the push/replace case above, and for the identical reason: a component that only
+      // ever dismisses a dialog (never pushes/pops a page) declares no router at all (`needsRouter`).
+      if (action === 'pop') {
+        const dismisses = node['dismisses'];
+        if (typeof dismisses === 'string') {
+          const dialogRef = scope.dialogRefFor?.(dismisses);
+          if (dialogRef !== undefined) {
+            return [`${dialogRef}.current?.close();`];
+          }
+        }
+      }
+
       const router = scope.routerLocal;
       if (router === undefined) {
         // The component emitter declares the router whenever the component contains one of these, so

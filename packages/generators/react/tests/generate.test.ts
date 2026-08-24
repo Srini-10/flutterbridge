@@ -780,7 +780,15 @@ describe('M4-B declared capabilities are checked before emission', () => {
 
 // ── M9-D: AlertDialog.actions is not rendered ────────────────────────────────────────────────────
 
-describe('M9-D — AlertDialog.actions is refused rather than silently dropped', () => {
+describe('M9-E — AlertDialog.actions renders as ordinary children, once dismissal is sound', () => {
+  // Superseded by M9-E: an `AlertDialog` with children was refused wholesale in M9-D (BRG3013), because
+  // nothing distinguished a dialog-local `Navigator.pop` from a page-level one. `0025-amendment-dialog-
+  // dismissal-scope.md` supplies that distinction at extraction time, so the widget-level refusal this
+  // test used to prove is gone — children render exactly like any other catalogued widget's own unslotted
+  // children (`emitElement`, unmodified). Dismissal correctness itself is proven at the real, analyzer-
+  // sourced fixture level (`dialog_destinations_build.test.ts`), not with hand-built UIR here — a
+  // hand-built `logic.Navigate` would have to assert `dismisses` was set correctly by construction,
+  // which is exactly the fact worth proving through the real pipeline instead.
   function appWith(widget: unknown): AnyUirNode[] {
     return [
       component('c1', 'HomeScreen', widget as ReturnType<typeof element>),
@@ -788,14 +796,13 @@ describe('M9-D — AlertDialog.actions is refused rather than silently dropped',
     ];
   }
 
-  it('BRG3013 — an AlertDialog with children (actions:) is refused, not silently rendered without them', () => {
+  it('an AlertDialog with children (actions:) renders them as ordinary JSX children, not refused', () => {
     const dialog = element('ad1', 'AlertDialog', {}, [element('btn1', 'TextButton', {}, [])]);
     const { context, reported } = harness(appWith(dialog));
     const { files } = reactGenerator.generate(context);
-    const errors = reported.filter((d) => d.severity === 'error');
-    expect(errors.some((d) => d.code === 'BRG3013')).toBe(true);
-    expect(errors.find((d) => d.code === 'BRG3013')?.message).toContain('AlertDialog.actions');
-    expect(files).toEqual([]);
+    expect(reported.filter((d) => d.severity === 'error')).toEqual([]);
+    expect(reported.some((d) => d.code === 'BRG3013')).toBe(false);
+    expect(files).not.toEqual([]);
   });
 
   it('an AlertDialog with no children is not refused', () => {
@@ -803,6 +810,43 @@ describe('M9-D — AlertDialog.actions is refused rather than silently dropped',
     const { context, reported } = harness(appWith(dialog));
     reactGenerator.generate(context);
     expect(reported.filter((d) => d.severity === 'error')).toEqual([]);
+  });
+
+  // A regression pin for a real, pre-existing, orthogonal gap the M9-E investigation found and
+  // documented rather than fixed (`0025-amendment-dialog-dismissal-scope.md` §5): `final result = await
+  // showDialog<T>(...);` mints an `app.RouteTransition` no `push` ever references (a `VariableDeclaration`
+  // initializer is not a statement shape `logic.Navigate` covers), while a dismiss `pop` *inside* that
+  // same dialog's own actions still correctly tags `dismisses` at it. No component ever reaches such a
+  // transition via a push, so `dialogRefFor` never resolves for the dismiss — this proves the generator
+  // refuses that shape honestly (no router in scope, since nothing else in the component navigates)
+  // rather than emitting a call against an undeclared ref.
+  it('a dismiss naming a transition no push in the component reaches is refused, not emitted against nothing', () => {
+    const orphanTransition = {
+      id: 'orphan1',
+      kind: 'app.RouteTransition',
+      span,
+      inline: element('ad2', 'AlertDialog', {}, []),
+    } as unknown as AnyUirNode;
+    const dismissPop = {
+      id: 'nav1',
+      kind: 'logic.Navigate',
+      span,
+      action: 'pop',
+      dismisses: 'orphan1',
+    } as unknown as AnyUirNode;
+    const tree = element('e1', 'ElevatedButton', {
+      onPressed: { id: 'b1', kind: 'bind.Expr', span, expr: { id: 'l1', kind: 'logic.Lambda', span, params: [], body: [dismissPop] } },
+    });
+    const nodes: AnyUirNode[] = [
+      orphanTransition,
+      component('c1', 'HomeScreen', tree),
+      { id: 'r1', kind: 'app.Route', span, path: '/', component: 'c1' } as unknown as AnyUirNode,
+    ];
+    const { context, reported } = harness(nodes);
+    const { files } = reactGenerator.generate(context);
+    const errors = reported.filter((d) => d.severity === 'error');
+    expect(errors.length).toBeGreaterThan(0);
+    expect(files).toEqual([]);
   });
 });
 

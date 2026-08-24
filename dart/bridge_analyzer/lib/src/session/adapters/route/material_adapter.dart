@@ -377,6 +377,31 @@ final class MaterialRouteAdapter implements RouteAdapter, TransitionAdapter {
     // argument list — `WrapperResolver` maps a *constructor*'s parameters through a wrapper class, and an
     // overlay opener is a top-level function with no wrapper to see through.
     if (MaterialCatalog.navigationOverlayOpeners.contains(method)) {
+      // `dismisses` (M9-E) rests on the calling page and the overlay sharing one `Navigator` — true only
+      // for the default configuration. `useRootNavigator: false` opens the overlay on a *different*
+      // Navigator than `Navigator.of(context)` would otherwise resolve to, and this analyzer has no model
+      // of which one — refused here, honestly, rather than silently trusting the default holds anyway
+      // (`0025-amendment-dialog-dismissal-scope.md` §4).
+      final Expression? rootNavigatorValue = node.argumentList.arguments
+          .whereType<NamedArgument>()
+          .where((NamedArgument a) => a.name.lexeme == MaterialCatalog.navigationUseRootNavigatorProp)
+          .map((NamedArgument a) => a.argumentExpression)
+          .firstOrNull;
+      final bool isDefaultNavigator =
+          rootNavigatorValue == null || (rootNavigatorValue is BooleanLiteral && rootNavigatorValue.value);
+      if (!isDefaultNavigator) {
+        context.report(
+          Codes.unsupportedWrapper,
+          'This overlay sets `${MaterialCatalog.navigationUseRootNavigatorProp}`, which can open it on a '
+          'different Navigator than the calling page resolves to. Dialog-local dismissal (a '
+          "Navigator.pop inside this overlay's own actions) assumes the default configuration — one "
+          'shared Navigator — and this analyzer has no model of which Navigator a non-default value '
+          'resolves to, so it refuses rather than guessing which pop targets what.',
+          node,
+        );
+        return null;
+      }
+
       final Expression? builder = node.argumentList.arguments
           .whereType<NamedArgument>()
           .where((NamedArgument a) => a.name.lexeme == MaterialCatalog.navigationBuilderProp)

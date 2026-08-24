@@ -63,6 +63,24 @@ final class TransitionExtractor {
   /// function — which has no component — records no source rather than the previous component's.
   String? enclosingComponent;
 
+  /// The transition whose own `inline` destination is currently being extracted, if any (M9-E, ADR-0025
+  /// amendment `0025-amendment-dialog-dismissal-scope.md`).
+  ///
+  /// Set to this transition's own symbol for the exact duration of `_destination()`'s own
+  /// `widgets.extract(widget, scope)` call, and reset to `null` immediately after — the same "settable
+  /// before, reset after" idiom [enclosingComponent] already uses. Read by `StatementExtractor.navigateOf`
+  /// (via `expressions.transitions`) so that **every** `Navigator.pop`/`maybePop` found anywhere inside
+  /// that one dialog's own extracted subtree — however deeply nested, in whatever closure, regardless of
+  /// which `BuildContext` expression is written — is tagged `dismisses: <this transition>`, without
+  /// needing to resolve *which* context was passed. Investigation found that identity unresolvable (a
+  /// `showDialog` builder's own parameter is never bound into `Scope` at all — the closure itself is
+  /// discarded by `MaterialRouteAdapter._returned()` before extraction ever sees it) and, separately,
+  /// unnecessary (real Flutter navigator-resolution semantics mean *any* pop reached synchronously from
+  /// inside a dialog's own action dismisses that dialog under the default navigator configuration,
+  /// regardless of which context variable was used — verified with a real `flutter_test` widget test, not
+  /// assumed).
+  String? presentingTransition;
+
   /// Navigation call sites already turned into a transition, by AST identity, and the symbol each got.
   ///
   /// One call site is one edge. A method's body can be walked more than once — a `build` that both
@@ -103,7 +121,10 @@ final class TransitionExtractor {
     // own constructors make the path/widget half exclusive — `toPath` sets `path`, `toWidget` sets
     // `widget` — so this reads whichever one it set; which of `component`/`inline` a widget destination
     // becomes is decided here, by whether it resolves to a project-declared component.
-    final ({String field, RawValue value})? destination = _destination(declaration, scope);
+    final ({String field, RawValue? value, Expression? pendingWidget})? destination = _destination(
+      declaration,
+      scope,
+    );
     if (destination == null) {
       // The inline destination is not a component this project declares (an inline `Container`, a
       // widget from a package). It was reported where that was discovered; there is no edge to emit —
@@ -146,6 +167,29 @@ final class TransitionExtractor {
     final String? symbol = toRoute ? null : out.symbols.navigation(ordinal);
     _seen[node] = symbol;
 
+    // The inline destination's own widget tree is extracted here, now that a symbol exists for it to be
+    // tagged with (M9-E) — `_destination` deferred exactly this, leaving `pendingWidget` unextracted. Set
+    // for the whole call so every `Navigator.pop` the subtree contains, at any depth, is tagged.
+    //
+    // Restored to the *previous* value afterward, not unconditionally to `null` — a dialog action that
+    // opens a second dialog (nested; not otherwise supported, §"what this amendment does not decide")
+    // would otherwise leave `presentingTransition` clobbered to `null` once the inner call returns, so a
+    // later pop in the *outer* dialog's own action — still lexically inside it — would wrongly stop being
+    // tagged. Saving/restoring costs nothing and avoids that silent-wrong outcome even though nested
+    // dialogs are not a shape this milestone builds or tests for.
+    final RawValue destinationValue;
+    if (destination.pendingWidget != null) {
+      final String? outerPresenting = presentingTransition;
+      presentingTransition = symbol;
+      try {
+        destinationValue = RawChild(widgets.extract(destination.pendingWidget!, scope));
+      } finally {
+        presentingTransition = outerPresenting;
+      }
+    } else {
+      destinationValue = destination.value!;
+    }
+
     out.emit(
       RawNode(
         kind: 'app.RouteTransition',
@@ -162,7 +206,7 @@ final class TransitionExtractor {
         // `component` destination embeds no subtree, so it needs no such namespace.
         anchorSegment: destination.field == 'inline' ? 'transition[$ordinal]' : null,
         fields: <String, RawValue>{
-          destination.field: destination.value,
+          destination.field: destinationValue,
           // `arguments` names constructor parameters crossing to a *separate* destination — the shape
           // N11 (ADR-11) promotes across a route boundary. An `inline` destination has no such boundary:
           // its own values are already embedded directly in the tree `inline` carries (M9-D), so
@@ -186,10 +230,20 @@ final class TransitionExtractor {
   /// `RawRouteRef`; whether that path names a route the program declares is the builder's question,
   /// answered against the whole route table (§A17), and an unmatched path is `BRG1308` there rather
   /// than a guess here.
-  ({String field, RawValue value})? _destination(TransitionDeclaration declaration, Scope scope) {
+  ///
+  /// For an inline destination, `value` is left null and `pendingWidget` carries the still-unextracted
+  /// widget expression instead (M9-E) — extraction is deferred to the caller, which by then has minted
+  /// this transition's own symbol and can set [presentingTransition] around the `widgets.extract` call, so
+  /// every `Navigator.pop` this dialog's own subtree contains is tagged `dismisses: <this transition>`
+  /// (`0025-amendment-dialog-dismissal-scope.md`). Extracting eagerly here, before a symbol exists, would
+  /// leave no identity to tag the pop with.
+  ({String field, RawValue? value, Expression? pendingWidget})? _destination(
+    TransitionDeclaration declaration,
+    Scope scope,
+  ) {
     final String? path = declaration.path;
     if (path != null) {
-      return (field: 'target', value: RawRouteRef(path));
+      return (field: 'target', value: RawRouteRef(path), pendingWidget: null);
     }
 
     final Expression widget = declaration.widget!;
@@ -210,7 +264,7 @@ final class TransitionExtractor {
     final String name = widget.constructorName.type.name.lexeme;
     final String? symbol = out.componentSymbolOf(widget.staticType, name);
     if (symbol != null) {
-      return (field: 'component', value: RawRef(symbol));
+      return (field: 'component', value: RawRef(symbol), pendingWidget: null);
     }
 
     // Not a component the project declares — a route overlay whose destination is a framework widget,
@@ -220,7 +274,7 @@ final class TransitionExtractor {
     // (title/content slots, an `actions` child list), not new extraction logic. Embedded directly
     // (`inline`), not referenced: there is no declaration for a `RawRef` to name, so inventing a symbol
     // would be exactly the dangling reference (BRG1201) the component branch above refuses.
-    return (field: 'inline', value: RawChild(widgets.extract(widget, scope)));
+    return (field: 'inline', value: null, pendingWidget: widget);
   }
 
   /// The arguments the navigation carries, each as `{name, transport, binding}`.

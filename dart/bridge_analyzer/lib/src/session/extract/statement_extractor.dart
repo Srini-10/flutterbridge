@@ -676,11 +676,19 @@ final class StatementExtractor implements StatementExtractorRef {
       );
     }
 
+    // `dismisses` (M9-E, ADR-0025 amendment `0025-amendment-dialog-dismissal-scope.md`): set only for a
+    // plain `pop`, and only when extraction is currently inside a dialog's own presentation
+    // (`TransitionExtractor.presentingTransition`, set by `_destination` for the whole duration of that
+    // dialog's own subtree extraction). `popUntil` never carries it — its own predicate stays unmodelled,
+    // reported above, unchanged.
+    final String? presenting = action == NavigateAction.pop ? expressions.presentingTransition?.call() : null;
+
     return RawNode(
       kind: 'logic.Navigate',
       span: out.span(node),
       fields: <String, RawValue>{
         'action': RawLiteral(action.name),
+        if (presenting != null) 'dismisses': RawRef(presenting),
       },
     );
   }

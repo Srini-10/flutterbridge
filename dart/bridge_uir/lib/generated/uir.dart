@@ -31,7 +31,7 @@ const String uirVersion = '1.7.0';
 /// A hash of the schema sources this library was generated from.
 ///
 /// Stamped into every emitted manifest: a UIR document always says which schema produced it.
-const String uirSchemaHash = '5261979188d2a188';
+const String uirSchemaHash = '699ae56311edc86b';
 
 /// Node kind -> the fields of that node which hold `NodeId` references.
 ///
@@ -67,7 +67,7 @@ const Map<String, List<String>> uirReferenceFields = <String, List<String>>{
   'logic.Lit': <String>['id'],
   'logic.MapLit': <String>['id'],
   'logic.MethodCall': <String>['id', 'target'],
-  'logic.Navigate': <String>['id', 'transition'],
+  'logic.Navigate': <String>['dismisses', 'id', 'transition'],
   'logic.New': <String>['id'],
   'logic.NullCheck': <String>['id'],
   'logic.OpaqueDecl': <String>['id'],
@@ -5416,6 +5416,7 @@ final class Navigate extends Stmt {
     required this.id,
     required this.span,
     this.anchor,
+    this.dismisses,
     this.ext,
     this.transition,
   });
@@ -5430,6 +5431,7 @@ final class Navigate extends Stmt {
     return Navigate(
       action: NavigateAction.fromJson(_req(json, 'action', path), '$path.action'),
       anchor: json['anchor'] == null ? null : _asString(json['anchor'], '$path.anchor'),
+      dismisses: json['dismisses'] == null ? null : _asString(json['dismisses'], '$path.dismisses'),
       ext: json['ext'] == null ? null : _asMap<Object?>(json['ext'], '$path.ext', (Object? v, String p) => v),
       id: _asString(_req(json, 'id', path), '$path.id'),
       span: SourceSpan.fromJson(_req(json, 'span', path), '$path.span'),
@@ -5442,6 +5444,13 @@ final class Navigate extends Stmt {
 
   /// The override key, when the node is addressable by a human.
   final Anchor? anchor;
+
+  /// The `app.RouteTransition` (with an `inline` destination) this `pop` dismisses (M9-E, ADR-0025 amendment `0025-amendment-dialog-dismissal-scope.md`).
+  ///
+  /// **Present only for `action: 'pop'`, and only when extraction proved the pop is lexically inside that transition's own presentation** — `Navigator.pop(dialogContext)`, or any other `Navigator.pop(...)`/`maybePop(...)`, reached anywhere inside a `showDialog(builder: ...)`'s own extracted widget subtree (e.g. `AlertDialog.actions`). Never present for an ordinary page-level pop, and never inferred from *which* `BuildContext` expression was written — only from where extraction found the call. `action` alone does not distinguish a dialog dismissal from a route pop; a reader checks whether this field is present.
+  ///
+  /// `popUntil` is unaffected and never carries this field — its own predicate remains unmodelled (§A17.3).
+  final NodeId? dismisses;
 
   /// Plugin extension data, namespaced `x-<plugin>`. Core passes round-trip it untouched (Spec §2.6).
   final Map<String, Object?>? ext;
@@ -5466,6 +5475,7 @@ final class Navigate extends Stmt {
   Map<String, Object?> toJson() => canonicalJson(<String, Object?>{
     'action': action.toJson(),
     'anchor': anchor,
+    'dismisses': dismisses,
     'ext': ext,
     'id': id,
     'kind': 'logic.Navigate',
@@ -5480,6 +5490,7 @@ final class Navigate extends Stmt {
   Navigate copyWith({
     NavigateAction? action,
     Anchor? anchor,
+    NodeId? dismisses,
     Map<String, Object?>? ext,
     NodeId? id,
     SourceSpan? span,
@@ -5488,6 +5499,7 @@ final class Navigate extends Stmt {
     return Navigate(
       action: action ?? this.action,
       anchor: anchor ?? this.anchor,
+      dismisses: dismisses ?? this.dismisses,
       ext: ext ?? this.ext,
       id: id ?? this.id,
       span: span ?? this.span,
@@ -5504,6 +5516,7 @@ final class Navigate extends Stmt {
     return other is Navigate &&
         _equality.equals(other.action, action) &&
         _equality.equals(other.anchor, anchor) &&
+        _equality.equals(other.dismisses, dismisses) &&
         _equality.equals(other.ext, ext) &&
         _equality.equals(other.id, id) &&
         _equality.equals(other.span, span) &&
@@ -5515,6 +5528,7 @@ final class Navigate extends Stmt {
     'Navigate',
     _equality.hash(action),
     _equality.hash(anchor),
+    _equality.hash(dismisses),
     _equality.hash(ext),
     _equality.hash(id),
     _equality.hash(span),

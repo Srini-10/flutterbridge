@@ -24,9 +24,15 @@ class HomeScreen extends StatelessWidget {
             onPressed: () {
               showDialog<void>(
                 context: context,
-                builder: (context) => const AlertDialog(
-                  title: Text('Delete item?'),
-                  content: Text('This cannot be undone.'),
+                builder: (dialogContext) => AlertDialog(
+                  title: const Text('Delete item?'),
+                  content: const Text('This cannot be undone.'),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(dialogContext),
+                      child: const Text('Cancel'),
+                    ),
+                  ],
                 ),
               );
             },
@@ -36,9 +42,17 @@ class HomeScreen extends StatelessWidget {
             onPressed: () {
               showDialog<void>(
                 context: context,
-                builder: (context) => const AlertDialog(
-                  title: Text('Sign out?'),
-                  content: Text('You can sign back in at any time.'),
+                builder: (dialogContext) => AlertDialog(
+                  title: const Text('Sign out?'),
+                  content: const Text('You can sign back in at any time.'),
+                  actions: [
+                    // Uses the OUTER page context, not dialogContext — proves the mechanism is
+                    // structural (extraction-scope-based), never identity- or name-based (M9-E).
+                    TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('Cancel'),
+                    ),
+                  ],
                 ),
               );
             },

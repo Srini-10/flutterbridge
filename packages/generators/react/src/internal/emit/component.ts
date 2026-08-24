@@ -212,17 +212,24 @@ function navigatesSomewhere(component: Node, scope: EmitScope): boolean {
 }
 
 /**
- * Whether a `logic.Navigate` node needs `router` in scope to lower (M9-D).
+ * Whether a `logic.Navigate` node needs `router` in scope to lower (M9-D, extended M9-E).
  *
- * `pop`/`popUntil` always do — there is no other way to leave. A `push`/`replace` does too, *unless* the
- * edge it performs names an inline route-overlay destination: `statement.ts`'s own `logic.Navigate` case
- * lowers that shape to `dialogRef.current?.show()`, which never touches `router` at all. Without this
- * check, a component whose only navigation opens a dialog still declared `const router = useRouter();`
- * and never read it — a real, if harmless, dead hook call this milestone's own new destination shape
- * introduced, not a pre-existing gap.
+ * `popUntil` always does — there is no other way to leave. A `push`/`replace` does too, *unless* the edge
+ * it performs names an inline route-overlay destination: `statement.ts`'s own `logic.Navigate` case lowers
+ * that shape to `dialogRef.current?.show()`, which never touches `router` at all. A `pop` does too,
+ * *unless* it was proved to dismiss a specific presentation (`dismisses`, M9-E) — that shape lowers to
+ * `dialogRef.current?.close()` on the same ref. Without this check, a component whose only navigation
+ * opens or dismisses a dialog still declared `const router = useRouter();` and never read it — a real, if
+ * harmless, dead hook call these destination shapes introduced, not a pre-existing gap.
  */
 function needsRouter(node: Node, scope: EmitScope): boolean {
   const action = node['action'];
+  if (action === 'pop') {
+    const dismisses = node['dismisses'];
+    if (typeof dismisses !== 'string') return true;
+    const transition = scope.node(dismisses) as unknown as Node | undefined;
+    return transition === undefined || transition['inline'] === undefined;
+  }
   if (action !== 'push' && action !== 'replace') return true;
   const transitionId = node['transition'];
   if (typeof transitionId !== 'string') return true;
@@ -328,18 +335,35 @@ function declareDialogHosts(
   const dialogHost = useRuntime(module, 'DialogHost');
   const handleType = useRuntimeType(module, 'DialogHostHandle');
 
+  // Every ref is declared *before* any dialog's own content is emitted (M9-E) — a dismissal
+  // (`Navigator.pop` proved to target a dialog, `dismisses`) is reached while *that same dialog's own*
+  // `inline` subtree is being walked below, and needs `dialogRefFor` to already resolve this ref, the
+  // same way a page component's own render tree already resolves `routerLocal` before it is used. Emitting
+  // ref and content together, as one pass, left `dialogRefFor` undefined for exactly the one case that
+  // needed it — a dialog dismissing itself.
   const refs = new Map<NodeId, string>();
-  const hosts: string[] = [];
   transitions.forEach((transition, index) => {
     const id = idOf(transition);
     if (id === undefined) return;
     const local = transitions.length === 1 ? 'dialogRef' : `dialogRef${index}`;
     module.line(`const ${local} = ${useRef}<${handleType}>(null);`);
     refs.set(id as NodeId, local);
-    const content = emitUiNode(transition['inline'] as Node, module, scope, 1);
-    hosts.push(`<${dialogHost} ref={${local}}>${content}</${dialogHost}>`);
   });
   module.line();
+
+  const withRefs: EmitScope = {
+    ...scope,
+    dialogRefFor: (id: NodeId) => refs.get(id) ?? scope.dialogRefFor?.(id),
+  };
+
+  const hosts: string[] = [];
+  for (const transition of transitions) {
+    const id = idOf(transition);
+    const local = id === undefined ? undefined : refs.get(id as NodeId);
+    if (local === undefined) continue;
+    const content = emitUiNode(transition['inline'] as Node, module, withRefs, 1);
+    hosts.push(`<${dialogHost} ref={${local}}>${content}</${dialogHost}>`);
+  }
   return { refs, hosts };
 }
 
@@ -1331,24 +1355,6 @@ function checkCapabilities(
       GeneratorDiagnosticCode.UnsupportedParameter,
       'error',
       `\`${widgetName}\` renders, but not with \`${parameter}\` set: ${reason}`,
-      idOf(node),
-    );
-  }
-
-  // M9-D: `AlertDialog.actions` is not catalogued (`catalog/widgets/material.json`'s own comment), but a
-  // generic fallback elsewhere in the analyzer still extracts an unrecognised widget-list argument as
-  // `children` regardless — so a program that supplies `actions:` reaches here with real children,
-  // which `AlertDialogProps` has no place for. Refused here, with a name and a reason, rather than left
-  // to fail as a raw, unexplained `tsc` error in the generated file (an unknown JSX prop) — the same
-  // "no silent drop" discipline the parameter check above already applies, extended to children.
-  if (widgetName === 'AlertDialog' && asArray(node['children']).length > 0) {
-    scope.report(
-      GeneratorDiagnosticCode.UnsupportedCapability,
-      'error',
-      "`AlertDialog.actions` is not rendered. Dismissing the dialog from inside an action button " +
-        '(`Navigator.pop(context)`) needs a way to say "pop the dialog I\'m inside," not "pop the page ' +
-        'router" — a genuine, unresolved architectural question (docs/m9/m9d-dialog-destination-' +
-        'architecture.md §9), not a recognition gap. `title`/`content` render; `actions` does not, yet.',
       idOf(node),
     );
   }
