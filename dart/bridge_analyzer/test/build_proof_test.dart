@@ -40,7 +40,10 @@ class Center extends Widget {
 
 class EdgeInsets {
   const EdgeInsets.all(this.value);
+  const EdgeInsets.symmetric({this.horizontal = 0, this.vertical = 0}) : value = 0;
   final double value;
+  final double horizontal;
+  final double vertical;
 }
 
 void runApp(Widget app) {}

@@ -73,6 +73,14 @@ final class ExtractStage extends Stage<LoadResult, ExtractionResult> {
     final Set<String> extractedDependencyFiles = input.project.dependencyLibraryFiles.toSet();
 
     await for (final ResolvedUnit unit in input.session.resolveAll()) {
+      // ADR-0031: a resolved AST is not proof of a valid program. If this unit's own source carries a
+      // real analyzer error, extracting from it risks silently translating invalid Dart into
+      // plausible-looking UIR — so nothing is extracted from it at all, and each underlying analyzer
+      // diagnostic is reported here, unchanged (BRG1310), never relabeled as a capability gap.
+      if (unit.analyzerErrors.isNotEmpty) {
+        context.diagnostics.addAll(unit.analyzerErrors);
+        continue;
+      }
       for (final RawNode record in Extractor(
         path: unit.relativePath,
         packageName: input.project.packageName,

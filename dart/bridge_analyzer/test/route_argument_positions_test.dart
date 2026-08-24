@@ -416,10 +416,15 @@ final GoRouter router = GoRouter(
   });
 
   group('a component constructed by an imperative navigation', () {
-    test('produces no app.RouteTransition at all — the call becomes ui.Opaque', () async {
-      // The corpus measurement found this position carries far more arguments than `home:` does
-      // (65 sites against 8), and it is the one with no node whatsoever. Recorded here so the M6-C
-      // navigation work starts from a checked fact rather than from the schema's intent.
+    test('an unresolved Navigator/MaterialPageRoute (real Dart errors) refuses the whole file, never an opaque guess (ADR-0031, M9-H)', () async {
+      // This harness's own default `flutterPackage` (unlike `transition_test.dart`'s own `navFlutter`)
+      // declares no `Navigator`/`MaterialPageRoute` at all — `Navigator.push(...)` here resolves to real,
+      // genuine Dart errors (`undefined_identifier`/`undefined_class`, confirmed directly), not merely an
+      // unmapped construct. Before M9-H/ADR-0031 this silently extracted anyway, producing a `ui.Opaque`
+      // node for the whole call — a resolved AST is not proof of a valid program, and this is exactly the
+      // shape that risk describes: a genuine compile error, previously indistinguishable from an ordinary,
+      // valid-but-unsupported construct. ADR-0031 refuses the whole file instead, with the real analyzer
+      // diagnostics surfaced, never fabricated as a capability gap.
       // Raw: the fixture's own `$id` is Dart source for the *analyzed* program, not an interpolation in
       // this one.
       final List<Map<String, dynamic>> nodes = await extractNodes(r'''
@@ -454,10 +459,7 @@ class App extends StatelessWidget {
 ''');
 
       expect(ofKind(nodes, 'app.RouteTransition'), isEmpty);
-
-      final Map<String, dynamic> opaque = ofKind(nodes, 'ui.Opaque').single;
-      expect(opaque['reason'], 'widget returned by a call');
-      expect(opaque['dartSource'], contains('Navigator.push'));
+      expect(ofKind(nodes, 'ui.Opaque'), isEmpty, reason: 'a refused file extracts nothing at all, not even an opaque guess');
     });
   });
 }

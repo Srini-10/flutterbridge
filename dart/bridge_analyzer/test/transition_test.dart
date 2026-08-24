@@ -72,8 +72,11 @@ class RoutingApp extends MaterialApp {
   final Route<Object?>? Function(RouteSettings)? onGenerateRoute;
 }
 
-Object? showDialog<T>({required BuildContext context, required Widget Function(BuildContext) builder}) =>
-    null;
+Object? showDialog<T>({
+  required BuildContext context,
+  required Widget Function(BuildContext) builder,
+  bool useRootNavigator = true,
+}) => null;
 
 Object? showModalBottomSheet<T>({
   required BuildContext context,
@@ -116,6 +119,8 @@ class Navigator {
   }) => null;
   static void pop<T>(BuildContext context, [T? result]) {}
 }
+
+void debugPrint(String? message, {int? wrapWidth}) {}
 ''',
 };
 
@@ -717,8 +722,11 @@ class App extends StatelessWidget {
       final Extracted extracted = await extractNav('''
 import 'package:flutter/material.dart';
 
-Object? showDialog<T>({required BuildContext context, required Widget Function(BuildContext) builder}) =>
-    null;
+Object? showDialog<T>({
+  required BuildContext context,
+  required Widget Function(BuildContext) builder,
+  bool useRootNavigator = true,
+}) => null;
 
 class Sheet extends StatelessWidget {
   const Sheet({super.key});

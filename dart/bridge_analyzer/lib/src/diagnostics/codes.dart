@@ -285,6 +285,30 @@ abstract final class Codes {
         'never guessed at — a path is matched against the routes that exist, or it is reported.',
   );
 
+  /// The resolved source unit itself carries a real analyzer error (ADR-0031).
+  static const DiagnosticCode analyzerRejectedSource = DiagnosticCode(
+    id: 'BRG1310',
+    category: DiagnosticCategory.extraction,
+    defaultSeverity: Severity.error,
+    docsSlug: 'analyzer-rejected-source',
+    title: 'Source does not compile',
+    explanation:
+        'This file resolved, but package:analyzer reported a real error inside it — the underlying '
+        'Dart program is not valid, independent of anything FlutterBridge supports or does not '
+        'support.\n'
+        '\n'
+        'A resolved AST is not proof of a valid program: the analyzer recovers a structurally-plausible '
+        'tree for erroneous source because IDE tooling needs one, not because the program compiles. '
+        'Extracting UIR from it anyway would risk silently translating invalid Dart into '
+        'plausible-looking, wrong output (ADR-0031) — so this file contributes nothing to the program, '
+        'and the underlying analyzer diagnostic is reported here, unchanged: same code, same message, '
+        'same location.\n'
+        '\n'
+        'This is not a FlutterBridge capability gap (see BRG3013 for those) and never becomes one. Fix '
+        'the Dart error the message names; `dart analyze`/`flutter analyze` reports the identical '
+        'problem.',
+  );
+
   // ── BRG12xx — the canonical builder and the emitter ───────────────────────────────────────────
 
   /// A reference names a declaration that does not exist.

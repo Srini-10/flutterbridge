@@ -146,6 +146,12 @@ final class IncrementalPipeline {
           // about the project, not a crash: it is recorded, and the file contributes nothing.
           return const <RawNode>[];
         }
+        // ADR-0031: the identical gate `ExtractStage` applies — a resolved AST is not proof of a valid
+        // program. Both pipelines share this one `resolve()` call, so neither needed its own copy.
+        if (unit.analyzerErrors.isNotEmpty) {
+          context.diagnostics.addAll(unit.analyzerErrors);
+          return const <RawNode>[];
+        }
         return Extractor(
           path: path,
           packageName: loaded.project.packageName,

@@ -17,14 +17,23 @@ import 'dart:io';
 import 'package:analyzer/dart/analysis/analysis_context_collection.dart';
 import 'package:analyzer/dart/analysis/results.dart';
 import 'package:analyzer/dart/ast/ast.dart';
+// Aliased: `package:analyzer`'s own `Diagnostic`/`Severity` (analyzer 14 — `AnalysisError` is now a
+// bare typedef for `Diagnostic`) share names with bridge_analyzer's own `diagnostics/diagnostic.dart`
+// model. This is the one file allowed to see both (ADR-14); everywhere else, only the translated,
+// bridge_analyzer-owned `Diagnostic` this file produces (ADR-0031) is ever visible.
+import 'package:analyzer/diagnostic/diagnostic.dart' as analyzer_diag;
+import 'package:analyzer/source/line_info.dart';
 // `packageConfigFile` (M8-F) exists only on the internal implementation, not the public
 // `AnalysisContextCollection` factory (see the constructor doc below). ADR-14 already accepts that
 // this file, and only this file, may reach past the public API when the public one has no seam for
 // something the compiler genuinely needs.
 // ignore: implementation_imports
 import 'package:analyzer/src/dart/analysis/analysis_context_collection.dart' show AnalysisContextCollectionImpl;
+import 'package:bridge_analyzer/src/diagnostics/codes.dart';
+import 'package:bridge_analyzer/src/diagnostics/diagnostic.dart' as bridge_diag;
 import 'package:bridge_analyzer/src/model/directive_ref.dart';
 import 'package:bridge_analyzer/src/model/project.dart';
+import 'package:bridge_analyzer/src/model/source_span.dart';
 import 'package:bridge_analyzer/src/session/directive_scanner.dart';
 import 'package:bridge_analyzer/src/session/session_digest_provider.dart';
 import 'package:bridge_analyzer/src/session/source_parser.dart';
@@ -34,13 +43,26 @@ import 'package:path/path.dart' as p;
 /// A resolved compilation unit, with the project-relative path it came from.
 final class ResolvedUnit {
   /// Creates a resolved unit.
-  const ResolvedUnit({required this.relativePath, required this.result});
+  const ResolvedUnit({required this.relativePath, required this.result, this.analyzerErrors = const <bridge_diag.Diagnostic>[]});
 
   /// The path of the unit, relative to the project root.
   final String relativePath;
 
   /// The resolved unit, with a complete element model.
   final ResolvedUnitResult result;
+
+  /// Real `package:analyzer` diagnostics at error severity, found in **this unit's own source span**
+  /// (never an imported unit's — analyzer 14's own `ResolvedUnitResult.diagnostics` is already scoped
+  /// that way, verified directly rather than assumed), already translated to bridge_analyzer's own
+  /// `Diagnostic` model (ADR-0031).
+  ///
+  /// A resolved AST is not proof of a valid program (ADR-0031 §2): the analyzer recovers a
+  /// structurally-plausible tree for erroneous source because IDE tooling needs one, not because the
+  /// program compiles. Non-empty here means this unit's own Dart is invalid, independent of anything
+  /// FlutterBridge supports — the caller (`ExtractStage`/the incremental extractor) reports each one as
+  /// `BRG1310` and extracts nothing from this unit. Warnings/info are never included: only
+  /// `analyzer_diag.Severity.error` (ADR-0031 §4/§5).
+  final List<bridge_diag.Diagnostic> analyzerErrors;
 }
 
 /// Owns the `package:analyzer` context for one project and hands out resolved units.
@@ -207,6 +229,41 @@ final class AnalysisSessionHandle {
     if (result is! ResolvedUnitResult) {
       return null;
     }
-    return ResolvedUnit(relativePath: relativePath, result: result);
+    return ResolvedUnit(
+      relativePath: relativePath,
+      result: result,
+      analyzerErrors: _analyzerErrorsOf(relativePath, result),
+    );
+  }
+
+  /// This unit's own real analyzer diagnostics at error severity, translated to bridge_analyzer's own
+  /// `Diagnostic` model (ADR-0031).
+  ///
+  /// `result.diagnostics` (analyzer 14; `.errors` is the identical list under a deprecated name) is
+  /// already scoped to this file's own source span — confirmed directly against the real, resolved
+  /// analyzer package, not assumed — so this never reaches into an imported unit's own problems.
+  List<bridge_diag.Diagnostic> _analyzerErrorsOf(String relativePath, ResolvedUnitResult result) {
+    final List<bridge_diag.Diagnostic> found = <bridge_diag.Diagnostic>[];
+    for (final analyzer_diag.Diagnostic diagnostic in result.diagnostics) {
+      if (diagnostic.severity != analyzer_diag.Severity.error) {
+        continue;
+      }
+      final CharacterLocation location = result.lineInfo.getLocation(diagnostic.offset);
+      found.add(
+        bridge_diag.Diagnostic(
+          code: Codes.analyzerRejectedSource,
+          message:
+              '${diagnostic.problemMessage.messageText(includeUrl: false)} (${diagnostic.diagnosticCode.lowerCaseName}, real Dart error — '
+              'not a FlutterBridge capability gap).',
+          span: SourceSpan(
+            file: relativePath,
+            line: location.lineNumber,
+            column: location.columnNumber,
+            length: diagnostic.length,
+          ),
+        ),
+      );
+    }
+    return found;
   }
 }

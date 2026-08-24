@@ -10,6 +10,10 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:bridge_analyzer/bridge_analyzer.dart';
+import 'package:bridge_analyzer/src/diagnostics/diagnostic_sink.dart';
+import 'package:bridge_analyzer/src/pipeline/extract/extract_stage.dart';
+import 'package:bridge_analyzer/src/pipeline/stage.dart';
+import 'package:bridge_analyzer/src/pipeline/stages.dart';
 import 'package:test/test.dart';
 
 import 'support/temp_project.dart';
@@ -3387,7 +3391,32 @@ class _WState extends State<W> {
       expect(targetOfRead(app, 'a', occurrence: 0), aDecl['id'], reason: 'b’s own initializer reads a');
     });
 
-    test('an ordinary local sharing a name with a declaration-list member, at a later point, never collides', () async {
+    test('an ordinary local sharing a name with a declaration-list member, in a genuinely nested scope, never collides', () async {
+      // A second, unnested `final int a = 99;` at the *same* method-body scope as the first `a` is not
+      // valid shadowing at all — it is `duplicate_definition`, a real Dart error (confirmed directly),
+      // which ADR-0031/M9-H now refuses wholesale (see the dedicated test below). This is the shape that
+      // was actually intended: a genuinely nested scope (an `if` block), which is real, valid shadowing.
+      final Extracted app = await extract(
+        actionWrapper.replaceFirst('{{BODY}}', '''
+  void _run() {
+    var a = 1, b = a + 1;
+    _log = a + b;
+    if (true) {
+      final int a = 99;
+      _log = a;
+    }
+  }
+'''),
+      );
+      expect(app.errors, isEmpty);
+
+      final List<Map<String, dynamic>> allVarDecls = app.ofKind('logic.VarDecl');
+      expect(allVarDecls, hasLength(3));
+      final Set<String> ids = allVarDecls.map((Map<String, dynamic> d) => d['id'] as String).toSet();
+      expect(ids, hasLength(3), reason: 'three distinct declarations, none collapsed');
+    });
+
+    test('a genuine duplicate declaration at the same scope (`duplicate_definition`, a real Dart error) refuses the whole file (ADR-0031, M9-H)', () async {
       final Extracted app = await extract(
         actionWrapper.replaceFirst('{{BODY}}', '''
   void _run() {
@@ -3398,12 +3427,10 @@ class _WState extends State<W> {
   }
 '''),
       );
-      expect(app.errors, isEmpty);
-
-      final List<Map<String, dynamic>> allVarDecls = app.ofKind('logic.VarDecl');
-      expect(allVarDecls, hasLength(3));
-      final Set<String> ids = allVarDecls.map((Map<String, dynamic> d) => d['id'] as String).toSet();
-      expect(ids, hasLength(3), reason: 'three distinct declarations, none collapsed');
+      expect(app.errors, hasLength(1));
+      expect(app.errors.single.code.id, 'BRG1310');
+      expect(app.errors.single.message, contains('duplicate_definition'));
+      expect(app.ofKind('logic.VarDecl'), isEmpty, reason: 'nothing is extracted from a refused unit');
     });
 
     test('a catch exception binding sharing a name with a declaration-list member never collides', () async {
@@ -3487,7 +3514,7 @@ class _WState extends State<W> {
       expect(allIds, hasLength(4), reason: 'four distinct declarations, none shared between the two actions');
     });
 
-    test('self-reference (`var a = a;`, a real Dart error, referenced_before_declaration) is left unresolved, not fabricated', () async {
+    test('self-reference (`var a = a;`, a real Dart error, referenced_before_declaration) refuses the whole file (ADR-0031, M9-H)', () async {
       final Extracted app = await extract(
         actionWrapper.replaceFirst('{{BODY}}', '''
   void _run() {
@@ -3497,18 +3524,20 @@ class _WState extends State<W> {
 '''),
       );
       // This source is invalid Dart (`dart analyze` reports `referenced_before_declaration`) — checked
-      // directly against the real Dart CLI before writing this test, not assumed. FlutterBridge's own
-      // diagnostics do not surface the analyzer's own resolution errors (a separate, pre-existing,
-      // unrelated characteristic this milestone did not introduce and is not scoped to fix); what this
-      // test proves is narrower and load-bearing for M9-C specifically: the sequential extractor must
-      // not silently resolve `a`'s own initializer to itself merely because the ordinal pre-pass already
-      // knows `a`'s eventual identity — identity availability is not lexical visibility.
-      final Map<String, dynamic> aDecl = app.only('logic.VarDecl');
-      expect(targetOfRead(app, 'a', occurrence: 0), isNull, reason: 'a’s own initializer, extracted before a itself enters scope');
-      expect(targetOfRead(app, 'a', occurrence: 1), aDecl['id'], reason: 'the body’s own read, after a is declared, still resolves correctly');
+      // directly against the real Dart CLI, not assumed. Before M9-H/ADR-0031, FlutterBridge's own
+      // diagnostics did not surface the analyzer's own resolution errors at all, and this test asserted
+      // the narrower, load-bearing fact that the sequential extractor did not *fabricate* a resolution
+      // for `a`'s own initializer merely because the ordinal pre-pass already knew `a`'s eventual
+      // identity. ADR-0031 closes the gap one level up: a resolved AST is not proof of a valid program,
+      // so the whole file is now refused before extraction ever runs — there is no VarDecl to check at
+      // all, for either `a`'s own initializer or the body's own later read.
+      expect(app.errors, hasLength(1));
+      expect(app.errors.single.code.id, 'BRG1310');
+      expect(app.errors.single.message, contains('referenced_before_declaration'));
+      expect(app.ofKind('logic.VarDecl'), isEmpty, reason: 'nothing is extracted from a refused unit');
     });
 
-    test('forward reference (`var a = b, b = 1;`, a real Dart error) is left unresolved, not fabricated', () async {
+    test('forward reference (`var a = b, b = 1;`, a real Dart error) refuses the whole file (ADR-0031, M9-H)', () async {
       final Extracted app = await extract(
         actionWrapper.replaceFirst('{{BODY}}', '''
   void _run() {
@@ -3517,10 +3546,14 @@ class _WState extends State<W> {
   }
 '''),
       );
-      // Also invalid Dart (`referenced_before_declaration`, confirmed directly), for the identical reason
-      // — `b` is declared textually after `a`, so it must not be visible to `a`'s own initializer,
-      // regardless of what the ordinal pre-pass already knows about `b`'s eventual identity.
-      expect(targetOfRead(app, 'b', occurrence: 0), isNull, reason: 'a’s own initializer, extracted before b enters scope');
+      // Also invalid Dart (`referenced_before_declaration`, confirmed directly) — `b` is declared
+      // textually after `a`, so it must not be visible to `a`'s own initializer. Before M9-H this left
+      // `b`'s own read unresolved but still extracted the rest of the file; ADR-0031 refuses the whole
+      // file instead, for the identical "resolved AST is not proof of validity" reason.
+      expect(app.errors, hasLength(1));
+      expect(app.errors.single.code.id, 'BRG1310');
+      expect(app.errors.single.message, contains('referenced_before_declaration'));
+      expect(app.ofKind('logic.VarDecl'), isEmpty, reason: 'nothing is extracted from a refused unit');
     });
 
     test('the same source extracts to the same ids on a second, independent run (determinism)', () async {
@@ -4109,6 +4142,368 @@ void useIt(Object context) {
     });
   });
 
+  group('resolved analyzer errors as a pre-extraction safety gate (ADR-0031, M9-H)', () {
+    // A resolved AST is not proof of a valid program: `package:analyzer` recovers a structurally-plausible
+    // tree for erroneous source because IDE tooling needs one, not because the program compiles. Before
+    // this milestone, `AnalysisSessionHandle.resolve()` obtained a `ResolvedUnitResult` and read only its
+    // `.unit` (the AST) — `.diagnostics`/`.errors` were discarded, unread, at every call site. This group
+    // proves the gate directly: `Severity.error` in the unit's own resolved diagnostics blocks extraction
+    // entirely (BRG1310, carrying the real analyzer code/message/location); warnings, lints and info never
+    // do; and invalid Dart is never confused with a valid-but-unsupported FlutterBridge capability.
+
+    Diagnostic onlyError(Extracted app) {
+      expect(app.errors, hasLength(1));
+      return app.errors.single;
+    }
+
+    // ── H3 — undefined identifier ───────────────────────────────────────────────────────────────────
+
+    test('H3 — an undefined identifier refuses the whole file, with the real analyzer diagnostic (not BRG1303)', () async {
+      // Raw would keep the backslash into the inner, analyzed Dart, turning `\$missingValue` from an
+      // interpolation into an escaped literal dollar sign, defeating the fixture entirely.
+      // ignore: use_raw_strings
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => Text('\$missingValue');
+}
+''');
+      final Diagnostic error = onlyError(app);
+      expect(error.code.id, 'BRG1310');
+      expect(error.message, contains('undefined_identifier'));
+      expect(app.ofKind('ui.Component'), isEmpty);
+    });
+
+    // ── H4 — type mismatch (the case nothing previously caught) ────────────────────────────────────
+
+    test('H4 — a genuine type mismatch (both sides fully resolved) is refused — previously silent, the defect this milestone closes', () async {
+      // Raw would keep the backslash into the inner, analyzed Dart, turning `\$value` from an
+      // interpolation into an escaped literal dollar sign, defeating the fixture entirely.
+      // ignore: use_raw_strings
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) {
+    int value = 'wrong';
+    return Text('\$value');
+  }
+}
+''');
+      final Diagnostic error = onlyError(app);
+      expect(error.code.id, 'BRG1310');
+      expect(error.message, contains('invalid_assignment'));
+      // Before ADR-0031: this extracted, normalized and generated cleanly — `<Text>{'wrong'}</Text>`, a
+      // plausible React component built from Dart the real compiler rejects. Nothing here — no
+      // ui.Component, no logic.VarDecl for `value` — reaches the document at all now.
+      expect(app.ofKind('ui.Component'), isEmpty);
+      expect(app.ofKind('logic.VarDecl'), isEmpty);
+    });
+
+    // ── H5/H6 — invalid call shape (wrong argument type / missing required argument) ───────────────
+
+    test('H5 — a wrong argument type is refused, not silently accepted', () async {
+      // Raw would keep the backslash into the inner, analyzed Dart, turning `\${addOne('nope')}` from an
+      // interpolation into escaped literal text, defeating the fixture entirely.
+      // ignore: use_raw_strings
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+int addOne(int n) => n + 1;
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => Text('\${addOne('nope')}');
+}
+''');
+      final Diagnostic error = onlyError(app);
+      expect(error.code.id, 'BRG1310');
+      expect(error.message, contains('argument_type_not_assignable'));
+    });
+
+    test('H6 — a missing required argument is refused, not silently accepted', () async {
+      // Raw would keep the backslash into the inner, analyzed Dart, turning `\${addOne()}` from an
+      // interpolation into escaped literal text, defeating the fixture entirely.
+      // ignore: use_raw_strings
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+int addOne(int n) => n + 1;
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => Text('\${addOne()}');
+}
+''');
+      final Diagnostic error = onlyError(app);
+      expect(error.code.id, 'BRG1310');
+      expect(error.message, contains('not_enough_positional_arguments'));
+    });
+
+    // ── syntax/parser errors ────────────────────────────────────────────────────────────────────────
+
+    test('a genuine syntax error refuses the whole file — the malformed declaration never silently vanishes', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class W extends StatelessWidget {
+  const W({super.key});
+  void _broken( {
+  }
+  @override
+  Widget build(BuildContext context) => const Text('go');
+}
+''');
+      expect(app.errors, isNotEmpty);
+      expect(app.errors.every((Diagnostic d) => d.code.id == 'BRG1310'), isTrue);
+      // Before ADR-0031: `_broken`'s own malformed declaration silently vanished and the unrelated, valid
+      // `build()` still extracted and would have generated cleanly — this milestone's second, independent
+      // proof that "the analyzer recovered an AST" is not "the program is valid" (§2 of the ADR).
+      expect(app.ofKind('ui.Component'), isEmpty);
+    });
+
+    // ── warnings/lints/info never block ─────────────────────────────────────────────────────────────
+
+    test('a warning-only file (unused local) is unaffected — Severity.error is the only blocking severity', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class W extends StatelessWidget {
+  const W({super.key});
+  void _unusedHelper() {
+    final unused = 42;
+  }
+  @override
+  Widget build(BuildContext context) => const Text('go');
+}
+''');
+      expect(app.errors, isEmpty);
+      expect(app.only('ui.Component')['name'], 'W');
+    });
+
+    test('an info-severity diagnostic (a state-promotion note) does not block — only Severity.error does', () async {
+      // `BRG2302`-style info diagnostics are this compiler's own, not the analyzer's — included here as a
+      // control that this gate reads the *analyzer's* severity, never bridge_analyzer's own diagnostic
+      // stream, which already carries non-error entries on every ordinary build.
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('go');
+}
+''');
+      expect(app.errors, isEmpty);
+    });
+
+    // ── an error in a declaration FlutterBridge would never have extracted anyway ───────────────────
+
+    test('an error in an unused, unreachable declaration still refuses the whole file (real Dart does not compile it either)', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('valid');
+}
+void _unusedInvalidHelper() {
+  int value = 'wrong';
+}
+''');
+      final Diagnostic error = onlyError(app);
+      expect(error.code.id, 'BRG1310');
+      // `_unusedInvalidHelper` is never reachable from `W.build()`, and `flutter build`/`dart compile`
+      // still refuse the whole program regardless — FlutterBridge's own stated contract (source-faithful
+      // conversion of *valid* Flutter/Dart) does the same, unconditional on reachability (ADR-0031 §7).
+      expect(app.ofKind('ui.Component'), isEmpty, reason: 'even the otherwise-valid, reachable W is refused with it');
+    });
+
+    // ── the gate itself, proven at the layer it operates on (Mutation E) ────────────────────────────
+
+    test('a clean declaration sharing an erroring file never reaches even the raw extraction output', () async {
+      // Every test above observes the *final* NDJSON document, which is also guarded downstream by the
+      // pre-existing, unrelated `DiagnosticSink.hasErrors -> EmitStage refuses to write` safety net
+      // (predates ADR-0031). That net alone would make the document empty even if this gate's own
+      // `continue` inside `ExtractStage` were deleted and every file were extracted regardless of its
+      // errors — so it cannot, by itself, prove *this* gate is what skipped the file. This test calls
+      // `LoadStage` and `ExtractStage` directly, never reaching `EmitStage` at all, and inspects the
+      // intermediate `ExtractionResult` — the one place the gate's own `continue` has any effect.
+      final String project = createProject(
+        name: 'app',
+        libraries: <String, String>{
+          'main.dart': '''
+import 'package:flutter/material.dart';
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('valid');
+}
+void _unusedInvalidHelper() {
+  int value = 'wrong';
+}
+''',
+        },
+      );
+      final DiagnosticSink sink = DiagnosticSink();
+      final StageContext context = StageContext(diagnostics: sink);
+      final LoadResult loaded = await const LoadStage().execute(
+        AnalyzerRequest(projectRoot: project, outputPath: 'build/out.ndjson'),
+        context,
+      );
+      final ExtractionResult extraction = await const ExtractStage().execute(loaded, context);
+
+      expect(
+        extraction.records.where((record) => record.span.file == 'lib/main.dart'),
+        isEmpty,
+        reason:
+            'main.dart carries a real error, so ExtractStage must skip it before Extractor.extract() ever '
+            'runs for it — the otherwise-valid W must not appear in the raw records either, independent of '
+            'anything EmitStage does afterward',
+      );
+      expect(
+        sink.sorted().where((Diagnostic d) => d.code.id == 'BRG1310'),
+        isNotEmpty,
+        reason: 'the skip is still reported, not silent',
+      );
+    });
+
+    // ── dependency/multi-file behavior (§9) ─────────────────────────────────────────────────────────
+
+    test('a clean file importing an erroneous one is unaffected by the erroneous file’s own diagnostics', () async {
+      final Extracted app = await extract(
+        '''
+import 'package:flutter/material.dart';
+import 'helper.dart';
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('clean');
+}
+''',
+        extra: <String, String>{
+          'helper.dart': '''
+void brokenHelper() {
+  int value = 'wrong';
+}
+''',
+        },
+      );
+      // main.dart's own resolved unit carries none of helper.dart's diagnostics (verified directly against
+      // the real, resolved analyzer package — each file's own `.diagnostics` is scoped to its own source
+      // span) — so main.dart is refused only because helper.dart's own extraction is skipped, never
+      // because of anything in main.dart itself.
+      final List<Diagnostic> errors = app.errors;
+      expect(errors, isNotEmpty);
+      expect(
+        errors.any((Diagnostic d) => d.code.id == 'BRG1310' && d.message.contains('invalid_assignment')),
+        isTrue,
+        reason: 'helper.dart’s own real error is reported',
+      );
+      expect(
+        errors.every((Diagnostic d) => (d.span?.file ?? '') != 'main.dart' || d.code.id != 'BRG1310'),
+        isTrue,
+        reason: 'main.dart itself is never blamed for helper.dart’s own error',
+      );
+    });
+
+    test('main.dart’s own extraction is never skipped for helper.dart’s error, proven below EmitStage’s own hasErrors net (Mutation F)', () async {
+      // The test above observes the *final* document, which the pre-existing, unrelated
+      // `DiagnosticSink.hasErrors -> EmitStage refuses to write` net already empties whenever helper.dart's
+      // genuine error is reported — regardless of whether main.dart's own extraction actually ran. So it
+      // cannot, by itself, distinguish "main.dart correctly extracted and something unrelated downstream
+      // refused to write" from "main.dart's own extraction was wrongly skipped because helper.dart's error
+      // leaked into it" (over-gating an importer for an imported unit's own diagnostics, if local-only
+      // gating were broken). This calls `LoadStage`/`ExtractStage` directly, never reaching `EmitStage`, to
+      // prove main.dart's own raw records are produced regardless.
+      final String project = createProject(
+        name: 'app',
+        libraries: <String, String>{
+          'main.dart': '''
+import 'package:flutter/material.dart';
+import 'helper.dart';
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('clean');
+}
+''',
+          'helper.dart': '''
+void brokenHelper() {
+  int value = 'wrong';
+}
+''',
+        },
+      );
+      final DiagnosticSink sink = DiagnosticSink();
+      final StageContext context = StageContext(diagnostics: sink);
+      final LoadResult loaded = await const LoadStage().execute(
+        AnalyzerRequest(projectRoot: project, outputPath: 'build/out.ndjson'),
+        context,
+      );
+      final ExtractionResult extraction = await const ExtractStage().execute(loaded, context);
+
+      expect(
+        extraction.records.where((record) => record.span.file == 'lib/main.dart' && record.kind == 'ui.Component'),
+        isNotEmpty,
+        reason: 'main.dart is clean — its own W component must be extracted regardless of helper.dart’s error',
+      );
+      expect(
+        extraction.records.where((record) => record.span.file == 'lib/helper.dart'),
+        isEmpty,
+        reason: 'helper.dart itself still carries a real error and must still be skipped',
+      );
+    });
+
+    // ── invalid Dart vs. unsupported (valid) Dart are never confused (#16) ──────────────────────────
+
+    test('valid-but-unsupported Dart still reports the ordinary BRG3013-family capability gap, never BRG1310', () async {
+      // `dart:mirrors` is real, valid, resolvable Dart this generator does not support lowering — a
+      // capability gap, structurally nothing like invalid source. Using a construct this analyzer's own
+      // extraction has no UIR node for (BRG1302, unsupportedSyntax) is the cleanest, most neutral proof
+      // available here that a genuinely valid-but-unsupported shape never trips the new gate at all.
+      final Extracted app = await extract(r'''
+import 'package:flutter/material.dart';
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) {
+    final record = (1, 2);
+    return Text('$record');
+  }
+}
+''');
+      expect(app.errors, isEmpty, reason: 'a record literal is valid Dart; BRG1302 is a warning, never BRG1310');
+      expect(app.ofKind('logic.OpaqueExpr'), isNotEmpty);
+    });
+
+    // ── deterministic rejection ──────────────────────────────────────────────────────────────────────
+
+    test('the same invalid source is refused identically on repeated, independent runs', () async {
+      // Raw would keep the backslash into the inner, analyzed Dart, turning `\$value` from an
+      // interpolation into an escaped literal dollar sign, defeating the fixture entirely.
+      // ignore: use_raw_strings
+      const String source = '''
+import 'package:flutter/material.dart';
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) {
+    int value = 'wrong';
+    return Text('\$value');
+  }
+}
+''';
+      final Extracted first = await extract(source);
+      final Extracted second = await extract(source);
+      expect(first.errors, hasLength(1));
+      expect(second.errors, hasLength(1));
+      expect(first.errors.single.code.id, second.errors.single.code.id);
+      expect(first.errors.single.message, second.errors.single.message);
+      expect(first.errors.single.span?.line, second.errors.single.span?.line);
+      expect(first.nodes, isEmpty);
+      expect(second.nodes, isEmpty);
+    });
+  });
+
   group('paths in UIR are platform-independent (M5-F)', () {
     // `span.file` is not a filesystem path once it is written: it becomes an anchor —
     // `'${span.file}#$segment'` in `node_factory.dart` — and an anchor is hashed into the node's id
@@ -4359,7 +4754,10 @@ class W extends StatelessWidget {
       final Extracted app = await extract('''
 import 'package:flutter/material.dart';
 enum Reason { a, b }
-String f(Reason r) => switch (r) { Reason.a when true => 'x', Reason.b => 'y' };
+// An unguarded fallback for Reason.a (real Dart: valid and exhaustive, confirmed directly — a guarded
+// case never counts toward exhaustiveness on its own, unlike an unguarded one for the same value) keeps
+// this genuinely valid Dart while still exercising a guarded case.
+String f(Reason r) => switch (r) { Reason.a when true => 'x', Reason.a => 'x2', Reason.b => 'y' };
 class W extends StatelessWidget {
   const W({required this.r, super.key});
   final Reason r;

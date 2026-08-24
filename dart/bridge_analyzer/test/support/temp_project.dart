@@ -301,14 +301,27 @@ class Color {
 /// Only `fromSeed` is modelled: it is the constructor that makes N10 derive the Material role set, and the
 /// one an app that wants a themed `Divider` has to use.
 class ColorScheme {
-  const ColorScheme.fromSeed({required this.seedColor});
-  final Color seedColor;
+  const ColorScheme.fromSeed({required this.seedColor}) : primary = null;
+  const ColorScheme.light({this.primary}) : seedColor = null;
+  final Color? seedColor;
+  final Color? primary;
 }
 
 class ThemeData {
-  const ThemeData({this.colorScheme, this.brightness});
+  const ThemeData({
+    this.colorScheme,
+    this.colorSchemeSeed,
+    this.brightness,
+    this.primaryColor,
+    this.scaffoldBackgroundColor,
+    this.useMaterial3,
+  });
   final ColorScheme? colorScheme;
+  final Color? colorSchemeSeed;
   final Brightness? brightness;
+  final Color? primaryColor;
+  final Color? scaffoldBackgroundColor;
+  final bool? useMaterial3;
 }
 
 enum Brightness { light, dark }
@@ -726,10 +739,17 @@ class Slider extends Widget {
 }
 
 class MaterialApp extends Widget {
-  const MaterialApp({this.home, this.routes = const <String, Widget Function(BuildContext)>{}, this.theme, super.key});
+  const MaterialApp({
+    this.home,
+    this.routes = const <String, Widget Function(BuildContext)>{},
+    this.theme,
+    this.darkTheme,
+    super.key,
+  });
   final Widget? home;
   final Map<String, Widget Function(BuildContext)> routes;
   final Object? theme;
+  final Object? darkTheme;
 }
 
 class Mystery extends Widget {
