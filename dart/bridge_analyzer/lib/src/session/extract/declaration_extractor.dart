@@ -126,8 +126,9 @@ final class DeclarationExtractor {
 
     // Computed **once**. Calling these inside the `if (…isNotEmpty)` guard *and* again in the value
     // extracted every field and body twice — doubling the work, and emitting every diagnostic twice.
-    final List<RawValue> fields = _fields(node, scope);
-    final List<RawValue> methods = semantic ? const <RawValue>[] : _methods(node, scope);
+    final String className = node.namePart.typeName.lexeme;
+    final List<RawValue> fields = _fields(node, scope, owner: className);
+    final List<RawValue> methods = semantic ? const <RawValue>[] : _methods(node, scope, owner: className);
 
     out.emit(
       RawNode(
@@ -182,7 +183,12 @@ final class DeclarationExtractor {
     );
   }
 
-  List<RawValue> _fields(ClassDeclaration node, Scope scope) => <RawValue>[
+  /// [owner] anchors every field's own symbol to its declaring class (ADR-0032) — the fix for the
+  /// cross-class collision two structurally-identical fields (same name, type, no initializer) in
+  /// unrelated classes would otherwise produce: `logic.FieldDecl` carries no `symbol:` of its own
+  /// before this, so the canonical builder falls back to content-addressing it (`IdAllocator.forContent`)
+  /// exactly like an expression, and two fields with identical content hash to the same id.
+  List<RawValue> _fields(ClassDeclaration node, Scope scope, {required String owner}) => <RawValue>[
     for (final ClassMember member in node.body.members)
       if (member is FieldDeclaration)
         for (final VariableDeclaration variable in member.fields.variables)
@@ -190,6 +196,7 @@ final class DeclarationExtractor {
             RawNode(
               kind: 'logic.FieldDecl',
               span: out.span(variable),
+              symbol: out.symbols.variable(variable.name.lexeme, owner: owner),
               fields: <String, RawValue>{
                 'name': RawLiteral(variable.name.lexeme),
                 'type': out.typeRef(variable.declaredFragment?.element.type, at: variable),
@@ -203,13 +210,28 @@ final class DeclarationExtractor {
           ),
   ];
 
-  List<RawValue> _methods(ClassDeclaration node, Scope scope) => <RawValue>[
+  /// [owner] anchors every method/getter/setter's own symbol to its declaring class (ADR-0032) — the
+  /// identical fix [_fields] applies, for the identical reason: M9-I's own real probe found two
+  /// unrelated classes' textually-identical `int get value => 1;` getters colliding on one NodeId
+  /// before this (`8b16269762a3b7ef` for both), because `logic.FunctionDecl` embedded here carried no
+  /// `symbol:` either. Only ever called for a **plain** class (`_class`'s own `semantic` guard) — a
+  /// component's `build()`/a store's mutators already have their own, separate, correct identity
+  /// (`ui.Component.render`/`sig.Action`) and are never re-extracted here.
+  List<RawValue> _methods(ClassDeclaration node, Scope scope, {required String owner}) => <RawValue>[
     for (final ClassMember member in node.body.members)
       if (member is MethodDeclaration)
         RawChild(
           RawNode(
             kind: 'logic.FunctionDecl',
             span: out.span(member),
+            // A getter and its own setter share one Dart name (`value`/`value`) but are two distinct
+            // declarations — the `=` suffix on a setter's own symbol (mirroring Dart's own convention
+            // for referring to one, `Type#value=`) is what keeps the pair from colliding into one
+            // `BRG1202` the moment a class declares both, which real Dart source commonly does.
+            symbol: out.symbols.function(
+              member.isSetter ? '${member.name.lexeme}=' : member.name.lexeme,
+              owner: owner,
+            ),
             fields: <String, RawValue>{
               'name': RawLiteral(member.name.lexeme),
               'returnType': out.typeRef(

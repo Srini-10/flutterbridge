@@ -33,10 +33,15 @@ final class Symbols {
   /// A class, mixin, enum, or type alias.
   String type(String name) => 'type:$path#$name';
 
-  /// A top-level or static function.
-  String function(String name) => 'fn:$path#$name';
+  /// A top-level function, or a method/getter/setter declared on a class (ADR-0032). [owner] is the
+  /// class name, or `null` at the top level — the identical convention [variable] already uses for a
+  /// field.
+  String function(String name, {String? owner}) =>
+      'fn:$path#${owner == null ? '' : '$owner.'}$name';
 
-  /// A field or top-level variable. [owner] is the class name, or `null` at the top level.
+  /// A field or top-level variable. [owner] is the class name, or `null` at the top level — wired up
+  /// for a class field by `declaration_extractor.dart`'s `_fields` (ADR-0032); previously minted,
+  /// never actually passed.
   String variable(String name, {String? owner}) =>
       'var:$path#${owner == null ? '' : '$owner.'}$name';
 

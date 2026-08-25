@@ -83,7 +83,14 @@ void main() {
         // some other way entirely, and this does: it recomputes every id from scratch.
         //
         // Declarations are exempt, and must be: their id is sha256('d:' + symbol), and the symbol is a
-        // source coordinate that is deliberately not carried in the document.
+        // source coordinate that is deliberately not carried in the document. Most declarations are
+        // their own top-level record, already excluded below by the `entry.key != 'id'` check — but a
+        // declaration can also be *embedded* inside another node's own fields and still be
+        // symbol-addressed: an ordinary local (`logic.VarDecl`, ADR-28) inside a statement list, and a
+        // class field/method (`logic.FieldDecl`/`logic.FunctionDecl`, ADR-0032) inside a
+        // `logic.ClassDecl`'s own `fields`/`methods`. Both are exempt here for the identical reason the
+        // top-level record is.
+        const Set<String> declarationKinds = <String>{'logic.VarDecl', 'logic.FieldDecl', 'logic.FunctionDecl'};
         final String path = '${outDir.path}/fixture.ndjson';
         await const BridgeAnalyzer().run(
           AnalyzerRequest(projectRoot: fixture, outputPath: path),
@@ -99,12 +106,13 @@ void main() {
           if (value is! Map<String, Object?>) return;
 
           final Object? id = value['id'];
-          if (value['kind'] is String && id is String) {
+          final Object? kind = value['kind'];
+          if (kind is String && id is String && !declarationKinds.contains(kind)) {
             expect(
               uir.nodeIdOfContent(uir.stripIdentity(value)! as Map<String, Object?>),
               id,
               reason:
-                  'the id of a nested ${value['kind']} is not the hash of its content. Content '
+                  'the id of a nested $kind is not the hash of its content. Content '
                   'addressing is broken, and every anchor and cache key in this compiler is a lie.',
             );
             checked++;
