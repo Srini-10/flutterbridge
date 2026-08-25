@@ -176,6 +176,20 @@ abstract interface class WidgetAdapter implements PackageAdapter {
   /// Whether a class extending [type] is a store: state that outlives any one component.
   bool isStoreBase(DartType? type);
 
+  /// Whether a class extending [type] is a component base (`StatelessWidget`/`StatefulWidget`) —
+  /// never `State` itself, which [isStoreBase]'s own sibling check would be a different question
+  /// about (ADR-0033). Exists so a plain-class-only mechanism (an ordinary instance member's own
+  /// provenance target) can exclude a component's own fields — which back its constructor
+  /// parameters, already resolved through `ui.Component.params`/`_componentProp` — without needing
+  /// an `AdapterContext` merely to ask this one, narrower question.
+  bool isComponentBase(DartType? type);
+
+  /// Whether a class extending [type] is `State` — the other half of a `StatefulWidget` pair
+  /// (ADR-0033's sibling exclusion to [isComponentBase]): its own fields are `sig.Signal`/
+  /// `app.StoreInstance`/plain-`Binds.field` bindings, resolved through `signal_extractor.dart`'s own
+  /// scope construction (ADR-4/ADR-27), never through this mechanism.
+  bool isStateBase(DartType? type);
+
   /// Whether [library] is the framework rather than the application.
   bool isFrameworkLibrary(String library);
 

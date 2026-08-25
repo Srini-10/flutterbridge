@@ -143,7 +143,14 @@ final class ExpressionExtractor {
           node.name,
           scope,
           type: _typeOfIdentifier(node),
-          staticTarget: _topLevelTarget(node.element),
+          // An implicit instance-member read — `count` inside the class that declares it, or a subclass
+          // that inherits it (ADR-0033) — is checked only after `_topLevelTarget` already found nothing:
+          // the analyzer's own resolution never lets `node.element` be *both* a top-level declaration and
+          // an instance member, so the two never compete. A local/parameter that shadows the member's own
+          // name resolves `node.element` to that local/parameter instead (Dart's own scoping, not
+          // reproduced here), so `_instanceMemberTarget` correctly returns null for it and this falls
+          // through to `binding?.symbol` below, unchanged.
+          staticTarget: _topLevelTarget(node.element) ?? _instanceMemberTarget(node.element),
         );
 
       // `MainAxisAlignment.center`, `http.get`, `Colors.blue` — the left-hand side is a *type* or an
@@ -219,7 +226,12 @@ final class ExpressionExtractor {
           fields: <String, RawValue>{
             'receiver': RawChild(extract(target, scope)),
             'property': RawLiteral(node.propertyName.name),
-            if (_storeMemberTarget(target.staticType, node.propertyName.element) case final String symbol)
+            // `this.count` (ADR-0033) — checked only for a receiver that is *literally* `this`, never for
+            // an arbitrary one: `model.count` from outside the class must keep reaching M9-J's own
+            // refusal unchanged, and that refusal is gated on `target` being absent.
+            if (_storeMemberTarget(target.staticType, node.propertyName.element) ??
+                    (target is ThisExpression ? _instanceMemberTarget(node.propertyName.element) : null)
+                case final String symbol)
               'target': RawRef(symbol),
             'type': out.typeRef(node.staticType, at: node),
           },
@@ -1238,6 +1250,90 @@ final class ExpressionExtractor {
               extractedDependencyFiles: out.extractedDependencyFiles,
             )
           : Symbols.derivedIn(
+              library,
+              name,
+              owner: ownerName,
+              packageName: out.packageName,
+              localPackages: out.localPackageNames,
+              extractedDependencyFiles: out.extractedDependencyFiles,
+            );
+    }
+    return null;
+  }
+
+  /// The class member [element] resolves to, when its own `enclosingElement` is a class (ADR-0033) —
+  /// the generalization of [_storeMemberTarget] beyond `isStoreBase`, to *any* project class's own
+  /// field/getter/method. Resolved the identical way: by the member's own declaring element, never by
+  /// name — the same `isOriginVariable`/`isOriginDeclaration` pair, the same `Symbols.pathOf`-backed
+  /// project-boundary check that already keeps a framework class's own inherited API from being
+  /// misattributed to a project class.
+  ///
+  /// **This is declaration *provenance*, never a dispatch instruction (ADR-0033 §2).** `target` here
+  /// states a fact the analyzer already proved — "this identifier resolves to member X of class Y" — a
+  /// fact that holds regardless of which concrete subtype the runtime receiver turns out to be. It is
+  /// exactly as true for `Base.readImplicit`'s own `value` (resolving to `Base.value`, even though a
+  /// `Child` instance dispatches `Child.value` at runtime) as it is for a `final` class with no
+  /// subclasses at all — because nothing that reads `target` anywhere in this codebase treats it as
+  /// "invoke this declaration instead of the receiver." Confirmed directly (ADR-0033's own audit): every
+  /// existing consumer of `target` on a `PropertyAccess`/`MethodCall` still evaluates and emits the
+  /// receiver expression unconditionally; `target` only ever selects *how* to lower the property/method
+  /// spelling, never *whether* to bypass the receiver.
+  ///
+  /// Callers restrict *where* this is invoked, not what it returns: only a bare identifier (an implicit
+  /// instance-member read, reached with no receiver at all) and an explicit `this.member`/`this.method()`
+  /// (checked structurally — the receiver AST node is literally a `ThisExpression`) ever call this. An
+  /// external read (`model.count`, from outside the class) never does, so M9-J's own refusal — gated on
+  /// `target` being absent — is untouched by this function's own existence.
+  String? _instanceMemberTarget(Element? element) {
+    if (element == null) {
+      return null;
+    }
+    final Element? owner = element.enclosingElement;
+    if (owner is! InstanceElement) {
+      return null;
+    }
+    // A component's own fields back its constructor parameters — already correctly represented as
+    // `ui.Component.params`, resolved through `scope.paramInScope`/`_componentProp`, never through this
+    // mechanism (a real regression this exclusion fixes: without it, a bare `base` read inside
+    // `StatelessWidget.build()` — `base` being `W`'s *own* field — got a target, which made
+    // `isParameterReceiver` (M9-J) stop recognizing it as a bare parameter and silently re-enabled the
+    // exact `unknown`-receiver passthrough M9-J exists to refuse). A store's own fields are, symmetrically,
+    // already correctly bound via `signal_extractor.dart`'s own `Binds.signal`/`.field`/`.storeInstance`
+    // scope construction (ADR-27) — giving them a *second*, differently-prefixed target here would
+    // conflict with, not complement, that mechanism. Both exclusions leave this function applying only to
+    // a plain class — exactly `_class`'s own `semantic = isComponent || isStore` boundary.
+    if (registry.isComponentBase(owner.thisType) ||
+        registry.isStateBase(owner.thisType) ||
+        registry.isStoreBase(owner.thisType)) {
+      return null;
+    }
+    final String? ownerName = owner.name;
+    final String library = owner.library.identifier;
+    final String? name = element.name;
+    if (ownerName == null || name == null) {
+      return null;
+    }
+    if (element is MethodElement) {
+      return Symbols.functionIn(
+        library,
+        name,
+        owner: ownerName,
+        packageName: out.packageName,
+        localPackages: out.localPackageNames,
+        extractedDependencyFiles: out.extractedDependencyFiles,
+      );
+    }
+    if (element is GetterElement) {
+      return element.isOriginVariable
+          ? Symbols.variableIn(
+              library,
+              name,
+              owner: ownerName,
+              packageName: out.packageName,
+              localPackages: out.localPackageNames,
+              extractedDependencyFiles: out.extractedDependencyFiles,
+            )
+          : Symbols.functionIn(
               library,
               name,
               owner: ownerName,

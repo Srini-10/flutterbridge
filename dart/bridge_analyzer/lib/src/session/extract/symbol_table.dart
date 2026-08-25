@@ -159,14 +159,16 @@ final class Symbols {
     return path == null ? null : 'type:$path#$name';
   }
 
-  /// The symbol for a top-level variable declared in [libraryUri] — the sibling of [typeIn], for a
-  /// bare reference (`protocolVersion`) whose declaring file is not the referring one (M8-J). Mirrors
-  /// [variable] exactly; the two agree by construction, since both derive from the same [pathOf] and
-  /// the identical `var:` prefix.
+  /// The symbol for a top-level variable, or a field declared on a class, in [libraryUri] — the sibling
+  /// of [typeIn], for a bare reference (`protocolVersion`) whose declaring file is not the referring one
+  /// (M8-J), or an inherited field read from a subclass declared elsewhere (ADR-0033). [owner] is the
+  /// class name, or `null` at the top level — mirrors [variable] exactly; the two agree by construction,
+  /// since both derive from the same [pathOf] and the identical `var:` prefix.
   static String? variableIn(
     String libraryUri,
     String name, {
     required String packageName,
+    String? owner,
     Set<String> localPackages = const <String>{},
     Set<String> extractedDependencyFiles = const <String>{},
   }) {
@@ -176,16 +178,19 @@ final class Symbols {
       localPackages: localPackages,
       extractedDependencyFiles: extractedDependencyFiles,
     );
-    return path == null ? null : 'var:$path#$name';
+    return path == null ? null : 'var:$path#${owner == null ? '' : '$owner.'}$name';
   }
 
-  /// The symbol for a top-level function declared in [libraryUri] — the sibling of [variableIn], for a
-  /// bare reference (`formatBytes`) or a tear-off whose declaring file is not the referring one (M8-J).
-  /// Mirrors [function] exactly, the identical `fn:` prefix.
+  /// The symbol for a top-level function, or a method/getter/setter declared on a class, in
+  /// [libraryUri] — the sibling of [variableIn], for a bare reference (`formatBytes`) or a tear-off
+  /// whose declaring file is not the referring one (M8-J), or an inherited method/getter read from a
+  /// subclass declared elsewhere (ADR-0033). [owner] is the class name, or `null` at the top level —
+  /// mirrors [function] exactly, the identical `fn:` prefix.
   static String? functionIn(
     String libraryUri,
     String name, {
     required String packageName,
+    String? owner,
     Set<String> localPackages = const <String>{},
     Set<String> extractedDependencyFiles = const <String>{},
   }) {
@@ -195,7 +200,7 @@ final class Symbols {
       localPackages: localPackages,
       extractedDependencyFiles: extractedDependencyFiles,
     );
-    return path == null ? null : 'fn:$path#$name';
+    return path == null ? null : 'fn:$path#${owner == null ? '' : '$owner.'}$name';
   }
 
   /// The signal symbol for a member declared in [libraryUri] (ADR-27).

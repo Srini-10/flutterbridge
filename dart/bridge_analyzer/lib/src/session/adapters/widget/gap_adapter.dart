@@ -117,6 +117,12 @@ final class GapWidgetAdapter implements WidgetAdapter {
   bool isStoreBase(DartType? type) => false;
 
   @override
+  bool isComponentBase(DartType? type) => false;
+
+  @override
+  bool isStateBase(DartType? type) => false;
+
+  @override
   bool isFrameworkLibrary(String library) => library.startsWith(GapCatalog.library);
 
   @override

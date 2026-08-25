@@ -4504,6 +4504,331 @@ class W extends StatelessWidget {
     });
   });
 
+  group('instance member-read provenance (ADR-0033, M9-L)', () {
+    // Every assertion here reads a `target` off a node *embedded* inside a plain class's own
+    // `logic.ClassDecl.methods`/`.fields` — `ofKind`/`only` already walk nested structures (M9-H's own
+    // established pattern), so no separate lookup mechanism is needed.
+
+    Map<String, dynamic> classDecl(Extracted app, String name) =>
+        app.ofKind('logic.ClassDecl').singleWhere((Map<String, dynamic> d) => d['name'] == name);
+
+    Map<String, dynamic> method(Map<String, dynamic> cls, String name) =>
+        (cls['methods'] as List<dynamic>).cast<Map<String, dynamic>>().singleWhere((m) => m['name'] == name);
+
+    Map<String, dynamic> field(Map<String, dynamic> cls, String name) =>
+        (cls['fields'] as List<dynamic>).cast<Map<String, dynamic>>().singleWhere((f) => f['name'] == name);
+
+    /// The first `logic.Ref`/`logic.PropertyAccess` reading [property] found in [body], depth-first.
+    Map<String, dynamic>? readOf(Object? body, String property) {
+      if (body is Map<String, dynamic>) {
+        if ((body['kind'] == 'logic.Ref' && body['name'] == property) ||
+            (body['kind'] == 'logic.PropertyAccess' && body['property'] == property)) {
+          return body;
+        }
+        for (final Object? v in body.values) {
+          if (readOf(v, property) case final Map<String, dynamic> found) return found;
+        }
+      } else if (body is List<dynamic>) {
+        for (final Object? item in body) {
+          if (readOf(item, property) case final Map<String, dynamic> found) return found;
+        }
+      }
+      return null;
+    }
+
+    test('implicit and explicit reads of the same field target the identical declaration', () async {
+      // Raw would keep the backslash into the inner, analyzed Dart, defeating the interpolation the fixture needs.
+      // ignore: use_raw_strings
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Counter {
+  final int count;
+  const Counter(this.count);
+  int get implicitRead => count;
+  int get explicitRead => this.count;
+}
+class W extends StatelessWidget {
+  const W({super.key, required this.counter});
+  final Counter counter;
+  @override
+  Widget build(BuildContext context) => Text('\${counter.implicitRead}-\${counter.explicitRead}');
+}
+''');
+      final Map<String, dynamic> cls = classDecl(app, 'Counter');
+      final String fieldId = field(cls, 'count')['id'] as String;
+      final String? implicitTarget = readOf(method(cls, 'implicitRead')['body'], 'count')?['target'] as String?;
+      final String? explicitTarget = readOf(method(cls, 'explicitRead')['body'], 'count')?['target'] as String?;
+      expect(implicitTarget, fieldId);
+      expect(explicitTarget, fieldId);
+    });
+
+    test('a getter-to-getter chain resolves to the getter’s own declaration, both implicitly and explicitly', () async {
+      // Raw would keep the backslash into the inner, analyzed Dart, defeating the interpolation the fixture needs.
+      // ignore: use_raw_strings
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Counter {
+  final int count;
+  const Counter(this.count);
+  int get doubled => count * 2;
+  int get quadrupled => doubled * 2;
+  int get quadrupledExplicit => this.doubled * 2;
+}
+class W extends StatelessWidget {
+  const W({super.key, required this.counter});
+  final Counter counter;
+  @override
+  Widget build(BuildContext context) => Text('\${counter.quadrupled}-\${counter.quadrupledExplicit}');
+}
+''');
+      final Map<String, dynamic> cls = classDecl(app, 'Counter');
+      final String doubledId = method(cls, 'doubled')['id'] as String;
+      expect(readOf(method(cls, 'quadrupled')['body'], 'doubled')?['target'], doubledId);
+      expect(readOf(method(cls, 'quadrupledExplicit')['body'], 'doubled')?['target'], doubledId);
+    });
+
+    test('a local shadowing a field targets the local, never the field — and explicit this.x still targets the field', () async {
+      // Raw would keep the backslash into the inner, analyzed Dart, defeating the interpolation the fixture needs.
+      // ignore: use_raw_strings
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Counter {
+  final int count;
+  const Counter(this.count);
+  int shadowed() {
+    final count = 10;
+    return count;
+  }
+  int shadowedExplicit() => this.count;
+}
+class W extends StatelessWidget {
+  const W({super.key, required this.counter});
+  final Counter counter;
+  @override
+  Widget build(BuildContext context) => Text('\${counter.shadowed()}-\${counter.shadowedExplicit()}');
+}
+''');
+      final Map<String, dynamic> cls = classDecl(app, 'Counter');
+      final String fieldId = field(cls, 'count')['id'] as String;
+      final Map<String, dynamic> shadowedBody = method(cls, 'shadowed');
+      final String localDeclId = ((shadowedBody['body'] as List<dynamic>).first as Map<String, dynamic>)['id'] as String;
+      final String? shadowedTarget = readOf(shadowedBody['body'], 'count')?['target'] as String?;
+      expect(shadowedTarget, isNot(fieldId), reason: 'the local, not the field');
+      expect(shadowedTarget, localDeclId);
+      expect(readOf(method(cls, 'shadowedExplicit')['body'], 'count')?['target'], fieldId);
+    });
+
+    test('a parameter shadowing a field is never mistargeted to the field (parameter identity itself stays deferred, M8-N)', () async {
+      // Raw would keep the backslash into the inner, analyzed Dart, defeating the interpolation the fixture needs.
+      // ignore: use_raw_strings
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Counter {
+  final int count;
+  const Counter(this.count);
+  int paramShadow(int count) => count;
+  int paramShadowExplicit(int count) => this.count;
+}
+class W extends StatelessWidget {
+  const W({super.key, required this.counter});
+  final Counter counter;
+  @override
+  Widget build(BuildContext context) => Text('\${counter.paramShadow(1)}-\${counter.paramShadowExplicit(1)}');
+}
+''');
+      final Map<String, dynamic> cls = classDecl(app, 'Counter');
+      final String fieldId = field(cls, 'count')['id'] as String;
+      expect(readOf(method(cls, 'paramShadow')['body'], 'count')?['target'], isNull);
+      expect(readOf(method(cls, 'paramShadowExplicit')['body'], 'count')?['target'], fieldId);
+    });
+
+    test('an inherited (not overridden) member resolves to the declaring superclass’s own declaration, never the subclass', () async {
+      // Raw would keep the backslash into the inner, analyzed Dart, defeating the interpolation the fixture needs.
+      // ignore: use_raw_strings
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Base {
+  int get value => 1;
+  int get readImplicit => value;
+}
+class Child extends Base {
+  @override
+  int get value => 2;
+}
+class W extends StatelessWidget {
+  const W({super.key, required this.base});
+  final Base base;
+  @override
+  Widget build(BuildContext context) => Text('\${base.readImplicit}');
+}
+''');
+      final Map<String, dynamic> baseCls = classDecl(app, 'Base');
+      final Map<String, dynamic> childCls = classDecl(app, 'Child');
+      final String baseValueId = method(baseCls, 'value')['id'] as String;
+      final String childValueId = method(childCls, 'value')['id'] as String;
+      expect(baseValueId, isNot(childValueId));
+      expect(readOf(method(baseCls, 'readImplicit')['body'], 'value')?['target'], baseValueId);
+    });
+
+    test('two unrelated classes with byte-identical getter bodies are never confused (ADR-0032 regression) — targeting agrees with identity', () async {
+      // Raw would keep the backslash into the inner, analyzed Dart, defeating the interpolation the fixture needs.
+      // ignore: use_raw_strings
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Alpha {
+  int get value => 1;
+  int get read => value;
+}
+class Beta {
+  int get value => 1;
+  int get read => value;
+}
+class W extends StatelessWidget {
+  const W({super.key, required this.alpha, required this.beta});
+  final Alpha alpha;
+  final Beta beta;
+  @override
+  Widget build(BuildContext context) => Text('\${alpha.read}-\${beta.read}');
+}
+''');
+      final Map<String, dynamic> alphaCls = classDecl(app, 'Alpha');
+      final Map<String, dynamic> betaCls = classDecl(app, 'Beta');
+      final String alphaValueId = method(alphaCls, 'value')['id'] as String;
+      final String betaValueId = method(betaCls, 'value')['id'] as String;
+      expect(alphaValueId, isNot(betaValueId));
+      expect(readOf(method(alphaCls, 'read')['body'], 'value')?['target'], alphaValueId);
+      expect(readOf(method(betaCls, 'read')['body'], 'value')?['target'], betaValueId);
+    });
+
+    test('a static member read inside a static method still resolves to its own declaration', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class WithStatic {
+  static int total = 0;
+  static int readTotal() => total;
+}
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('go');
+}
+''');
+      final Map<String, dynamic> cls = classDecl(app, 'WithStatic');
+      final String totalId = field(cls, 'total')['id'] as String;
+      expect(readOf(method(cls, 'readTotal')['body'], 'total')?['target'], totalId);
+    });
+
+    test('a component’s own field, read implicitly inside its own build method, is never mistargeted — M9-J regression', () async {
+      // The real regression this milestone's own development caught: giving `W`'s own field `model`
+      // (backing its constructor parameter) a target here would make `isParameterReceiver` (M9-J) stop
+      // recognizing `model` as a bare, untargeted parameter — silently re-enabling the exact
+      // `unknown`-receiver passthrough M9-J exists to refuse. BRG3013 itself is raised downstream, by
+      // the generator (`packages/generators/react`), which this Dart-only extraction test never runs —
+      // that refusal has its own dedicated TS coverage
+      // (`unmodelled_class_member_build.test.ts`). What this test proves, at the layer it actually
+      // runs at, is the fact that refusal depends on: `model`'s own receiver `Ref`, inside `W`'s build
+      // body, must carry no `target` at all, exactly as if this ADR had never run.
+      // ignore: use_raw_strings
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {
+  final int count;
+  const Model(this.count);
+}
+class W extends StatelessWidget {
+  const W({super.key, required this.model});
+  final Model model;
+  @override
+  Widget build(BuildContext context) => Text('\${model.count}');
+}
+''');
+      expect(app.errors, isEmpty);
+      final Map<String, dynamic> component = app
+          .ofKind('ui.Component')
+          .singleWhere((Map<String, dynamic> c) => c['name'] == 'W');
+      final Map<String, dynamic>? access = readOf(component, 'count');
+      expect(access, isNotNull, reason: 'the model.count read must still be present in the UIR');
+      expect(access!['kind'], 'logic.PropertyAccess');
+      final Map<String, dynamic> receiver = access['receiver'] as Map<String, dynamic>;
+      expect(receiver['kind'], 'logic.Ref');
+      expect(receiver['name'], 'model');
+      expect(receiver.containsKey('target'), isFalse,
+          reason: 'model is a bare, untargeted parameter — M9-J relies on this to refuse the read');
+    });
+
+    test('an analyzer-invalid getter body is refused as BRG1310, before any member-target logic ever runs', () async {
+      // Raw would keep the backslash into the inner, analyzed Dart, defeating the interpolation the fixture needs.
+      // ignore: use_raw_strings
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {
+  final int count;
+  const Model(this.count);
+  int get value => missingIdentifier;
+}
+class W extends StatelessWidget {
+  const W({super.key, required this.model});
+  final Model model;
+  @override
+  Widget build(BuildContext context) => Text('\${model.value}');
+}
+''');
+      final Diagnostic error = app.errors.single;
+      expect(error.code.id, 'BRG1310');
+      expect(app.nodes, isEmpty);
+    });
+
+    test('an extension getter is never targeted by this mechanism', () async {
+      // Raw would keep the backslash into the inner, analyzed Dart, defeating the interpolation the fixture needs.
+      // ignore: use_raw_strings
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+extension IntExt on int {
+  int get doubled => this * 2;
+}
+class Holder {
+  final int count;
+  const Holder(this.count);
+  int get value => count.doubled;
+}
+class W extends StatelessWidget {
+  const W({super.key, required this.h});
+  final Holder h;
+  @override
+  Widget build(BuildContext context) => Text('\${h.value}');
+}
+''');
+      final Map<String, dynamic> cls = classDecl(app, 'Holder');
+      final Map<String, dynamic>? doubledRead = readOf(method(cls, 'value')['body'], 'doubled');
+      expect(doubledRead?['target'], isNull);
+    });
+
+    test('the same source extracts to the same targets on a second, independent run (determinism)', () async {
+      // Raw would keep the backslash into the inner, analyzed Dart, defeating the interpolation the fixture needs.
+      // ignore: use_raw_strings
+      const String source = '''
+import 'package:flutter/material.dart';
+class Counter {
+  final int count;
+  const Counter(this.count);
+  int get doubled => count * 2;
+}
+class W extends StatelessWidget {
+  const W({super.key, required this.counter});
+  final Counter counter;
+  @override
+  Widget build(BuildContext context) => Text('\${counter.doubled}');
+}
+''';
+      final Extracted first = await extract(source);
+      final Extracted second = await extract(source);
+      final String? firstTarget = readOf(method(classDecl(first, 'Counter'), 'doubled')['body'], 'count')?['target'] as String?;
+      final String? secondTarget = readOf(method(classDecl(second, 'Counter'), 'doubled')['body'], 'count')?['target'] as String?;
+      expect(firstTarget, isNotNull);
+      expect(firstTarget, secondTarget);
+    });
+  });
+
   group('paths in UIR are platform-independent (M5-F)', () {
     // `span.file` is not a filesystem path once it is written: it becomes an anchor —
     // `'${span.file}#$segment'` in `node_factory.dart` — and an anchor is hashed into the node's id

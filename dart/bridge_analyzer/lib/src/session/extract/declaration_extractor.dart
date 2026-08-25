@@ -217,35 +217,58 @@ final class DeclarationExtractor {
   /// `symbol:` either. Only ever called for a **plain** class (`_class`'s own `semantic` guard) — a
   /// component's `build()`/a store's mutators already have their own, separate, correct identity
   /// (`ui.Component.render`/`sig.Action`) and are never re-extracted here.
-  List<RawValue> _methods(ClassDeclaration node, Scope scope, {required String owner}) => <RawValue>[
-    for (final ClassMember member in node.body.members)
-      if (member is MethodDeclaration)
+  ///
+  /// Each method body gets its **own** child scope (ADR-0033), keyed on its own symbol as `owner` —
+  /// mirroring [_function] exactly. Before this, every method body was extracted against the *class's*
+  /// own enclosing scope directly, so a local declared inside a method never got its own ADR-28 target
+  /// (a real, reproduced bug this milestone found: `final count = 10; return count;` inside a method
+  /// extracted the read as a bare, untargeted `logic.Ref`, structurally identical to an unresolvable
+  /// identifier, even though the identical shape at the top level already correctly targeted its own
+  /// `logic.VarDecl`). Fixing scope construction is also what makes instance-member targeting sound: a
+  /// local/parameter that shadows a field's own name now resolves to its *own* declaration first (Dart's
+  /// own analyzer resolution — never a name-based guess), so `_instanceMemberTarget` correctly never
+  /// fires for a shadowed read.
+  List<RawValue> _methods(ClassDeclaration node, Scope scope, {required String owner}) {
+    final List<RawValue> methods = <RawValue>[];
+    for (final ClassMember member in node.body.members) {
+      if (member is! MethodDeclaration) {
+        continue;
+      }
+      // A getter and its own setter share one Dart name (`value`/`value`) but are two distinct
+      // declarations — the `=` suffix on a setter's own symbol (mirroring Dart's own convention for
+      // referring to one, `Type#value=`) is what keeps the pair from colliding into one `BRG1202` the
+      // moment a class declares both, which real Dart source commonly does.
+      final String symbol = out.symbols.function(
+        member.isSetter ? '${member.name.lexeme}=' : member.name.lexeme,
+        owner: owner,
+      );
+      final Scope inner = Scope.forBody(scope, owner: symbol, body: member.body).child(<Binding>[
+        for (final FormalParameter parameter in member.parameters?.parameters ?? const <FormalParameter>[])
+          if (parameter.name != null) Binding(name: parameter.name!.lexeme, binds: Binds.parameter),
+      ]);
+      methods.add(
         RawChild(
           RawNode(
             kind: 'logic.FunctionDecl',
             span: out.span(member),
-            // A getter and its own setter share one Dart name (`value`/`value`) but are two distinct
-            // declarations — the `=` suffix on a setter's own symbol (mirroring Dart's own convention
-            // for referring to one, `Type#value=`) is what keeps the pair from colliding into one
-            // `BRG1202` the moment a class declares both, which real Dart source commonly does.
-            symbol: out.symbols.function(
-              member.isSetter ? '${member.name.lexeme}=' : member.name.lexeme,
-              owner: owner,
-            ),
+            symbol: symbol,
             fields: <String, RawValue>{
               'name': RawLiteral(member.name.lexeme),
               'returnType': out.typeRef(
                 member.declaredFragment?.element.returnType ?? member.returnType?.type,
                 at: member,
               ),
-              'params': RawList(_params(member.parameters, scope)),
-              'body': RawList(expressions.bodyOf(member.body, scope)),
+              'params': RawList(_params(member.parameters, inner)),
+              'body': RawList(expressions.bodyOf(member.body, inner)),
               if (member.body.isAsynchronous) 'isAsync': const RawLiteral(true),
               if (member.isStatic) 'isStatic': const RawLiteral(true),
             },
           ),
         ),
-  ];
+      );
+    }
+    return methods;
+  }
 
   void _function(FunctionDeclaration node, Scope scope) {
     final FunctionExpression function = node.functionExpression;

@@ -280,6 +280,14 @@ final class AdapterRegistry {
   bool isStoreBase(DartType? type) =>
       widgetAdapters.any((WidgetAdapter a) => a.isStoreBase(type));
 
+  /// Whether a class extending [type] is a component base.
+  bool isComponentBase(DartType? type) =>
+      widgetAdapters.any((WidgetAdapter a) => a.isComponentBase(type));
+
+  /// Whether a class extending [type] is `State`.
+  bool isStateBase(DartType? type) =>
+      widgetAdapters.any((WidgetAdapter a) => a.isStateBase(type));
+
   /// The closure a framework state-batching call wraps, if [node] is one (INV-22).
   FunctionExpression? unwrapStateBatch(MethodInvocation node) {
     for (final WidgetAdapter adapter in widgetAdapters) {

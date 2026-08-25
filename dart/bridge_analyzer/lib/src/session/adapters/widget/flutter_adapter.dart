@@ -115,6 +115,12 @@ final class FlutterWidgetAdapter implements WidgetAdapter, ThemeAdapter {
   bool isStoreBase(DartType? type) => _extendsAny(type, MaterialCatalog.storeBases);
 
   @override
+  bool isComponentBase(DartType? type) => _extendsAny(type, MaterialCatalog.componentBases);
+
+  @override
+  bool isStateBase(DartType? type) => _extendsAny(type, <String>{MaterialCatalog.stateBase});
+
+  @override
   bool isFrameworkLibrary(String library) =>
       library.startsWith(_package) || library.startsWith('dart:');
 
