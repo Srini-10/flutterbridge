@@ -25,6 +25,7 @@ import type { AnyUirNode, Expr, NodeId } from '@bridge/uir';
 import { GeneratorDiagnosticCode } from '../diagnostics/codes.js';
 import { identifierOf, type ModuleBuilder } from './module.js';
 import { RUNTIME_MODULE as RUNTIME, isKitProvided } from './runtime.js';
+import { typeTextOf } from './types.js';
 import { OWNER_LABEL, missingCapabilityOf } from './unsupported.js';
 
 
@@ -292,6 +293,69 @@ function sdkTypeOf(type: Node | undefined): string | undefined {
   const rawName = type?.['name'];
   if (typeof library !== 'string' || library !== 'dart:core' || typeof rawName !== 'string') return undefined;
   return rawName.endsWith('?') ? rawName.slice(0, -1) : rawName;
+}
+
+/**
+ * Whether `receiver` is a **parameter** read — a bare `logic.Ref` with no `target` that resolves through
+ * `scope.paramInScope` (a component prop, or an action/function parameter) — the *only* UIR shape whose
+ * emitted TypeScript type is actually `typeTextOf(type)` (M9-J). A `target`-bearing `Ref` is a local
+ * variable, a signal, a store instance, an enum constant, or a top-level declaration — every one of those
+ * is excluded here (`target !== undefined` returns `false` immediately) because none of them carry an
+ * explicit type annotation in the generated output: `statement.ts`'s own `logic.VarDecl` emission never
+ * writes one (`const/let ${name} = ${initializer};`, confirmed directly — no type text anywhere), so a
+ * local's real TypeScript type is whatever `tsc` infers from its initializer, which is very often *not*
+ * `unknown` even when the identical `TypeRef` would be, in a parameter position. A real build-proof fixture
+ * found this the hard way: `const List<String> units = [...]; ... units.length` — `List<String>` maps to
+ * `unknown` via `typeTextOf` exactly like a project-defined class does, but `units` is a local initialized
+ * from an array literal, so `tsc` infers `string[]` for it and `.length` is genuinely, already safe. Only a
+ * receiver whose type annotation this generator itself wrote — a parameter — is the shape this milestone
+ * closes; a project-class value that has passed through a local variable is a real, separate, narrower gap
+ * this milestone does not close (see the milestone doc's own remaining-blocker graph).
+ */
+function isParameterReceiver(receiver: Node | undefined, scope: EmitScope): boolean {
+  if (receiver === undefined || kindOf(receiver) !== 'logic.Ref') return false;
+  if (receiver['target'] !== undefined) return false;
+  const name = receiver['name'];
+  return typeof name === 'string' && scope.paramInScope(name) !== undefined;
+}
+
+/**
+ * Whether `type` names a member-bearing type this generator has no model for (M9-J) — a project-defined or
+ * external-package class or enum, or an unrecognized SDK collection type. Reusing `typeTextOf` (`types.ts`)
+ * rather than a second classification table is deliberate: `unknown` in a generated prop type and "this
+ * generator cannot answer a member read on it" are the same fact, stated once. Only meaningful for a
+ * receiver `isParameterReceiver` already confirmed is actually typed this way in the generated output — see
+ * that function's own comment for why a local variable's identical `TypeRef` does not imply the same thing.
+ *
+ * Two exclusions, both named directly by `type.name` rather than derived from `typeTextOf`'s own output,
+ * because `typeTextOf` maps both to `unknown` too and this is precisely the distinction that matters here:
+ *
+ *   * **`dynamic`** — the source program itself declined to state a type. `value.foo()` on a `dynamic`
+ *     receiver is what the author asked for, and refusing it would refuse ordinary, valid Dart this
+ *     generator has always run (M9-J §6 of the milestone brief). `dynamic`'s own `TypeRef` carries no
+ *     `library` at all (confirmed directly: a real `dynamic`-typed parameter's raw UIR is `{name:
+ *     'dynamic'}`, no `library` key — the one structural fact that distinguishes it from every resolved
+ *     `InterfaceType`, which always carries one), so `type?.['library'] === undefined` already excludes it
+ *     without needing to name `'dynamic'` specially — but naming it here documents why, rather than relying
+ *     on a coincidence of the analyzer's own output shape.
+ *   * **`Object`/`Object?`** — Dart's own root type. Every value already satisfies it; refusing
+ *     `.hashCode`/`.toString()`/`.runtimeType` on an `Object`-typed receiver would refuse code this
+ *     generator already silently passed through before M9-J, and the milestone's own scope is a project-
+ *     class-shaped gap, not a general audit of every `dart:core` root member (out of scope, milestone
+ *     brief §1/§28-equivalent restraint).
+ *
+ * A receiver with no resolved `type` at all is left alone (returns `false`) — this function only ever
+ * *adds* a refusal to a shape that would otherwise silently pass through; it never invents a new refusal
+ * for a shape this milestone did not reproduce and prove.
+ */
+function isUnmodelledMemberReceiver(type: Node | undefined): boolean {
+  if (type === undefined) return false;
+  const rawName = type['name'];
+  if (typeof rawName !== 'string') return false;
+  const name = rawName.endsWith('?') ? rawName.slice(0, -1) : rawName;
+  if (name === 'dynamic' || name === 'Object') return false;
+  const text = typeTextOf(type);
+  return text === 'unknown' || text === 'unknown | null';
 }
 
 /**
@@ -718,6 +782,33 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
         return REFUSED;
       }
 
+      // M9-J: a property read with no resolved `target` (so not a recognized store member, per the check
+      // above), off a receiver that is itself a bare parameter read (`isParameterReceiver` — the only
+      // shape whose emitted type is actually `typeTextOf`'s own `unknown`, never a local's tsc-inferred
+      // one), whose type has no TypeScript representation, is a project-defined or external-package class
+      // this generator has no member model for. Checked before `receiver` is emitted here — mirroring the
+      // `ScaffoldMessenger`-family check below — so a chained `model.child.name` refuses once, at the
+      // first unsupported edge (`model.child`, itself a parameter read), rather than once per level.
+      const receiverTypeForMember = receiverNode?.['type'] as Node | undefined;
+      if (
+        node['target'] === undefined &&
+        isParameterReceiver(receiverNode, scope) &&
+        isUnmodelledMemberReceiver(receiverTypeForMember)
+      ) {
+        const property = String(node['property'] ?? '');
+        const receiverTypeName = String(receiverTypeForMember?.['name'] ?? 'this value');
+        scope.report(
+          GeneratorDiagnosticCode.UnsupportedCapability,
+          'error',
+          `\`${property}\` reads a member of \`${receiverTypeName}\`, a class this generator has no member ` +
+            `model for. FlutterBridge does not yet lower a project-defined or external-package class's own ` +
+            `fields, getters or methods — this refuses reading a member of \`${receiverTypeName}\`, not ` +
+            `carrying a \`${receiverTypeName}\` value, which is unaffected. Owner: ${OWNER_LABEL['generator']}.`,
+          idOf(node),
+        );
+        return REFUSED;
+      }
+
       const receiver = emitExpression(node['receiver'] as Node, scope);
       return `${receiver}.${identifierOf(String(node['property'] ?? ''))}`;
     }
@@ -794,6 +885,34 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
           `\`${receiverType}.${method}\` has no lowering. This generator supports \`toDouble\`, ` +
             `\`toStringAsFixed\`, and \`remainder\` on a \`dart:core\` numeric value (M8-V) — the methods ` +
             `real evidence has needed so far. A different one needs its own evidence before it can be added.`,
+          idOf(node),
+        );
+        return REFUSED;
+      }
+
+      // M9-J: the same unmodelled-receiver refusal `logic.PropertyAccess` reports (see its own comment),
+      // for a method call rather than a property read. Guarded on `receiver !== REFUSED`: the receiver was
+      // already emitted above (line-eager in this case, unlike `PropertyAccess`'s own deferred evaluation),
+      // so a receiver that is itself an unmodelled member access — `model.child.compute()`, where `.child`
+      // already refused — already reported its own, more specific diagnostic; this avoids a second, less
+      // specific one cascading on top of it (milestone brief §16).
+      const methodReceiverNode = node['receiver'] as Node | undefined;
+      const methodReceiverType = methodReceiverNode?.['type'] as Node | undefined;
+      if (
+        receiver !== REFUSED &&
+        node['target'] === undefined &&
+        isParameterReceiver(methodReceiverNode, scope) &&
+        isUnmodelledMemberReceiver(methodReceiverType)
+      ) {
+        const methodReceiverTypeName = String(methodReceiverType?.['name'] ?? 'this value');
+        scope.report(
+          GeneratorDiagnosticCode.UnsupportedCapability,
+          'error',
+          `\`${method}\` calls a member of \`${methodReceiverTypeName}\`, a class this generator has no ` +
+            `member model for. FlutterBridge does not yet lower a project-defined or external-package ` +
+            `class's own fields, getters or methods — this refuses calling a member of ` +
+            `\`${methodReceiverTypeName}\`, not carrying a \`${methodReceiverTypeName}\` value, which is ` +
+            `unaffected. Owner: ${OWNER_LABEL['generator']}.`,
           idOf(node),
         );
         return REFUSED;

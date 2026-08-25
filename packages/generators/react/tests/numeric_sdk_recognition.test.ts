@@ -66,11 +66,15 @@ describe('M8-V — Duration getter recognition', () => {
     expect(source).toContain('Math.trunc(props.d.inMilliseconds / 1000)');
   });
 
-  it('a project-defined type with its own .inSeconds getter is untouched (negative control)', () => {
+  it('a project-defined type with its own .inSeconds getter is untouched by Duration lowering, and honestly refused (M9-J) rather than silently passed through', () => {
+    // Untouched by the *Duration* lowering specifically — `sdkTypeOf`'s own library check still correctly
+    // excludes this project-defined lookalike, exactly as before M9-J. What changed is what happens next:
+    // before M9-J, falling through meant a silent `props.d.inSeconds` — `unknown`-typed, TS18046 at `tsc`.
+    // M9-J's own unmodelled-receiver check now owns that fallthrough and reports it honestly instead.
     const { reported, source } = build('d', PROJECT_TYPE('MyDuration'), (r) => propertyAccess('p1', 'inSeconds', r, DART_CORE_INT));
-    expect(reported.filter((d) => d.severity === 'error')).toEqual([]);
-    expect(source).toContain('props.d.inSeconds');
-    expect(source).not.toContain('Math.trunc');
+    const errors = reported.filter((d) => d.severity === 'error');
+    expect(errors.some((d) => d.code === 'BRG3013' && d.message.includes('MyDuration'))).toBe(true);
+    expect(source).toBe('');
   });
 
   it('an unrecognized Duration getter on a real dart:core Duration receiver is honestly refused, not silently passed through', () => {
@@ -87,10 +91,11 @@ describe('M8-V — numeric method recognition', () => {
     expect(source).not.toContain('.toDouble()');
   });
 
-  it('a project-defined type with its own .toDouble() is untouched (negative control)', () => {
+  it('a project-defined type with its own .toDouble() is untouched by numeric lowering, and honestly refused (M9-J) rather than silently passed through', () => {
     const { reported, source } = build('f', PROJECT_TYPE('FakeNumber'), (r) => methodCall('m1', 'toDouble', r, [], DART_CORE_DOUBLE));
-    expect(reported.filter((d) => d.severity === 'error')).toEqual([]);
-    expect(source).toContain('props.f.toDouble()');
+    const errors = reported.filter((d) => d.severity === 'error');
+    expect(errors.some((d) => d.code === 'BRG3013' && d.message.includes('FakeNumber'))).toBe(true);
+    expect(source).toBe('');
   });
 
   it('double.toStringAsFixed(n) lowers to .toFixed(n)', () => {
@@ -101,13 +106,13 @@ describe('M8-V — numeric method recognition', () => {
     expect(source).toContain('props.v.toFixed(2)');
   });
 
-  it('a project-defined type with its own .toStringAsFixed() is untouched (negative control)', () => {
+  it('a project-defined type with its own .toStringAsFixed() is untouched by numeric lowering, and honestly refused (M9-J) rather than silently passed through', () => {
     const { reported, source } = build('f', PROJECT_TYPE('FakeNumber'), (r) =>
       methodCall('m1', 'toStringAsFixed', r, [lit('a1', 2, DART_CORE_INT)], DART_CORE_STRING),
     );
-    expect(reported.filter((d) => d.severity === 'error')).toEqual([]);
-    expect(source).toContain('props.f.toStringAsFixed(2)');
-    expect(source).not.toContain('.toFixed(');
+    const errors = reported.filter((d) => d.severity === 'error');
+    expect(errors.some((d) => d.code === 'BRG3013' && d.message.includes('FakeNumber'))).toBe(true);
+    expect(source).toBe('');
   });
 
   it('int.remainder(n) lowers to %, never Dart\'s own % operator semantics', () => {

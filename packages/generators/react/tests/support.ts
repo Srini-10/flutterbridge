@@ -321,3 +321,9 @@ export function snackbarPresentationRaw(): string {
   const path = fileURLToPath(new URL('../../../../fixtures/uir/snackbar_presentation.ndjson', import.meta.url));
   return readFileSync(path, 'utf8');
 }
+
+/** The real `fixtures/apps/unmodelled_class_member` document, raw analyzer output (M9-J) — not yet normalized. */
+export function unmodelledClassMemberRaw(): string {
+  const path = fileURLToPath(new URL('../../../../fixtures/uir/unmodelled_class_member.ndjson', import.meta.url));
+  return readFileSync(path, 'utf8');
+}
