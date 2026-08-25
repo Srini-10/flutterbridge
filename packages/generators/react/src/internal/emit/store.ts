@@ -166,6 +166,7 @@ function storeScope(
     storeExports: parent.storeExports,
     componentModules: parent.componentModules,
     functionModules: parent.functionModules,
+    classModules: parent.classModules,
     storeAccessRead: (id) => parent.storeAccessRead(id),
     node: parent.node.bind(parent),
     isStoreOwned: (id) => parent.isStoreOwned(id),

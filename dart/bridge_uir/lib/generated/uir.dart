@@ -1,7 +1,7 @@
 // GENERATED CODE — DO NOT EDIT
 //
 // Produced by tools/schema-codegen from packages/uir/schema/*.json.
-// UIR schema version: 1.7.0
+// UIR schema version: 1.8.0
 //
 // Edit the schema and re-run `pnpm codegen`. Hand-edits to this file are lost on the next run,
 // and CI fails if this file does not match the schema (drift check).
@@ -26,12 +26,12 @@ import 'package:crypto/crypto.dart';
 import 'package:meta/meta.dart';
 
 /// The UIR schema version this library was generated from.
-const String uirVersion = '1.7.0';
+const String uirVersion = '1.8.0';
 
 /// A hash of the schema sources this library was generated from.
 ///
 /// Stamped into every emitted manifest: a UIR document always says which schema produced it.
-const String uirSchemaHash = '4e92e2cb1b62a36e';
+const String uirSchemaHash = 'de242e9dcf47e6ca';
 
 /// Node kind -> the fields of that node which hold `NodeId` references.
 ///
@@ -1629,6 +1629,7 @@ final class TypeRef {
     required this.name,
     this.library,
     this.nullable,
+    this.target,
   });
 
   /// Parses a [TypeRef] from JSON, validating as it goes.
@@ -1638,6 +1639,7 @@ final class TypeRef {
       library: json['library'] == null ? null : _asString(json['library'], '$path.library'),
       name: _asString(_req(json, 'name', path), '$path.name'),
       nullable: json['nullable'] == null ? null : _asBool(json['nullable'], '$path.nullable'),
+      target: json['target'] == null ? null : _asString(json['target'], '$path.target'),
     );
   }
 
@@ -1650,11 +1652,15 @@ final class TypeRef {
   /// Whether the type is nullable.
   final bool? nullable;
 
+  /// The `logic.ClassDecl` this type refers to, when it is a class this compiler extracted its own declaration for (ADR-0034). Declaration provenance only — identical in kind to `PropertyAccess.target` (ADR-27) and member-read `target` (ADR-0033): it states a resolved fact about identity, never a claim that the generator can construct, or lower a member of, the referenced class. Absent for a primitive, an SDK type, `dynamic`/`Object`, an unresolved external type, or a generic instantiation (ADR-0034 §12).
+  final NodeId? target;
+
   /// Serializes to canonical JSON: keys sorted, nulls omitted.
   Map<String, Object?> toJson() => canonicalJson(<String, Object?>{
     'library': library,
     'name': name,
     'nullable': nullable,
+    'target': target,
   })! as Map<String, Object?>;
 
   /// Returns a copy with the given fields replaced. The original is never mutated.
@@ -1665,11 +1671,13 @@ final class TypeRef {
     String? library,
     String? name,
     bool? nullable,
+    NodeId? target,
   }) {
     return TypeRef(
       library: library ?? this.library,
       name: name ?? this.name,
       nullable: nullable ?? this.nullable,
+      target: target ?? this.target,
     );
   }
 
@@ -1679,7 +1687,8 @@ final class TypeRef {
     return other is TypeRef &&
         _equality.equals(other.library, library) &&
         _equality.equals(other.name, name) &&
-        _equality.equals(other.nullable, nullable);
+        _equality.equals(other.nullable, nullable) &&
+        _equality.equals(other.target, target);
   }
 
   @override
@@ -1688,6 +1697,7 @@ final class TypeRef {
     _equality.hash(library),
     _equality.hash(name),
     _equality.hash(nullable),
+    _equality.hash(target),
   ]);
 }
 

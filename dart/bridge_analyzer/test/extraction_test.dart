@@ -4829,6 +4829,147 @@ class W extends StatelessWidget {
     });
   });
 
+  group('project class type-reference provenance (ADR-0034, M9-M)', () {
+    Map<String, dynamic> classDecl(Extracted app, String name, {String file = 'lib/main.dart'}) =>
+        app.ofKind('logic.ClassDecl').singleWhere(
+          (Map<String, dynamic> d) => d['name'] == name && (d['span'] as Map<String, dynamic>)['file'] == file,
+        );
+    Map<String, dynamic> componentNamed(Extracted app, String name) =>
+        app.ofKind('ui.Component').singleWhere((Map<String, dynamic> c) => c['name'] == name);
+    Map<String, dynamic> paramOf(Extracted app, String name, {String component = 'W'}) =>
+        (componentNamed(app, component)['params'] as List<dynamic>)
+            .cast<Map<String, dynamic>>()
+            .singleWhere((Map<String, dynamic> p) => p['name'] == name);
+
+    test('a plain project class used only as a parameter type carries a target to its own ClassDecl', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {}
+class W extends StatelessWidget {
+  const W({super.key, required this.model});
+  final Model model;
+  @override
+  Widget build(BuildContext context) => const Text('ok');
+}
+''');
+      final String modelId = classDecl(app, 'Model')['id'] as String;
+      final Map<String, dynamic> type = paramOf(app, 'model')['type'] as Map<String, dynamic>;
+      expect(type['target'], modelId);
+    });
+
+    test('same-name classes in two different files get distinct targets', () async {
+      final Extracted app = await extract(
+        '''
+import 'package:flutter/material.dart';
+import 'helper.dart' as helper;
+class Model {}
+class W extends StatelessWidget {
+  const W({super.key, required this.a, required this.b});
+  final Model a;
+  final helper.Model b;
+  @override
+  Widget build(BuildContext context) => const Text('ok');
+}
+''',
+        extra: <String, String>{'helper.dart': 'class Model {}'},
+      );
+      final String localId = classDecl(app, 'Model')['id'] as String;
+      final Map<String, dynamic> aType = paramOf(app, 'a')['type'] as Map<String, dynamic>;
+      final Map<String, dynamic> bType = paramOf(app, 'b')['type'] as Map<String, dynamic>;
+      expect(aType['target'], localId);
+      expect(bType['target'], isNotNull);
+      expect(bType['target'], isNot(localId));
+    });
+
+    test('a generic class instantiation carries no target — bounded out (ADR-0034 §12)', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Box<T> {}
+class W extends StatelessWidget {
+  const W({super.key, required this.box});
+  final Box<int> box;
+  @override
+  Widget build(BuildContext context) => const Text('ok');
+}
+''');
+      final Map<String, dynamic> type = paramOf(app, 'box')['type'] as Map<String, dynamic>;
+      expect(type['target'], isNull);
+    });
+
+    test('a component class used as a parameter type carries no target — already represented as ui.Component', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Inner extends StatelessWidget {
+  const Inner({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('inner');
+}
+class W extends StatelessWidget {
+  const W({super.key, required this.inner});
+  final Inner inner;
+  @override
+  Widget build(BuildContext context) => inner;
+}
+''');
+      final Map<String, dynamic> inner = app.ofKind('ui.Component').singleWhere((Map<String, dynamic> c) => c['name'] == 'W');
+      final Map<String, dynamic> type = paramOf(app, 'inner')['type'] as Map<String, dynamic>;
+      expect(type['target'], isNull);
+      expect(inner['name'], 'W');
+    });
+
+    test('a private class used as a parameter type still carries a target — exclusion is a generator-layer decision (ADR-0034 §9)', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class _Model {}
+class W extends StatelessWidget {
+  const W({super.key, required this.model});
+  final _Model model;
+  @override
+  Widget build(BuildContext context) => const Text('ok');
+}
+''');
+      final String modelId = classDecl(app, '_Model')['id'] as String;
+      final Map<String, dynamic> type = paramOf(app, 'model')['type'] as Map<String, dynamic>;
+      expect(type['target'], modelId);
+    });
+
+    test('a nullable project class type carries both target and nullable', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {}
+class W extends StatelessWidget {
+  const W({super.key, this.model});
+  final Model? model;
+  @override
+  Widget build(BuildContext context) => const Text('ok');
+}
+''');
+      final String modelId = classDecl(app, 'Model')['id'] as String;
+      final Map<String, dynamic> type = paramOf(app, 'model')['type'] as Map<String, dynamic>;
+      expect(type['target'], modelId);
+      expect(type['nullable'], true);
+    });
+
+    test('the same source extracts to the same type target on a second, independent run (determinism)', () async {
+      const String source = '''
+import 'package:flutter/material.dart';
+class Model {}
+class W extends StatelessWidget {
+  const W({super.key, required this.model});
+  final Model model;
+  @override
+  Widget build(BuildContext context) => const Text('ok');
+}
+''';
+      final Extracted first = await extract(source);
+      final Extracted second = await extract(source);
+      final Object? firstTarget = (paramOf(first, 'model')['type'] as Map<String, dynamic>)['target'];
+      final Object? secondTarget = (paramOf(second, 'model')['type'] as Map<String, dynamic>)['target'];
+      expect(firstTarget, isNotNull);
+      expect(firstTarget, secondTarget);
+    });
+  });
+
   group('paths in UIR are platform-independent (M5-F)', () {
     // `span.file` is not a filesystem path once it is written: it becomes an anchor —
     // `'${span.file}#$segment'` in `node_factory.dart` — and an anchor is hashed into the node's id

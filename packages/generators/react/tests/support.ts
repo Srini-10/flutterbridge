@@ -327,3 +327,9 @@ export function unmodelledClassMemberRaw(): string {
   const path = fileURLToPath(new URL('../../../../fixtures/uir/unmodelled_class_member.ndjson', import.meta.url));
   return readFileSync(path, 'utf8');
 }
+
+/** The real `fixtures/apps/class_type_emission` document, raw analyzer output (ADR-0034, M9-M) — not yet normalized. */
+export function classTypeEmissionRaw(): string {
+  const path = fileURLToPath(new URL('../../../../fixtures/uir/class_type_emission.ndjson', import.meta.url));
+  return readFileSync(path, 'utf8');
+}

@@ -133,7 +133,42 @@ final class RawNodeEmitter {
       'name': RawLiteral(type.getDisplayString()),
       if (type.nullabilitySuffix == NullabilitySuffix.question) 'nullable': const RawLiteral(true),
       if (library != null) 'library': RawLiteral(library),
+      if (_classTypeTarget(type, element) case final String symbol) 'target': RawRef(symbol),
     });
+  }
+
+  /// The `logic.ClassDecl` symbol [type] refers to, when it is a plain class this compiler extracts a
+  /// declaration for (ADR-0034) — declaration provenance only, mirroring [componentSymbolOf]'s own
+  /// resolved-element approach exactly, never a claim that the referenced class can be constructed or
+  /// that its members can be read (that boundary is downstream — the generator's own emittable-subset
+  /// decision, and, independently, M9-J's own refusal, which this ADR requires to key on `target`'s mere
+  /// presence rather than on whatever name the generator chooses to render for it).
+  ///
+  /// Absent (`null`) for: a non-class type (primitive, function type, etc. — `element is! ClassElement`);
+  /// a generic instantiation (`type.typeArguments.isNotEmpty` — `Box<int>`, `List<Model>` alike; ADR-0034
+  /// §12 bounds generics out here, once, rather than in the generator); a component/`State`/store class
+  /// (already correctly represented through an entirely different mechanism — `ui.Component`/`app.Store`
+  /// — attaching a second, competing identity here would be exactly the kind of duplicate representation
+  /// M9-L's own component/store exclusions were written to avoid); or an unresolvable library (external
+  /// package with no adapter, or a dependency this analysis root did not itself extract).
+  String? _classTypeTarget(DartType type, Element? element) {
+    if (element is! ClassElement) {
+      return null;
+    }
+    if (type is InterfaceType && type.typeArguments.isNotEmpty) {
+      return null;
+    }
+    if (registry.isComponentBase(type) || registry.isStateBase(type) || registry.isStoreBase(type)) {
+      return null;
+    }
+    final String library = element.library.identifier;
+    return Symbols.typeIn(
+      library,
+      element.name ?? '',
+      packageName: packageName,
+      localPackages: localPackageNames,
+      extractedDependencyFiles: extractedDependencyFiles,
+    );
   }
 
   /// A `WidgetRef` for a widget of [name] constructed from [type].

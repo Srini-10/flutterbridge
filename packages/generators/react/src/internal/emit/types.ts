@@ -4,6 +4,8 @@
 // §A18). It was private to the component emitter until actions gained parameters and needed the same answer —
 // and two functions answering "what is `int` in TypeScript" would eventually answer differently.
 
+import type { NodeId } from '@bridge/uir';
+
 import { GeneratorDiagnosticCode } from '../diagnostics/codes.js';
 
 /** A `TypeRef`, loosely typed: nested values are not `AnyUirNode`. */
@@ -51,11 +53,30 @@ const SDK_VALUE_TYPE_NAMES: ReadonlySet<string> = new Set(['dart:core#Duration']
  * @param use - registers an import for a kit-provided SDK value type (M8-V) and returns the local name to
  *   write; omitted by a caller with no module to import into, in which case a kit-provided type falls
  *   back to `unknown` exactly as before — never a bare, unimported reference.
- * @returns the type text. `unknown` for anything not primitive and not kit-provided.
+ * @param classOf - resolves a `TypeRef.target` (ADR-0034) to the local name of a project-class type this
+ *   generator already emitted (registering a type-only import if it lives in a different module),
+ *   or `undefined` if that class was excluded from the emittable subset (private, inherited, or a
+ *   caller with no class registry at all) — in which case this falls through to `unknown`, exactly as
+ *   before ADR-0034. Checked *before* `PRIMITIVES`/kit lookup: a `target` is only ever present on a
+ *   `TypeRef` this ADR itself attached (never on a primitive's), so there is no ordering hazard.
+ * @returns the type text. `unknown` for anything not primitive, not kit-provided, and not an emitted
+ *   project class.
  */
-export function typeTextOf(type: Node | undefined, use?: (name: string) => string): string {
+export function typeTextOf(
+  type: Node | undefined,
+  use?: (name: string) => string,
+  classOf?: (target: NodeId) => string | undefined,
+): string {
   const declared = typeof type?.['name'] === 'string' ? type['name'] : 'unknown';
   const nullable = type?.['nullable'] === true;
+
+  const target = type?.['target'];
+  if (classOf !== undefined && typeof target === 'string') {
+    const resolved = classOf(target as NodeId);
+    if (resolved !== undefined) {
+      return nullable ? `${resolved} | null` : resolved;
+    }
+  }
 
   // The `?` is stripped before the lookup, and that is not cosmetic. A `TypeRef.name` is the analyzer's
   // `getDisplayString()`, which spells a nullable type `bool?` — *and* the ref sets `nullable: true`
@@ -94,12 +115,15 @@ export function typeTextOf(type: Node | undefined, use?: (name: string) => strin
  * @param identifier - how to make a name safe.
  * @param use - forwarded to `typeTextOf` (M8-V) — a kit-provided parameter type (`Duration`) needs an
  *   import, and this is the one place a param list's own caller can supply one.
+ * @param classOf - forwarded to `typeTextOf` (ADR-0034) — a project-class-typed parameter needs the
+ *   same registry lookup a return type or a component prop already gets.
  * @returns the text between the parentheses.
  */
 export function paramListOf(
   params: readonly Node[],
   identifier: (raw: string) => string,
   use?: (name: string) => string,
+  classOf?: (target: NodeId) => string | undefined,
 ): string {
   return params
     .map((param) => {
@@ -109,7 +133,7 @@ export function paramListOf(
       // emitter reports it rather than quietly turning it into a positional one at a position the caller
       // would have to guess.
       const optional = param['required'] === false && param['defaultValue'] === undefined ? '?' : '';
-      return `${name}${optional}: ${typeTextOf(param['type'] as Node | undefined, use)}`;
+      return `${name}${optional}: ${typeTextOf(param['type'] as Node | undefined, use, classOf)}`;
     })
     .join(', ');
 }

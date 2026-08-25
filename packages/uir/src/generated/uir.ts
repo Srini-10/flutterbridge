@@ -1,7 +1,7 @@
 // GENERATED CODE — DO NOT EDIT
 //
 // Produced by tools/schema-codegen from packages/uir/schema/*.json.
-// UIR schema version: 1.7.0
+// UIR schema version: 1.8.0
 //
 // Edit the schema and re-run `pnpm codegen`. Hand-edits to this file are lost on the next run,
 // and CI fails if this file does not match the schema (drift check).
@@ -11,10 +11,10 @@
 import { createHash } from 'node:crypto';
 
 /** The UIR schema version this module was generated from. */
-export const UIR_VERSION = '1.7.0' as const;
+export const UIR_VERSION = '1.8.0' as const;
 
 /** A hash of the schema sources this module was generated from. */
-export const UIR_SCHEMA_HASH = '4e92e2cb1b62a36e' as const;
+export const UIR_SCHEMA_HASH = 'de242e9dcf47e6ca' as const;
 
 /** Node kind -> the fields of that node which hold `NodeId` references. */
 export const UIR_REFERENCE_FIELDS: Readonly<Record<string, readonly string[]>> = {
@@ -848,6 +848,8 @@ export interface TypeRef {
   readonly name: string;
   /// Whether the type is nullable.
   readonly nullable?: boolean;
+  /// The `logic.ClassDecl` this type refers to, when it is a class this compiler extracted its own declaration for (ADR-0034). Declaration provenance only — identical in kind to `PropertyAccess.target` (ADR-27) and member-read `target` (ADR-0033): it states a resolved fact about identity, never a claim that the generator can construct, or lower a member of, the referenced class. Absent for a primitive, an SDK type, `dynamic`/`Object`, an unresolved external type, or a generic instantiation (ADR-0034 §12).
+  readonly target?: NodeId;
 }
 
 /// A reference to a widget class — a framework widget, a package widget, or one the application declares.
@@ -2510,6 +2512,7 @@ export function parseTypeRef(value: unknown, path = 'TypeRef'): TypeRef {
     ...(own(o, 'library') === undefined || own(o, 'library') === null ? {} : { library: asString(own(o, 'library'), `${path}.library`) }),
     name: asString(req(o, 'name', path), `${path}.name`),
     ...(own(o, 'nullable') === undefined || own(o, 'nullable') === null ? {} : { nullable: asBool(own(o, 'nullable'), `${path}.nullable`) }),
+    ...(own(o, 'target') === undefined || own(o, 'target') === null ? {} : { target: parseNodeId(own(o, 'target'), `${path}.target`) }),
   };
 }
 

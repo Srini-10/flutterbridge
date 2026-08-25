@@ -7,6 +7,7 @@
 
 import type { AnyUirNode, NodeId } from '@bridge/uir';
 
+import { GeneratorDiagnosticCode } from '../diagnostics/codes.js';
 import { localBindingsIn, type EmitScope } from './expression.js';
 import { fileNameOf, identifierOf, ModuleBuilder } from './module.js';
 import { useRuntime } from './runtime.js';
@@ -117,6 +118,59 @@ export interface FunctionModuleInfo {
   readonly name: string;
 }
 
+/** An emitted project-class type's own destination (ADR-0034) — identical shape to {@link FunctionModuleInfo}. */
+export interface ClassModuleInfo {
+  readonly path: string;
+  readonly module: string;
+  readonly name: string;
+}
+
+/**
+ * Collects the `target` of every `TypeRef` on `params`' own `type` field (ADR-0034 §4) — a type edge,
+ * never a value edge: this never recurses into a param's own default value or any other expression.
+ */
+function directClassTypeTargets(params: readonly Node[], found: Set<NodeId>): void {
+  for (const param of params) {
+    const type = param['type'] as Node | undefined;
+    const target = type?.['target'];
+    if (typeof target === 'string') found.add(target as NodeId);
+  }
+}
+
+/**
+ * Every `logic.ClassDecl` a component's own parameters, or an already-reachable top-level function's own
+ * parameters/return type, refer to (ADR-0034 §4) — a **type**-reachability walk, deliberately structurally
+ * separate from {@link reachableFunctions}'s own **value**-reachability walk (ADR-0034 §5): a type
+ * reference must never be treated as though it also reaches the referenced class's own fields, methods,
+ * or constructor. No fixed point is needed here (unlike function reachability): a class excluded from the
+ * emittable subset (§has a superclass, ADR-0034 §11) is never emitted, so there is nothing to gain by
+ * chasing its own `superclass` reference further — this stops at one level, by construction.
+ *
+ * @param reachableFns - the ids `reachableFunctions` already found, so a function's own signature is only
+ *   consulted once it is known this program actually reaches it.
+ */
+export function reachableClassTypes(
+  nodes: readonly AnyUirNode[],
+  scope: EmitScope,
+  reachableFns: readonly NodeId[],
+): NodeId[] {
+  const found = new Set<NodeId>();
+  for (const node of nodes as unknown as Node[]) {
+    if (kindOf(node) === 'ui.Component') {
+      directClassTypeTargets(Array.isArray(node['params']) ? (node['params'] as Node[]) : [], found);
+    }
+  }
+  for (const id of reachableFns) {
+    const fn = scope.node(id) as unknown as Node | undefined;
+    if (fn === undefined) continue;
+    directClassTypeTargets(Array.isArray(fn['params']) ? (fn['params'] as Node[]) : [], found);
+    const returnType = fn['returnType'] as Node | undefined;
+    const returnTarget = returnType?.['target'];
+    if (typeof returnTarget === 'string') found.add(returnTarget as NodeId);
+  }
+  return [...found].sort();
+}
+
 /** One generated declarations module, accumulating every function this program places in it. */
 interface PendingModule {
   readonly builder: ModuleBuilder;
@@ -148,10 +202,82 @@ interface PendingModule {
 export function emitFunctionModules(
   nodes: readonly AnyUirNode[],
   scope: EmitScope,
-): { readonly files: { readonly path: string; readonly contents: string }[]; readonly functionModules: ReadonlyMap<NodeId, FunctionModuleInfo> } {
+): {
+  readonly files: { readonly path: string; readonly contents: string }[];
+  readonly functionModules: ReadonlyMap<NodeId, FunctionModuleInfo>;
+  readonly classModules: ReadonlyMap<NodeId, ClassModuleInfo>;
+} {
   const reachable = reachableFunctions(nodes, scope);
   const modules = new Map<string, PendingModule>();
   const functionModules = new Map<NodeId, FunctionModuleInfo>();
+  const classModules = new Map<NodeId, ClassModuleInfo>();
+
+  const pendingModuleFor = (path: string, specifier: string): PendingModule => {
+    let pending = modules.get(path);
+    if (pending === undefined) {
+      const builder = new ModuleBuilder(path);
+      builder.setBanner(
+        `// GENERATED CODE — DO NOT EDIT.\n//\n// Emitted by @bridge/gen-react from Dart source, module by module.\n//\n` +
+          `// Edits are lost on the next build. To change what this file says, change the Flutter source it ` +
+          `came from, or attach an override to the anchor of the node that produced it.`,
+      );
+      pending = { builder, specifier, lines: [] };
+      modules.set(path, pending);
+    }
+    return pending;
+  };
+
+  // Type declarations first (ADR-0034), before any function attempt below — a function's own signature
+  // may itself reference one of these classes (§ reachableClassTypes already includes an already-
+  // reachable function's own params/return type), and emitting a class is unconditional (an empty
+  // interface cannot itself fail to lower the way a function body can), so there is no ordering hazard
+  // in building this registry first.
+  for (const id of reachableClassTypes(nodes, scope, reachable)) {
+    const classDecl = scope.node(id) as unknown as Node | undefined;
+    if (classDecl === undefined) continue;
+    const name = typeof classDecl['name'] === 'string' ? classDecl['name'] : undefined;
+    const span = classDecl['span'] as Node | undefined;
+    const spanFile = typeof span?.['file'] === 'string' ? span['file'] : undefined;
+    if (name === undefined || spanFile === undefined) continue;
+
+    // Private (ADR-0034 §9): this generator's own per-Dart-file module convention would export a
+    // leading-underscore class as a *public* named export of its own generated module — widening
+    // Dart's library-scoped privacy, not preserving it.
+    if (name.startsWith('_')) {
+      scope.report(
+        GeneratorDiagnosticCode.UnsupportedCapability,
+        'error',
+        `\`${name}\` is a private class. FlutterBridge does not yet give a private Dart class a generated ` +
+          `TypeScript type — this generator's own per-file module convention would export it as a public ` +
+          `name, which would widen Dart's own library-scoped privacy rather than preserve it.`,
+        id,
+      );
+      continue;
+    }
+    // Inherited (ADR-0034 §11): an empty `interface Child {}` would misrepresent a real Dart subtype
+    // relationship this generator has no member model to encode faithfully.
+    if (classDecl['superclass'] !== undefined) {
+      scope.report(
+        GeneratorDiagnosticCode.UnsupportedCapability,
+        'error',
+        `\`${name}\` extends another class. FlutterBridge does not yet lower a project-defined class's own ` +
+          `inheritance relationship into its generated TypeScript type.`,
+        id,
+      );
+      continue;
+    }
+
+    const { path, specifier } = modulePathFor(spanFile);
+    const pending = pendingModuleFor(path, specifier);
+    const localName = pending.builder.declare(name, id);
+    pending.lines.push(
+      `/** \`${name}\`, from ${spanFile}. Type-only — FlutterBridge does not yet construct or read a member of this class (ADR-0034). */`,
+      `export interface ${localName} {}`,
+      '',
+    );
+    classModules.set(id, { path: pending.builder.path, module: specifier, name: localName });
+  }
+
   let remaining = new Set(reachable);
 
   let progressed = true;
@@ -177,17 +303,7 @@ export function emitFunctionModules(
       }
 
       const { path, specifier } = modulePathFor(spanFile);
-      let pending = modules.get(path);
-      if (pending === undefined) {
-        const builder = new ModuleBuilder(path);
-        builder.setBanner(
-          `// GENERATED CODE — DO NOT EDIT.\n//\n// Emitted by @bridge/gen-react from Dart source, module by module.\n//\n` +
-            `// Edits are lost on the next build. To change what this file says, change the Flutter source it ` +
-            `came from, or attach an override to the anchor of the node that produced it.`,
-        );
-        pending = { builder, specifier, lines: [] };
-        modules.set(path, pending);
-      }
+      const pending = pendingModuleFor(path, specifier);
 
       const params = Array.isArray(fn['params']) ? (fn['params'] as Node[]) : [];
 
@@ -241,10 +357,18 @@ export function emitFunctionModules(
         body[0]?.['kind'] === 'logic.Switch' &&
         body[0]?.['defaultCase'] === undefined &&
         body[0]?.['default'] === undefined;
+      // A project-class-typed parameter/return (ADR-0034): a same-file class needs no import (the two
+      // declarations share one `ModuleBuilder`); a cross-file one goes through `scratch.use`, exactly
+      // like `functionModules`'s own same-file/cross-file split (`expression.ts`'s `logic.Ref` case).
+      const classOf = (target: NodeId): string | undefined => {
+        const info = classModules.get(target);
+        if (info === undefined) return undefined;
+        return info.path === scratch.path ? info.name : scratch.use(info.module, info.name, { typeOnly: true });
+      };
       const returnType = isSoleExhaustiveSwitch
-        ? `: ${typeTextOf(fn['returnType'] as Node | undefined, (name) => useRuntime(scratch, name))}`
+        ? `: ${typeTextOf(fn['returnType'] as Node | undefined, (name) => useRuntime(scratch, name), classOf)}`
         : '';
-      const signature = `(${paramListOf(params, identifierOf, (name) => useRuntime(scratch, name))})${returnType}`;
+      const signature = `(${paramListOf(params, identifierOf, (name) => useRuntime(scratch, name), classOf)})${returnType}`;
       const lines = emitStatements(body, fnScope);
 
       if (hadError) continue; // try again next pass — a callee this pass hadn't resolved yet might resolve then
@@ -270,5 +394,5 @@ export function emitFunctionModules(
     .filter((m) => m.lines.length > 0)
     .map((m) => ({ path: m.builder.path, contents: m.builder.toSource() }));
 
-  return { files, functionModules };
+  return { files, functionModules, classModules };
 }

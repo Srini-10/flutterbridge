@@ -220,6 +220,15 @@ export interface EmitScope {
    */
   readonly functionModules: ReadonlyMap<NodeId, { readonly path: string; readonly module: string; readonly name: string }>;
   /**
+   * Every project-class `logic.ClassDecl` this program actually emits a TypeScript type for, keyed by its
+   * own declaration id (ADR-0034) — the sibling of {@link functionModules}, for `TypeRef.target` rather
+   * than `Ref.target`. Absent for a class this milestone excludes from the emittable subset (private,
+   * inherited, or never itself referenced as a type) — the honest fact that lets `typeTextOf` fall through
+   * to `unknown`, exactly as it did before ADR-0034. Built once, before any component or function is
+   * finally committed, the same way {@link functionModules} already is.
+   */
+  readonly classModules: ReadonlyMap<NodeId, { readonly path: string; readonly module: string; readonly name: string }>;
+  /**
    * The resolved expression for a `logic.PropertyAccess` whose `target` names a signal/derived member of
    * a *locally-owned* store instance (ADR-27) — `favorites.favoriteCount` where `favorites` is this
    * component's own `useLocalStore(...)`.
@@ -354,6 +363,15 @@ function isUnmodelledMemberReceiver(type: Node | undefined): boolean {
   if (typeof rawName !== 'string') return false;
   const name = rawName.endsWith('?') ? rawName.slice(0, -1) : rawName;
   if (name === 'dynamic' || name === 'Object') return false;
+  // A `target` (ADR-0034) means this receiver resolved to a real `logic.ClassDecl` this compiler
+  // extracted — a project-defined or already-extracted-dependency class, regardless of whether
+  // `typeTextOf` renders it as a real name or still falls back to `unknown` (private/inherited classes
+  // keep a `target` even though they are excluded from the emittable subset, ADR-0034 §9/§11). No class,
+  // of any shape, has member execution support yet, so `target`'s mere presence is sufficient grounds
+  // for refusal on its own — checked independently of, and in addition to, the `typeTextOf` text check
+  // below, which still catches every other still-`unknown` type (external, unresolved, or a generic
+  // instantiation ADR-0034 never attaches a `target` to at all).
+  if (typeof type['target'] === 'string') return true;
   const text = typeTextOf(type);
   return text === 'unknown' || text === 'unknown | null';
 }

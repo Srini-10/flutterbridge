@@ -71,10 +71,18 @@ export function emitComponent(component: Node, module: ModuleBuilder, scope: Emi
     module.line(`/** Props for {@link ${name}}. */`);
     module.line(`export interface ${name}Props {`);
     module.block(() => {
+      // A project-class-typed prop (ADR-0034): a same-file class needs no import; a cross-file one goes
+      // through `module.use`, the identical same-file/cross-file split `functions.ts`'s own `classOf`
+      // closure and `expression.ts`'s `functionModules` lookup both already use.
+      const classOf = (target: NodeId): string | undefined => {
+        const info = scope.classModules.get(target);
+        if (info === undefined) return undefined;
+        return info.path === module.path ? info.name : module.use(info.module, info.name, { typeOnly: true });
+      };
       for (const param of params) {
         const paramName = identifierOf(String(param['name'] ?? '_'));
         const optional = param['required'] === true ? '' : '?';
-        module.line(`readonly ${paramName}${optional}: ${typeTextOf(param['type'] as Node | undefined)};`);
+        module.line(`readonly ${paramName}${optional}: ${typeTextOf(param['type'] as Node | undefined, undefined, classOf)};`);
       }
     });
     module.line('}');
@@ -1016,6 +1024,7 @@ function childScope(
     storeExports: parent.storeExports,
     componentModules: parent.componentModules,
     functionModules: parent.functionModules,
+    classModules: parent.classModules,
     storeAccessRead: (id) => storeInstanceReads.get(id) ?? parent.storeAccessRead(id),
     // Forwarded, not rebuilt: the router is declared once per component and every nested scope inside it
     // refers to that one declaration. Spread rather than assigned, because `exactOptionalPropertyTypes`
