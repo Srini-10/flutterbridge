@@ -1472,6 +1472,13 @@
                 "description": "A method."
               },
               "description": "Methods, in declaration order."
+            },
+            "constructibleFieldOrder": {
+              "type": "array",
+              "items": {
+                "$ref": "shared.json#/$defs/NodeId"
+              },
+              "description": "The `logic.FieldDecl` each of this class's own unnamed constructor's required-positional field-formal parameters initializes, index-for-index (ADR-0036). Present only when this class is safely equivalent to a plain, immutable record: every instance field is public/final/non-static/non-late, and the class has exactly one applicable unnamed constructor (the implicit default when there are no explicit constructors and no instance fields, or the sole explicit unnamed one otherwise) that is non-const, non-factory, non-redirecting, has an empty body and an empty initializer list, and whose field-formal parameters cover every instance field exactly once. Derived exclusively from `FieldFormalParameterElement.field` — never from parameter-name or field-name text equality. Absent for every other class shape, including one with an otherwise-eligible field set but a non-trivial, named, factory, const, or redirecting constructor — a project-class construction reaching `logic.New` for such a class remains an ordinary, unmodelled construction, refused exactly as it already was. Declaration provenance only — never a claim that any constructor is invoked at runtime; a generator using this array to lower a construction emits a plain object literal, never a call to the constructor these ids describe."
             }
           }
         }

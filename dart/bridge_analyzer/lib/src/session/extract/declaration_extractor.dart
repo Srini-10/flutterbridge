@@ -11,6 +11,7 @@
 library;
 
 import 'package:analyzer/dart/ast/ast.dart';
+import 'package:analyzer/dart/element/element.dart';
 import 'package:bridge_analyzer/src/model/raw_node.dart';
 import 'package:bridge_analyzer/src/session/extract/component_extractor.dart';
 import 'package:bridge_analyzer/src/session/extract/expression_extractor.dart';
@@ -129,6 +130,8 @@ final class DeclarationExtractor {
     final String className = node.namePart.typeName.lexeme;
     final List<RawValue> fields = _fields(node, scope, owner: className);
     final List<RawValue> methods = semantic ? const <RawValue>[] : _methods(node, scope, owner: className);
+    final List<RawValue>? constructibleFieldOrder =
+        semantic ? null : _constructibleFieldOrder(node, owner: className);
 
     out.emit(
       RawNode(
@@ -144,9 +147,95 @@ final class DeclarationExtractor {
             'superclass': out.typeRef(node.extendsClause!.superclass.type, at: node),
           if (fields.isNotEmpty) 'fields': RawList(fields),
           if (methods.isNotEmpty) 'methods': RawList(methods),
+          if (constructibleFieldOrder != null) 'constructibleFieldOrder': RawList(constructibleFieldOrder),
         },
       ),
     );
+  }
+
+  /// The constructor field mapping for a bounded, structurally-constructible class (ADR-0036) — present
+  /// only when the class is safely equivalent to a plain object literal: every instance field is public,
+  /// final, non-static, non-late; the class is public, non-generic, and has no explicit superclass; and
+  /// the class has exactly one applicable unnamed constructor — the implicit default when there are no
+  /// explicit constructors and no instance fields, or the sole explicit unnamed one otherwise — that is
+  /// non-const, non-factory, does not redirect, has an empty body (`is EmptyFunctionBody`, the real AST
+  /// type, never source-string trimming), an empty initializer list, and exactly one required-positional
+  /// field-formal parameter per instance field, covering every one of them exactly once.
+  ///
+  /// Resolved exclusively from `FieldFormalParameterElement.field` — never from parameter-name or
+  /// field-name text equality (ADR-0036 §7/§24). Absent for every other shape (a mutable/late/private/
+  /// static field anywhere on the class, a named/factory/const/redirecting constructor, a non-empty body
+  /// or initializer list, an optional/named/default/non-field-formal parameter, a field left uncovered or
+  /// covered twice) — the generator's own existing construction refusal (`BRG3002`) is unchanged for
+  /// those; this function does not report a diagnostic itself, since every such case is honestly refused
+  /// already, unrelated to this milestone.
+  ///
+  /// An unrelated explicit getter/method does **not** disqualify the class (ADR-0036 §25) — mirroring
+  /// ADR-0035's own field-level, not whole-class, read-capability policy: this check is only about
+  /// whether the class's own *fields* form a complete, unambiguous record, never about its executable
+  /// members, which remain independently, unconditionally refused wherever they are read or called.
+  List<RawValue>? _constructibleFieldOrder(ClassDeclaration node, {required String owner}) {
+    if (owner.startsWith('_')) return null;
+    if (node.extendsClause != null) return null;
+    if (node.implementsClause != null) return null;
+    if (node.withClause != null) return null;
+    if (node.namePart.typeParameters != null) return null;
+    if (node.abstractKeyword != null) return null;
+
+    final List<VariableDeclaration> instanceFields = <VariableDeclaration>[
+      for (final ClassMember member in node.body.members)
+        if (member is FieldDeclaration && !member.isStatic)
+          for (final VariableDeclaration variable in member.fields.variables) variable,
+    ];
+    for (final VariableDeclaration variable in instanceFields) {
+      final VariableElement? element = variable.declaredFragment?.element;
+      if (element is! FieldElement || !element.isFinal || element.isLate || element.isPrivate) {
+        return null;
+      }
+    }
+
+    final List<ConstructorDeclaration> constructors = <ConstructorDeclaration>[
+      for (final ClassMember member in node.body.members)
+        if (member is ConstructorDeclaration) member,
+    ];
+
+    if (constructors.isEmpty) {
+      // The implicit default constructor — trivially eligible only when there is nothing to initialize.
+      return instanceFields.isEmpty ? const <RawValue>[] : null;
+    }
+
+    ConstructorDeclaration? unnamed;
+    for (final ConstructorDeclaration ctor in constructors) {
+      if (ctor.name == null) {
+        unnamed = ctor;
+        break;
+      }
+    }
+    if (unnamed == null) return null;
+    if (unnamed.factoryKeyword != null) return null;
+    if (unnamed.constKeyword != null) return null;
+    if (unnamed.redirectedConstructor != null) return null;
+    if (unnamed.body is! EmptyFunctionBody) return null;
+    if (unnamed.initializers.isNotEmpty) return null;
+
+    final List<String> order = <String>[];
+    final Set<Element> targeted = <Element>{};
+    for (final FormalParameter param in unnamed.parameters.parameters) {
+      if (!param.isRequiredPositional) return null;
+      if (param is! FieldFormalParameter) return null;
+      final FormalParameterElement? paramElement = param.declaredFragment?.element;
+      if (paramElement is! FieldFormalParameterElement) return null;
+      final FieldElement? field = paramElement.field;
+      if (field == null) return null;
+      if (!field.isFinal || field.isStatic || field.isLate || field.isPrivate) return null;
+      if (!targeted.add(field)) return null;
+      final String? name = field.name;
+      if (name == null) return null;
+      order.add(out.symbols.variable(name, owner: owner));
+    }
+    if (targeted.length != instanceFields.length) return null;
+
+    return order.map(RawRef.new).toList();
   }
 
   /// A `ChangeNotifier` and its kin: state that outlives any one component.

@@ -1,7 +1,7 @@
 // GENERATED CODE — DO NOT EDIT
 //
 // Produced by tools/schema-codegen from packages/uir/schema/*.json.
-// UIR schema version: 1.9.0
+// UIR schema version: 1.12.0
 //
 // Edit the schema and re-run `pnpm codegen`. Hand-edits to this file are lost on the next run,
 // and CI fails if this file does not match the schema (drift check).
@@ -26,12 +26,12 @@ import 'package:crypto/crypto.dart';
 import 'package:meta/meta.dart';
 
 /// The UIR schema version this library was generated from.
-const String uirVersion = '1.9.0';
+const String uirVersion = '1.12.0';
 
 /// A hash of the schema sources this library was generated from.
 ///
 /// Stamped into every emitted manifest: a UIR document always says which schema produced it.
-const String uirSchemaHash = '524768b057dd5fef';
+const String uirSchemaHash = 'b75410d5317e5f61';
 
 /// Node kind -> the fields of that node which hold `NodeId` references.
 ///
@@ -46,7 +46,7 @@ const Map<String, List<String>> uirReferenceFields = <String, List<String>>{
   'logic.Break': <String>['id'],
   'logic.Call': <String>['id'],
   'logic.Cast': <String>['id'],
-  'logic.ClassDecl': <String>['id'],
+  'logic.ClassDecl': <String>['constructibleFieldOrder', 'id'],
   'ui.Component': <String>['id', 'localSignals'],
   'logic.Conditional': <String>['id'],
   'bind.Const': <String>['id'],
@@ -2773,6 +2773,7 @@ final class ClassDecl extends Decl {
     required this.name,
     required this.span,
     this.anchor,
+    this.constructibleFieldOrder,
     this.ext,
     this.fields,
     this.methods,
@@ -2788,6 +2789,7 @@ final class ClassDecl extends Decl {
     }
     return ClassDecl(
       anchor: json['anchor'] == null ? null : _asString(json['anchor'], '$path.anchor'),
+      constructibleFieldOrder: json['constructibleFieldOrder'] == null ? null : _asList<NodeId>(json['constructibleFieldOrder'], '$path.constructibleFieldOrder', _asString),
       ext: json['ext'] == null ? null : _asMap<Object?>(json['ext'], '$path.ext', (Object? v, String p) => v),
       fields: json['fields'] == null ? null : _asList<FieldDecl>(json['fields'], '$path.fields', FieldDecl.fromJson),
       id: _asString(_req(json, 'id', path), '$path.id'),
@@ -2800,6 +2802,9 @@ final class ClassDecl extends Decl {
 
   /// The override key, when the node is addressable by a human.
   final Anchor? anchor;
+
+  /// The `logic.FieldDecl` each of this class's own unnamed constructor's required-positional field-formal parameters initializes, index-for-index (ADR-0036). Present only when this class is safely equivalent to a plain, immutable record: every instance field is public/final/non-static/non-late, and the class has exactly one applicable unnamed constructor (the implicit default when there are no explicit constructors and no instance fields, or the sole explicit unnamed one otherwise) that is non-const, non-factory, non-redirecting, has an empty body and an empty initializer list, and whose field-formal parameters cover every instance field exactly once. Derived exclusively from `FieldFormalParameterElement.field` — never from parameter-name or field-name text equality. Absent for every other class shape, including one with an otherwise-eligible field set but a non-trivial, named, factory, const, or redirecting constructor — a project-class construction reaching `logic.New` for such a class remains an ordinary, unmodelled construction, refused exactly as it already was. Declaration provenance only — never a claim that any constructor is invoked at runtime; a generator using this array to lower a construction emits a plain object literal, never a call to the constructor these ids describe.
+  final List<NodeId>? constructibleFieldOrder;
 
   /// Plugin extension data, namespaced `x-<plugin>`. Core passes round-trip it untouched (Spec §2.6).
   final Map<String, Object?>? ext;
@@ -2830,6 +2835,7 @@ final class ClassDecl extends Decl {
   @override
   Map<String, Object?> toJson() => canonicalJson(<String, Object?>{
     'anchor': anchor,
+    'constructibleFieldOrder': constructibleFieldOrder,
     'ext': ext,
     'fields': fields?.map((FieldDecl v) => v.toJson()).toList(),
     'id': id,
@@ -2846,6 +2852,7 @@ final class ClassDecl extends Decl {
   /// null. Construct a new node when that is what you mean.
   ClassDecl copyWith({
     Anchor? anchor,
+    List<NodeId>? constructibleFieldOrder,
     Map<String, Object?>? ext,
     List<FieldDecl>? fields,
     NodeId? id,
@@ -2856,6 +2863,7 @@ final class ClassDecl extends Decl {
   }) {
     return ClassDecl(
       anchor: anchor ?? this.anchor,
+      constructibleFieldOrder: constructibleFieldOrder ?? this.constructibleFieldOrder,
       ext: ext ?? this.ext,
       fields: fields ?? this.fields,
       id: id ?? this.id,
@@ -2874,6 +2882,7 @@ final class ClassDecl extends Decl {
     if (identical(this, other)) return true;
     return other is ClassDecl &&
         _equality.equals(other.anchor, anchor) &&
+        _equality.equals(other.constructibleFieldOrder, constructibleFieldOrder) &&
         _equality.equals(other.ext, ext) &&
         _equality.equals(other.fields, fields) &&
         _equality.equals(other.id, id) &&
@@ -2887,6 +2896,7 @@ final class ClassDecl extends Decl {
   int get hashCode => Object.hashAll(<Object?>[
     'ClassDecl',
     _equality.hash(anchor),
+    _equality.hash(constructibleFieldOrder),
     _equality.hash(ext),
     _equality.hash(fields),
     _equality.hash(id),

@@ -1,7 +1,7 @@
 // GENERATED CODE — DO NOT EDIT
 //
 // Produced by tools/schema-codegen from packages/uir/schema/*.json.
-// UIR schema version: 1.9.0
+// UIR schema version: 1.12.0
 //
 // Edit the schema and re-run `pnpm codegen`. Hand-edits to this file are lost on the next run,
 // and CI fails if this file does not match the schema (drift check).
@@ -11,10 +11,10 @@
 import { createHash } from 'node:crypto';
 
 /** The UIR schema version this module was generated from. */
-export const UIR_VERSION = '1.9.0' as const;
+export const UIR_VERSION = '1.12.0' as const;
 
 /** A hash of the schema sources this module was generated from. */
-export const UIR_SCHEMA_HASH = '524768b057dd5fef' as const;
+export const UIR_SCHEMA_HASH = 'b75410d5317e5f61' as const;
 
 /** Node kind -> the fields of that node which hold `NodeId` references. */
 export const UIR_REFERENCE_FIELDS: Readonly<Record<string, readonly string[]>> = {
@@ -26,7 +26,7 @@ export const UIR_REFERENCE_FIELDS: Readonly<Record<string, readonly string[]>> =
   'logic.Break': ['id'],
   'logic.Call': ['id'],
   'logic.Cast': ['id'],
-  'logic.ClassDecl': ['id'],
+  'logic.ClassDecl': ['constructibleFieldOrder', 'id'],
   'ui.Component': ['id', 'localSignals'],
   'logic.Conditional': ['id'],
   'bind.Const': ['id'],
@@ -1038,6 +1038,8 @@ export interface Cast {
 export interface ClassDecl {
   /// The override key, when the node is addressable by a human.
   readonly anchor?: Anchor;
+  /// The `logic.FieldDecl` each of this class's own unnamed constructor's required-positional field-formal parameters initializes, index-for-index (ADR-0036). Present only when this class is safely equivalent to a plain, immutable record: every instance field is public/final/non-static/non-late, and the class has exactly one applicable unnamed constructor (the implicit default when there are no explicit constructors and no instance fields, or the sole explicit unnamed one otherwise) that is non-const, non-factory, non-redirecting, has an empty body and an empty initializer list, and whose field-formal parameters cover every instance field exactly once. Derived exclusively from `FieldFormalParameterElement.field` — never from parameter-name or field-name text equality. Absent for every other class shape, including one with an otherwise-eligible field set but a non-trivial, named, factory, const, or redirecting constructor — a project-class construction reaching `logic.New` for such a class remains an ordinary, unmodelled construction, refused exactly as it already was. Declaration provenance only — never a claim that any constructor is invoked at runtime; a generator using this array to lower a construction emits a plain object literal, never a call to the constructor these ids describe.
+  readonly constructibleFieldOrder?: readonly NodeId[];
   /// Plugin extension data, namespaced `x-<plugin>`. Core passes round-trip it untouched (Spec §2.6).
   readonly ext?: Readonly<Record<string, unknown>>;
   /// Fields, in declaration order.
@@ -2830,6 +2832,7 @@ export function parseClassDecl(value: unknown, path = 'ClassDecl'): ClassDecl {
 
   return {
     ...(own(o, 'anchor') === undefined || own(o, 'anchor') === null ? {} : { anchor: parseAnchor(own(o, 'anchor'), `${path}.anchor`) }),
+    ...(own(o, 'constructibleFieldOrder') === undefined || own(o, 'constructibleFieldOrder') === null ? {} : { constructibleFieldOrder: asList(own(o, 'constructibleFieldOrder'), `${path}.constructibleFieldOrder`, (v, p) => parseNodeId(v, p)) }),
     ...(own(o, 'ext') === undefined || own(o, 'ext') === null ? {} : { ext: asMap(own(o, 'ext'), `${path}.ext`, (v) => v) }),
     ...(own(o, 'fields') === undefined || own(o, 'fields') === null ? {} : { fields: asList(own(o, 'fields'), `${path}.fields`, (v, p) => parseFieldDecl(v, p)) }),
     id: parseNodeId(req(o, 'id', path), `${path}.id`),

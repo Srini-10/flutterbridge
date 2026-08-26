@@ -5328,6 +5328,489 @@ class W extends StatelessWidget {
     });
   });
 
+  group('bounded structural project-class construction (ADR-0036, M9-O)', () {
+    Map<String, dynamic> classDecl(Extracted app, String name) =>
+        app.ofKind('logic.ClassDecl').singleWhere((Map<String, dynamic> d) => d['name'] == name);
+    Map<String, dynamic> field(Map<String, dynamic> cls, String name) => (cls['fields'] as List<dynamic>)
+        .cast<Map<String, dynamic>>()
+        .singleWhere((Map<String, dynamic> f) => f['name'] == name);
+    List<dynamic>? fieldOrder(Map<String, dynamic> cls) => cls['constructibleFieldOrder'] as List<dynamic>?;
+
+    test('an implicit default constructor on an empty class is trivially constructible', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {}
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('ok');
+}
+''');
+      expect(fieldOrder(classDecl(app, 'Model')), isEmpty);
+    });
+
+    test('a class with fields and no explicit constructor is not constructible (analyzer would refuse the source anyway)', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {
+  final int count = 1;
+}
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('ok');
+}
+''');
+      expect(fieldOrder(classDecl(app, 'Model')), isNull);
+    });
+
+    test('a single field-formal parameter maps to its own FieldDecl, in parameter order', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {
+  final int count;
+  Model(this.count);
+}
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('ok');
+}
+''');
+      final Map<String, dynamic> cls = classDecl(app, 'Model');
+      final String countId = field(cls, 'count')['id'] as String;
+      expect(fieldOrder(cls), <String>[countId]);
+    });
+
+    test('two field-formal parameters in declaration order map field-for-field', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {
+  final int count;
+  final String name;
+  Model(this.count, this.name);
+}
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('ok');
+}
+''');
+      final Map<String, dynamic> cls = classDecl(app, 'Model');
+      final String countId = field(cls, 'count')['id'] as String;
+      final String nameId = field(cls, 'name')['id'] as String;
+      expect(fieldOrder(cls), <String>[countId, nameId]);
+    });
+
+    test('a constructor parameter order that differs from field declaration order is preserved exactly', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {
+  final int first;
+  final int second;
+  Model(this.second, this.first);
+}
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('ok');
+}
+''');
+      final Map<String, dynamic> cls = classDecl(app, 'Model');
+      final String firstId = field(cls, 'first')['id'] as String;
+      final String secondId = field(cls, 'second')['id'] as String;
+      // Constructor parameter order — `second` then `first` — never field declaration order.
+      expect(fieldOrder(cls), <String>[secondId, firstId]);
+    });
+
+    test('an unrelated explicit getter does not disqualify an otherwise-eligible class', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {
+  final int count;
+  Model(this.count);
+  int get doubled => count * 2;
+}
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('ok');
+}
+''');
+      final Map<String, dynamic> cls = classDecl(app, 'Model');
+      final String countId = field(cls, 'count')['id'] as String;
+      expect(fieldOrder(cls), <String>[countId]);
+    });
+
+    test('an unrelated method does not disqualify an otherwise-eligible class', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {
+  final int count;
+  Model(this.count);
+  int compute() => count + 1;
+}
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('ok');
+}
+''');
+      final Map<String, dynamic> cls = classDecl(app, 'Model');
+      final String countId = field(cls, 'count')['id'] as String;
+      expect(fieldOrder(cls), <String>[countId]);
+    });
+
+    test('a mutable field disqualifies the whole class from construction', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {
+  int count;
+  Model(this.count);
+}
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('ok');
+}
+''');
+      expect(fieldOrder(classDecl(app, 'Model')), isNull);
+    });
+
+    test('a private field disqualifies the whole class from construction', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {
+  final int _count;
+  Model(this._count);
+}
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('ok');
+}
+''');
+      expect(fieldOrder(classDecl(app, 'Model')), isNull);
+    });
+
+    test('a late final field disqualifies the whole class from construction', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {
+  late final int count;
+  Model(this.count);
+}
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('ok');
+}
+''');
+      expect(fieldOrder(classDecl(app, 'Model')), isNull);
+    });
+
+    test('a static field is not part of the instance field set and does not itself disqualify construction', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {
+  final int count;
+  static final int total = 0;
+  Model(this.count);
+}
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('ok');
+}
+''');
+      final Map<String, dynamic> cls = classDecl(app, 'Model');
+      final String countId = field(cls, 'count')['id'] as String;
+      expect(fieldOrder(cls), <String>[countId]);
+    });
+
+    test('a const constructor is not constructible', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {
+  final int count;
+  const Model(this.count);
+}
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('ok');
+}
+''');
+      expect(fieldOrder(classDecl(app, 'Model')), isNull);
+    });
+
+    test('a factory constructor is not constructible', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {
+  final int count;
+  Model._(this.count);
+  factory Model(int count) => Model._(count);
+}
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('ok');
+}
+''');
+      expect(fieldOrder(classDecl(app, 'Model')), isNull);
+    });
+
+    test('a named constructor alone (no unnamed constructor) is not constructible', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {
+  final int count;
+  Model.named(this.count);
+}
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('ok');
+}
+''');
+      expect(fieldOrder(classDecl(app, 'Model')), isNull);
+    });
+
+    test('a non-empty constructor body disqualifies the class from construction', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+void sideEffect() {}
+class Model {
+  final int count;
+  Model(this.count) {
+    sideEffect();
+  }
+}
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('ok');
+}
+''');
+      expect(fieldOrder(classDecl(app, 'Model')), isNull);
+    });
+
+    test('a field with a declaration-level initializer, not covered by any field-formal, disqualifies the class from construction', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {
+  final int count;
+  final int total = 0;
+  Model(this.count);
+}
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('ok');
+}
+''');
+      // `total` is an eligible instance field (final, public, non-static, non-late) with no field-formal
+      // of its own — the bijection between field-formals and the full instance field set fails, since
+      // `Model`'s own constructor only ever covers `count`. Catches exactly the shape a bijection check
+      // exists to reject: a field the constructor silently leaves at its own declaration-time default.
+      expect(fieldOrder(classDecl(app, 'Model')), isNull);
+    });
+
+    test('an initializer list disqualifies the class from construction', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {
+  final int count;
+  Model(int value) : count = value;
+}
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('ok');
+}
+''');
+      expect(fieldOrder(classDecl(app, 'Model')), isNull);
+    });
+
+    test('an inherited class is not constructible', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Base {
+  final int value;
+  Base(this.value);
+}
+class Model extends Base {
+  Model(super.value);
+}
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('ok');
+}
+''');
+      expect(fieldOrder(classDecl(app, 'Model')), isNull);
+    });
+
+    test('a generic class is not constructible', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model<T> {
+  final T value;
+  Model(this.value);
+}
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('ok');
+}
+''');
+      expect(fieldOrder(classDecl(app, 'Model')), isNull);
+    });
+
+    test('a private class is not constructible', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class _Model {
+  final int count;
+  _Model(this.count);
+}
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('ok');
+}
+''');
+      expect(fieldOrder(classDecl(app, '_Model')), isNull);
+    });
+
+    test('an optional positional field-formal parameter disqualifies the class from construction', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {
+  final int count;
+  Model([this.count = 0]);
+}
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('ok');
+}
+''');
+      expect(fieldOrder(classDecl(app, 'Model')), isNull);
+    });
+
+    test('a named field-formal parameter disqualifies the class from construction', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {
+  final int count;
+  Model({required this.count});
+}
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('ok');
+}
+''');
+      expect(fieldOrder(classDecl(app, 'Model')), isNull);
+    });
+
+    test('a plain (non-field-formal) parameter disqualifies the class from construction', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {
+  final int count;
+  Model(int value) : count = value;
+}
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('ok');
+}
+''');
+      expect(fieldOrder(classDecl(app, 'Model')), isNull);
+    });
+
+    test('a field-formal targeting a field twice disqualifies the class from construction', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {
+  final int count;
+  Model(this.count, this.count);
+}
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('ok');
+}
+''');
+      expect(app.errors, isNotEmpty, reason: 'duplicate final-field initialization is itself invalid Dart');
+    });
+
+    test('a same-name field across two classes maps to its own distinct declaration (ADR-0032 regression)', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Alpha {
+  final int value;
+  Alpha(this.value);
+}
+class Beta {
+  final int value;
+  Beta(this.value);
+}
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('ok');
+}
+''');
+      final String alphaValueId = field(classDecl(app, 'Alpha'), 'value')['id'] as String;
+      final String betaValueId = field(classDecl(app, 'Beta'), 'value')['id'] as String;
+      expect(alphaValueId, isNot(betaValueId));
+      expect(fieldOrder(classDecl(app, 'Alpha')), <String>[alphaValueId]);
+      expect(fieldOrder(classDecl(app, 'Beta')), <String>[betaValueId]);
+    });
+
+    test('an analyzer-invalid field type is refused as BRG1310, before M9-O construction eligibility ever runs', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {
+  final MissingType value;
+  Model(this.value);
+}
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('ok');
+}
+''');
+      final Diagnostic error = app.errors.single;
+      expect(error.code.id, 'BRG1310');
+      expect(app.nodes, isEmpty);
+    });
+
+    test('the same source extracts to the same constructible field order on a second, independent run (determinism)', () async {
+      const String source = '''
+import 'package:flutter/material.dart';
+class Model {
+  final int count;
+  final String name;
+  Model(this.count, this.name);
+}
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('ok');
+}
+''';
+      final Extracted first = await extract(source);
+      final Extracted second = await extract(source);
+      expect(fieldOrder(classDecl(first, 'Model')), fieldOrder(classDecl(second, 'Model')));
+      expect(fieldOrder(classDecl(first, 'Model')), isNotEmpty);
+    });
+  });
+
   group('paths in UIR are platform-independent (M5-F)', () {
     // `span.file` is not a filesystem path once it is written: it becomes an anchor —
     // `'${span.file}#$segment'` in `node_factory.dart` — and an anchor is hashed into the node's id

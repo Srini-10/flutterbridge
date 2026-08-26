@@ -339,3 +339,11 @@ export function immutableFieldReadsRaw(): string {
   const path = fileURLToPath(new URL('../../../../fixtures/uir/immutable_field_reads.ndjson', import.meta.url));
   return readFileSync(path, 'utf8');
 }
+
+/** The real `fixtures/apps/structural_class_construction` document, raw analyzer output (ADR-0036, M9-O) — not yet normalized. */
+export function structuralClassConstructionRaw(): string {
+  const path = fileURLToPath(
+    new URL('../../../../fixtures/uir/structural_class_construction.ndjson', import.meta.url),
+  );
+  return readFileSync(path, 'utf8');
+}

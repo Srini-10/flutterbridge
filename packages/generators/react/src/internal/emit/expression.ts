@@ -1040,6 +1040,49 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
       const constructorName = node['constructorName'];
       const kitProvided = isKitProvided(node['type'] as Node | undefined);
 
+      // Bounded structural project-class construction (ADR-0036) — checked before every other path
+      // below, and only for the unnamed, non-const constructor: a named constructor or a `const`
+      // invocation of the identical class still reaches the ordinary refusal further down, unchanged.
+      // `constructibleFieldOrder`'s own presence on the constructed class's `ClassDecl` (resolved via
+      // the class's own `TypeRef.target` — already attached, unconditionally, since ADR-0034) is the
+      // one truth this check consults; it is never re-derived from the class's own shape here, and
+      // never treated as an instruction to invoke the constructor it was derived from — the emitted
+      // value is a plain object literal, never a call.
+      if (node['isConst'] !== true && (typeof constructorName !== 'string' || constructorName === '')) {
+        const constructedClass = (node['type'] as Node | undefined)?.['target'];
+        if (typeof constructedClass === 'string') {
+          const classDecl = scope.node(constructedClass as NodeId) as unknown as Node | undefined;
+          const fieldOrder = classDecl?.['constructibleFieldOrder'];
+          const constructorArgs = asArray(node['args']);
+          // `FieldDecl` is embedded on `ClassDecl.fields`, never its own top-level document record — the
+          // identical structural fact ADR-0034/ADR-0035 already established — so each id in `fieldOrder`
+          // is resolved by scanning that same embedded array, never via `scope.node()`.
+          const embeddedFields = Array.isArray(classDecl?.['fields']) ? (classDecl['fields'] as Node[]) : [];
+          if (Array.isArray(fieldOrder) && fieldOrder.length === constructorArgs.length) {
+            const properties: string[] = [];
+            let ok = true;
+            for (let i = 0; i < fieldOrder.length; i++) {
+              const fieldDecl = embeddedFields.find((f) => f['id'] === fieldOrder[i]);
+              const fieldName = typeof fieldDecl?.['name'] === 'string' ? (fieldDecl['name'] as string) : undefined;
+              if (fieldName === undefined) {
+                ok = false;
+                break;
+              }
+              // Property value expressions evaluate in the literal's own written order (ECMAScript),
+              // which is `fieldOrder`/`args`' own shared index order — the constructor's own
+              // parameter/invocation argument order, never the class's own field-declaration order
+              // (ADR-0036 §11/§12/§13/§14 of the governing brief).
+              const value = emitExpression(constructorArgs[i] as Node, scope);
+              if (value === REFUSED) return REFUSED;
+              properties.push(`${identifierOf(fieldName)}: ${value}`);
+            }
+            if (ok) {
+              return properties.length === 0 ? '{}' : `{ ${properties.join(', ')} }`;
+            }
+          }
+        }
+      }
+
       // Dart's named arguments have no positional equivalent in TypeScript, and lowering them needs the
       // callee's signature — which the program does not carry for an arbitrary user class, so `refuseNamedArgs`
       // refuses rather than guessing which parameter a value belongs to.
