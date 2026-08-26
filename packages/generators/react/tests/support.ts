@@ -363,3 +363,15 @@ export function boundedGetterExecutionRaw(): string {
   );
   return readFileSync(path, 'utf8');
 }
+
+/** The real `fixtures/apps/m9_class_closure` document, raw analyzer output (M9-R final closure) — not yet normalized. */
+export function m9ClassClosureRaw(): string {
+  const path = fileURLToPath(new URL('../../../../fixtures/uir/m9_class_closure.ndjson', import.meta.url));
+  return readFileSync(path, 'utf8');
+}
+
+/** The real `fixtures/apps/method_call_refusal` document, raw analyzer output (M9-R closure fix) — not yet normalized. */
+export function methodCallRefusalRaw(): string {
+  const path = fileURLToPath(new URL('../../../../fixtures/uir/method_call_refusal.ndjson', import.meta.url));
+  return readFileSync(path, 'utf8');
+}

@@ -5,11 +5,15 @@ import { reactGenerator } from '../src/index.js';
 import { fileAt, harness } from './support.js';
 
 // M9-J — the receiver-classification boundary itself, in isolation from the full real-Dart fixture
-// (`unmodelled_class_member_build.test.ts`). Every positive case here proves the new refusal fires only
-// for a **parameter** read of a type this generator cannot represent; every negative control proves a
-// shape that must stay exactly as it was before this milestone — `dynamic`, `Object`/`Object?`, an unused
-// opaque value, and a write through an assignment target, which shares the read-side classifier for free
-// (`emitTarget` defers a non-`Ref` target to the identical `logic.PropertyAccess` case).
+// (`unmodelled_class_member_build.test.ts`). Every positive case here proves the refusal fires for a
+// **parameter** read, or (M9-R closure fix) a **local** whose own resolved type carries `TypeRef.target`
+// (ADR-0034) — a type this generator has itself proven a real declaration for, and so proven an
+// unsupported member on cannot be `tsc`-safe the way an untargeted, unresolved local's own type might be.
+// Every negative control proves a shape that must stay exactly as it was — `dynamic`, `Object`/`Object?`,
+// an unused opaque value, an *untargeted* local (the one case `tsc`'s own more precise inference can
+// still legitimately differ from this generator's own type text for), and a write through an assignment
+// target, which shares the read-side classifier for free (`emitTarget` defers a non-`Ref` target to the
+// identical `logic.PropertyAccess` case).
 
 const span = { file: 'lib/main.dart', line: 10, column: 3 } as const;
 
@@ -98,11 +102,14 @@ describe('M9-J — unsupported project-class member access is honestly refused',
       expect(reported.filter((d) => d.severity === 'error')).toEqual([]);
     });
 
-    it('a local variable holding a project-class value is untouched — a real, separate, narrower gap this milestone does not close', () => {
+    it('a local variable holding an UNRESOLVED type is untouched — a real, separate, narrower gap this milestone does not close', () => {
       // `emitTarget`/local emission never annotates a local's own type (`statement.ts`'s `logic.VarDecl`
       // always infers), so the identical `TypeRef` that means `unknown` in a parameter position does not
       // mean the same thing here — refusing it would be a false positive against `tsc`'s own, more precise
-      // inference. See the milestone doc's own remaining-blocker graph.
+      // inference (a local initialized from an array/collection literal is the real-world shape this
+      // protects, M9-J's own milestone doc). This type carries no `target` at all — an *unresolved* type
+      // this generator never proved anything about, the one case the array-literal argument actually
+      // covers. See the milestone doc's own remaining-blocker graph.
       const local: Record<string, unknown> = {
         id: 'l1',
         kind: 'logic.Ref',
@@ -116,6 +123,34 @@ describe('M9-J — unsupported project-class member access is honestly refused',
       reactGenerator.generate(context);
       // Not asserted refused — this documents the boundary's own known limit, not a claim of correctness.
       expect(reported.filter((d) => d.severity === 'error' && d.code === 'BRG3013')).toEqual([]);
+    });
+
+    it('a local variable holding a KNOWN project-class value (TypeRef.target present) IS refused — M9-R closure fix', () => {
+      // The array/collection-literal argument the prior test relies on does not hold here: once
+      // `TypeRef.target` is present (ADR-0034), the receiver's own inferred TypeScript shape is *exactly*
+      // as narrow as the source class's own eligible field set (ADR-0036 §10/§17, for a construction; the
+      // identical structural fact for any other project-class-typed expression) — there is no way for
+      // `tsc` to infer something *broader* the way it can for `[...]`. An unsupported member on such a
+      // receiver was, before this fix, silently lowered to `receiver.property` regardless of whether the
+      // receiver was a parameter or a local — reaching `tsc` as its own, uncontrolled error rather than
+      // this compiler's own honest `BRG3013`. Found during M9-R's own closure audit via a real
+      // `Model(7).multiply(3)` probe (a locally-constructed receiver calling an unsupported method);
+      // reproduced here at the unit level via a property read for isolation from M9-O's own construction
+      // machinery.
+      const local: Record<string, unknown> = {
+        id: 'l1',
+        kind: 'logic.Ref',
+        span,
+        name: 'localCopy',
+        target: 'localCopyDecl',
+        type: { ...PROJECT_TYPE('Model'), target: 'model-class-decl' },
+      };
+      const nodes: AnyUirNode[] = [component('comp', 'W', [], text('t1', propertyAccess('p1', 'count', local, DART_CORE_INT)))];
+      const { context, reported } = harness(nodes);
+      const { files } = reactGenerator.generate(context);
+      const errors = reported.filter((d) => d.severity === 'error');
+      expect(errors.some((d) => d.code === 'BRG3013' && d.message.includes('Model') && d.message.includes('count'))).toBe(true);
+      expect(fileAt(files, 'src/components/w.tsx') ?? '').toBe('');
     });
   });
 

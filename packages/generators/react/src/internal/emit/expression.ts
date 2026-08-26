@@ -350,6 +350,29 @@ function isParameterReceiver(receiver: Node | undefined, scope: EmitScope): bool
 }
 
 /**
+ * Whether `type` is a project-defined class this generator itself resolved a declaration for
+ * (`TypeRef.target`, ADR-0034) — closing the one narrow corner {@link isParameterReceiver}'s own
+ * "a local's real TypeScript type is whatever `tsc` infers, and that is often safe" argument does not
+ * cover (M9-R closure finding).
+ *
+ * That argument holds for a local initialized from an array/collection literal (`tsc` infers a real,
+ * useful type `typeTextOf` alone would have called `unknown`) — but it does not hold for a local
+ * initialized from a bounded structural construction (M9-O), because the object literal that
+ * construction lowers to has an inferred TypeScript shape *exactly* as narrow as the source Dart class's
+ * own eligible field set, by construction (ADR-0036 §10/§17). There is no way for `tsc` to infer a
+ * *broader* shape than that for such a value the way it can for `[...]`/array literals — so an unsupported
+ * member call on it is not a case this generator merely fails to prove safe; it is a case already proven
+ * unsafe, by the identical evidence `TypeRef.target`'s own presence already gives an external prop's field
+ * read (ADR-0035) or a getter read (ADR-0038). A receiver in this shape is therefore refused honestly here,
+ * regardless of whether it is a bare parameter or has passed through a local variable — the receiver-shape
+ * restriction {@link isParameterReceiver} still needs for an *un*targeted, unresolved type stays exactly as
+ * narrow as it always was.
+ */
+function isKnownProjectClassReceiver(type: Node | undefined): boolean {
+  return typeof type?.['target'] === 'string';
+}
+
+/**
  * Whether `type` names a member-bearing type this generator has no model for (M9-J) — a project-defined or
  * external-package class or enum, or an unrecognized SDK collection type. Reusing `typeTextOf` (`types.ts`)
  * rather than a second classification table is deliberate: `unknown` in a generated prop type and "this
@@ -869,7 +892,7 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
       const receiverTypeForMember = receiverNode?.['type'] as Node | undefined;
       if (
         node['target'] === undefined &&
-        isParameterReceiver(receiverNode, scope) &&
+        (isParameterReceiver(receiverNode, scope) || isKnownProjectClassReceiver(receiverTypeForMember)) &&
         isUnmodelledMemberReceiver(receiverTypeForMember)
       ) {
         const property = String(node['property'] ?? '');
@@ -995,7 +1018,7 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
       if (
         receiver !== REFUSED &&
         node['target'] === undefined &&
-        isParameterReceiver(methodReceiverNode, scope) &&
+        (isParameterReceiver(methodReceiverNode, scope) || isKnownProjectClassReceiver(methodReceiverType)) &&
         isUnmodelledMemberReceiver(methodReceiverType)
       ) {
         const methodReceiverTypeName = String(methodReceiverType?.['name'] ?? 'this value');

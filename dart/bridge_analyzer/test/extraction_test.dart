@@ -6768,6 +6768,81 @@ class W extends StatelessWidget {
     });
   });
 
+  group('M9-R final closure — capability-kind separation', () {
+    Map<String, dynamic> classDecl(Extracted app, String name) =>
+        app.ofKind('logic.ClassDecl').singleWhere((Map<String, dynamic> d) => d['name'] == name);
+
+    test('a field, a getter, and a method of the identical name across three classes are never confused', () async {
+      // The required three-way negative control (M9-R §18): capability kind must be selected by each
+      // member's own resolved declaration kind, never by property-name text, across the full matrix this
+      // repository's own architecture actually has — a field (M9-N), a getter (M9-Q), and a method
+      // (deferred, M10+).
+      final Extracted app = await extract(r'''
+import 'package:flutter/material.dart';
+class Alpha {
+  final int value;
+  Alpha(this.value);
+}
+class Beta {
+  final int count;
+  Beta(this.count);
+  int get value => count;
+}
+class Gamma {
+  final int count;
+  Gamma(this.count);
+  int value() => count;
+}
+class W extends StatelessWidget {
+  const W({super.key, required this.alpha, required this.beta, required this.gamma});
+  final Alpha alpha;
+  final Beta beta;
+  final Gamma gamma;
+  @override
+  Widget build(BuildContext context) => Text('${alpha.value} ${beta.value} ${gamma.value()}');
+}
+''');
+      final Map<String, dynamic> alphaCls = classDecl(app, 'Alpha');
+      final Map<String, dynamic> betaCls = classDecl(app, 'Beta');
+      final Map<String, dynamic> gammaCls = classDecl(app, 'Gamma');
+      // Alpha.value: a field — never in `methods` at all.
+      expect((alphaCls['methods'] as List<dynamic>?) ?? const <dynamic>[], isEmpty);
+      // Beta.value: an explicit getter — present in `methods`, flagged `isGetter`.
+      final Map<String, dynamic> betaValue =
+          (betaCls['methods'] as List<dynamic>).cast<Map<String, dynamic>>().singleWhere((m) => m['name'] == 'value');
+      expect(betaValue['isGetter'], isTrue);
+      // Gamma.value: an ordinary method — present in `methods`, NOT flagged `isGetter`.
+      final Map<String, dynamic> gammaValue =
+          (gammaCls['methods'] as List<dynamic>).cast<Map<String, dynamic>>().singleWhere((m) => m['name'] == 'value');
+      expect(gammaValue['isGetter'], isNot(true));
+      // Every external read/call in the render body resolves to its own class's own declaration.
+      final Map<String, dynamic> render = app.only('ui.Component')['render'] as Map<String, dynamic>;
+      // Alpha.value (field) and Beta.value (getter) both carry `target`s; Gamma.value() (method call)
+      // is never targeted at all (M9-Q never supports methods) — confirmed structurally, not by text.
+      final List<Map<String, dynamic>> propertyAccesses = <Map<String, dynamic>>[];
+      void collect(Object? node) {
+        if (node is Map<String, dynamic>) {
+          if (node['kind'] == 'logic.PropertyAccess') propertyAccesses.add(node);
+          node.values.forEach(collect);
+        } else if (node is List<dynamic>) {
+          node.forEach(collect);
+        }
+      }
+
+      collect(render);
+      final Map<String, dynamic> alphaRead = propertyAccesses.singleWhere(
+        (p) => (p['receiver'] as Map<String, dynamic>)['name'] == 'alpha',
+      );
+      final Map<String, dynamic> betaRead = propertyAccesses.singleWhere(
+        (p) => (p['receiver'] as Map<String, dynamic>)['name'] == 'beta',
+      );
+      expect(alphaRead['target'], isNotNull);
+      expect(betaRead['target'], isNotNull);
+      expect(alphaRead['target'], isNot(betaRead['target']));
+      expect(app.ofKind('logic.MethodCall').where((n) => n['method'] == 'value'), isNotEmpty);
+    });
+  });
+
   group('paths in UIR are platform-independent (M5-F)', () {
     // `span.file` is not a filesystem path once it is written: it becomes an anchor —
     // `'${span.file}#$segment'` in `node_factory.dart` — and an anchor is hashed into the node's id
