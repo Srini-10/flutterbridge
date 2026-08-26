@@ -1,0 +1,18 @@
+name: bounded_getter_execution
+description: >-
+  M9-Q fixture: a bounded, dispatch-safe project-class explicit instance getter
+  (`int get doubled => count * 2;`) executes truthfully via a generated, module-level helper function
+  — `Model_doubled(self)` — never a runtime class or prototype getter, for both an externally-supplied
+  and a locally-constructed `Model` value (docs/m9/m9q-executable-member-boundary.md).
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

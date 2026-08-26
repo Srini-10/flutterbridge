@@ -117,15 +117,20 @@ export function generateProject(context: GeneratorContext): GeneratorOutput {
   // Every reachable, self-contained top-level function this program emits, decided once, before any
   // component or action is emitted (ADR-29, M8-U) — the sibling of the component pre-pass immediately
   // above, for the identical forward-reference reason.
-  const { files: functionFiles, functionModules: resolvedFunctions, classModules: resolvedClasses } = emitFunctionModules(
-    context.program.nodes,
-    scope,
-  );
+  const {
+    files: functionFiles,
+    functionModules: resolvedFunctions,
+    classModules: resolvedClasses,
+    getterHelpers: resolvedGetters,
+  } = emitFunctionModules(context.program.nodes, scope);
   for (const [id, info] of resolvedFunctions) {
     (scope.functionModules as Map<NodeId, { readonly path: string; readonly module: string; readonly name: string }>).set(id, info);
   }
   for (const [id, info] of resolvedClasses) {
     (scope.classModules as Map<NodeId, { readonly path: string; readonly module: string; readonly name: string }>).set(id, info);
+  }
+  for (const [id, info] of resolvedGetters) {
+    (scope.getterHelpers as Map<NodeId, { readonly path: string; readonly module: string; readonly name: string }>).set(id, info);
   }
   files.push(...functionFiles);
 
@@ -560,6 +565,7 @@ function rootScope(
   // eventually-complete result.
   const functionModuleInfo = new Map<NodeId, { readonly path: string; readonly module: string; readonly name: string }>();
   const classModuleInfo = new Map<NodeId, { readonly path: string; readonly module: string; readonly name: string }>();
+  const getterHelperInfo = new Map<NodeId, { readonly path: string; readonly module: string; readonly name: string }>();
 
   const scope: EmitScope = {
     module: new ModuleBuilder('<none>'),
@@ -570,6 +576,7 @@ function rootScope(
     componentModules: componentModuleInfo,
     functionModules: functionModuleInfo,
     classModules: classModuleInfo,
+    getterHelpers: getterHelperInfo,
     node: (id: NodeId) => context.program.get(id) as AnyUirNode | undefined,
     // A bare reference at the root resolves nothing — every store member reachable here is resolved
     // explicitly, per component, by `declareStoreConsumption` (M7-F), which is the only thing that knows

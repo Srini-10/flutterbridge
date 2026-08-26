@@ -355,3 +355,11 @@ export function namedStructuralConstructionRaw(): string {
   );
   return readFileSync(path, 'utf8');
 }
+
+/** The real `fixtures/apps/bounded_getter_execution` document, raw analyzer output (ADR-0038, M9-Q) — not yet normalized. */
+export function boundedGetterExecutionRaw(): string {
+  const path = fileURLToPath(
+    new URL('../../../../fixtures/uir/bounded_getter_execution.ndjson', import.meta.url),
+  );
+  return readFileSync(path, 'utf8');
+}

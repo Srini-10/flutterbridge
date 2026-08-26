@@ -198,7 +198,8 @@ final class ExpressionExtractor {
             // never `this` here (a `ThisExpression` is never parsed as a `PrefixedIdentifier`'s own
             // prefix), so every reach of `_externalFieldTarget` from this case is a genuine external read.
             if (_storeMemberTarget(node.prefix.staticType, node.identifier.element) ??
-                    _externalFieldTarget(node.prefix.staticType, node.identifier.element)
+                    _externalFieldTarget(node.prefix.staticType, node.identifier.element) ??
+                    _externalGetterTarget(node.prefix.staticType, node.identifier.element)
                 case final String symbol)
               'target': RawRef(symbol),
             'type': out.typeRef(node.staticType, at: node),
@@ -241,7 +242,8 @@ final class ExpressionExtractor {
             if (_storeMemberTarget(target.staticType, node.propertyName.element) ??
                     (target is ThisExpression
                         ? _instanceMemberTarget(node.propertyName.element)
-                        : _externalFieldTarget(target.staticType, node.propertyName.element))
+                        : _externalFieldTarget(target.staticType, node.propertyName.element) ??
+                              _externalGetterTarget(target.staticType, node.propertyName.element))
                 case final String symbol)
               'target': RawRef(symbol),
             'type': out.typeRef(node.staticType, at: node),
@@ -1379,6 +1381,39 @@ final class ExpressionExtractor {
   /// checked via the real analyzer semantic API (`VariableElement.isFinal`/`.isStatic`/`.isLate`,
   /// `Element.isPrivate`), never by name text or AST modifier syntax.
   String? _externalFieldTarget(DartType? receiverType, Element? element) {
+    final ClassElement? ownerClass = _dispatchSafeReceiverClass(receiverType);
+    if (ownerClass == null) {
+      return null;
+    }
+    if (element is! GetterElement || !element.isOriginVariable) {
+      return null;
+    }
+    final PropertyInducingElement field = element.variable;
+    if (!field.isFinal || field.isStatic || field.isLate || field.isPrivate) {
+      return null;
+    }
+    // Owner consistency (ADR-0035 §7/§8) — never property-name equality. Dart's own resolution already
+    // makes this structurally true for a direct, non-inherited access; asserted directly rather than
+    // trusted implicitly.
+    if (field.enclosingElement != ownerClass) {
+      return null;
+    }
+    return _instanceMemberTarget(element);
+  }
+
+  /// The class a project-class-typed [receiverType] resolves to, when it is safe to execute one of its
+  /// own instance members against — the shared eligibility gate [_externalFieldTarget] (ADR-0035) and
+  /// [_externalGetterTarget] (ADR-0038) both apply, factored out once they were proven identical.
+  ///
+  /// Eligible only when: the type is a non-generic `InterfaceType` whose element is a public `ClassElement`
+  /// with no explicit superclass (`Object` only) and not a component/`State`/store base. A receiver typed
+  /// as a *subclass* (one with its own explicit superclass) is excluded here, unconditionally — which is
+  /// also, structurally, the entire dynamic-dispatch safety argument ADR-0038 relies on for getters: since
+  /// a subclass-typed receiver can never pass this check, a member resolved against it can never be
+  /// reached through this function at all, regardless of whether some subclass overrides that member
+  /// elsewhere in the program. No corpus-wide "does this class have a subclass" search is needed, or
+  /// performed.
+  ClassElement? _dispatchSafeReceiverClass(DartType? receiverType) {
     if (receiverType is! InterfaceType || receiverType.typeArguments.isNotEmpty) {
       return null;
     }
@@ -1395,17 +1430,42 @@ final class ExpressionExtractor {
         registry.isStoreBase(receiverType)) {
       return null;
     }
-    if (element is! GetterElement || !element.isOriginVariable) {
+    return ownerClass;
+  }
+
+  /// The `logic.FunctionDecl` [element] resolves to, for an EXTERNAL explicit-getter read (`model.doubled`
+  /// — the receiver is some other expression, never `this`) — ADR-0038, the getter-execution sibling of
+  /// [_externalFieldTarget].
+  ///
+  /// Eligible only when: [_dispatchSafeReceiverClass] admits the receiver's own type (§ its own doc —
+  /// this is also the entire dynamic-dispatch exclusion); the resolved member is an explicit getter
+  /// (`GetterElement.isOriginDeclaration`, never the field-backed `isOriginVariable` shape
+  /// [_externalFieldTarget] already owns); it is non-static, non-abstract (a real body — Dart represents
+  /// an interface-only getter's absence of one as `isAbstract`, checked as a real `Element`-level semantic
+  /// fact, never by re-parsing the AST body text), non-external, and carries no `@override` annotation
+  /// (`Element.hasOverride` — a getter that overrides an inherited one is refused even though its own
+  /// class already passed the "no superclass" gate above, since `@override` without a superclass is
+  /// itself invalid Dart and never actually reaches here; kept as an explicit, independent check rather
+  /// than inferred from that fact, matching this codebase's own "defense in depth over assumed redundancy"
+  /// discipline — ADR-0035 §21/M9-N's own precedent). Owner consistency (`element.enclosingElement !=
+  /// ownerClass` — the identical check [_externalFieldTarget] already makes) excludes an inherited getter
+  /// exactly as it excludes an inherited field.
+  String? _externalGetterTarget(DartType? receiverType, Element? element) {
+    final ClassElement? ownerClass = _dispatchSafeReceiverClass(receiverType);
+    if (ownerClass == null) {
       return null;
     }
-    final PropertyInducingElement field = element.variable;
-    if (!field.isFinal || field.isStatic || field.isLate || field.isPrivate) {
+    if (element is! GetterElement || !element.isOriginDeclaration) {
       return null;
     }
-    // Owner consistency (ADR-0035 §7/§8) — never property-name equality. Dart's own resolution already
-    // makes this structurally true for a direct, non-inherited access; asserted directly rather than
-    // trusted implicitly.
-    if (field.enclosingElement != ownerClass) {
+    if (element.isStatic ||
+        element.isAbstract ||
+        element.isExternal ||
+        element.isPrivate ||
+        element.metadata.hasOverride) {
+      return null;
+    }
+    if (element.enclosingElement != ownerClass) {
       return null;
     }
     return _instanceMemberTarget(element);

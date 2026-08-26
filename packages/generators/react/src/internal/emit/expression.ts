@@ -229,6 +229,27 @@ export interface EmitScope {
    */
   readonly classModules: ReadonlyMap<NodeId, { readonly path: string; readonly module: string; readonly name: string }>;
   /**
+   * Every reachable, self-contained project-class explicit instance getter this program actually emits a
+   * helper function for, keyed by the getter's own embedded `logic.FunctionDecl` id within its owning
+   * `ClassDecl.methods` (ADR-0038, M9-Q) — the sibling of {@link functionModules}, for a
+   * `PropertyAccess.target` naming a getter rather than a top-level function. Absent for a getter this
+   * generator excludes from the emittable subset (its own body references something unsupported, its
+   * owning class fails the dispatch-safe subset, or it is simply unreachable) — the honest fact that lets
+   * `PropertyAccess` fall through to the pre-existing M9-J refusal, exactly as `functionModules`'s own
+   * absence already does for a top-level function. Built once, alongside {@link functionModules}.
+   */
+  readonly getterHelpers: ReadonlyMap<NodeId, { readonly path: string; readonly module: string; readonly name: string }>;
+  /**
+   * Set only while emitting a project-class member helper's own body (ADR-0038, M9-Q) — the receiver
+   * every implicit/`this.`-qualified instance-field read inside that body must rewrite to, and the class
+   * that receiver's own fields belong to (so a field embedded on a *different* class's own `ClassDecl`,
+   * which should never occur, is never matched by coincidence of id). Absent everywhere else — ordinary
+   * component/action/top-level-function bodies have no receiver to rewrite to, and their own
+   * implicit-`this` reads (a component's own field, a store's own signal) are already resolved by their
+   * own, separate, pre-existing mechanisms, untouched by this one.
+   */
+  readonly memberSelf?: { readonly ownerClassId: NodeId; readonly selfName: string };
+  /**
    * The resolved expression for a `logic.PropertyAccess` whose `target` names a signal/derived member of
    * a *locally-owned* store instance (ADR-27) — `favorites.favoriteCount` where `favorites` is this
    * component's own `useLocalStore(...)`.
@@ -511,6 +532,27 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
 
     case 'logic.Ref': {
       const target = node['target'];
+
+      // A bounded getter helper's own body (ADR-0038, M9-Q): an implicit instance-field read
+      // (`count`, no receiver at all — extraction's own bare-identifier shape for a member read,
+      // ADR-0033) rewrites to the explicit `self` receiver every helper is given. Checked first, and
+      // only while `scope.memberSelf` is set — every other body (a component's render tree, a store's
+      // own action, an ordinary top-level function) never has one, so this never fires outside a member
+      // helper's own body. Matched by scanning `self`'s own class's embedded `fields` array — a
+      // `FieldDecl` is never its own top-level document record (the identical structural fact
+      // ADR-0034/0035/0036 already established) — never `scope.node()`.
+      if (scope.memberSelf !== undefined && typeof target === 'string') {
+        const ownerClass = scope.node(scope.memberSelf.ownerClassId) as unknown as Node | undefined;
+        const fields = Array.isArray(ownerClass?.['fields']) ? (ownerClass['fields'] as Node[]) : [];
+        const field = fields.find((f) => f['id'] === target);
+        if (field !== undefined) {
+          const fieldName = typeof field['name'] === 'string' ? field['name'] : undefined;
+          if (fieldName !== undefined) {
+            return `${scope.memberSelf.selfName}.${identifierOf(fieldName)}`;
+          }
+        }
+      }
+
       if (typeof target === 'string') {
         const read = scope.signalRead(target);
         if (read !== undefined) return read;
@@ -767,6 +809,23 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
     }
 
     case 'logic.PropertyAccess': {
+      // A bounded getter helper's own body (ADR-0038, M9-Q): `this.count` — extracted as a
+      // `PropertyAccess` whose own receiver is literally `this` (ADR-0033), never a bare `logic.Ref` the
+      // way an implicit `count` is. The identical `self.<field>` rewrite `case 'logic.Ref':` already
+      // performs for the implicit form, applied here for the explicit one — both reach the same field
+      // target, and both must lower identically.
+      if (scope.memberSelf !== undefined && typeof node['target'] === 'string') {
+        const ownerClass = scope.node(scope.memberSelf.ownerClassId) as unknown as Node | undefined;
+        const fields = Array.isArray(ownerClass?.['fields']) ? (ownerClass['fields'] as Node[]) : [];
+        const field = fields.find((f) => f['id'] === node['target']);
+        if (field !== undefined) {
+          const fieldName = typeof field['name'] === 'string' ? field['name'] : undefined;
+          if (fieldName !== undefined) {
+            return `${scope.memberSelf.selfName}.${identifierOf(fieldName)}`;
+          }
+        }
+      }
+
       // A locally-owned store instance's signal/derived member (ADR-27) — `favorites.favoriteCount`.
       // Resolved by the node's own id, never by `target` alone: `target` names the *member* (shared by
       // every instance of the store), and the id is what distinguishes `left.count` from `right.count`.
@@ -825,6 +884,23 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
           idOf(node),
         );
         return REFUSED;
+      }
+
+      // Bounded getter execution (ADR-0038, M9-Q): `target` names an eligible, reachable explicit getter
+      // — checked by looking the id up in `getterHelpers`, never re-derived from the receiver's own
+      // shape here. There is no runtime prototype `doubled` property on the plain structural object this
+      // generator emits for a project class, so the property spelling itself is never emitted; the getter
+      // becomes a real function call over the receiver, evaluated exactly once (the receiver expression is
+      // emitted a single time, below, and passed as that one call's own single argument — never inlined a
+      // second time the way re-evaluating the getter's own body at each read would risk).
+      if (typeof node['target'] === 'string') {
+        const helper = scope.getterHelpers.get(node['target'] as NodeId);
+        if (helper !== undefined) {
+          const receiver = emitExpression(node['receiver'] as Node, scope);
+          if (receiver === REFUSED) return REFUSED;
+          const name = helper.path === scope.module.path ? helper.name : scope.module.use(helper.module, helper.name);
+          return `${name}(${receiver})`;
+        }
       }
 
       const receiver = emitExpression(node['receiver'] as Node, scope);

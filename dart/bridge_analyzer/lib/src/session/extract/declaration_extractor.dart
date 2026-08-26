@@ -381,6 +381,7 @@ final class DeclarationExtractor {
               'body': RawList(expressions.bodyOf(member.body, inner)),
               if (member.body.isAsynchronous) 'isAsync': const RawLiteral(true),
               if (member.isStatic) 'isStatic': const RawLiteral(true),
+              if (member.isGetter) 'isGetter': const RawLiteral(true),
             },
           ),
         ),

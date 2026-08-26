@@ -109,6 +109,64 @@ export function reachableFunctions(nodes: readonly AnyUirNode[], scope: EmitScop
   return [...found].sort();
 }
 
+/**
+ * Walks `value`, collecting the `target` of every `logic.PropertyAccess` that names a getter present in
+ * `getterOwnerOf` (ADR-0038, M9-Q) — a member-execution sibling of {@link directFunctionRefs}. No
+ * fixed-point walk into a discovered getter's own body is performed, or needed: the bounded getter subset
+ * this milestone supports reads only fields, never another getter or method (§ the governing brief's own
+ * "prefer first support set: getter→fields... do not force the full matrix"), so a getter's own body can
+ * never itself reference a further getter this walk would need to discover.
+ */
+function directGetterRefs(value: unknown, getterOwnerOf: ReadonlyMap<NodeId, NodeId>, found: Set<NodeId>): void {
+  if (Array.isArray(value)) {
+    for (const item of value) directGetterRefs(item, getterOwnerOf, found);
+    return;
+  }
+  if (value === null || typeof value !== 'object') return;
+  const node = value as Node;
+  if (kindOf(node) === 'logic.PropertyAccess' && typeof node['target'] === 'string') {
+    const target = node['target'] as NodeId;
+    if (getterOwnerOf.has(target)) found.add(target);
+  }
+  for (const child of Object.values(node)) directGetterRefs(child, getterOwnerOf, found);
+}
+
+/**
+ * Every explicit instance getter the program reaches, directly, from a component's own render tree, a
+ * `sig.Action`'s own body, or an already-reachable top-level function's own body (ADR-0038, M9-Q) —
+ * the member-execution sibling of {@link reachableFunctions}. Not a fixed-point walk over getters
+ * themselves (see {@link directGetterRefs}'s own note) — one pass over every already-known reachable
+ * body is complete by construction.
+ */
+function reachableGetters(
+  nodes: readonly AnyUirNode[],
+  reachableFns: readonly NodeId[],
+  scope: EmitScope,
+  getterOwnerOf: ReadonlyMap<NodeId, NodeId>,
+): NodeId[] {
+  const found = new Set<NodeId>();
+  for (const node of nodes as unknown as Node[]) {
+    if (kindOf(node) === 'ui.Component') {
+      directGetterRefs(node['render'], getterOwnerOf, found);
+    } else if (kindOf(node) === 'sig.Action') {
+      directGetterRefs(node['body'], getterOwnerOf, found);
+    }
+  }
+  for (const id of reachableFns) {
+    const fn = scope.node(id) as unknown as Node | undefined;
+    if (fn === undefined) continue;
+    directGetterRefs(fn['body'], getterOwnerOf, found);
+  }
+  return [...found].sort();
+}
+
+/** A reachable getter's own destination: which file it lives in, and the helper name reserved there. */
+export interface GetterHelperInfo {
+  readonly path: string;
+  readonly module: string;
+  readonly name: string;
+}
+
 /** A reachable function's own destination: which file it lives in, and the local name reserved there. */
 export interface FunctionModuleInfo {
   /** The output file path (`ModuleBuilder.path`) — used to tell a same-file reference from a cross-file one. */
@@ -206,11 +264,45 @@ export function emitFunctionModules(
   readonly files: { readonly path: string; readonly contents: string }[];
   readonly functionModules: ReadonlyMap<NodeId, FunctionModuleInfo>;
   readonly classModules: ReadonlyMap<NodeId, ClassModuleInfo>;
+  readonly getterHelpers: ReadonlyMap<NodeId, GetterHelperInfo>;
 } {
   const reachable = reachableFunctions(nodes, scope);
   const modules = new Map<string, PendingModule>();
   const functionModules = new Map<NodeId, FunctionModuleInfo>();
   const classModules = new Map<NodeId, ClassModuleInfo>();
+  const getterHelpers = new Map<NodeId, GetterHelperInfo>();
+
+  // Every explicit getter's own owning class, by the getter's own embedded `logic.FunctionDecl` id
+  // (ADR-0038, M9-Q) — built once, from the full node list, since a `logic.FunctionDecl` embedded on
+  // `ClassDecl.methods` is not itself an independently addressable top-level record `scope.node()` can
+  // find (the identical structural fact ADR-0034/ADR-0036/ADR-0037 already established for a class's own
+  // fields and constructors).
+  const getterOwnerOf = new Map<NodeId, NodeId>();
+  for (const node of nodes as unknown as Node[]) {
+    if (kindOf(node) !== 'logic.ClassDecl') continue;
+    const classId = node['id'];
+    const methods = Array.isArray(node['methods']) ? (node['methods'] as Node[]) : [];
+    for (const method of methods) {
+      if (method['isGetter'] === true && typeof method['id'] === 'string' && typeof classId === 'string') {
+        getterOwnerOf.set(method['id'] as NodeId, classId as NodeId);
+      }
+    }
+  }
+  const reachableGetterIds = reachableGetters(nodes, reachable, scope, getterOwnerOf);
+
+  // A getter's own owning class needs a real emitted type the moment the getter itself is reachable —
+  // independent of whether that class is *also* reachable the way `reachableClassTypes` already looks for
+  // (a component/function param or return type). A class reached only through `final model = Model(...)`
+  // (M9-O/P's own construction, which resolves via `scope.node()` directly, never through this reachability
+  // set — ADR-0036 §6) would otherwise never gain a type module here, and `self: Model` inside its own
+  // getter helper would have nothing to reference. Unioned once, ahead of the class-emission loop below,
+  // so a getter-reachable class is treated identically to a param/return-type-reachable one from this point
+  // on — one emission path, not two.
+  const classIdsNeedingTypes = new Set(reachableClassTypes(nodes, scope, reachable));
+  for (const getterId of reachableGetterIds) {
+    const ownerId = getterOwnerOf.get(getterId);
+    if (ownerId !== undefined) classIdsNeedingTypes.add(ownerId);
+  }
 
   const pendingModuleFor = (path: string, specifier: string): PendingModule => {
     let pending = modules.get(path);
@@ -232,7 +324,7 @@ export function emitFunctionModules(
   // reachable function's own params/return type), and emitting a class is unconditional (an empty
   // interface cannot itself fail to lower the way a function body can), so there is no ordering hazard
   // in building this registry first.
-  for (const id of reachableClassTypes(nodes, scope, reachable)) {
+  for (const id of [...classIdsNeedingTypes].sort()) {
     const classDecl = scope.node(id) as unknown as Node | undefined;
     if (classDecl === undefined) continue;
     const name = typeof classDecl['name'] === 'string' ? classDecl['name'] : undefined;
@@ -311,6 +403,53 @@ export function emitFunctionModules(
       ...(fieldLines.length === 0 ? [] : [...fieldLines, '}']),
       '',
     );
+
+    // Bounded getter execution (ADR-0038, M9-Q): one helper function per reachable, explicit instance
+    // getter this class declares, emitted into this same per-file module — a getter's own receiver type
+    // is exactly the class its own interface, immediately above, already declares, so there is nothing to
+    // import for `self`'s own type when the two are already co-located (the cross-file case goes through
+    // `classOf`, identical to a field's own type reference above).
+    const methods = Array.isArray(classDecl['methods']) ? (classDecl['methods'] as Node[]) : [];
+    for (const method of methods) {
+      const methodId = method['id'];
+      if (method['isGetter'] !== true || typeof methodId !== 'string' || !reachableGetterIds.includes(methodId as NodeId)) {
+        continue;
+      }
+      const body = method['body'];
+      if (method['isAsync'] === true || !Array.isArray(body)) continue;
+
+      const getterName = typeof method['name'] === 'string' ? method['name'] : String(methodId);
+      const helperName = pending.builder.declare(`${name}_${getterName}`, methodId);
+
+      const scratch = new ModuleBuilder(pending.builder.path);
+      let hadError = false;
+      const helperScope: EmitScope = {
+        ...scope,
+        module: scratch,
+        classModules,
+        getterHelpers,
+        memberSelf: { ownerClassId: id, selfName: 'self' },
+        paramInScope: () => undefined,
+        localName: (localId) => localBindingsIn(body).get(localId) ?? scope.localName(localId),
+        report: (code, severity, message, nodeId) => {
+          if (severity === 'error') hadError = true;
+          else scope.report(code, severity, message, nodeId);
+        },
+      };
+      const returnType = typeTextOf(method['returnType'] as Node | undefined, (rt) => useRuntime(scratch, rt), classOf);
+      const lines = emitStatements(body, helperScope);
+      if (hadError) continue;
+
+      for (const request of scratch.usedImports()) pending.builder.use(request.from, request.name, { typeOnly: request.typeOnly });
+      pending.lines.push(
+        `/** \`${name}.${getterName}\`, from ${spanFile}. A bounded, structural getter execution (ADR-0038) — never a prototype getter; there is no runtime \`${name}\` class. */`,
+        `export function ${helperName}(self: ${localName}): ${returnType} {`,
+        ...lines.map((line: string) => `  ${line}`),
+        '}',
+        '',
+      );
+      getterHelpers.set(methodId as NodeId, { path: pending.builder.path, module: specifier, name: helperName });
+    }
   }
 
   let remaining = new Set(reachable);
@@ -429,5 +568,5 @@ export function emitFunctionModules(
     .filter((m) => m.lines.length > 0)
     .map((m) => ({ path: m.builder.path, contents: m.builder.toSource() }));
 
-  return { files, functionModules, classModules };
+  return { files, functionModules, classModules, getterHelpers };
 }

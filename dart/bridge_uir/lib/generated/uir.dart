@@ -1,7 +1,7 @@
 // GENERATED CODE — DO NOT EDIT
 //
 // Produced by tools/schema-codegen from packages/uir/schema/*.json.
-// UIR schema version: 1.14.0
+// UIR schema version: 1.15.0
 //
 // Edit the schema and re-run `pnpm codegen`. Hand-edits to this file are lost on the next run,
 // and CI fails if this file does not match the schema (drift check).
@@ -26,12 +26,12 @@ import 'package:crypto/crypto.dart';
 import 'package:meta/meta.dart';
 
 /// The UIR schema version this library was generated from.
-const String uirVersion = '1.14.0';
+const String uirVersion = '1.15.0';
 
 /// A hash of the schema sources this library was generated from.
 ///
 /// Stamped into every emitted manifest: a UIR document always says which schema produced it.
-const String uirSchemaHash = 'ae1b2dd656111505';
+const String uirSchemaHash = 'e72e6f6adf244f93';
 
 /// Node kind -> the fields of that node which hold `NodeId` references.
 ///
@@ -4476,6 +4476,7 @@ final class FunctionDecl extends Decl {
     this.body,
     this.ext,
     this.isAsync,
+    this.isGetter,
     this.isStatic,
     this.params,
   });
@@ -4493,6 +4494,7 @@ final class FunctionDecl extends Decl {
       ext: json['ext'] == null ? null : _asMap<Object?>(json['ext'], '$path.ext', (Object? v, String p) => v),
       id: _asString(_req(json, 'id', path), '$path.id'),
       isAsync: json['isAsync'] == null ? null : _asBool(json['isAsync'], '$path.isAsync'),
+      isGetter: json['isGetter'] == null ? null : _asBool(json['isGetter'], '$path.isGetter'),
       isStatic: json['isStatic'] == null ? null : _asBool(json['isStatic'], '$path.isStatic'),
       name: _asString(_req(json, 'name', path), '$path.name'),
       params: json['params'] == null ? null : _asList<ParamDecl>(json['params'], '$path.params', ParamDecl.fromJson),
@@ -4515,6 +4517,9 @@ final class FunctionDecl extends Decl {
 
   /// Whether the function is async.
   final bool? isAsync;
+
+  /// Whether this declaration is a class's own explicit instance getter (ADR-0038), as opposed to an ordinary method or a setter. Present only on a `logic.FunctionDecl` embedded in `ClassDecl.methods` — a top-level `logic.FunctionDecl` (ADR-29) is never marked this way, since Dart's own top-level `get` declarations extract identically to an ordinary top-level function (`declaration_extractor.dart`'s own `_function`), the same way this schema has always treated one; there is no `isGetter` distinction to make at that level. A class's own setter continues to be represented as an ordinary, unflagged `logic.FunctionDecl` (its own symbol mangled with a trailing `=`, unchanged since before M9-Q) — `isGetter` absent (never `false`) for it, exactly as for an ordinary method; M9-Q's own bounded execution model reads `isGetter === true` as the one positive signal it needs, never infers a setter from its absence.
+  final bool? isGetter;
 
   /// Whether the function is static.
   final bool? isStatic;
@@ -4543,6 +4548,7 @@ final class FunctionDecl extends Decl {
     'ext': ext,
     'id': id,
     'isAsync': isAsync,
+    'isGetter': isGetter,
     'isStatic': isStatic,
     'kind': 'logic.FunctionDecl',
     'name': name,
@@ -4561,6 +4567,7 @@ final class FunctionDecl extends Decl {
     Map<String, Object?>? ext,
     NodeId? id,
     bool? isAsync,
+    bool? isGetter,
     bool? isStatic,
     String? name,
     List<ParamDecl>? params,
@@ -4573,6 +4580,7 @@ final class FunctionDecl extends Decl {
       ext: ext ?? this.ext,
       id: id ?? this.id,
       isAsync: isAsync ?? this.isAsync,
+      isGetter: isGetter ?? this.isGetter,
       isStatic: isStatic ?? this.isStatic,
       name: name ?? this.name,
       params: params ?? this.params,
@@ -4593,6 +4601,7 @@ final class FunctionDecl extends Decl {
         _equality.equals(other.ext, ext) &&
         _equality.equals(other.id, id) &&
         _equality.equals(other.isAsync, isAsync) &&
+        _equality.equals(other.isGetter, isGetter) &&
         _equality.equals(other.isStatic, isStatic) &&
         _equality.equals(other.name, name) &&
         _equality.equals(other.params, params) &&
@@ -4608,6 +4617,7 @@ final class FunctionDecl extends Decl {
     _equality.hash(ext),
     _equality.hash(id),
     _equality.hash(isAsync),
+    _equality.hash(isGetter),
     _equality.hash(isStatic),
     _equality.hash(name),
     _equality.hash(params),
