@@ -1,7 +1,7 @@
 // GENERATED CODE — DO NOT EDIT
 //
 // Produced by tools/schema-codegen from packages/uir/schema/*.json.
-// UIR schema version: 1.12.0
+// UIR schema version: 1.14.0
 //
 // Edit the schema and re-run `pnpm codegen`. Hand-edits to this file are lost on the next run,
 // and CI fails if this file does not match the schema (drift check).
@@ -26,12 +26,12 @@ import 'package:crypto/crypto.dart';
 import 'package:meta/meta.dart';
 
 /// The UIR schema version this library was generated from.
-const String uirVersion = '1.12.0';
+const String uirVersion = '1.14.0';
 
 /// A hash of the schema sources this library was generated from.
 ///
 /// Stamped into every emitted manifest: a UIR document always says which schema produced it.
-const String uirSchemaHash = 'b75410d5317e5f61';
+const String uirSchemaHash = 'ae1b2dd656111505';
 
 /// Node kind -> the fields of that node which hold `NodeId` references.
 ///
@@ -46,7 +46,7 @@ const Map<String, List<String>> uirReferenceFields = <String, List<String>>{
   'logic.Break': <String>['id'],
   'logic.Call': <String>['id'],
   'logic.Cast': <String>['id'],
-  'logic.ClassDecl': <String>['constructibleFieldOrder', 'id'],
+  'logic.ClassDecl': <String>['id'],
   'ui.Component': <String>['id', 'localSignals'],
   'logic.Conditional': <String>['id'],
   'bind.Const': <String>['id'],
@@ -1084,6 +1084,76 @@ final class CatchClause {
     _equality.hash(exceptionName),
     _equality.hash(exceptionType),
     _equality.hash(stackTraceName),
+  ]);
+}
+
+/// One of a class's own constructors, proven safely equivalent to a plain object literal's own construction (ADR-0036/ADR-0037).
+@immutable
+final class ConstructibleConstructor {
+  /// Creates a [ConstructibleConstructor].
+  const ConstructibleConstructor({
+    required this.fields,
+    required this.kind,
+    this.name,
+  });
+
+  /// Parses a [ConstructibleConstructor] from JSON, validating as it goes.
+  factory ConstructibleConstructor.fromJson(Object? value, [String path = 'ConstructibleConstructor']) {
+    final Map<String, Object?> json = _asObject(value, path);
+    return ConstructibleConstructor(
+      fields: _asList<NodeId>(_req(json, 'fields', path), '$path.fields', _asString),
+      kind: _asString(_req(json, 'kind', path), '$path.kind'),
+      name: json['name'] == null ? null : _asString(json['name'], '$path.name'),
+    );
+  }
+
+  /// The `logic.FieldDecl` each of this constructor's own required field-formal parameters initializes. For `kind: "positional"`, index-for-index with a call's own positional `args`. For `kind: "named"`, one entry per required named field-formal, in declaration order — order here carries no calling significance, only determinism; a generator resolves each field's own value from a call's own `namedArgs`, keyed by the field's own name.
+  final List<NodeId> fields;
+
+  /// Whether this constructor's own field-formal parameters are all required-positional (`fields` in parameter/call-argument order) or all required-named (`fields` in parameter declaration order — a generator matches each one to a call's own `namedArgs` by the field's own name, which Dart's own grammar guarantees equals the field-formal parameter's declared external label). A constructor mixing required-positional and required-named field-formals is excluded entirely (ADR-0037) — narrower than Dart itself allows, kept out of the first subset deliberately.
+  final String kind;
+
+  /// The constructor's own name (e.g. `named`, for `Model.named(...)`). Absent for the unnamed constructor.
+  final String? name;
+
+  /// Serializes to canonical JSON: keys sorted, nulls omitted.
+  Map<String, Object?> toJson() => canonicalJson(<String, Object?>{
+    'fields': fields,
+    'kind': kind,
+    'name': name,
+  })! as Map<String, Object?>;
+
+  /// Returns a copy with the given fields replaced. The original is never mutated.
+  ///
+  /// An omitted argument keeps its current value; `copyWith` cannot set a field back to
+  /// null. Construct a new node when that is what you mean.
+  ConstructibleConstructor copyWith({
+    List<NodeId>? fields,
+    String? kind,
+    String? name,
+  }) {
+    return ConstructibleConstructor(
+      fields: fields ?? this.fields,
+      kind: kind ?? this.kind,
+      name: name ?? this.name,
+    );
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is ConstructibleConstructor &&
+        _equality.equals(other.fields, fields) &&
+        _equality.equals(other.kind, kind) &&
+        _equality.equals(other.name, name);
+  }
+
+  @override
+  int get hashCode => Object.hashAll(<Object?>[
+    'ConstructibleConstructor',
+    _equality.hash(fields),
+    _equality.hash(kind),
+    _equality.hash(name),
   ]);
 }
 
@@ -2773,7 +2843,7 @@ final class ClassDecl extends Decl {
     required this.name,
     required this.span,
     this.anchor,
-    this.constructibleFieldOrder,
+    this.constructibleConstructors,
     this.ext,
     this.fields,
     this.methods,
@@ -2789,7 +2859,7 @@ final class ClassDecl extends Decl {
     }
     return ClassDecl(
       anchor: json['anchor'] == null ? null : _asString(json['anchor'], '$path.anchor'),
-      constructibleFieldOrder: json['constructibleFieldOrder'] == null ? null : _asList<NodeId>(json['constructibleFieldOrder'], '$path.constructibleFieldOrder', _asString),
+      constructibleConstructors: json['constructibleConstructors'] == null ? null : _asList<ConstructibleConstructor>(json['constructibleConstructors'], '$path.constructibleConstructors', ConstructibleConstructor.fromJson),
       ext: json['ext'] == null ? null : _asMap<Object?>(json['ext'], '$path.ext', (Object? v, String p) => v),
       fields: json['fields'] == null ? null : _asList<FieldDecl>(json['fields'], '$path.fields', FieldDecl.fromJson),
       id: _asString(_req(json, 'id', path), '$path.id'),
@@ -2803,8 +2873,8 @@ final class ClassDecl extends Decl {
   /// The override key, when the node is addressable by a human.
   final Anchor? anchor;
 
-  /// The `logic.FieldDecl` each of this class's own unnamed constructor's required-positional field-formal parameters initializes, index-for-index (ADR-0036). Present only when this class is safely equivalent to a plain, immutable record: every instance field is public/final/non-static/non-late, and the class has exactly one applicable unnamed constructor (the implicit default when there are no explicit constructors and no instance fields, or the sole explicit unnamed one otherwise) that is non-const, non-factory, non-redirecting, has an empty body and an empty initializer list, and whose field-formal parameters cover every instance field exactly once. Derived exclusively from `FieldFormalParameterElement.field` — never from parameter-name or field-name text equality. Absent for every other class shape, including one with an otherwise-eligible field set but a non-trivial, named, factory, const, or redirecting constructor — a project-class construction reaching `logic.New` for such a class remains an ordinary, unmodelled construction, refused exactly as it already was. Declaration provenance only — never a claim that any constructor is invoked at runtime; a generator using this array to lower a construction emits a plain object literal, never a call to the constructor these ids describe.
-  final List<NodeId>? constructibleFieldOrder;
+  /// One entry per this class's own constructor that is safely equivalent to a plain, immutable record's own construction (ADR-0036, generalized by ADR-0037 from a single class-global mapping to a constructor-keyed list): non-const, non-factory, non-redirecting, an empty body and an empty initializer list, and field-formal parameters — uniformly required-positional or uniformly required-named, never mixed — that cover every one of the class's own instance fields exactly once. The whole-class prerequisite is unchanged from ADR-0036: every instance field public/final/non-static/non-late, and the class itself public, non-generic, with no superclass/`implements`/`with`. A constructor failing its own eligibility (a body, a factory keyword, an incomplete field-formal set, a mix of positional and named field-formals, and so on) is simply absent from this array — it neither disqualifies a sibling constructor nor the class's own other, eligible constructors (ADR-0037 §9). Present as an empty array when the class satisfies the whole-class prerequisite but has no individually eligible constructor; present as a single implicit-unnamed-positional entry with an empty `fields` array for a fieldless class with no explicit constructor; absent entirely when the whole-class prerequisite itself fails. Constructor identity is `(this ClassDecl, this entry's own name)` — already unique, since Dart forbids two constructors sharing one name on one class, and two different classes never share a `ClassDecl` id — so no separate constructor-identity node or symbol scheme was introduced. Derived exclusively from `FieldFormalParameterElement.field` — never from parameter-name or field-name text equality. Declaration provenance only — never a claim that any constructor is invoked at runtime; a generator resolving a construction against an entry here emits a plain object literal, never a call to the constructor this entry describes.
+  final List<ConstructibleConstructor>? constructibleConstructors;
 
   /// Plugin extension data, namespaced `x-<plugin>`. Core passes round-trip it untouched (Spec §2.6).
   final Map<String, Object?>? ext;
@@ -2835,7 +2905,7 @@ final class ClassDecl extends Decl {
   @override
   Map<String, Object?> toJson() => canonicalJson(<String, Object?>{
     'anchor': anchor,
-    'constructibleFieldOrder': constructibleFieldOrder,
+    'constructibleConstructors': constructibleConstructors?.map((ConstructibleConstructor v) => v.toJson()).toList(),
     'ext': ext,
     'fields': fields?.map((FieldDecl v) => v.toJson()).toList(),
     'id': id,
@@ -2852,7 +2922,7 @@ final class ClassDecl extends Decl {
   /// null. Construct a new node when that is what you mean.
   ClassDecl copyWith({
     Anchor? anchor,
-    List<NodeId>? constructibleFieldOrder,
+    List<ConstructibleConstructor>? constructibleConstructors,
     Map<String, Object?>? ext,
     List<FieldDecl>? fields,
     NodeId? id,
@@ -2863,7 +2933,7 @@ final class ClassDecl extends Decl {
   }) {
     return ClassDecl(
       anchor: anchor ?? this.anchor,
-      constructibleFieldOrder: constructibleFieldOrder ?? this.constructibleFieldOrder,
+      constructibleConstructors: constructibleConstructors ?? this.constructibleConstructors,
       ext: ext ?? this.ext,
       fields: fields ?? this.fields,
       id: id ?? this.id,
@@ -2882,7 +2952,7 @@ final class ClassDecl extends Decl {
     if (identical(this, other)) return true;
     return other is ClassDecl &&
         _equality.equals(other.anchor, anchor) &&
-        _equality.equals(other.constructibleFieldOrder, constructibleFieldOrder) &&
+        _equality.equals(other.constructibleConstructors, constructibleConstructors) &&
         _equality.equals(other.ext, ext) &&
         _equality.equals(other.fields, fields) &&
         _equality.equals(other.id, id) &&
@@ -2896,7 +2966,7 @@ final class ClassDecl extends Decl {
   int get hashCode => Object.hashAll(<Object?>[
     'ClassDecl',
     _equality.hash(anchor),
-    _equality.hash(constructibleFieldOrder),
+    _equality.hash(constructibleConstructors),
     _equality.hash(ext),
     _equality.hash(fields),
     _equality.hash(id),
@@ -5580,6 +5650,7 @@ final class New extends Expr {
     this.constructorName,
     this.ext,
     this.isConst,
+    this.namedArgOrder,
     this.namedArgs,
     this.presentedContent,
   });
@@ -5598,6 +5669,7 @@ final class New extends Expr {
       ext: json['ext'] == null ? null : _asMap<Object?>(json['ext'], '$path.ext', (Object? v, String p) => v),
       id: _asString(_req(json, 'id', path), '$path.id'),
       isConst: json['isConst'] == null ? null : _asBool(json['isConst'], '$path.isConst'),
+      namedArgOrder: json['namedArgOrder'] == null ? null : _asList<String>(json['namedArgOrder'], '$path.namedArgOrder', _asString),
       namedArgs: json['namedArgs'] == null ? null : _asMap<Expr>(json['namedArgs'], '$path.namedArgs', Expr.fromJson),
       presentedContent: json['presentedContent'] == null ? null : UiNode.fromJson(json['presentedContent'], '$path.presentedContent'),
       span: SourceSpan.fromJson(_req(json, 'span', path), '$path.span'),
@@ -5623,6 +5695,9 @@ final class New extends Expr {
 
   /// Whether the construction is const — the input to const folding (pass N6).
   final bool? isConst;
+
+  /// The labels of `namedArgs`, in this call's own real source (left-to-right) argument order (ADR-0037) — never sorted, never reordered to a constructor's own declaration order. Present only alongside `namedArgs`. Exists because `namedArgs` itself is an ordinary map, canonicalized to sorted key order by the builder (`RawMap`'s own documented contract) like every other named-argument-carrying node in the schema — a property that does not matter for a `namedArgs` consumer that only reads *values*, but does matter for a bounded structural construction (ADR-0036) lowering to an object literal, where Dart's own left-to-right argument evaluation order must survive into the emitted property order even when it differs from the constructed class's own field-declaration order. Scoped to `logic.New` alone — no other `namedArgs`-carrying node kind gained this field, since none needed it for this milestone.
+  final List<String>? namedArgOrder;
 
   /// Named arguments.
   final Map<String, Expr>? namedArgs;
@@ -5657,6 +5732,7 @@ final class New extends Expr {
     'id': id,
     'isConst': isConst,
     'kind': 'logic.New',
+    'namedArgOrder': namedArgOrder,
     'namedArgs': namedArgs?.map((String k, Expr v) => MapEntry<String, Object?>(k, v.toJson())),
     'presentedContent': presentedContent?.toJson(),
     'span': span.toJson(),
@@ -5675,6 +5751,7 @@ final class New extends Expr {
     Map<String, Object?>? ext,
     NodeId? id,
     bool? isConst,
+    List<String>? namedArgOrder,
     Map<String, Expr>? namedArgs,
     UiNode? presentedContent,
     SourceSpan? span,
@@ -5688,6 +5765,7 @@ final class New extends Expr {
       ext: ext ?? this.ext,
       id: id ?? this.id,
       isConst: isConst ?? this.isConst,
+      namedArgOrder: namedArgOrder ?? this.namedArgOrder,
       namedArgs: namedArgs ?? this.namedArgs,
       presentedContent: presentedContent ?? this.presentedContent,
       span: span ?? this.span,
@@ -5709,6 +5787,7 @@ final class New extends Expr {
         _equality.equals(other.ext, ext) &&
         _equality.equals(other.id, id) &&
         _equality.equals(other.isConst, isConst) &&
+        _equality.equals(other.namedArgOrder, namedArgOrder) &&
         _equality.equals(other.namedArgs, namedArgs) &&
         _equality.equals(other.presentedContent, presentedContent) &&
         _equality.equals(other.span, span) &&
@@ -5725,6 +5804,7 @@ final class New extends Expr {
     _equality.hash(ext),
     _equality.hash(id),
     _equality.hash(isConst),
+    _equality.hash(namedArgOrder),
     _equality.hash(namedArgs),
     _equality.hash(presentedContent),
     _equality.hash(span),

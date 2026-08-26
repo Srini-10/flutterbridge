@@ -130,8 +130,8 @@ final class DeclarationExtractor {
     final String className = node.namePart.typeName.lexeme;
     final List<RawValue> fields = _fields(node, scope, owner: className);
     final List<RawValue> methods = semantic ? const <RawValue>[] : _methods(node, scope, owner: className);
-    final List<RawValue>? constructibleFieldOrder =
-        semantic ? null : _constructibleFieldOrder(node, owner: className);
+    final List<RawValue>? constructibleConstructors =
+        semantic ? null : _constructibleConstructors(node, owner: className);
 
     out.emit(
       RawNode(
@@ -147,34 +147,36 @@ final class DeclarationExtractor {
             'superclass': out.typeRef(node.extendsClause!.superclass.type, at: node),
           if (fields.isNotEmpty) 'fields': RawList(fields),
           if (methods.isNotEmpty) 'methods': RawList(methods),
-          if (constructibleFieldOrder != null) 'constructibleFieldOrder': RawList(constructibleFieldOrder),
+          if (constructibleConstructors != null) 'constructibleConstructors': RawList(constructibleConstructors),
         },
       ),
     );
   }
 
-  /// The constructor field mapping for a bounded, structurally-constructible class (ADR-0036) — present
-  /// only when the class is safely equivalent to a plain object literal: every instance field is public,
-  /// final, non-static, non-late; the class is public, non-generic, and has no explicit superclass; and
-  /// the class has exactly one applicable unnamed constructor — the implicit default when there are no
-  /// explicit constructors and no instance fields, or the sole explicit unnamed one otherwise — that is
-  /// non-const, non-factory, does not redirect, has an empty body (`is EmptyFunctionBody`, the real AST
-  /// type, never source-string trimming), an empty initializer list, and exactly one required-positional
-  /// field-formal parameter per instance field, covering every one of them exactly once.
+  /// The constructor-keyed field mapping for a bounded, structurally-constructible class (ADR-0036,
+  /// generalized to multiple constructors by ADR-0037) — present only when the class satisfies the
+  /// **whole-class** prerequisite: every instance field is public, final, non-static, non-late; the class
+  /// itself is public, non-generic, and has no explicit superclass/`implements`/`with`.
+  ///
+  /// Each of the class's own constructors is then evaluated **independently** (ADR-0037 §9): a
+  /// constructor is included only when it is non-const, non-factory, does not redirect, has an empty body
+  /// (`is EmptyFunctionBody`, the real AST type, never source-string trimming), an empty initializer list,
+  /// and field-formal parameters that are uniformly required-positional or uniformly required-named
+  /// (never mixed) and cover every instance field exactly once. A constructor failing its own eligibility
+  /// is simply absent from the result — it neither disqualifies a sibling constructor nor is disqualified
+  /// by one (the "safe + unsafe sibling" case, ADR-0037 §23). The implicit default constructor (no
+  /// explicit constructors, no instance fields) yields one trivial unnamed/positional/empty entry.
   ///
   /// Resolved exclusively from `FieldFormalParameterElement.field` — never from parameter-name or
-  /// field-name text equality (ADR-0036 §7/§24). Absent for every other shape (a mutable/late/private/
-  /// static field anywhere on the class, a named/factory/const/redirecting constructor, a non-empty body
-  /// or initializer list, an optional/named/default/non-field-formal parameter, a field left uncovered or
-  /// covered twice) — the generator's own existing construction refusal (`BRG3002`) is unchanged for
-  /// those; this function does not report a diagnostic itself, since every such case is honestly refused
-  /// already, unrelated to this milestone.
+  /// field-name text equality (ADR-0036 §7/§24, unchanged). Absent entirely (not merely empty) when the
+  /// whole-class prerequisite itself fails; the generator's own existing construction refusal (`BRG3002`)
+  /// is unchanged for both cases — this function does not report a diagnostic itself.
   ///
   /// An unrelated explicit getter/method does **not** disqualify the class (ADR-0036 §25) — mirroring
   /// ADR-0035's own field-level, not whole-class, read-capability policy: this check is only about
   /// whether the class's own *fields* form a complete, unambiguous record, never about its executable
   /// members, which remain independently, unconditionally refused wherever they are read or called.
-  List<RawValue>? _constructibleFieldOrder(ClassDeclaration node, {required String owner}) {
+  List<RawValue>? _constructibleConstructors(ClassDeclaration node, {required String owner}) {
     if (owner.startsWith('_')) return null;
     if (node.extendsClause != null) return null;
     if (node.implementsClause != null) return null;
@@ -201,27 +203,47 @@ final class DeclarationExtractor {
 
     if (constructors.isEmpty) {
       // The implicit default constructor — trivially eligible only when there is nothing to initialize.
-      return instanceFields.isEmpty ? const <RawValue>[] : null;
+      if (instanceFields.isNotEmpty) return null;
+      return <RawValue>[
+        const RawMap(<String, RawValue>{'kind': RawLiteral('positional'), 'fields': RawList(<RawValue>[])}),
+      ];
     }
 
-    ConstructorDeclaration? unnamed;
+    final List<RawValue> eligible = <RawValue>[];
     for (final ConstructorDeclaration ctor in constructors) {
-      if (ctor.name == null) {
-        unnamed = ctor;
-        break;
-      }
+      final RawValue? entry = _constructibleConstructorEntry(
+        ctor,
+        owner: owner,
+        instanceFieldCount: instanceFields.length,
+      );
+      if (entry != null) eligible.add(entry);
     }
-    if (unnamed == null) return null;
-    if (unnamed.factoryKeyword != null) return null;
-    if (unnamed.constKeyword != null) return null;
-    if (unnamed.redirectedConstructor != null) return null;
-    if (unnamed.body is! EmptyFunctionBody) return null;
-    if (unnamed.initializers.isNotEmpty) return null;
+    return eligible;
+  }
 
+  /// One eligible entry of [_constructibleConstructors], for a single constructor — or `null` if [ctor]
+  /// does not, on its own, satisfy ADR-0037 §8/§10's constructor-level eligibility.
+  RawValue? _constructibleConstructorEntry(
+    ConstructorDeclaration ctor, {
+    required String owner,
+    required int instanceFieldCount,
+  }) {
+    if (ctor.factoryKeyword != null) return null;
+    if (ctor.constKeyword != null) return null;
+    if (ctor.redirectedConstructor != null) return null;
+    if (ctor.body is! EmptyFunctionBody) return null;
+    if (ctor.initializers.isNotEmpty) return null;
+
+    // A constructor mixing required-positional and required-named field-formals is excluded entirely
+    // (ADR-0037 §15) — narrower than Dart itself allows, kept out of the first subset deliberately.
+    bool? named;
     final List<String> order = <String>[];
     final Set<Element> targeted = <Element>{};
-    for (final FormalParameter param in unnamed.parameters.parameters) {
-      if (!param.isRequiredPositional) return null;
+    for (final FormalParameter param in ctor.parameters.parameters) {
+      final bool isNamedParam = param.isRequiredNamed;
+      if (!isNamedParam && !param.isRequiredPositional) return null;
+      named ??= isNamedParam;
+      if (named != isNamedParam) return null;
       if (param is! FieldFormalParameter) return null;
       final FormalParameterElement? paramElement = param.declaredFragment?.element;
       if (paramElement is! FieldFormalParameterElement) return null;
@@ -233,9 +255,13 @@ final class DeclarationExtractor {
       if (name == null) return null;
       order.add(out.symbols.variable(name, owner: owner));
     }
-    if (targeted.length != instanceFields.length) return null;
+    if (targeted.length != instanceFieldCount) return null;
 
-    return order.map(RawRef.new).toList();
+    return RawMap(<String, RawValue>{
+      if (ctor.name != null) 'name': RawLiteral(ctor.name!.lexeme),
+      'kind': RawLiteral(named == true ? 'named' : 'positional'),
+      'fields': RawList(order.map(RawRef.new).toList()),
+    });
   }
 
   /// A `ChangeNotifier` and its kin: state that outlives any one component.

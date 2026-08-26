@@ -1,0 +1,20 @@
+name: named_structural_construction
+description: >-
+  M9-P fixture: a bounded, constructor-specific structural project-class construction — a named
+  generative constructor with required named field-formals (`Model.named(name: ..., count: ...)`)
+  lowers to a plain JS object literal, with real source (left-to-right) argument-evaluation order
+  preserved even when it differs from both field-declaration order and the call's own written label
+  order relative to the constructor's own declaration
+  (docs/m9/m9p-constructor-completion-pack.md).
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

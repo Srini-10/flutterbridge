@@ -1,7 +1,7 @@
 // GENERATED CODE — DO NOT EDIT
 //
 // Produced by tools/schema-codegen from packages/uir/schema/*.json.
-// UIR schema version: 1.12.0
+// UIR schema version: 1.14.0
 //
 // Edit the schema and re-run `pnpm codegen`. Hand-edits to this file are lost on the next run,
 // and CI fails if this file does not match the schema (drift check).
@@ -11,10 +11,10 @@
 import { createHash } from 'node:crypto';
 
 /** The UIR schema version this module was generated from. */
-export const UIR_VERSION = '1.12.0' as const;
+export const UIR_VERSION = '1.14.0' as const;
 
 /** A hash of the schema sources this module was generated from. */
-export const UIR_SCHEMA_HASH = 'b75410d5317e5f61' as const;
+export const UIR_SCHEMA_HASH = 'ae1b2dd656111505' as const;
 
 /** Node kind -> the fields of that node which hold `NodeId` references. */
 export const UIR_REFERENCE_FIELDS: Readonly<Record<string, readonly string[]>> = {
@@ -26,7 +26,7 @@ export const UIR_REFERENCE_FIELDS: Readonly<Record<string, readonly string[]>> =
   'logic.Break': ['id'],
   'logic.Call': ['id'],
   'logic.Cast': ['id'],
-  'logic.ClassDecl': ['constructibleFieldOrder', 'id'],
+  'logic.ClassDecl': ['id'],
   'ui.Component': ['id', 'localSignals'],
   'logic.Conditional': ['id'],
   'bind.Const': ['id'],
@@ -758,6 +758,16 @@ export interface CatchClause {
   readonly stackTraceName?: string;
 }
 
+/// One of a class's own constructors, proven safely equivalent to a plain object literal's own construction (ADR-0036/ADR-0037).
+export interface ConstructibleConstructor {
+  /// The `logic.FieldDecl` each of this constructor's own required field-formal parameters initializes. For `kind: "positional"`, index-for-index with a call's own positional `args`. For `kind: "named"`, one entry per required named field-formal, in declaration order — order here carries no calling significance, only determinism; a generator resolves each field's own value from a call's own `namedArgs`, keyed by the field's own name.
+  readonly fields: readonly NodeId[];
+  /// Whether this constructor's own field-formal parameters are all required-positional (`fields` in parameter/call-argument order) or all required-named (`fields` in parameter declaration order — a generator matches each one to a call's own `namedArgs` by the field's own name, which Dart's own grammar guarantees equals the field-formal parameter's declared external label). A constructor mixing required-positional and required-named field-formals is excluded entirely (ADR-0037) — narrower than Dart itself allows, kept out of the first subset deliberately.
+  readonly kind: string;
+  /// The constructor's own name (e.g. `named`, for `Model.named(...)`). Absent for the unnamed constructor.
+  readonly name?: string;
+}
+
 /// The layout information a ui-realm generator needs, computed by the `layout-boundedness` analysis.
 ///
 /// Additive: it is an optional field on `UiElement` and changes no existing node semantics.
@@ -1038,8 +1048,8 @@ export interface Cast {
 export interface ClassDecl {
   /// The override key, when the node is addressable by a human.
   readonly anchor?: Anchor;
-  /// The `logic.FieldDecl` each of this class's own unnamed constructor's required-positional field-formal parameters initializes, index-for-index (ADR-0036). Present only when this class is safely equivalent to a plain, immutable record: every instance field is public/final/non-static/non-late, and the class has exactly one applicable unnamed constructor (the implicit default when there are no explicit constructors and no instance fields, or the sole explicit unnamed one otherwise) that is non-const, non-factory, non-redirecting, has an empty body and an empty initializer list, and whose field-formal parameters cover every instance field exactly once. Derived exclusively from `FieldFormalParameterElement.field` — never from parameter-name or field-name text equality. Absent for every other class shape, including one with an otherwise-eligible field set but a non-trivial, named, factory, const, or redirecting constructor — a project-class construction reaching `logic.New` for such a class remains an ordinary, unmodelled construction, refused exactly as it already was. Declaration provenance only — never a claim that any constructor is invoked at runtime; a generator using this array to lower a construction emits a plain object literal, never a call to the constructor these ids describe.
-  readonly constructibleFieldOrder?: readonly NodeId[];
+  /// One entry per this class's own constructor that is safely equivalent to a plain, immutable record's own construction (ADR-0036, generalized by ADR-0037 from a single class-global mapping to a constructor-keyed list): non-const, non-factory, non-redirecting, an empty body and an empty initializer list, and field-formal parameters — uniformly required-positional or uniformly required-named, never mixed — that cover every one of the class's own instance fields exactly once. The whole-class prerequisite is unchanged from ADR-0036: every instance field public/final/non-static/non-late, and the class itself public, non-generic, with no superclass/`implements`/`with`. A constructor failing its own eligibility (a body, a factory keyword, an incomplete field-formal set, a mix of positional and named field-formals, and so on) is simply absent from this array — it neither disqualifies a sibling constructor nor the class's own other, eligible constructors (ADR-0037 §9). Present as an empty array when the class satisfies the whole-class prerequisite but has no individually eligible constructor; present as a single implicit-unnamed-positional entry with an empty `fields` array for a fieldless class with no explicit constructor; absent entirely when the whole-class prerequisite itself fails. Constructor identity is `(this ClassDecl, this entry's own name)` — already unique, since Dart forbids two constructors sharing one name on one class, and two different classes never share a `ClassDecl` id — so no separate constructor-identity node or symbol scheme was introduced. Derived exclusively from `FieldFormalParameterElement.field` — never from parameter-name or field-name text equality. Declaration provenance only — never a claim that any constructor is invoked at runtime; a generator resolving a construction against an entry here emits a plain object literal, never a call to the constructor this entry describes.
+  readonly constructibleConstructors?: readonly ConstructibleConstructor[];
   /// Plugin extension data, namespaced `x-<plugin>`. Core passes round-trip it untouched (Spec §2.6).
   readonly ext?: Readonly<Record<string, unknown>>;
   /// Fields, in declaration order.
@@ -1526,6 +1536,8 @@ export interface New {
   readonly isConst?: boolean;
   /// Discriminant.
   readonly kind: 'logic.New';
+  /// The labels of `namedArgs`, in this call's own real source (left-to-right) argument order (ADR-0037) — never sorted, never reordered to a constructor's own declaration order. Present only alongside `namedArgs`. Exists because `namedArgs` itself is an ordinary map, canonicalized to sorted key order by the builder (`RawMap`'s own documented contract) like every other named-argument-carrying node in the schema — a property that does not matter for a `namedArgs` consumer that only reads *values*, but does matter for a bounded structural construction (ADR-0036) lowering to an object literal, where Dart's own left-to-right argument evaluation order must survive into the emitted property order even when it differs from the constructed class's own field-declaration order. Scoped to `logic.New` alone — no other `namedArgs`-carrying node kind gained this field, since none needed it for this milestone.
+  readonly namedArgOrder?: readonly string[];
   /// Named arguments.
   readonly namedArgs?: Readonly<Record<string, Expr>>;
   /// This construction's own widget content, embedded (ADR-0030).
@@ -2330,6 +2342,31 @@ export function copyWithCatchClause(node: CatchClause, patch: Partial<CatchClaus
   return { ...node, ...patch };
 }
 
+/** Parses a {@link ConstructibleConstructor}, validating as it goes. Throws {@link UirParseError} on bad input. */
+export function parseConstructibleConstructor(value: unknown, path = 'ConstructibleConstructor'): ConstructibleConstructor {
+  const o = asObject(value, path);
+  return {
+    fields: asList(req(o, 'fields', path), `${path}.fields`, (v, p) => parseNodeId(v, p)),
+    kind: asString(req(o, 'kind', path), `${path}.kind`),
+    ...(own(o, 'name') === undefined || own(o, 'name') === null ? {} : { name: asString(own(o, 'name'), `${path}.name`) }),
+  };
+}
+
+/** Serializes a {@link ConstructibleConstructor} to canonical JSON. */
+export function serializeConstructibleConstructor(node: ConstructibleConstructor): Record<string, unknown> {
+  return canonicalJson(node) as Record<string, unknown>;
+}
+
+/** Structural equality. List order is significant: UIR children are ordered (Spec §2.3). */
+export function equalsConstructibleConstructor(a: ConstructibleConstructor, b: ConstructibleConstructor): boolean {
+  return deepEquals(canonicalJson(a), canonicalJson(b));
+}
+
+/** Returns a copy of [node] with [patch] applied. The original is never mutated. */
+export function copyWithConstructibleConstructor(node: ConstructibleConstructor, patch: Partial<ConstructibleConstructor>): ConstructibleConstructor {
+  return { ...node, ...patch };
+}
+
 /** Parses a {@link LayoutIntent}, validating as it goes. Throws {@link UirParseError} on bad input. */
 export function parseLayoutIntent(value: unknown, path = 'LayoutIntent'): LayoutIntent {
   const o = asObject(value, path);
@@ -2832,7 +2869,7 @@ export function parseClassDecl(value: unknown, path = 'ClassDecl'): ClassDecl {
 
   return {
     ...(own(o, 'anchor') === undefined || own(o, 'anchor') === null ? {} : { anchor: parseAnchor(own(o, 'anchor'), `${path}.anchor`) }),
-    ...(own(o, 'constructibleFieldOrder') === undefined || own(o, 'constructibleFieldOrder') === null ? {} : { constructibleFieldOrder: asList(own(o, 'constructibleFieldOrder'), `${path}.constructibleFieldOrder`, (v, p) => parseNodeId(v, p)) }),
+    ...(own(o, 'constructibleConstructors') === undefined || own(o, 'constructibleConstructors') === null ? {} : { constructibleConstructors: asList(own(o, 'constructibleConstructors'), `${path}.constructibleConstructors`, (v, p) => parseConstructibleConstructor(v, p)) }),
     ...(own(o, 'ext') === undefined || own(o, 'ext') === null ? {} : { ext: asMap(own(o, 'ext'), `${path}.ext`, (v) => v) }),
     ...(own(o, 'fields') === undefined || own(o, 'fields') === null ? {} : { fields: asList(own(o, 'fields'), `${path}.fields`, (v, p) => parseFieldDecl(v, p)) }),
     id: parseNodeId(req(o, 'id', path), `${path}.id`),
@@ -3573,6 +3610,7 @@ export function parseNew(value: unknown, path = 'New'): New {
     id: parseNodeId(req(o, 'id', path), `${path}.id`),
     ...(own(o, 'isConst') === undefined || own(o, 'isConst') === null ? {} : { isConst: asBool(own(o, 'isConst'), `${path}.isConst`) }),
     kind: 'logic.New',
+    ...(own(o, 'namedArgOrder') === undefined || own(o, 'namedArgOrder') === null ? {} : { namedArgOrder: asList(own(o, 'namedArgOrder'), `${path}.namedArgOrder`, (v, p) => asString(v, p)) }),
     ...(own(o, 'namedArgs') === undefined || own(o, 'namedArgs') === null ? {} : { namedArgs: asMap(own(o, 'namedArgs'), `${path}.namedArgs`, (v, p) => parseExpr(v, p)) }),
     ...(own(o, 'presentedContent') === undefined || own(o, 'presentedContent') === null ? {} : { presentedContent: parseUiNode(own(o, 'presentedContent'), `${path}.presentedContent`) }),
     span: parseSourceSpan(req(o, 'span', path), `${path}.span`),

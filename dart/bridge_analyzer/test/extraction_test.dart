@@ -5334,7 +5334,20 @@ class W extends StatelessWidget {
     Map<String, dynamic> field(Map<String, dynamic> cls, String name) => (cls['fields'] as List<dynamic>)
         .cast<Map<String, dynamic>>()
         .singleWhere((Map<String, dynamic> f) => f['name'] == name);
-    List<dynamic>? fieldOrder(Map<String, dynamic> cls) => cls['constructibleFieldOrder'] as List<dynamic>?;
+    List<dynamic>? constructors(Map<String, dynamic> cls) => cls['constructibleConstructors'] as List<dynamic>?;
+    Map<String, dynamic>? constructorEntry(Map<String, dynamic> cls, {String? name}) {
+      final List<dynamic>? all = constructors(cls);
+      if (all == null) return null;
+      for (final Map<String, dynamic> entry in all.cast<Map<String, dynamic>>()) {
+        if (entry['name'] == name) return entry;
+      }
+      return null;
+    }
+
+    // Back-compat shape for every pre-existing M9-O test below: the sole unnamed constructor's own field
+    // order, or `null` when it is absent — identical in meaning to M9-O's own class-global
+    // `constructibleFieldOrder`, now resolved as one entry of the ADR-0037 constructor-keyed array.
+    List<dynamic>? fieldOrder(Map<String, dynamic> cls) => constructorEntry(cls)?['fields'] as List<dynamic>?;
 
     test('an implicit default constructor on an empty class is trivially constructible', () async {
       final Extracted app = await extract('''
@@ -5700,12 +5713,12 @@ class W extends StatelessWidget {
       expect(fieldOrder(classDecl(app, 'Model')), isNull);
     });
 
-    test('a named field-formal parameter disqualifies the class from construction', () async {
+    test('an optional (non-required) named field-formal parameter disqualifies the class from construction', () async {
       final Extracted app = await extract('''
 import 'package:flutter/material.dart';
 class Model {
   final int count;
-  Model({required this.count});
+  Model({this.count = 0});
 }
 class W extends StatelessWidget {
   const W({super.key});
@@ -5808,6 +5821,448 @@ class W extends StatelessWidget {
       final Extracted second = await extract(source);
       expect(fieldOrder(classDecl(first, 'Model')), fieldOrder(classDecl(second, 'Model')));
       expect(fieldOrder(classDecl(first, 'Model')), isNotEmpty);
+    });
+  });
+
+  group('constructor-specific structural construction (ADR-0037, M9-P)', () {
+    Map<String, dynamic> classDecl(Extracted app, String name) =>
+        app.ofKind('logic.ClassDecl').singleWhere((Map<String, dynamic> d) => d['name'] == name);
+    Map<String, dynamic> field(Map<String, dynamic> cls, String name) => (cls['fields'] as List<dynamic>)
+        .cast<Map<String, dynamic>>()
+        .singleWhere((Map<String, dynamic> f) => f['name'] == name);
+    List<dynamic>? constructors(Map<String, dynamic> cls) => cls['constructibleConstructors'] as List<dynamic>?;
+    Map<String, dynamic>? entryNamed(Map<String, dynamic> cls, String? name) {
+      final List<dynamic>? all = constructors(cls);
+      if (all == null) return null;
+      for (final Map<String, dynamic> entry in all.cast<Map<String, dynamic>>()) {
+        if (entry['name'] == name) return entry;
+      }
+      return null;
+    }
+
+    test('P2 — a single named generative constructor with positional field-formals is constructible', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {
+  final int count;
+  final String name;
+  Model.named(this.count, this.name);
+}
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('ok');
+}
+''');
+      final Map<String, dynamic> cls = classDecl(app, 'Model');
+      final String countId = field(cls, 'count')['id'] as String;
+      final String nameId = field(cls, 'name')['id'] as String;
+      final Map<String, dynamic>? entry = entryNamed(cls, 'named');
+      expect(entry, isNotNull);
+      expect(entry!['kind'], 'positional');
+      expect(entry['fields'], <String>[countId, nameId]);
+      // The unnamed slot is genuinely absent — `Model` itself has no unnamed constructor.
+      expect(entryNamed(cls, null), isNull);
+    });
+
+    test('P3 — an unnamed and a named constructor on the same class are both independently constructible', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {
+  final int count;
+  Model(this.count);
+  Model.zero() : this(0);
+}
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('ok');
+}
+''');
+      // `Model.zero()` redirects (`: this(0)`) — excluded on its own terms (ADR-0037 §22/redirect
+      // boundary), which is exactly the "safe + unsafe sibling" shape this rung exists to prove: the
+      // unnamed constructor's own eligibility is untouched by its sibling's redirect.
+      final Map<String, dynamic> cls = classDecl(app, 'Model');
+      final String countId = field(cls, 'count')['id'] as String;
+      expect(entryNamed(cls, null)?['fields'], <String>[countId]);
+      expect(entryNamed(cls, 'zero'), isNull);
+    });
+
+    test('P4 — two named constructors with different field orders are each independently correct', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {
+  final int a;
+  final int b;
+  Model.first(this.a, this.b);
+  Model.second(this.b, this.a);
+}
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('ok');
+}
+''');
+      final Map<String, dynamic> cls = classDecl(app, 'Model');
+      final String aId = field(cls, 'a')['id'] as String;
+      final String bId = field(cls, 'b')['id'] as String;
+      expect(entryNamed(cls, 'first')!['fields'], <String>[aId, bId]);
+      expect(entryNamed(cls, 'second')!['fields'], <String>[bId, aId]);
+    });
+
+    test('P5 — the same constructor name on two different classes never collides', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Alpha {
+  final int value;
+  Alpha.named(this.value);
+}
+class Beta {
+  final String value;
+  Beta.named(this.value);
+}
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('ok');
+}
+''');
+      final String alphaValueId = field(classDecl(app, 'Alpha'), 'value')['id'] as String;
+      final String betaValueId = field(classDecl(app, 'Beta'), 'value')['id'] as String;
+      expect(alphaValueId, isNot(betaValueId));
+      expect(entryNamed(classDecl(app, 'Alpha'), 'named')!['fields'], <String>[alphaValueId]);
+      expect(entryNamed(classDecl(app, 'Beta'), 'named')!['fields'], <String>[betaValueId]);
+    });
+
+    test('P9 — a single required named field-formal is constructible', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {
+  final int count;
+  Model({required this.count});
+}
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('ok');
+}
+''');
+      final Map<String, dynamic> cls = classDecl(app, 'Model');
+      final String countId = field(cls, 'count')['id'] as String;
+      final Map<String, dynamic>? entry = entryNamed(cls, null);
+      expect(entry, isNotNull);
+      expect(entry!['kind'], 'named');
+      expect(entry['fields'], <String>[countId]);
+    });
+
+    test('P10 — two required named field-formals are both constructible, in declaration order', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {
+  final int count;
+  final String name;
+  Model({required this.count, required this.name});
+}
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('ok');
+}
+''');
+      final Map<String, dynamic> cls = classDecl(app, 'Model');
+      final String countId = field(cls, 'count')['id'] as String;
+      final String nameId = field(cls, 'name')['id'] as String;
+      final Map<String, dynamic>? entry = entryNamed(cls, null);
+      expect(entry!['kind'], 'named');
+      expect(entry['fields'], <String>[countId, nameId]);
+    });
+
+    test('a named constructor with required named field-formals is constructible', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {
+  final int count;
+  final String name;
+  Model.named({required this.name, required this.count});
+}
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('ok');
+}
+''');
+      final Map<String, dynamic> cls = classDecl(app, 'Model');
+      final String countId = field(cls, 'count')['id'] as String;
+      final String nameId = field(cls, 'name')['id'] as String;
+      final Map<String, dynamic>? entry = entryNamed(cls, 'named');
+      expect(entry!['kind'], 'named');
+      expect(entry['fields'], <String>[nameId, countId]);
+    });
+
+    test('a constructor mixing required-positional and required-named field-formals is excluded entirely', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {
+  final int count;
+  final String name;
+  Model(this.count, {required this.name});
+}
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('ok');
+}
+''');
+      expect(entryNamed(classDecl(app, 'Model'), null), isNull);
+    });
+
+    test('P14 — a safe unnamed constructor and an unsafe named constructor (side-effecting body) coexist correctly', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+void sideEffect() {}
+class Model {
+  final int count;
+  Model(this.count);
+  Model.bad(this.count) {
+    sideEffect();
+  }
+}
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('ok');
+}
+''');
+      final Map<String, dynamic> cls = classDecl(app, 'Model');
+      final String countId = field(cls, 'count')['id'] as String;
+      expect(entryNamed(cls, null)?['fields'], <String>[countId]);
+      expect(entryNamed(cls, 'bad'), isNull);
+    });
+
+    test('P19 — a factory named constructor is excluded, its safe unnamed sibling unaffected', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {
+  final int count;
+  Model(this.count);
+  Model._raw(this.count);
+  factory Model.cached(int count) => Model._raw(count);
+}
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('ok');
+}
+''');
+      final Map<String, dynamic> cls = classDecl(app, 'Model');
+      final String countId = field(cls, 'count')['id'] as String;
+      expect(entryNamed(cls, null)?['fields'], <String>[countId]);
+      expect(entryNamed(cls, 'cached'), isNull);
+      // `Model._raw` is private — never itself a constructible entry (ADR-0037 does not export private
+      // constructor internals), though this test's own focus is the factory exclusion above.
+    });
+
+    test('P20 — a redirecting named constructor is excluded', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {
+  final int count;
+  Model(this.count);
+  Model.zero() : this(0);
+}
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('ok');
+}
+''');
+      expect(entryNamed(classDecl(app, 'Model'), 'zero'), isNull);
+    });
+
+    test('a zero-parameter redirecting FACTORY constructor on a fieldless class is excluded — isolates the factory/redirect checks from the body/field-formal checks', () async {
+      // `factory Model() = Model.raw;` has no `{}`/`=>` body of its own — the AST represents it with an
+      // `EmptyFunctionBody`, exactly like a genuinely trivial constructor — and, on a fieldless class,
+      // zero parameters trivially satisfies the field-formal bijection too. Only the `factoryKeyword`/
+      // `redirectedConstructor` checks themselves stand between this shape and being wrongly accepted —
+      // every other real-world factory/redirect example in this file's own P19/P20 is redundantly
+      // protected by its own non-empty body or incomplete field coverage, which this one deliberately
+      // is not.
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {
+  factory Model() = Model.raw;
+  Model.raw();
+}
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('ok');
+}
+''');
+      final Map<String, dynamic> cls = classDecl(app, 'Model');
+      expect(entryNamed(cls, null), isNull);
+      expect(entryNamed(cls, 'raw'), isNotNull);
+    });
+
+    test('P21 — a const named constructor is excluded', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {
+  final int count;
+  const Model.named(this.count);
+}
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('ok');
+}
+''');
+      expect(entryNamed(classDecl(app, 'Model'), 'named'), isNull);
+    });
+
+    test('P22 — a generic class remains excluded regardless of a named constructor', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model<T> {
+  final T value;
+  Model.named(this.value);
+}
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('ok');
+}
+''');
+      expect(constructors(classDecl(app, 'Model')), isNull);
+    });
+
+    test('P23 — an inherited class remains excluded regardless of a named constructor', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Base {
+  final int value;
+  Base(this.value);
+}
+class Model extends Base {
+  Model.named(super.value);
+}
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('ok');
+}
+''');
+      expect(constructors(classDecl(app, 'Model')), isNull);
+    });
+
+    test('P24 — a private class remains excluded regardless of a named constructor', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class _Model {
+  final int count;
+  _Model.named(this.count);
+}
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('ok');
+}
+''');
+      expect(constructors(classDecl(app, '_Model')), isNull);
+    });
+
+    test('P28/P29 — an explicit getter/method coexists with a named constructor without disqualifying it', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {
+  final int count;
+  Model.named(this.count);
+  int get doubled => count * 2;
+  int compute() => count + 1;
+}
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('ok');
+}
+''');
+      final Map<String, dynamic> cls = classDecl(app, 'Model');
+      final String countId = field(cls, 'count')['id'] as String;
+      expect(entryNamed(cls, 'named')?['fields'], <String>[countId]);
+    });
+
+    test('a non-empty named-constructor body disqualifies only that constructor', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+void sideEffect() {}
+class Model {
+  final int count;
+  Model.named(this.count) {
+    sideEffect();
+  }
+}
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('ok');
+}
+''');
+      expect(entryNamed(classDecl(app, 'Model'), 'named'), isNull);
+    });
+
+    test('a named constructor with a non-empty initializer list is excluded', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {
+  final int count;
+  Model.named(int value) : count = value;
+}
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('ok');
+}
+''');
+      expect(entryNamed(classDecl(app, 'Model'), 'named'), isNull);
+    });
+
+    test('the whole-class prerequisite still gates every constructor: a mutable field excludes all of them', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {
+  int count;
+  Model(this.count);
+  Model.named(this.count);
+}
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('ok');
+}
+''');
+      expect(constructors(classDecl(app, 'Model')), isNull);
+    });
+
+    test('the same source extracts to the same constructor-keyed mapping on a second, independent run (determinism)', () async {
+      const String source = '''
+import 'package:flutter/material.dart';
+class Model {
+  final int count;
+  final String name;
+  Model(this.count, this.name);
+  Model.named({required this.name, required this.count});
+}
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('ok');
+}
+''';
+      final Extracted first = await extract(source);
+      final Extracted second = await extract(source);
+      expect(constructors(classDecl(first, 'Model')), constructors(classDecl(second, 'Model')));
+      expect(entryNamed(classDecl(first, 'Model'), null), isNotNull);
+      expect(entryNamed(classDecl(first, 'Model'), 'named'), isNotNull);
     });
   });
 

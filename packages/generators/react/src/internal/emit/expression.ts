@@ -1040,44 +1040,99 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
       const constructorName = node['constructorName'];
       const kitProvided = isKitProvided(node['type'] as Node | undefined);
 
-      // Bounded structural project-class construction (ADR-0036) — checked before every other path
-      // below, and only for the unnamed, non-const constructor: a named constructor or a `const`
-      // invocation of the identical class still reaches the ordinary refusal further down, unchanged.
-      // `constructibleFieldOrder`'s own presence on the constructed class's `ClassDecl` (resolved via
-      // the class's own `TypeRef.target` — already attached, unconditionally, since ADR-0034) is the
-      // one truth this check consults; it is never re-derived from the class's own shape here, and
-      // never treated as an instruction to invoke the constructor it was derived from — the emitted
-      // value is a plain object literal, never a call.
-      if (node['isConst'] !== true && (typeof constructorName !== 'string' || constructorName === '')) {
+      // Bounded structural project-class construction (ADR-0036, generalized to a constructor-keyed
+      // mapping by ADR-0037) — checked before every other path below, and only for a non-`const`
+      // invocation: a `const` invocation of the identical constructor still reaches the ordinary refusal
+      // further down, unchanged. `constructibleConstructors`' own presence on the constructed class's
+      // `ClassDecl` (resolved via the class's own `TypeRef.target` — already attached, unconditionally,
+      // since ADR-0034) is the one truth this check consults; it is never re-derived from the class's own
+      // shape here, and never treated as an instruction to invoke the constructor it describes — the
+      // emitted value is a plain object literal, never a call.
+      if (node['isConst'] !== true) {
         const constructedClass = (node['type'] as Node | undefined)?.['target'];
         if (typeof constructedClass === 'string') {
           const classDecl = scope.node(constructedClass as NodeId) as unknown as Node | undefined;
-          const fieldOrder = classDecl?.['constructibleFieldOrder'];
-          const constructorArgs = asArray(node['args']);
+          const constructors = classDecl?.['constructibleConstructors'];
+          // Constructor identity is `(this ClassDecl, this entry's own name)` (ADR-0037 §6) — already
+          // unique, since Dart forbids two constructors sharing one name on one class. `undefined`
+          // matches the unnamed constructor, exactly like `constructorName`'s own absence at a call site.
+          const entry = Array.isArray(constructors)
+            ? (constructors as Node[]).find((c) => (typeof c['name'] === 'string' ? c['name'] : undefined) === constructorName)
+            : undefined;
           // `FieldDecl` is embedded on `ClassDecl.fields`, never its own top-level document record — the
-          // identical structural fact ADR-0034/ADR-0035 already established — so each id in `fieldOrder`
-          // is resolved by scanning that same embedded array, never via `scope.node()`.
+          // identical structural fact ADR-0034/ADR-0035 already established — so each id in the matched
+          // entry's own `fields` is resolved by scanning that same embedded array, never via `scope.node()`.
           const embeddedFields = Array.isArray(classDecl?.['fields']) ? (classDecl['fields'] as Node[]) : [];
-          if (Array.isArray(fieldOrder) && fieldOrder.length === constructorArgs.length) {
-            const properties: string[] = [];
-            let ok = true;
-            for (let i = 0; i < fieldOrder.length; i++) {
-              const fieldDecl = embeddedFields.find((f) => f['id'] === fieldOrder[i]);
-              const fieldName = typeof fieldDecl?.['name'] === 'string' ? (fieldDecl['name'] as string) : undefined;
-              if (fieldName === undefined) {
-                ok = false;
-                break;
+          const fieldIds = Array.isArray(entry?.['fields']) ? (entry['fields'] as string[]) : undefined;
+          const fieldNameOf = (id: string): string | undefined => {
+            const fieldDecl = embeddedFields.find((f) => f['id'] === id);
+            return typeof fieldDecl?.['name'] === 'string' ? (fieldDecl['name'] as string) : undefined;
+          };
+
+          if (fieldIds !== undefined && entry?.['kind'] === 'positional') {
+            const constructorArgs = asArray(node['args']);
+            if (fieldIds.length === constructorArgs.length) {
+              const properties: string[] = [];
+              let ok = true;
+              for (let i = 0; i < fieldIds.length; i++) {
+                const fieldName = fieldNameOf(fieldIds[i] as string);
+                if (fieldName === undefined) {
+                  ok = false;
+                  break;
+                }
+                // Property value expressions evaluate in the literal's own written order (ECMAScript),
+                // which is `fields`/`args`' own shared index order — the constructor's own
+                // parameter/invocation argument order, never the class's own field-declaration order
+                // (ADR-0036 §11/§12/§13/§14).
+                const value = emitExpression(constructorArgs[i] as Node, scope);
+                if (value === REFUSED) return REFUSED;
+                properties.push(`${identifierOf(fieldName)}: ${value}`);
               }
-              // Property value expressions evaluate in the literal's own written order (ECMAScript),
-              // which is `fieldOrder`/`args`' own shared index order — the constructor's own
-              // parameter/invocation argument order, never the class's own field-declaration order
-              // (ADR-0036 §11/§12/§13/§14 of the governing brief).
-              const value = emitExpression(constructorArgs[i] as Node, scope);
-              if (value === REFUSED) return REFUSED;
-              properties.push(`${identifierOf(fieldName)}: ${value}`);
+              if (ok) {
+                return properties.length === 0 ? '{}' : `{ ${properties.join(', ')} }`;
+              }
             }
-            if (ok) {
-              return properties.length === 0 ? '{}' : `{ ${properties.join(', ')} }`;
+          } else if (fieldIds !== undefined && entry?.['kind'] === 'named') {
+            // Each required named field-formal parameter's own external label is, by Dart's own grammar,
+            // exactly the field's own name (`{required this.count}` can only ever be called as
+            // `count: ...`) — already proven once, at extraction time, via `FieldFormalParameterElement
+            // .field` (ADR-0036 §7/§24). So matching a call's own `namedArgs` key against a field's own
+            // name here is the correct closure of that already-proven chain, never a fresh text-equality
+            // guess (ADR-0037 §13).
+            const namedArgs = node['namedArgs'];
+            const order = node['namedArgOrder'];
+            const fieldNames = fieldIds.map((id) => fieldNameOf(id));
+            if (
+              Array.isArray(order) &&
+              typeof namedArgs === 'object' &&
+              namedArgs !== null &&
+              order.length === fieldIds.length &&
+              fieldNames.every((name) => name !== undefined) &&
+              // Every label this call actually wrote must be exactly the field-name set this constructor
+              // requires — a mismatch (extra/missing/misspelled label) is invalid Dart, never reached
+              // here (BRG1310), but this is checked defensively rather than assumed.
+              new Set(order as string[]).size === fieldNames.length &&
+              fieldNames.every((name) => (order as string[]).includes(name as string))
+            ) {
+              const properties: string[] = [];
+              let ok = true;
+              // Property value expressions evaluate in the literal's own written order (ECMAScript),
+              // which here is `namedArgOrder`'s own order — this call's real source (left-to-right)
+              // argument evaluation order (ADR-0037 §11/§14) — never the constructor's own field
+              // declaration order, and never sorted.
+              for (const label of order as string[]) {
+                const argExpr = (namedArgs as Record<string, Node>)[label];
+                if (argExpr === undefined) {
+                  ok = false;
+                  break;
+                }
+                const value = emitExpression(argExpr, scope);
+                if (value === REFUSED) return REFUSED;
+                properties.push(`${identifierOf(label)}: ${value}`);
+              }
+              if (ok) {
+                return properties.length === 0 ? '{}' : `{ ${properties.join(', ')} }`;
+              }
             }
           }
         }

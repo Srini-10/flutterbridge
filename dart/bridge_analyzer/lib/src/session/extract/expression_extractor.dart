@@ -1441,7 +1441,12 @@ final class ExpressionExtractor {
       fields: <String, RawValue>{
         'typeName': RawLiteral(node.constructorName.type.name.lexeme),
         if (constructorName != null) 'constructorName': RawLiteral(constructorName),
-        ..._arguments(node.argumentList, scope, omit: presentedContent != null ? const {'content'} : const {}),
+        ..._arguments(
+          node.argumentList,
+          scope,
+          omit: presentedContent != null ? const {'content'} : const {},
+          includeNamedOrder: true,
+        ),
         'presentedContent': ?presentedContent,
         if (node.isConst) 'isConst': const RawLiteral(true),
         'type': out.typeRef(node.staticType, at: node),
@@ -1479,14 +1484,29 @@ final class ExpressionExtractor {
   /// [omit] excludes named-argument keys already extracted some other way (ADR-0030's `presentedContent`,
   /// for `content`) — extracting the same expression twice would give it two different anchors and one of
   /// them would collide with a sibling call's own (BRG1205).
-  Map<String, RawValue> _arguments(ArgumentList list, Scope scope, {Set<String> omit = const {}}) {
+  ///
+  /// [includeNamedOrder] additionally emits `namedArgOrder` (ADR-0037) — the named-argument labels in
+  /// this call's own real source order, captured here because it is the one place that order is still
+  /// visible: `namedArgs` itself is a `RawMap`, canonicalized to sorted key order by the builder like
+  /// every other named-argument map in the schema. Only [_construction] (`logic.New`) passes `true` —
+  /// a bounded structural construction (ADR-0036) is the one place in this milestone that needs Dart's
+  /// left-to-right argument evaluation order to survive into a generator's own emitted property order;
+  /// `logic.Call`'s own two call sites below leave it `false`; `namedArgOrder` is absent for them, unchanged.
+  Map<String, RawValue> _arguments(
+    ArgumentList list,
+    Scope scope, {
+    Set<String> omit = const {},
+    bool includeNamedOrder = false,
+  }) {
     final List<RawValue> positional = <RawValue>[];
     final Map<String, RawValue> named = <String, RawValue>{};
+    final List<String> namedOrder = <String>[];
 
     for (final Argument argument in list.arguments) {
       if (argument is NamedArgument) {
         if (omit.contains(argument.name.lexeme)) continue;
         named[argument.name.lexeme] = RawChild(extract(argument.argumentExpression, scope));
+        namedOrder.add(argument.name.lexeme);
       } else if (argument is Expression) {
         positional.add(RawChild(extract(argument, scope)));
       }
@@ -1495,6 +1515,8 @@ final class ExpressionExtractor {
     return <String, RawValue>{
       if (positional.isNotEmpty) 'args': RawList(positional),
       if (named.isNotEmpty) 'namedArgs': RawMap(named),
+      if (includeNamedOrder && namedOrder.isNotEmpty)
+        'namedArgOrder': RawList(namedOrder.map(RawLiteral.new).toList()),
     };
   }
 

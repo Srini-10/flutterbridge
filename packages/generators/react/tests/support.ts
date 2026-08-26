@@ -347,3 +347,11 @@ export function structuralClassConstructionRaw(): string {
   );
   return readFileSync(path, 'utf8');
 }
+
+/** The real `fixtures/apps/named_structural_construction` document, raw analyzer output (ADR-0037, M9-P) — not yet normalized. */
+export function namedStructuralConstructionRaw(): string {
+  const path = fileURLToPath(
+    new URL('../../../../fixtures/uir/named_structural_construction.ndjson', import.meta.url),
+  );
+  return readFileSync(path, 'utf8');
+}
