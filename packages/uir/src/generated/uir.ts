@@ -1,7 +1,7 @@
 // GENERATED CODE — DO NOT EDIT
 //
 // Produced by tools/schema-codegen from packages/uir/schema/*.json.
-// UIR schema version: 1.8.0
+// UIR schema version: 1.9.0
 //
 // Edit the schema and re-run `pnpm codegen`. Hand-edits to this file are lost on the next run,
 // and CI fails if this file does not match the schema (drift check).
@@ -11,10 +11,10 @@
 import { createHash } from 'node:crypto';
 
 /** The UIR schema version this module was generated from. */
-export const UIR_VERSION = '1.8.0' as const;
+export const UIR_VERSION = '1.9.0' as const;
 
 /** A hash of the schema sources this module was generated from. */
-export const UIR_SCHEMA_HASH = 'de242e9dcf47e6ca' as const;
+export const UIR_SCHEMA_HASH = '524768b057dd5fef' as const;
 
 /** Node kind -> the fields of that node which hold `NodeId` references. */
 export const UIR_REFERENCE_FIELDS: Readonly<Record<string, readonly string[]>> = {
@@ -1260,6 +1260,8 @@ export interface FieldDecl {
   readonly initializer?: Expr;
   /// Whether the field is final.
   readonly isFinal?: boolean;
+  /// Whether the field was declared with the `late` modifier (ADR-0035). `late` carries its own runtime initialization/error semantics a bounded, side-effect-free field-shape read must not misrepresent — this is the one field-eligibility fact `isFinal`/`isStatic` cannot express and the generator has no other schema source for, so it is recorded explicitly rather than inferred.
+  readonly isLate?: boolean;
   /// Whether the field is static.
   readonly isStatic?: boolean;
   /// Discriminant.
@@ -3191,6 +3193,7 @@ export function parseFieldDecl(value: unknown, path = 'FieldDecl'): FieldDecl {
     id: parseNodeId(req(o, 'id', path), `${path}.id`),
     ...(own(o, 'initializer') === undefined || own(o, 'initializer') === null ? {} : { initializer: parseExpr(own(o, 'initializer'), `${path}.initializer`) }),
     ...(own(o, 'isFinal') === undefined || own(o, 'isFinal') === null ? {} : { isFinal: asBool(own(o, 'isFinal'), `${path}.isFinal`) }),
+    ...(own(o, 'isLate') === undefined || own(o, 'isLate') === null ? {} : { isLate: asBool(own(o, 'isLate'), `${path}.isLate`) }),
     ...(own(o, 'isStatic') === undefined || own(o, 'isStatic') === null ? {} : { isStatic: asBool(own(o, 'isStatic'), `${path}.isStatic`) }),
     kind: 'logic.FieldDecl',
     name: asString(req(o, 'name', path), `${path}.name`),

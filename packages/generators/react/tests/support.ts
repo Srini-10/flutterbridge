@@ -333,3 +333,9 @@ export function classTypeEmissionRaw(): string {
   const path = fileURLToPath(new URL('../../../../fixtures/uir/class_type_emission.ndjson', import.meta.url));
   return readFileSync(path, 'utf8');
 }
+
+/** The real `fixtures/apps/immutable_field_reads` document, raw analyzer output (ADR-0035, M9-N) — not yet normalized. */
+export function immutableFieldReadsRaw(): string {
+  const path = fileURLToPath(new URL('../../../../fixtures/uir/immutable_field_reads.ndjson', import.meta.url));
+  return readFileSync(path, 'utf8');
+}

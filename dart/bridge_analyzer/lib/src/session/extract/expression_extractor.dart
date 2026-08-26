@@ -192,7 +192,14 @@ final class ExpressionExtractor {
           fields: <String, RawValue>{
             'receiver': RawChild(extract(node.prefix, scope)),
             'property': RawLiteral(node.identifier.name),
-            if (_storeMemberTarget(node.prefix.staticType, node.identifier.element) case final String symbol)
+            // `model.count` (ADR-0035) — a bare-identifier receiver reaches the analyzer's AST as a
+            // `PrefixedIdentifier`, never a `PropertyAccess` (that shape is reserved for a receiver
+            // expression, e.g. `this.count`/`foo().count` — see the sibling case below). `node.prefix` is
+            // never `this` here (a `ThisExpression` is never parsed as a `PrefixedIdentifier`'s own
+            // prefix), so every reach of `_externalFieldTarget` from this case is a genuine external read.
+            if (_storeMemberTarget(node.prefix.staticType, node.identifier.element) ??
+                    _externalFieldTarget(node.prefix.staticType, node.identifier.element)
+                case final String symbol)
               'target': RawRef(symbol),
             'type': out.typeRef(node.staticType, at: node),
           },
@@ -226,11 +233,15 @@ final class ExpressionExtractor {
           fields: <String, RawValue>{
             'receiver': RawChild(extract(target, scope)),
             'property': RawLiteral(node.propertyName.name),
-            // `this.count` (ADR-0033) — checked only for a receiver that is *literally* `this`, never for
-            // an arbitrary one: `model.count` from outside the class must keep reaching M9-J's own
-            // refusal unchanged, and that refusal is gated on `target` being absent.
+            // `this.count` (ADR-0033) resolves through `_instanceMemberTarget` for a receiver that is
+            // *literally* `this`; an external receiver (`model.count`, ADR-0035) resolves through the
+            // strictly narrower `_externalFieldTarget` gate instead — never both, and never the broader
+            // `_instanceMemberTarget` unguarded, which would reopen exactly the hazard M9-J's own refusal
+            // exists to prevent for every member shape ADR-0035 does not explicitly prove safe.
             if (_storeMemberTarget(target.staticType, node.propertyName.element) ??
-                    (target is ThisExpression ? _instanceMemberTarget(node.propertyName.element) : null)
+                    (target is ThisExpression
+                        ? _instanceMemberTarget(node.propertyName.element)
+                        : _externalFieldTarget(target.staticType, node.propertyName.element))
                 case final String symbol)
               'target': RawRef(symbol),
             'type': out.typeRef(node.staticType, at: node),
@@ -1343,6 +1354,61 @@ final class ExpressionExtractor {
             );
     }
     return null;
+  }
+
+  /// The `logic.FieldDecl` [element] resolves to, for an EXTERNAL field read (`model.count` — the
+  /// receiver is some other expression, never `this`) — ADR-0035.
+  ///
+  /// A strictly narrower, independently-checked eligibility gate in front of [_instanceMemberTarget]'s
+  /// own, already-proven field-backed resolution — never a second, competing symbol-computation path.
+  /// [_instanceMemberTarget] alone is not safe to call for an external receiver as-is: it exists to
+  /// record provenance for a read *inside* the declaring class's own body, where the receiver's exact
+  /// runtime shape is not yet this compiler's concern. An external read is different — a target here
+  /// makes M9-J's own refusal (`node['target'] === undefined`, the *first*, independent conjunct of its
+  /// three-way check) stop firing outright, bypassing `isUnmodelledMemberReceiver`'s own class-level
+  /// opinion entirely. So every exclusion that class-level check would otherwise have caught — an
+  /// inherited class, a generic instantiation, a private class — must be re-checked here, explicitly,
+  /// rather than assumed from `_classTypeTarget`'s own (deliberately more permissive, ADR-0034 §9/§11)
+  /// behavior for `TypeRef.target`.
+  ///
+  /// Eligible only when ALL of: the receiver's static type is a non-generic `InterfaceType` whose
+  /// element is a `ClassElement`; that class is public and has no explicit superclass (`Object` only);
+  /// it is not a component/`State`/store base; the resolved member is a field-backed getter
+  /// (`GetterElement.isOriginVariable`, never an explicit `isOriginDeclaration` getter); and the
+  /// underlying field itself is `final`, not `static`, not `late`, and not private — every one of these
+  /// checked via the real analyzer semantic API (`VariableElement.isFinal`/`.isStatic`/`.isLate`,
+  /// `Element.isPrivate`), never by name text or AST modifier syntax.
+  String? _externalFieldTarget(DartType? receiverType, Element? element) {
+    if (receiverType is! InterfaceType || receiverType.typeArguments.isNotEmpty) {
+      return null;
+    }
+    final InterfaceElement ownerClass = receiverType.element;
+    if (ownerClass is! ClassElement || ownerClass.isPrivate) {
+      return null;
+    }
+    final InterfaceType? supertype = ownerClass.supertype;
+    if (supertype != null && supertype.element.name != 'Object') {
+      return null;
+    }
+    if (registry.isComponentBase(receiverType) ||
+        registry.isStateBase(receiverType) ||
+        registry.isStoreBase(receiverType)) {
+      return null;
+    }
+    if (element is! GetterElement || !element.isOriginVariable) {
+      return null;
+    }
+    final PropertyInducingElement field = element.variable;
+    if (!field.isFinal || field.isStatic || field.isLate || field.isPrivate) {
+      return null;
+    }
+    // Owner consistency (ADR-0035 §7/§8) — never property-name equality. Dart's own resolution already
+    // makes this structurally true for a direct, non-inherited access; asserted directly rather than
+    // trusted implicitly.
+    if (field.enclosingElement != ownerClass) {
+      return null;
+    }
+    return _instanceMemberTarget(element);
   }
 
   RawNode _construction(InstanceCreationExpression node, Scope scope) {

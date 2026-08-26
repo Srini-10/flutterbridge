@@ -205,6 +205,10 @@ final class DeclarationExtractor {
                 if (member.fields.isFinal || member.fields.isConst)
                   'isFinal': const RawLiteral(true),
                 if (member.isStatic) 'isStatic': const RawLiteral(true),
+                // ADR-0035: the one field-eligibility fact `isFinal`/`isStatic` cannot express — a
+                // `late final` field carries its own runtime initialization/error semantics a bounded,
+                // side-effect-free field-shape read must not misrepresent.
+                if (member.fields.isLate) 'isLate': const RawLiteral(true),
               },
             ),
           ),

@@ -1643,6 +1643,10 @@
             "isStatic": {
               "type": "boolean",
               "description": "Whether the field is static."
+            },
+            "isLate": {
+              "type": "boolean",
+              "description": "Whether the field was declared with the `late` modifier (ADR-0035). `late` carries its own runtime initialization/error semantics a bounded, side-effect-free field-shape read must not misrepresent — this is the one field-eligibility fact `isFinal`/`isStatic` cannot express and the generator has no other schema source for, so it is recorded explicitly rather than inferred."
             }
           }
         }

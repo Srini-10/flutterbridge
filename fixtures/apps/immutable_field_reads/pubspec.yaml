@@ -1,0 +1,18 @@
+name: immutable_field_reads
+description: >-
+  M9-N fixture: a bounded, immutable instance-field read on a project-defined class receiver — a real
+  `readonly` field in the generated type shape, a real receiver-based property read (`props.model.count`),
+  and a real `tsc --strict` proof — while every unsupported member shape on the same class (an explicit
+  getter, a method) remains refused (docs/m9/m9n-bounded-immutable-field-shape-and-receiver-reads.md).
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

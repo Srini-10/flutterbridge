@@ -10,7 +10,7 @@ import type { AnyUirNode, NodeId } from '@bridge/uir';
 import { GeneratorDiagnosticCode } from '../diagnostics/codes.js';
 import { localBindingsIn, type EmitScope } from './expression.js';
 import { fileNameOf, identifierOf, ModuleBuilder } from './module.js';
-import { useRuntime } from './runtime.js';
+import { useRuntime, useRuntimeType } from './runtime.js';
 import { emitStatements } from './statement.js';
 import { paramListOf, refuseNamedParams, typeTextOf } from './types.js';
 
@@ -270,12 +270,47 @@ export function emitFunctionModules(
     const { path, specifier } = modulePathFor(spanFile);
     const pending = pendingModuleFor(path, specifier);
     const localName = pending.builder.declare(name, id);
+    classModules.set(id, { path: pending.builder.path, module: specifier, name: localName });
+
+    // Bounded, immutable instance-field shape (ADR-0035): a field is eligible only when public
+    // (`!name.startsWith('_')` — Dart's own privacy syntax, unambiguous for a simple identifier, the
+    // identical convention already used for a private *class* name above), `isFinal`, and neither
+    // `isStatic` nor `isLate` (`late`'s own runtime initialization/error semantics a side-effect-free
+    // shape read must not misrepresent). The identical eligibility facts the Dart extractor's own
+    // `_externalFieldTarget` (ADR-0035 §3) checks before ever attaching a `PropertyAccess.target` — the
+    // one truth §27 of the governing brief requires, not a second, independently-drifting guess: a field
+    // appears here if and only if a read of it can also resolve to a target there.
+    const classOf = (target: NodeId): string | undefined => {
+      const info = classModules.get(target);
+      if (info === undefined) return undefined;
+      return info.path === pending.builder.path ? info.name : pending.builder.use(info.module, info.name, { typeOnly: true });
+    };
+    const fields = Array.isArray(classDecl['fields']) ? (classDecl['fields'] as Node[]) : [];
+    const fieldLines: string[] = [];
+    for (const fieldDecl of fields) {
+      const fieldName = typeof fieldDecl['name'] === 'string' ? fieldDecl['name'] : undefined;
+      if (
+        fieldName === undefined ||
+        fieldName.startsWith('_') ||
+        fieldDecl['isFinal'] !== true ||
+        fieldDecl['isStatic'] === true ||
+        fieldDecl['isLate'] === true
+      ) {
+        continue;
+      }
+      // `useRuntimeType`, not `useRuntime`: a field's own type is a pure type position — an interface
+      // body never needs a runtime value import the way a function body's own executable use of
+      // `Duration` might.
+      const fieldType = typeTextOf(fieldDecl['type'] as Node | undefined, (rt) => useRuntimeType(pending.builder, rt), classOf);
+      fieldLines.push(`  readonly ${identifierOf(fieldName)}: ${fieldType};`);
+    }
+
     pending.lines.push(
-      `/** \`${name}\`, from ${spanFile}. Type-only — FlutterBridge does not yet construct or read a member of this class (ADR-0034). */`,
-      `export interface ${localName} {}`,
+      `/** \`${name}\`, from ${spanFile}. Type-only — FlutterBridge does not yet construct this class, and reads only its bounded, immutable field shape (ADR-0035). */`,
+      fieldLines.length === 0 ? `export interface ${localName} {}` : `export interface ${localName} {`,
+      ...(fieldLines.length === 0 ? [] : [...fieldLines, '}']),
       '',
     );
-    classModules.set(id, { path: pending.builder.path, module: specifier, name: localName });
   }
 
   let remaining = new Set(reachable);

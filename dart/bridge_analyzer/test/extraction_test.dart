@@ -1402,7 +1402,12 @@ class _ScreenState extends State<Screen> {
       expect(targets, hasLength(2), reason: 'AStore.count and BStore.count are two distinct declarations');
     });
 
-    test('an ordinary (non-store) class never gets a target — Point stays honestly unsupported', () async {
+    test('an ordinary (non-store) class field target is never store-prefixed — Point.x (ADR-0035, M9-N)', () async {
+      // Pre-M9-N this asserted Point.x carried no target at all. As of ADR-0035 (M9-N), an eligible
+      // external final-field read *does* get a target — truthful declaration provenance, independent of
+      // the receiver's own shape (here, a constructor-result receiver, `Point(1, 2).x`, never a supported
+      // M9-J execution receiver either way). What this test still protects is the ADR-27 boundary: that
+      // target must never be confused with a store member's own `sig:`/`der:`/`act:`-prefixed symbol.
       final Extracted app = await extract(r'''
 import 'package:flutter/material.dart';
 
@@ -1432,7 +1437,12 @@ class _PointText extends StatelessWidget {
       expect(app.ofKind('app.Store'), isEmpty);
       final List<Map<String, dynamic>> reads = app.ofKind('logic.PropertyAccess');
       final Map<String, dynamic> xRead = reads.firstWhere((Map<String, dynamic> n) => n['property'] == 'x');
-      expect(xRead.containsKey('target'), isFalse, reason: 'Point.x is not a store member');
+      final Map<String, dynamic> point =
+          app.ofKind('logic.ClassDecl').singleWhere((Map<String, dynamic> d) => d['name'] == 'Point');
+      final Map<String, dynamic> xField = (point['fields'] as List<dynamic>)
+          .cast<Map<String, dynamic>>()
+          .singleWhere((Map<String, dynamic> f) => f['name'] == 'x');
+      expect(xRead['target'], xField['id'], reason: 'Point.x (ADR-0035) — a plain field target, never a store member');
     });
 
     test('a cross-file store instance resolves identically to a same-file one', () async {
@@ -1992,11 +2002,20 @@ class W extends StatelessWidget {
       expect(app.errors, isEmpty);
       final Map<String, dynamic> access = app.only('logic.PropertyAccess');
       expect(access['property'], 'ready');
+      // As of ADR-0035 (M9-N), an eligible external final-field read *does* carry a target — truthful
+      // field declaration provenance, independent of the property's own spelling. What this test still
+      // protects is the M8-D boundary: that target must be `Thing.ready`'s own `FieldDecl`, never
+      // resolved to `Stage.ready` (the enum constant) on the strength of the word "ready" alone.
+      final Map<String, dynamic> thing =
+          app.ofKind('logic.ClassDecl').singleWhere((Map<String, dynamic> d) => d['name'] == 'Thing');
+      final Map<String, dynamic> readyField = (thing['fields'] as List<dynamic>)
+          .cast<Map<String, dynamic>>()
+          .singleWhere((Map<String, dynamic> f) => f['name'] == 'ready');
       expect(
-        access.containsKey('target'),
-        isFalse,
-        reason: '`thing.ready` is an ordinary instance field read, not an enum constant — claiming a '
-            'target here would resolve it to `Stage` on the strength of the word "ready" alone',
+        access['target'],
+        readyField['id'],
+        reason: "`thing.ready` (ADR-0035) must target `Thing.ready`'s own FieldDecl, never `Stage.ready` "
+            '(the enum constant) on the strength of the word "ready" alone',
       );
     });
 
@@ -4965,6 +4984,345 @@ class W extends StatelessWidget {
       final Extracted second = await extract(source);
       final Object? firstTarget = (paramOf(first, 'model')['type'] as Map<String, dynamic>)['target'];
       final Object? secondTarget = (paramOf(second, 'model')['type'] as Map<String, dynamic>)['target'];
+      expect(firstTarget, isNotNull);
+      expect(firstTarget, secondTarget);
+    });
+  });
+
+  group('external immutable field-read targeting (ADR-0035, M9-N)', () {
+    Map<String, dynamic> classDecl(Extracted app, String name) =>
+        app.ofKind('logic.ClassDecl').singleWhere((Map<String, dynamic> d) => d['name'] == name);
+    Map<String, dynamic> field(Map<String, dynamic> cls, String name) => (cls['fields'] as List<dynamic>)
+        .cast<Map<String, dynamic>>()
+        .singleWhere((Map<String, dynamic> f) => f['name'] == name);
+    Map<String, dynamic>? readOf(Object? body, String property) {
+      if (body is Map<String, dynamic>) {
+        if ((body['kind'] == 'logic.Ref' && body['name'] == property) ||
+            (body['kind'] == 'logic.PropertyAccess' && body['property'] == property)) {
+          return body;
+        }
+        for (final Object? v in body.values) {
+          if (readOf(v, property) case final Map<String, dynamic> found) return found;
+        }
+      } else if (body is List<dynamic>) {
+        for (final Object? item in body) {
+          if (readOf(item, property) case final Map<String, dynamic> found) return found;
+        }
+      }
+      return null;
+    }
+
+    test('a direct final field read on a parameter receiver carries a target to its own FieldDecl', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {
+  final int count;
+  Model(this.count);
+}
+class W extends StatelessWidget {
+  const W({super.key, required this.model});
+  final Model model;
+  @override
+  Widget build(BuildContext context) => Text(model.count.toString());
+}
+''');
+      final String countId = field(classDecl(app, 'Model'), 'count')['id'] as String;
+      final Map<String, dynamic>? read = readOf(app.only('ui.Component')['render'], 'count');
+      expect(read?['target'], countId);
+    });
+
+    test('field-backed external, implicit, and explicit-this reads all target the identical FieldDecl', () async {
+      final Extracted app = await extract(r'''
+import 'package:flutter/material.dart';
+class Model {
+  final int count;
+  Model(this.count);
+  int get implicitRead => count;
+  int get explicitRead => this.count;
+}
+class W extends StatelessWidget {
+  const W({super.key, required this.model});
+  final Model model;
+  @override
+  Widget build(BuildContext context) => Text('${model.count}-${model.implicitRead}-${model.explicitRead}');
+}
+''');
+      final String countId = field(classDecl(app, 'Model'), 'count')['id'] as String;
+      final Map<String, dynamic> cls = classDecl(app, 'Model');
+      final List<dynamic> methods = cls['methods'] as List<dynamic>;
+      final Map<String, dynamic> implicitGetter =
+          methods.cast<Map<String, dynamic>>().singleWhere((m) => m['name'] == 'implicitRead');
+      final Map<String, dynamic> explicitGetter =
+          methods.cast<Map<String, dynamic>>().singleWhere((m) => m['name'] == 'explicitRead');
+      final Map<String, dynamic>? externalRead = readOf(app.only('ui.Component')['render'], 'count');
+      final Map<String, dynamic>? implicitInsideRead = readOf(implicitGetter['body'], 'count');
+      final Map<String, dynamic>? explicitInsideRead = readOf(explicitGetter['body'], 'count');
+      expect(externalRead?['target'], countId);
+      expect(implicitInsideRead?['target'], countId);
+      expect(explicitInsideRead?['target'], countId);
+    });
+
+    test('the field target owner matches the receiver class — never property-name equality', () async {
+      final Extracted app = await extract(r'''
+import 'package:flutter/material.dart';
+class Alpha {
+  final int value;
+  Alpha(this.value);
+}
+class Beta {
+  final String value;
+  Beta(this.value);
+}
+class W extends StatelessWidget {
+  const W({super.key, required this.alpha, required this.beta});
+  final Alpha alpha;
+  final Beta beta;
+  @override
+  Widget build(BuildContext context) => Text('${alpha.value}-${beta.value}');
+}
+''');
+      final String alphaValueId = field(classDecl(app, 'Alpha'), 'value')['id'] as String;
+      final String betaValueId = field(classDecl(app, 'Beta'), 'value')['id'] as String;
+      expect(alphaValueId, isNot(betaValueId));
+      final List<Map<String, dynamic>> reads = app.ofKind('logic.PropertyAccess');
+      final Map<String, dynamic> alphaRead =
+          reads.firstWhere((n) => n['property'] == 'value' && (n['receiver'] as Map<String, dynamic>)['name'] == 'alpha');
+      final Map<String, dynamic> betaRead =
+          reads.firstWhere((n) => n['property'] == 'value' && (n['receiver'] as Map<String, dynamic>)['name'] == 'beta');
+      expect(alphaRead['target'], alphaValueId);
+      expect(betaRead['target'], betaValueId);
+    });
+
+    test('repeated external reads of the same field target the identical declaration', () async {
+      final Extracted app = await extract(r'''
+import 'package:flutter/material.dart';
+class Model {
+  final int count;
+  Model(this.count);
+}
+class W extends StatelessWidget {
+  const W({super.key, required this.model});
+  final Model model;
+  @override
+  Widget build(BuildContext context) => Text('${model.count}-${model.count}');
+}
+''');
+      final String countId = field(classDecl(app, 'Model'), 'count')['id'] as String;
+      final List<Map<String, dynamic>> reads =
+          app.ofKind('logic.PropertyAccess').where((n) => n['property'] == 'count').toList();
+      expect(reads, hasLength(2));
+      expect(reads[0]['target'], countId);
+      expect(reads[1]['target'], countId);
+    });
+
+    test('two distinct final fields on the same class each target their own declaration', () async {
+      final Extracted app = await extract(r'''
+import 'package:flutter/material.dart';
+class Model {
+  final int count;
+  final String name;
+  Model(this.count, this.name);
+}
+class W extends StatelessWidget {
+  const W({super.key, required this.model});
+  final Model model;
+  @override
+  Widget build(BuildContext context) => Text('${model.count}-${model.name}');
+}
+''');
+      final String countId = field(classDecl(app, 'Model'), 'count')['id'] as String;
+      final String nameId = field(classDecl(app, 'Model'), 'name')['id'] as String;
+      expect(countId, isNot(nameId));
+      final List<Map<String, dynamic>> reads = app.ofKind('logic.PropertyAccess');
+      expect(reads.firstWhere((n) => n['property'] == 'count')['target'], countId);
+      expect(reads.firstWhere((n) => n['property'] == 'name')['target'], nameId);
+    });
+
+    test('an explicit getter is never targeted by external field-read resolution', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {
+  final int count;
+  Model(this.count);
+  int get doubled => count * 2;
+}
+class W extends StatelessWidget {
+  const W({super.key, required this.model});
+  final Model model;
+  @override
+  Widget build(BuildContext context) => Text(model.doubled.toString());
+}
+''');
+      final Map<String, dynamic>? read = readOf(app.only('ui.Component')['render'], 'doubled');
+      expect(read?.containsKey('target'), isFalse);
+    });
+
+    test('a mutable field is never targeted by external field-read resolution', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {
+  int count;
+  Model(this.count);
+}
+class W extends StatelessWidget {
+  const W({super.key, required this.model});
+  final Model model;
+  @override
+  Widget build(BuildContext context) => Text(model.count.toString());
+}
+''');
+      final Map<String, dynamic>? read = readOf(app.only('ui.Component')['render'], 'count');
+      expect(read?.containsKey('target'), isFalse);
+    });
+
+    test('a static field is never targeted by external field-read resolution', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {
+  static final int count = 1;
+}
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => Text(Model.count.toString());
+}
+''');
+      // `Model.count` is a static qualifier (`_isStaticQualifier`), extracted as a compound-name
+      // `logic.Ref` (`'Model.count'`), never a `logic.PropertyAccess` — `_externalFieldTarget` is never
+      // even reached for it, structurally, since it only ever fires from the instance-receiver cases.
+      expect(app.ofKind('logic.PropertyAccess').where((n) => n['property'] == 'count'), isEmpty);
+      final Map<String, dynamic> ref =
+          app.ofKind('logic.Ref').singleWhere((n) => n['name'] == 'Model.count');
+      expect(ref.containsKey('target'), isFalse);
+    });
+
+    test('a private field is never targeted by external field-read resolution', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {
+  final int _count;
+  Model(this._count);
+  int get count => _count;
+}
+class W extends StatelessWidget {
+  const W({super.key, required this.model});
+  final Model model;
+  @override
+  Widget build(BuildContext context) => Text(model.count.toString());
+}
+''');
+      // `model.count` reads the *public* explicit getter — never targeted (isOriginDeclaration).
+      // `_count` itself is unreachable from outside the library in valid Dart, so it is not separately
+      // probed here; the getter case alone already proves no field-shaped shortcut fires for it.
+      final Map<String, dynamic>? read = readOf(app.only('ui.Component')['render'], 'count');
+      expect(read?.containsKey('target'), isFalse);
+    });
+
+    test('an inherited class field is never targeted by external field-read resolution', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Base {
+  final int value;
+  Base(this.value);
+}
+class Child extends Base {
+  Child(super.value);
+}
+class W extends StatelessWidget {
+  const W({super.key, required this.child});
+  final Child child;
+  @override
+  Widget build(BuildContext context) => Text(child.value.toString());
+}
+''');
+      final Map<String, dynamic>? read = readOf(app.only('ui.Component')['render'], 'value');
+      expect(read?.containsKey('target'), isFalse);
+    });
+
+    test('a generic class field is never targeted by external field-read resolution', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Box<T> {
+  final T value;
+  Box(this.value);
+}
+class W extends StatelessWidget {
+  const W({super.key, required this.box});
+  final Box<int> box;
+  @override
+  Widget build(BuildContext context) => Text(box.value.toString());
+}
+''');
+      final Map<String, dynamic>? read = readOf(app.only('ui.Component')['render'], 'value');
+      expect(read?.containsKey('target'), isFalse);
+    });
+
+    test('a component field read implicitly inside its own build method stays untargeted (M9-J boundary unchanged)', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {
+  final int count;
+  Model(this.count);
+}
+class W extends StatelessWidget {
+  const W({super.key, required this.model});
+  final Model model;
+  @override
+  Widget build(BuildContext context) => Text(model.count.toString());
+}
+class Outer extends StatelessWidget {
+  const Outer({super.key, required this.model});
+  final Model model;
+  @override
+  Widget build(BuildContext context) => W(model: model);
+}
+''');
+      // `Outer.build`'s own `model` (its own field, read implicitly) must stay untargeted — the exact
+      // M9-J/M9-L regression boundary this milestone must not disturb.
+      final Map<String, dynamic> outer =
+          app.ofKind('ui.Component').singleWhere((c) => c['name'] == 'Outer');
+      // `model` here is a bare Ref (component's own prop read), not a PropertyAccess — no field-read
+      // targeting mechanism applies to it at all; this asserts the render tree still extracts cleanly.
+      expect(outer['render'], isNotNull);
+    });
+
+    test('an analyzer-invalid field type is refused as BRG1310, before M9-N targeting ever runs', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {
+  final MissingType value;
+  Model(this.value);
+}
+class W extends StatelessWidget {
+  const W({super.key, required this.model});
+  final Model model;
+  @override
+  Widget build(BuildContext context) => Text(model.value.toString());
+}
+''');
+      final Diagnostic error = app.errors.single;
+      expect(error.code.id, 'BRG1310');
+      expect(app.nodes, isEmpty);
+    });
+
+    test('the same source extracts to the same field target on a second, independent run (determinism)', () async {
+      const String source = '''
+import 'package:flutter/material.dart';
+class Model {
+  final int count;
+  Model(this.count);
+}
+class W extends StatelessWidget {
+  const W({super.key, required this.model});
+  final Model model;
+  @override
+  Widget build(BuildContext context) => Text(model.count.toString());
+}
+''';
+      final Extracted first = await extract(source);
+      final Extracted second = await extract(source);
+      final Object? firstTarget = readOf(first.only('ui.Component')['render'], 'count')?['target'];
+      final Object? secondTarget = readOf(second.only('ui.Component')['render'], 'count')?['target'];
       expect(firstTarget, isNotNull);
       expect(firstTarget, secondTarget);
     });

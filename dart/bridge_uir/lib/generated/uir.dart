@@ -1,7 +1,7 @@
 // GENERATED CODE — DO NOT EDIT
 //
 // Produced by tools/schema-codegen from packages/uir/schema/*.json.
-// UIR schema version: 1.8.0
+// UIR schema version: 1.9.0
 //
 // Edit the schema and re-run `pnpm codegen`. Hand-edits to this file are lost on the next run,
 // and CI fails if this file does not match the schema (drift check).
@@ -26,12 +26,12 @@ import 'package:crypto/crypto.dart';
 import 'package:meta/meta.dart';
 
 /// The UIR schema version this library was generated from.
-const String uirVersion = '1.8.0';
+const String uirVersion = '1.9.0';
 
 /// A hash of the schema sources this library was generated from.
 ///
 /// Stamped into every emitted manifest: a UIR document always says which schema produced it.
-const String uirSchemaHash = 'de242e9dcf47e6ca';
+const String uirSchemaHash = '524768b057dd5fef';
 
 /// Node kind -> the fields of that node which hold `NodeId` references.
 ///
@@ -4080,6 +4080,7 @@ final class FieldDecl extends Decl {
     this.ext,
     this.initializer,
     this.isFinal,
+    this.isLate,
     this.isStatic,
   });
 
@@ -4096,6 +4097,7 @@ final class FieldDecl extends Decl {
       id: _asString(_req(json, 'id', path), '$path.id'),
       initializer: json['initializer'] == null ? null : Expr.fromJson(json['initializer'], '$path.initializer'),
       isFinal: json['isFinal'] == null ? null : _asBool(json['isFinal'], '$path.isFinal'),
+      isLate: json['isLate'] == null ? null : _asBool(json['isLate'], '$path.isLate'),
       isStatic: json['isStatic'] == null ? null : _asBool(json['isStatic'], '$path.isStatic'),
       name: _asString(_req(json, 'name', path), '$path.name'),
       span: SourceSpan.fromJson(_req(json, 'span', path), '$path.span'),
@@ -4117,6 +4119,9 @@ final class FieldDecl extends Decl {
 
   /// Whether the field is final.
   final bool? isFinal;
+
+  /// Whether the field was declared with the `late` modifier (ADR-0035). `late` carries its own runtime initialization/error semantics a bounded, side-effect-free field-shape read must not misrepresent — this is the one field-eligibility fact `isFinal`/`isStatic` cannot express and the generator has no other schema source for, so it is recorded explicitly rather than inferred.
+  final bool? isLate;
 
   /// Whether the field is static.
   final bool? isStatic;
@@ -4142,6 +4147,7 @@ final class FieldDecl extends Decl {
     'id': id,
     'initializer': initializer?.toJson(),
     'isFinal': isFinal,
+    'isLate': isLate,
     'isStatic': isStatic,
     'kind': 'logic.FieldDecl',
     'name': name,
@@ -4159,6 +4165,7 @@ final class FieldDecl extends Decl {
     NodeId? id,
     Expr? initializer,
     bool? isFinal,
+    bool? isLate,
     bool? isStatic,
     String? name,
     SourceSpan? span,
@@ -4170,6 +4177,7 @@ final class FieldDecl extends Decl {
       id: id ?? this.id,
       initializer: initializer ?? this.initializer,
       isFinal: isFinal ?? this.isFinal,
+      isLate: isLate ?? this.isLate,
       isStatic: isStatic ?? this.isStatic,
       name: name ?? this.name,
       span: span ?? this.span,
@@ -4189,6 +4197,7 @@ final class FieldDecl extends Decl {
         _equality.equals(other.id, id) &&
         _equality.equals(other.initializer, initializer) &&
         _equality.equals(other.isFinal, isFinal) &&
+        _equality.equals(other.isLate, isLate) &&
         _equality.equals(other.isStatic, isStatic) &&
         _equality.equals(other.name, name) &&
         _equality.equals(other.span, span) &&
@@ -4203,6 +4212,7 @@ final class FieldDecl extends Decl {
     _equality.hash(id),
     _equality.hash(initializer),
     _equality.hash(isFinal),
+    _equality.hash(isLate),
     _equality.hash(isStatic),
     _equality.hash(name),
     _equality.hash(span),
