@@ -1075,7 +1075,17 @@ final class ExpressionExtractor {
         else ...<String, RawValue>{
           'receiver': RawChild(extract(target, scope)),
           'method': RawLiteral(node.methodName.name),
-          if (_storeMemberTarget(target.staticType, node.methodName.element) case final String symbol)
+          // `_externalMethodTarget` (ADR-0039) is deliberately never reached for an implicit- or
+          // explicit-`this` receiver (`node.target`, the real syntactic receiver — never `realTarget`,
+          // which synthesizes an implicit `this` for a bare call the same way it does for a store's own
+          // action): a method calling another method or getter on the same instance is out of this
+          // milestone's own scope (M10-A §31) — the same field-only, no-member-to-member-calls boundary
+          // ADR-0038 already drew for getter bodies, kept identical here rather than re-derived.
+          if (_storeMemberTarget(target.staticType, node.methodName.element) ??
+                  (node.target == null || node.target is ThisExpression
+                      ? null
+                      : _externalMethodTarget(target.staticType, node.methodName.element))
+              case final String symbol)
             'target': RawRef(symbol),
         },
         ..._arguments(node.argumentList, scope),
@@ -1467,6 +1477,46 @@ final class ExpressionExtractor {
     }
     if (element.enclosingElement != ownerClass) {
       return null;
+    }
+    return _instanceMemberTarget(element);
+  }
+
+  /// The `logic.FunctionDecl` [element] resolves to, for an EXTERNAL instance method call
+  /// (`model.multiply(3)`) — ADR-0039, the method-execution sibling of [_externalGetterTarget].
+  ///
+  /// Eligible only when: [_dispatchSafeReceiverClass] admits the receiver's own type (the identical
+  /// dynamic-dispatch exclusion ADR-0038 §10 already established, reused verbatim — a subclass-typed
+  /// receiver can never pass this gate, whether or not the subclass overrides the method); the resolved
+  /// member is a real, ordinary `MethodElement` (this alone already excludes a getter/setter, which the
+  /// analyzer resolves to distinct element types, and an operator invoked via ordinary call syntax, which
+  /// it never is — `element.isOperator` is checked directly regardless, since Dart's own `[]`/`[]=`
+  /// operators reach this file through the identical `logic.MethodCall` shape an ordinary call does,
+  /// M4-H); it is non-static, non-abstract (a real body), non-external, non-private, carries no
+  /// `@override` annotation, and is declared directly on the receiver's own class (owner consistency,
+  /// identical to the getter/field checks). Its own parameters must be uniformly required-positional —
+  /// no optional, named, or default-valued parameter — mirroring the identical boundary ADR-0037 already
+  /// drew for a constructor's own field-formals, kept narrow deliberately rather than re-derived per
+  /// capability.
+  String? _externalMethodTarget(DartType? receiverType, Element? element) {
+    final ClassElement? ownerClass = _dispatchSafeReceiverClass(receiverType);
+    if (ownerClass == null) {
+      return null;
+    }
+    if (element is! MethodElement || element.isOperator) {
+      return null;
+    }
+    if (element.isStatic ||
+        element.isAbstract ||
+        element.isExternal ||
+        element.isPrivate ||
+        element.metadata.hasOverride) {
+      return null;
+    }
+    if (element.enclosingElement != ownerClass) {
+      return null;
+    }
+    for (final FormalParameterElement param in element.formalParameters) {
+      if (!param.isRequiredPositional) return null;
     }
     return _instanceMemberTarget(element);
   }

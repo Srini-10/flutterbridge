@@ -1026,6 +1026,8 @@ function childScope(
     functionModules: parent.functionModules,
     classModules: parent.classModules,
     getterHelpers: parent.getterHelpers,
+    methodHelpers: parent.methodHelpers,
+    projectClassMethodIds: parent.projectClassMethodIds,
     storeAccessRead: (id) => storeInstanceReads.get(id) ?? parent.storeAccessRead(id),
     // Forwarded, not rebuilt: the router is declared once per component and every nested scope inside it
     // refers to that one declaration. Spread rather than assigned, because `exactOptionalPropertyTypes`

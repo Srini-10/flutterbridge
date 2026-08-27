@@ -6768,6 +6768,406 @@ class W extends StatelessWidget {
     });
   });
 
+  group('bounded structural instance method execution provenance (ADR-0039, M10-A)', () {
+    Map<String, dynamic> classDecl(Extracted app, String name) =>
+        app.ofKind('logic.ClassDecl').singleWhere((Map<String, dynamic> d) => d['name'] == name);
+    Map<String, dynamic> method(Map<String, dynamic> cls, String name) => (cls['methods'] as List<dynamic>)
+        .cast<Map<String, dynamic>>()
+        .singleWhere((Map<String, dynamic> m) => m['name'] == name);
+    Map<String, dynamic>? callOf(Object? body, String methodName) {
+      if (body is Map<String, dynamic>) {
+        if (body['kind'] == 'logic.MethodCall' && body['method'] == methodName) return body;
+        for (final Object? v in body.values) {
+          if (callOf(v, methodName) case final Map<String, dynamic> found) return found;
+        }
+      } else if (body is List<dynamic>) {
+        for (final Object? item in body) {
+          if (callOf(item, methodName) case final Map<String, dynamic> found) return found;
+        }
+      }
+      return null;
+    }
+
+    test('an external call of an eligible method, via a parameter receiver, targets its own declaration', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {
+  final int count;
+  Model(this.count);
+  int multiply(int factor) => count * factor;
+}
+class W extends StatelessWidget {
+  const W({super.key, required this.model});
+  final Model model;
+  @override
+  Widget build(BuildContext context) => Text(model.multiply(3).toString());
+}
+''');
+      final Map<String, dynamic> cls = classDecl(app, 'Model');
+      final String multiplyId = method(cls, 'multiply')['id'] as String;
+      final Map<String, dynamic>? call = callOf(app.only('ui.Component')['render'], 'multiply');
+      expect(call?['target'], multiplyId);
+      expect(method(cls, 'multiply')['isGetter'], isNot(true));
+    });
+
+    test('the same method name on two different classes resolves to two distinct declarations (owner-qualified identity)', () async {
+      final Extracted app = await extract(r'''
+import 'package:flutter/material.dart';
+class Alpha {
+  final int count;
+  Alpha(this.count);
+  int scale(int factor) => count * factor;
+}
+class Beta {
+  final int count;
+  Beta(this.count);
+  int scale(int factor) => count * factor;
+}
+class W extends StatelessWidget {
+  const W({super.key, required this.alpha, required this.beta});
+  final Alpha alpha;
+  final Beta beta;
+  @override
+  Widget build(BuildContext context) => Text('\${alpha.scale(2)} \${beta.scale(2)}');
+}
+''');
+      final String alphaScaleId = method(classDecl(app, 'Alpha'), 'scale')['id'] as String;
+      final String betaScaleId = method(classDecl(app, 'Beta'), 'scale')['id'] as String;
+      expect(alphaScaleId, isNot(betaScaleId));
+    });
+
+    test('a private method is never targeted by external call resolution', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {
+  final int count;
+  Model(this.count);
+  int _scale(int factor) => count * factor;
+}
+class W extends StatelessWidget {
+  const W({super.key, required this.model});
+  final Model model;
+  @override
+  Widget build(BuildContext context) => Text(model._scale(3).toString());
+}
+''');
+      final Map<String, dynamic>? call = callOf(app.only('ui.Component')['render'], '_scale');
+      expect(call?.containsKey('target'), isFalse);
+    });
+
+    test('an abstract method (no body) is never targeted by external call resolution', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+abstract class Model {
+  int scale(int factor);
+}
+class W extends StatelessWidget {
+  const W({super.key, required this.model});
+  final Model model;
+  @override
+  Widget build(BuildContext context) => Text(model.scale(3).toString());
+}
+''');
+      final Map<String, dynamic>? call = callOf(app.only('ui.Component')['render'], 'scale');
+      expect(call?.containsKey('target'), isFalse);
+    });
+
+    test('a static method call never reaches the MethodCall/target shape at all', () async {
+      // `Model.scale(3)` is a static-qualified call — `_invocation`'s own `_isStaticQualifier` check
+      // means this reaches UIR as `logic.Call` with a qualified `callee` reference (`'Model.scale'`),
+      // never `logic.MethodCall` — so `_externalMethodTarget` is never even consulted for it, the same
+      // structural reason a static getter/field was never reachable through `_externalGetterTarget` /
+      // `_externalFieldTarget` either.
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {
+  static int scale(int factor) => factor * 2;
+}
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => Text(Model.scale(3).toString());
+}
+''');
+      Map<String, dynamic>? calleeOf(Object? body) {
+        if (body is Map<String, dynamic>) {
+          if (body['kind'] == 'logic.Call' && (body['callee'] as Map<String, dynamic>?)?['name'] == 'Model.scale') {
+            return body['callee'] as Map<String, dynamic>;
+          }
+          for (final Object? v in body.values) {
+            if (calleeOf(v) case final Map<String, dynamic> found) return found;
+          }
+        } else if (body is List<dynamic>) {
+          for (final Object? item in body) {
+            if (calleeOf(item) case final Map<String, dynamic> found) return found;
+          }
+        }
+        return null;
+      }
+
+      expect(callOf(app.only('ui.Component')['render'], 'scale'), isNull);
+      final Map<String, dynamic>? callee = calleeOf(app.only('ui.Component')['render']);
+      expect(callee, isNotNull);
+      expect(callee!.containsKey('target'), isFalse);
+    });
+
+    test('a method with an optional positional parameter is never targeted by external call resolution', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {
+  final int count;
+  Model(this.count);
+  int scale(int factor, [int bonus = 0]) => count * factor + bonus;
+}
+class W extends StatelessWidget {
+  const W({super.key, required this.model});
+  final Model model;
+  @override
+  Widget build(BuildContext context) => Text(model.scale(3, 1).toString());
+}
+''');
+      final Map<String, dynamic>? call = callOf(app.only('ui.Component')['render'], 'scale');
+      expect(call?.containsKey('target'), isFalse);
+    });
+
+    test('a method with a named parameter is never targeted by external call resolution', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {
+  final int count;
+  Model(this.count);
+  int scale(int factor, {int bonus = 0}) => count * factor + bonus;
+}
+class W extends StatelessWidget {
+  const W({super.key, required this.model});
+  final Model model;
+  @override
+  Widget build(BuildContext context) => Text(model.scale(3, bonus: 1).toString());
+}
+''');
+      final Map<String, dynamic>? call = callOf(app.only('ui.Component')['render'], 'scale');
+      expect(call?.containsKey('target'), isFalse);
+    });
+
+    test('an operator method (`[]`) is never targeted by external call resolution', () async {
+      // Dart's binary `+` reaches UIR as `logic.Binary` (`operator: '+'`), never `logic.MethodCall` —
+      // structurally excluded already, the same way a static call is (above). `[]`/`[]=` are the
+      // operators that DO reach this file through the identical `logic.MethodCall` shape an ordinary call
+      // has (M4-H) — `method: '[]'` — which is exactly why `_externalMethodTarget` checks
+      // `element.isOperator` directly rather than trusting call syntax to already exclude every operator.
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {
+  final int count;
+  Model(this.count);
+  int operator [](int i) => count + i;
+}
+class W extends StatelessWidget {
+  const W({super.key, required this.model});
+  final Model model;
+  @override
+  Widget build(BuildContext context) => Text(model[0].toString());
+}
+''');
+      final Map<String, dynamic>? call = callOf(app.only('ui.Component')['render'], '[]');
+      expect(call?.containsKey('target'), isFalse);
+    });
+
+    test('an inherited method, called via a subclass-typed receiver, is never targeted', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Base {
+  int scale(int factor) => factor;
+}
+class Model extends Base {
+  final int count;
+  Model(this.count);
+}
+class W extends StatelessWidget {
+  const W({super.key, required this.model});
+  final Model model;
+  @override
+  Widget build(BuildContext context) => Text(model.scale(3).toString());
+}
+''');
+      final Map<String, dynamic>? call = callOf(app.only('ui.Component')['render'], 'scale');
+      expect(call?.containsKey('target'), isFalse);
+    });
+
+    test('calling the identical method directly off a Base-typed receiver IS targeted', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Base {
+  int scale(int factor) => factor;
+}
+class Model extends Base {
+  final int count;
+  Model(this.count);
+}
+class W extends StatelessWidget {
+  const W({super.key, required this.base});
+  final Base base;
+  @override
+  Widget build(BuildContext context) => Text(base.scale(3).toString());
+}
+''');
+      final Map<String, dynamic>? call = callOf(app.only('ui.Component')['render'], 'scale');
+      expect(call?['target'], isNotNull);
+    });
+
+    test('an overriding method on a subclass is never targeted, regardless of the override itself', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Base {
+  int scale(int factor) => factor;
+}
+class Model extends Base {
+  final int count;
+  Model(this.count);
+  @override
+  int scale(int factor) => count * factor;
+}
+class W extends StatelessWidget {
+  const W({super.key, required this.model});
+  final Model model;
+  @override
+  Widget build(BuildContext context) => Text(model.scale(3).toString());
+}
+''');
+      final Map<String, dynamic>? call = callOf(app.only('ui.Component')['render'], 'scale');
+      expect(call?.containsKey('target'), isFalse);
+    });
+
+    test('`@override` is independently load-bearing, isolated from the superclass gate via `implements`', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+abstract class Shape {
+  int scale(int factor);
+}
+class Model implements Shape {
+  final int count;
+  Model(this.count);
+  @override
+  int scale(int factor) => count * factor;
+}
+class W extends StatelessWidget {
+  const W({super.key, required this.model});
+  final Model model;
+  @override
+  Widget build(BuildContext context) => Text(model.scale(3).toString());
+}
+''');
+      final Map<String, dynamic>? call = callOf(app.only('ui.Component')['render'], 'scale');
+      expect(call?.containsKey('target'), isFalse);
+    });
+
+    test('a method on a generic class is never targeted by external call resolution', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Box<T> {
+  final T value;
+  Box(this.value);
+  T identity() => value;
+}
+class W extends StatelessWidget {
+  const W({super.key, required this.box});
+  final Box<int> box;
+  @override
+  Widget build(BuildContext context) => Text(box.identity().toString());
+}
+''');
+      final Map<String, dynamic>? call = callOf(app.only('ui.Component')['render'], 'identity');
+      expect(call?.containsKey('target'), isFalse);
+    });
+
+    test('a method on a private class is never targeted by external call resolution', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class _Model {
+  final int count;
+  _Model(this.count);
+  int scale(int factor) => count * factor;
+}
+class W extends StatelessWidget {
+  const W({super.key, required this.model});
+  final _Model model;
+  @override
+  Widget build(BuildContext context) => Text(model.scale(3).toString());
+}
+''');
+      final Map<String, dynamic>? call = callOf(app.only('ui.Component')['render'], 'scale');
+      expect(call?.containsKey('target'), isFalse);
+    });
+
+    test('a field, a getter, and a method never confuse capability kinds when resolving a call', () async {
+      // The identical M9-R closure guarantee (`Alpha`/`Beta`/`Gamma`, above), re-proven for a call site
+      // specifically: `gamma.value()` must never be confused with a field or getter read of `value`.
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Gamma {
+  int value() => 7;
+}
+class W extends StatelessWidget {
+  const W({super.key, required this.gamma});
+  final Gamma gamma;
+  @override
+  Widget build(BuildContext context) => Text(gamma.value().toString());
+}
+''');
+      final Map<String, dynamic>? call = callOf(app.only('ui.Component')['render'], 'value');
+      expect(call?['kind'], 'logic.MethodCall');
+      expect(call?['target'], isNotNull);
+    });
+
+    test('an async method still resolves a `target` at this layer — the generator, not the extractor, excludes it', () async {
+      // `_externalMethodTarget` (ADR-0039) deliberately checks the identical facts `_externalGetterTarget`
+      // does, and neither checks `isAsync` — a real, pre-existing asymmetry this project already carries
+      // for getters (a `Future`-returning async getter can pass this same gate). The TypeScript generator
+      // is the layer responsible for declining an async method's own helper emission and refusing
+      // (`BRG3013`) rather than falling through to a broken call — proven at that layer, not this one
+      // (`packages/generators/react`).
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {
+  final int count;
+  Model(this.count);
+  Future<int> scale(int factor) async => count * factor;
+}
+class W extends StatelessWidget {
+  const W({super.key, required this.model});
+  final Model model;
+  @override
+  Widget build(BuildContext context) => Text(model.scale(3).toString());
+}
+''');
+      final Map<String, dynamic>? call = callOf(app.only('ui.Component')['render'], 'scale');
+      expect(call?['target'], isNotNull);
+    });
+
+    test('the same source extracts to the same method target on a second, independent run (determinism)', () async {
+      const String source = '''
+import 'package:flutter/material.dart';
+class Model {
+  final int count;
+  Model(this.count);
+  int multiply(int factor) => count * factor;
+}
+class W extends StatelessWidget {
+  const W({super.key, required this.model});
+  final Model model;
+  @override
+  Widget build(BuildContext context) => Text(model.multiply(3).toString());
+}
+''';
+      final Extracted first = await extract(source);
+      final Extracted second = await extract(source);
+      final Map<String, dynamic>? firstCall = callOf(first.only('ui.Component')['render'], 'multiply');
+      final Map<String, dynamic>? secondCall = callOf(second.only('ui.Component')['render'], 'multiply');
+      expect(firstCall?['target'], isNotNull);
+      expect(firstCall?['target'], secondCall?['target']);
+    });
+  });
+
   group('M9-R final closure — capability-kind separation', () {
     Map<String, dynamic> classDecl(Extracted app, String name) =>
         app.ofKind('logic.ClassDecl').singleWhere((Map<String, dynamic> d) => d['name'] == name);

@@ -370,8 +370,19 @@ export function m9ClassClosureRaw(): string {
   return readFileSync(path, 'utf8');
 }
 
-/** The real `fixtures/apps/method_call_refusal` document, raw analyzer output (M9-R closure fix) — not yet normalized. */
+/**
+ * The real `fixtures/apps/method_call_refusal` document, raw analyzer output — not yet normalized.
+ * Originally captured for the M9-R closure fix; its own method now carries an optional parameter (ADR-0039
+ * excludes it from the M10-A subset) so it keeps proving the identical refusal for a method that stays
+ * genuinely unsupported even after M10-A ships bounded method execution.
+ */
 export function methodCallRefusalRaw(): string {
   const path = fileURLToPath(new URL('../../../../fixtures/uir/method_call_refusal.ndjson', import.meta.url));
+  return readFileSync(path, 'utf8');
+}
+
+/** The real `fixtures/apps/instance_method_execution` document, raw analyzer output (ADR-0039, M10-A) — not yet normalized. */
+export function instanceMethodExecutionRaw(): string {
+  const path = fileURLToPath(new URL('../../../../fixtures/uir/instance_method_execution.ndjson', import.meta.url));
   return readFileSync(path, 'utf8');
 }

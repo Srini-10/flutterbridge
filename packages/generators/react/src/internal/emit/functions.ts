@@ -167,6 +167,65 @@ export interface GetterHelperInfo {
   readonly name: string;
 }
 
+/** A reachable method's own destination: which file it lives in, and the helper name reserved there (ADR-0039, M10-A). */
+export interface MethodHelperInfo {
+  readonly path: string;
+  readonly module: string;
+  readonly name: string;
+}
+
+/**
+ * Walks `value`, collecting the `target` of every `logic.MethodCall` that names a method present in
+ * `methodOwnerOf` (ADR-0039, M10-A) — the method-execution sibling of {@link directGetterRefs}. No
+ * fixed-point walk into a discovered method's own body is performed, or needed: the bounded method
+ * subset this milestone supports reads only fields and its own parameters/locals, never another getter or
+ * method (the identical field/parameter-only boundary ADR-0038 already drew for getter bodies, kept here
+ * rather than re-derived), so a method's own body can never itself reference a further method this walk
+ * would need to discover.
+ */
+function directMethodRefs(value: unknown, methodOwnerOf: ReadonlyMap<NodeId, NodeId>, found: Set<NodeId>): void {
+  if (Array.isArray(value)) {
+    for (const item of value) directMethodRefs(item, methodOwnerOf, found);
+    return;
+  }
+  if (value === null || typeof value !== 'object') return;
+  const node = value as Node;
+  if (kindOf(node) === 'logic.MethodCall' && typeof node['target'] === 'string') {
+    const target = node['target'] as NodeId;
+    if (methodOwnerOf.has(target)) found.add(target);
+  }
+  for (const child of Object.values(node)) directMethodRefs(child, methodOwnerOf, found);
+}
+
+/**
+ * Every explicit instance method the program reaches, directly, from a component's own render tree, a
+ * `sig.Action`'s own body, or an already-reachable top-level function's own body (ADR-0039, M10-A) — the
+ * member-execution sibling of {@link reachableGetters}. Not a fixed-point walk over methods themselves
+ * (see {@link directMethodRefs}'s own note) — one pass over every already-known reachable body is
+ * complete by construction.
+ */
+function reachableMethods(
+  nodes: readonly AnyUirNode[],
+  reachableFns: readonly NodeId[],
+  scope: EmitScope,
+  methodOwnerOf: ReadonlyMap<NodeId, NodeId>,
+): NodeId[] {
+  const found = new Set<NodeId>();
+  for (const node of nodes as unknown as Node[]) {
+    if (kindOf(node) === 'ui.Component') {
+      directMethodRefs(node['render'], methodOwnerOf, found);
+    } else if (kindOf(node) === 'sig.Action') {
+      directMethodRefs(node['body'], methodOwnerOf, found);
+    }
+  }
+  for (const id of reachableFns) {
+    const fn = scope.node(id) as unknown as Node | undefined;
+    if (fn === undefined) continue;
+    directMethodRefs(fn['body'], methodOwnerOf, found);
+  }
+  return [...found].sort();
+}
+
 /** A reachable function's own destination: which file it lives in, and the local name reserved there. */
 export interface FunctionModuleInfo {
   /** The output file path (`ModuleBuilder.path`) — used to tell a same-file reference from a cross-file one. */
@@ -265,12 +324,15 @@ export function emitFunctionModules(
   readonly functionModules: ReadonlyMap<NodeId, FunctionModuleInfo>;
   readonly classModules: ReadonlyMap<NodeId, ClassModuleInfo>;
   readonly getterHelpers: ReadonlyMap<NodeId, GetterHelperInfo>;
+  readonly methodHelpers: ReadonlyMap<NodeId, MethodHelperInfo>;
+  readonly projectClassMethodIds: ReadonlySet<NodeId>;
 } {
   const reachable = reachableFunctions(nodes, scope);
   const modules = new Map<string, PendingModule>();
   const functionModules = new Map<NodeId, FunctionModuleInfo>();
   const classModules = new Map<NodeId, ClassModuleInfo>();
   const getterHelpers = new Map<NodeId, GetterHelperInfo>();
+  const methodHelpers = new Map<NodeId, MethodHelperInfo>();
 
   // Every explicit getter's own owning class, by the getter's own embedded `logic.FunctionDecl` id
   // (ADR-0038, M9-Q) — built once, from the full node list, since a `logic.FunctionDecl` embedded on
@@ -290,6 +352,25 @@ export function emitFunctionModules(
   }
   const reachableGetterIds = reachableGetters(nodes, reachable, scope, getterOwnerOf);
 
+  // Every explicit method's own owning class, by the method's own embedded `logic.FunctionDecl` id
+  // (ADR-0039, M10-A) — the method-execution sibling of `getterOwnerOf`, immediately above. Built from
+  // every method regardless of eligibility (mirroring `getterOwnerOf`'s own unconditional scan): a method
+  // with a named/optional parameter, for instance, is scanned here just the same, but can never appear in
+  // `reachableMethodIds` below, because the Dart extractor's own `_externalMethodTarget` (ADR-0039) never
+  // attaches a `MethodCall.target` to a call on one in the first place.
+  const methodOwnerOf = new Map<NodeId, NodeId>();
+  for (const node of nodes as unknown as Node[]) {
+    if (kindOf(node) !== 'logic.ClassDecl') continue;
+    const classId = node['id'];
+    const methodDecls = Array.isArray(node['methods']) ? (node['methods'] as Node[]) : [];
+    for (const method of methodDecls) {
+      if (method['isGetter'] !== true && typeof method['id'] === 'string' && typeof classId === 'string') {
+        methodOwnerOf.set(method['id'] as NodeId, classId as NodeId);
+      }
+    }
+  }
+  const reachableMethodIds = reachableMethods(nodes, reachable, scope, methodOwnerOf);
+
   // A getter's own owning class needs a real emitted type the moment the getter itself is reachable —
   // independent of whether that class is *also* reachable the way `reachableClassTypes` already looks for
   // (a component/function param or return type). A class reached only through `final model = Model(...)`
@@ -301,6 +382,10 @@ export function emitFunctionModules(
   const classIdsNeedingTypes = new Set(reachableClassTypes(nodes, scope, reachable));
   for (const getterId of reachableGetterIds) {
     const ownerId = getterOwnerOf.get(getterId);
+    if (ownerId !== undefined) classIdsNeedingTypes.add(ownerId);
+  }
+  for (const methodId of reachableMethodIds) {
+    const ownerId = methodOwnerOf.get(methodId);
     if (ownerId !== undefined) classIdsNeedingTypes.add(ownerId);
   }
 
@@ -450,6 +535,69 @@ export function emitFunctionModules(
       );
       getterHelpers.set(methodId as NodeId, { path: pending.builder.path, module: specifier, name: helperName });
     }
+
+    // Bounded structural instance method execution (ADR-0039, M10-A): one helper function per reachable,
+    // explicit instance method this class declares, emitted alongside its own getter helpers immediately
+    // above, in the identical per-file module. A method whose own body reports an error while being
+    // lowered (an unsupported construct, an internal call to another member — out of this milestone's own
+    // scope — a named/optional parameter that somehow reached this far) is simply never added to
+    // `methodHelpers`; the existing `logic.MethodCall` case in `expression.ts` refuses it (`BRG3013`)
+    // rather than falling through to `receiver.method(args)`, exactly as an absent `functionModules` entry
+    // already does for a top-level function.
+    for (const method of methods) {
+      const methodId = method['id'];
+      if (method['isGetter'] === true || typeof methodId !== 'string' || !reachableMethodIds.includes(methodId as NodeId)) {
+        continue;
+      }
+      const body = method['body'];
+      if (method['isAsync'] === true || !Array.isArray(body)) continue;
+
+      const methodName = typeof method['name'] === 'string' ? method['name'] : String(methodId);
+      const helperName = pending.builder.declare(`${name}_${methodName}`, methodId);
+      const params = Array.isArray(method['params']) ? (method['params'] as Node[]) : [];
+      const paramNames = new Map<string, string>();
+      for (const param of params) {
+        const paramName = typeof param['name'] === 'string' ? param['name'] : undefined;
+        if (paramName !== undefined) paramNames.set(paramName, identifierOf(paramName));
+      }
+
+      const scratch = new ModuleBuilder(pending.builder.path);
+      let hadError = false;
+      const locals = localBindingsIn(body);
+      const helperScope: EmitScope = {
+        ...scope,
+        module: scratch,
+        classModules,
+        getterHelpers,
+        methodHelpers,
+        memberSelf: { ownerClassId: id, selfName: 'self' },
+        // No closure over any outer scope (identical to the getter helper's own scope, above): a method
+        // helper is a plain, standalone module-level function, so a name that is not one of this method's
+        // own parameters must fail to resolve here, never accidentally fall through to some unrelated
+        // component prop or action parameter that happens to share the name.
+        paramInScope: (paramName) => paramNames.get(paramName),
+        localName: (localId) => locals.get(localId) ?? scope.localName(localId),
+        report: (code, severity, message, nodeId) => {
+          if (severity === 'error') hadError = true;
+          else scope.report(code, severity, message, nodeId);
+        },
+      };
+      const returnType = typeTextOf(method['returnType'] as Node | undefined, (rt) => useRuntime(scratch, rt), classOf);
+      const paramList = paramListOf(params, identifierOf, (rt) => useRuntime(scratch, rt), classOf);
+      const signature = paramList.length === 0 ? `self: ${localName}` : `self: ${localName}, ${paramList}`;
+      const lines = emitStatements(body, helperScope);
+      if (hadError) continue;
+
+      for (const request of scratch.usedImports()) pending.builder.use(request.from, request.name, { typeOnly: request.typeOnly });
+      pending.lines.push(
+        `/** \`${name}.${methodName}\`, from ${spanFile}. A bounded, structural instance method execution (ADR-0039) — never a prototype method; there is no runtime \`${name}\` class. */`,
+        `export function ${helperName}(${signature}): ${returnType} {`,
+        ...lines.map((line: string) => `  ${line}`),
+        '}',
+        '',
+      );
+      methodHelpers.set(methodId as NodeId, { path: pending.builder.path, module: specifier, name: helperName });
+    }
   }
 
   let remaining = new Set(reachable);
@@ -568,5 +716,5 @@ export function emitFunctionModules(
     .filter((m) => m.lines.length > 0)
     .map((m) => ({ path: m.builder.path, contents: m.builder.toSource() }));
 
-  return { files, functionModules, classModules, getterHelpers };
+  return { files, functionModules, classModules, getterHelpers, methodHelpers, projectClassMethodIds: new Set(methodOwnerOf.keys()) };
 }

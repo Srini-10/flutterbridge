@@ -1,0 +1,20 @@
+name: instance_method_execution
+description: >-
+  M10-A positive proof: an instance method call on a LOCALLY-CONSTRUCTED (M9-O) project-class receiver,
+  whose declared shape meets every ADR-0039 gate, lowers to a bounded, structural helper call —
+  `Model_multiply(model, 3)` — never a runtime class, prototype, or method property on the emitted
+  structural object. Generalizes M9-Q's own bounded getter-execution architecture
+  (`docs/m9/m9q-executable-member-boundary.md`) from zero-argument getters to a method carrying real,
+  required-positional arguments.
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

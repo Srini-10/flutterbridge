@@ -240,6 +240,31 @@ export interface EmitScope {
    */
   readonly getterHelpers: ReadonlyMap<NodeId, { readonly path: string; readonly module: string; readonly name: string }>;
   /**
+   * Every reachable, self-contained project-class explicit instance method this program actually emits a
+   * helper function for, keyed by the method's own embedded `logic.FunctionDecl` id within its owning
+   * `ClassDecl.methods` (ADR-0039, M10-A) — the method-execution sibling of {@link getterHelpers}, for a
+   * `MethodCall.target` naming a method rather than a getter. Absent for a method this generator excludes
+   * from the emittable subset (a named/optional parameter, an unsupported body construct, an owning class
+   * that fails the dispatch-safe subset, or simple unreachability). Checked only once {@link
+   * projectClassMethodIds} has already confirmed `target` names a `ClassDecl`-declared method at all — see
+   * that field's own doc for why a set `target` cannot, by itself, be trusted to mean that. Built once,
+   * alongside {@link getterHelpers}.
+   */
+  readonly methodHelpers: ReadonlyMap<NodeId, { readonly path: string; readonly module: string; readonly name: string }>;
+  /**
+   * Every method declared on every `logic.ClassDecl` in the program (ADR-0039, M10-A) — not only the
+   * reachable, eligible ones {@link methodHelpers} tracks, but the full, unconditional scan, exactly the
+   * key domain `methodOwnerOf` builds in `functions.ts`. `MethodCall.target` is not a field this capability
+   * owns exclusively: `_storeMemberTarget` (M7-N, ADR-27) already attaches a `target` to a locally-owned
+   * store instance's own action call (`_left.add(5)`), for entirely separate, pre-existing reasons, and a
+   * store's own generated shape has a real, callable method the plain `receiver.method(args)` lowering
+   * already correctly reaches — refusing it would be a regression, not a closure. So the `logic.MethodCall`
+   * case must check `target` is *in this set* before ever treating it as an ADR-0039 method-helper
+   * reference; a `target` present but absent from this set belongs to some other capability entirely and
+   * must fall through completely unchanged, exactly as it did before this milestone existed.
+   */
+  readonly projectClassMethodIds: ReadonlySet<NodeId>;
+  /**
    * Set only while emitting a project-class member helper's own body (ADR-0038, M9-Q) — the receiver
    * every implicit/`this.`-qualified instance-field read inside that body must rewrite to, and the class
    * that receiver's own fields belong to (so a field embedded on a *different* class's own `ClassDecl`,
@@ -1007,12 +1032,52 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
         return REFUSED;
       }
 
+      // Bounded structural instance method execution (ADR-0039, M10-A): `target` names an eligible method
+      // — checked by looking the id up in `methodHelpers`, never re-derived from the receiver's own shape
+      // here, mirroring `logic.PropertyAccess`'s own getter-helper lookup above. There is no runtime
+      // prototype `multiply` method on the plain structural object this generator emits for a project
+      // class, so the method spelling itself is never emitted; the call becomes a real function call over
+      // the receiver and its own arguments, each evaluated exactly once, in the same left-to-right order
+      // Dart's own call already had (`receiver`, already emitted above, then every argument, below —
+      // neither re-ordered nor duplicated).
+      if (
+        receiver !== REFUSED &&
+        typeof node['target'] === 'string' &&
+        scope.projectClassMethodIds.has(node['target'] as NodeId)
+      ) {
+        const helper = scope.methodHelpers.get(node['target'] as NodeId);
+        if (helper === undefined) {
+          // Eligible per the Dart extractor's own gate (ADR-0039) but this generator's own re-check
+          // declined to emit a helper for it (an `async` method, a block body with an unsupported
+          // construct) — `BRG3013`, never the naive `receiver.method(args)` lowering below, which would
+          // call a method the emitted structural object never actually has. Falling through here would
+          // reopen, for this narrower gate, exactly the silent-wrong-code shape the M9-R closure fix
+          // exists to prevent.
+          scope.report(
+            GeneratorDiagnosticCode.UnsupportedCapability,
+            'error',
+            `\`${method}\` has no supported lowering for this call, even though its own declaration is ` +
+              `otherwise eligible (ADR-0039). FlutterBridge does not yet lower this method's own body.`,
+            idOf(node),
+          );
+          return REFUSED;
+        }
+        const args = emitArguments(node['args'], scope);
+        const name = helper.path === scope.module.path ? helper.name : scope.module.use(helper.module, helper.name);
+        return `${name}(${receiver}${args === '' ? '' : `, ${args}`})`;
+      }
+
       // M9-J: the same unmodelled-receiver refusal `logic.PropertyAccess` reports (see its own comment),
       // for a method call rather than a property read. Guarded on `receiver !== REFUSED`: the receiver was
       // already emitted above (line-eager in this case, unlike `PropertyAccess`'s own deferred evaluation),
       // so a receiver that is itself an unmodelled member access — `model.child.compute()`, where `.child`
       // already refused — already reported its own, more specific diagnostic; this avoids a second, less
-      // specific one cascading on top of it (milestone brief §16).
+      // specific one cascading on top of it (milestone brief §16). Still guarded on `node['target'] ===
+      // undefined`, exactly as before ADR-0039: a `target` naming a project-class method already returned,
+      // just above; a `target` naming something else this refusal has never covered (a store instance's
+      // own action call, `_storeMemberTarget`, M7-N/ADR-27) must keep skipping this check completely
+      // unchanged, the same way it always has — a store's own generated shape has a real, callable method,
+      // and `receiver.method(args)`, below, is the correct lowering for it.
       const methodReceiverNode = node['receiver'] as Node | undefined;
       const methodReceiverType = methodReceiverNode?.['type'] as Node | undefined;
       if (

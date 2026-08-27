@@ -168,6 +168,8 @@ function storeScope(
     functionModules: parent.functionModules,
     classModules: parent.classModules,
     getterHelpers: parent.getterHelpers,
+    methodHelpers: parent.methodHelpers,
+    projectClassMethodIds: parent.projectClassMethodIds,
     storeAccessRead: (id) => parent.storeAccessRead(id),
     node: parent.node.bind(parent),
     isStoreOwned: (id) => parent.isStoreOwned(id),
