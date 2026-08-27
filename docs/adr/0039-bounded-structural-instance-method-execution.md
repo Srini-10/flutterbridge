@@ -41,9 +41,14 @@ element types) and not `isOperator` (Dart's `[]`/`[]=` reach this file through t
 `logic.MethodCall` shape an ordinary call has — M4-H — so `isOperator` is checked directly rather than
 trusted to already be excluded by call syntax); non-static, non-abstract (a real body), non-external,
 non-private, carries no `@override` annotation; is declared directly on the receiver's own class (owner
-consistency, identical to ADR-0038's field/getter checks); and every one of its own parameters is
-`isRequiredPositional` — no optional, named, or default-valued parameter, mirroring the identical boundary
-ADR-0037 already drew for a constructor's own field-formals.
+consistency, identical to ADR-0038's field/getter checks); its own `typeParameters` are empty (a generic
+*method*, `T identity<T>(T value) => value;`, on an otherwise-eligible non-generic class — found live as a
+real gap: `_dispatchSafeReceiverClass`'s own generic check only ever inspects the RECEIVER's type
+arguments, never the resolved member's own type parameters, so this exclusion is independent of it, and
+`ClassDecl.methods`'s own `FunctionDecl` shape has no field to represent `T` faithfully in a helper
+signature regardless); and every one of its own parameters is `isRequiredPositional` — no optional, named,
+or default-valued parameter, mirroring the identical boundary ADR-0037 already drew for a constructor's own
+field-formals.
 
 Binary operators (`+`, `-`, …) never reach this gate at all — Dart's own binary-operator syntax extracts
 to `logic.Binary`, never `logic.MethodCall` — proven directly, alongside the identical structural fact for

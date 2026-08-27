@@ -60,4 +60,63 @@ describe('M10-A: an eligible instance method call on a locally-constructed recei
     expect(reported.filter((d) => d.severity === 'error')).toEqual([]);
     typecheckEmitted(files);
   }, 120_000);
+
+  // M10-A §15/§16: `subtract(a, b) => count - a - b` is non-commutative — swapping `5`/`2` changes the
+  // result, so a passing left-to-right argument-order assertion cannot be an accident of commutativity.
+  it('multiple arguments reach the helper in the program\'s own left-to-right order, never reordered', () => {
+    const normalized = compiledFrom(instanceMethodExecutionRaw());
+    const { context } = harness(normalized);
+    const { files } = reactGenerator.generate(context);
+    const model = files.find((f) => f.path.endsWith('lib/model.ts'));
+    expect(model).toBeDefined();
+    expect(model!.contents).toContain('export function Model_subtract(self: Model, a: number, b: number): number {');
+    expect(model!.contents).toContain('return ((self.count - a) - b);');
+    const component = files.find((f) => f.path.endsWith('method-call-on-local.tsx'));
+    expect(component).toBeDefined();
+    expect(component!.contents).toContain('Model_subtract({ count: 7 }, 5, 2)');
+  });
+
+  // M10-A §29: a getter (M9-Q) and a method (ADR-0039) on the identical class, sharing the identical
+  // structural receiver — proves both helper kinds coexist without regressing one another.
+  it('a getter and a method on the same class coexist with distinct helper identities', () => {
+    const normalized = compiledFrom(instanceMethodExecutionRaw());
+    const { context } = harness(normalized);
+    const { files } = reactGenerator.generate(context);
+    const model = files.find((f) => f.path.endsWith('lib/model.ts'));
+    expect(model).toBeDefined();
+    expect(model!.contents).toContain('export function Model_doubled(self: Model): number {');
+    expect(model!.contents).toContain('export function Model_multiply(self: Model, factor: number): number {');
+    const component = files.find((f) => f.path.endsWith('method-call-on-local.tsx'));
+    expect(component).toBeDefined();
+    expect(component!.contents).toContain('Model_doubled({ count: 7 })');
+  });
+
+  // M10-A §6/§26/§57: an EXTERNAL receiver (a real widget constructor parameter, never locally
+  // constructed) must lower through the identical helper a locally-constructed receiver does — no hidden
+  // "was this constructed here" marker anywhere in the runtime representation or the generated call.
+  it('an external (prop) receiver lowers through the identical helper as a locally-constructed one', () => {
+    const normalized = compiledFrom(instanceMethodExecutionRaw());
+    const { context, reported } = harness(normalized);
+    const { files } = reactGenerator.generate(context);
+    expect(reported.filter((d) => d.severity === 'error')).toEqual([]);
+    const component = files.find((f) => f.path.endsWith('external-receiver-demo.tsx'));
+    expect(component).toBeDefined();
+    expect(component!.contents).toContain('Model_multiply(props.model, 3)');
+    expect(component!.contents).toContain('Model_subtract(props.model, 5, 2)');
+    expect(component!.contents).toContain('Model_doubled(props.model)');
+    expect(component!.contents).not.toContain('.multiply(');
+  });
+
+  // M10-A §28: `Model.unusedMultiplier` is a real, otherwise-fully-eligible method never called
+  // anywhere in this program — reachability must stay selective ("class is known" never implies "every
+  // one of its own methods is emitted"), mirroring the identical, already-proven getter-reachability
+  // discipline (ADR-0038).
+  it('an eligible but unreachable sibling method is never emitted', () => {
+    const normalized = compiledFrom(instanceMethodExecutionRaw());
+    const { context } = harness(normalized);
+    const { files } = reactGenerator.generate(context);
+    const model = files.find((f) => f.path.endsWith('lib/model.ts'));
+    expect(model).toBeDefined();
+    expect(model!.contents).not.toContain('unusedMultiplier');
+  });
 });

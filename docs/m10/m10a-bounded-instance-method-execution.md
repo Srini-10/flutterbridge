@@ -105,6 +105,12 @@ reading only fields, its own parameters, and locals derived from them. Full stat
 | 18 | Method-to-method / method-to-getter call inside a body | Out of scope — deliberately never reaches `_externalMethodTarget` |
 | 19 | External (parameter) receiver vs. locally-constructed receiver | Identical helper semantics, both real-fixture proven |
 | 20 | Store instance method call (`_left.add(5)`) | Unaffected — resolved via the pre-existing, unrelated store mechanism (§6) |
+| 21 | Generic METHOD (`T identity<T>(T value)`) on a non-generic class | Refused, `BRG3013` at extraction — real gap found and fixed (§18) |
+| 22 | External (prop) receiver, real fixture | Supported, identical helper as a constructed receiver (§18, `ExternalReceiverDemo`) |
+| 23 | Getter + method on one class, real fixture | Supported, both coexist (§18, `Model.doubled`/`Model.multiply`) |
+| 24 | Two-argument, non-commutative method | Supported, left-to-right order preserved (§18, `Model.subtract`) |
+| 25 | Eligible but unreachable sibling method | Never emitted (§18, `Model.unusedMultiplier`) |
+| 26 | Invalid Dart inside an otherwise-eligible method body | `BRG1310`, never `BRG3013` (§18) |
 
 Not independently fixture-verified (reasoned from code plus the shared, already-tested `_dispatchSafeReceiverClass`/
 `emitArguments`/`ModuleBuilder.declare` mechanisms): named-parameter refusal at the generator layer specifically
@@ -144,6 +150,7 @@ shape. ADR-0039 §12.
 | C/D — rewrite the field-rewrite match from id-based to name-based | A parameter named like a field, and a local named like a field, both incorrectly rewritten to `self.<name>` | `instance_method_shadowing_build.test.ts` (2 tests) |
 | F — remove `hasOverride`/owner-consistency checks from `_externalMethodTarget` | An `@override` method reachable via `implements` (no superclass gate to independently block it) incorrectly targeted | `extraction_test.dart`'s own "independently load-bearing... via `implements`" test |
 | H — add every declared method to the structural interface | `Model`'s own interface gained a bogus `multiply(): unknown;` member | `instance_method_execution_build.test.ts` (2 tests: interface shape, `tsc`) |
+| G — remove the `helper === undefined` `BRG3013` fallback, fall through to naive `receiver.method(args)` | The async `AsyncModel.scale` call stopped refusing | `method_call_refusal_build.test.ts` ("refuses an async method call as BRG3013" — `expected false to be true`) |
 
 Every mutation reverted; `git diff --numstat` on each touched file matched its pre-mutation baseline
 exactly after reverting.
@@ -157,12 +164,10 @@ check first. Recorded here rather than silently left unnoticed, consistent with 
 disclosure.
 
 Not run (would require Option D or reopening M9-Q's own settled architecture; judged lower value than the
-four run): A (helper-name-only identity — unmodified, already-proven ADR-0038 §5 mechanism), E (inline
-body causing duplication), G (remove the selective `BRG3013` fallback) — G's own scenario (target eligible,
-no helper) is instead covered by a real, permanent regression fixture (`AsyncModel`, §10 row 17) rather
-than a mutate-and-revert, since removing that branch is already directly observable by deleting it and
-rerunning `method_call_refusal_build.test.ts`, which was done during implementation (§6 of the code
-change), not restated here as a separate mutation.
+five run): A (helper-name-only identity — unmodified, already-proven ADR-0038 §5 mechanism, over a shared
+`ModuleBuilder.declare` this milestone added no new identity scheme for), E (inline body causing
+duplication — Option D was rejected outright in §2, so exercising it would require reintroducing an
+architecture this ADR already discards, not merely toggling a flag in the shipped one).
 
 ## 15. Regressions
 
@@ -189,7 +194,58 @@ file) — pre-existing, untouched provenance comments citing Continuum remain in
 also edited elsewhere (`expression.ts`, `component.ts`, `extraction_test.dart`), unchanged from before.
 `fixtures/apps/hello_bridge/analysis_options.yaml`'s own pre-existing drift left untouched, unstaged.
 
-## 18. Outcome
+## 18. Second audit pass — one real fix, and evidence the first pass left thin
+
+A second, independent read of the governing brief (fuller than the platform-truncated copy §1-17 were
+written against) surfaced one genuine correctness gap and several places where the first pass's own
+evidence was thinner than the brief asked for. Addressed before treating M10-A as closed:
+
+- **Real fix — a generic METHOD on a non-generic class was not excluded.** `_dispatchSafeReceiverClass`'s
+  own generic check inspects the RECEIVER's type arguments only; `_externalMethodTarget` never separately
+  checked the resolved member's own `typeParameters`. Live probe confirmed `T identity<T>(T value) =>
+  value;` on an otherwise-fully-eligible, non-generic `Model` got a `target` attached — `ClassDecl.methods`
+  has no field to represent `T` in a helper signature, so this would have reached the generator's own
+  method-helper loop with nowhere correct to go. Fixed by adding `element.typeParameters.isNotEmpty` to
+  `_externalMethodTarget` (ADR-0039 §3), with a permanent regression test
+  (`extraction_test.dart`, "a generic METHOD on an otherwise-eligible non-generic class is never
+  targeted").
+- **External-receiver positive control, real fixture.** The first pass proved external-vs-constructed
+  coherence only at the Dart extraction layer. `instance_method_execution`'s own `ExternalReceiverDemo`
+  now takes `Model` as a real widget constructor parameter and calls the identical `multiply`/`subtract`/
+  `doubled` members; the generated call is `Model_multiply(props.model, 3)` — the identical helper the
+  locally-constructed receiver's own `Model_multiply({ count: 7 }, 3)` uses.
+- **Getter + method on one class, real fixture.** `Model` now also declares `doubled` (a getter) alongside
+  `multiply`/`subtract`; both helper kinds coexist in the same generated module, sharing the identical
+  structural receiver.
+- **Multi-argument, non-commutative evaluation-order proof.** Added `Model.subtract(int a, int b) => count
+  - a - b`; swapping `a`/`b` changes the result, so the passing assertion (`Model_subtract({ count: 7 }, 5,
+  2)`) cannot be an accident of commutativity the way a single-argument or commutative example could be.
+- **The brief's own exact single-expression shadowing form.** Added `Box.exactCombine(int value) =>
+  this.value + value;` — the literal form §13/§58 name, not only the two-local block-bodied `combine`
+  the first pass already had.
+- **Reachability negative control, real fixture.** Added `Model.unusedMultiplier`, called nowhere in the
+  program; asserted absent from the generated module, proving reachability stays selective.
+- **BRG1310 precedence, explicit test.** An analyzer-invalid method body (`missingIdentifier + factor`)
+  still reports `BRG1310`, never reaching this milestone's own capability logic — true by construction
+  (ADR-0031's own gate runs first), now asserted directly rather than only relied upon.
+- **Mutation G, run for real.** The first pass substituted a real regression fixture (the `AsyncModel`
+  refusal test) for this mutation, reasoning it was equivalent. Run directly this time: removing the
+  `helper === undefined` refusal branch and reverting to the naive lowering caused the async-method test
+  to fail exactly as predicted (`expected false to be true` on the `BRG3013` assertion) — confirmed, then
+  reverted; `git diff --numstat` matched the pre-mutation baseline exactly.
+
+Not additionally strengthened this pass, with reasoning: mutation A (helper-name-only identity) and
+helper-name collision safety remain proven only by inheritance from ADR-0038 §5's own adversarial getter
+proof over the shared, unmodified `ModuleBuilder.declare` mechanism — this milestone added no new identity
+scheme for `declare` to exercise differently. Method-to-method/getter reachability, recursion, broader
+return/parameter type coverage beyond `int`/getter/field types, and a project-class-typed method parameter
+remain investigated only at the level §30-§35 of the brief itself calls optional — deferred, not silently
+skipped.
+
+Regression counts after this pass: Dart 539/539 (+2 over §15's own 537), TypeScript 449/449 (+5 over §15's
+own 444).
+
+## 19. Outcome
 
 **A2 — bounded method execution, expression- and block-bodied.** ADR-0039 written and reconciled with
 ADR-0038. M10-B was not started; the next M10 theme (method-to-method/getter reachability,

@@ -7080,6 +7080,31 @@ class W extends StatelessWidget {
       expect(call?.containsKey('target'), isFalse);
     });
 
+    test('a generic METHOD on an otherwise-eligible non-generic class is never targeted', () async {
+      // Distinct from the sibling test above: `Model` itself has no type parameters and independently
+      // passes every other `_externalMethodTarget` gate — only `identity`'s own `<T>` excludes it. Found
+      // live, as a real gap: `_dispatchSafeReceiverClass`'s own generic check only ever inspects the
+      // RECEIVER's type arguments, never the resolved member's own type parameters, so a generic method
+      // on a non-generic class was not excluded until `element.typeParameters.isNotEmpty` was added
+      // directly to `_externalMethodTarget`.
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {
+  final int count;
+  Model(this.count);
+  T identity<T>(T value) => value;
+}
+class W extends StatelessWidget {
+  const W({super.key, required this.model});
+  final Model model;
+  @override
+  Widget build(BuildContext context) => Text(model.identity<int>(3).toString());
+}
+''');
+      final Map<String, dynamic>? call = callOf(app.only('ui.Component')['render'], 'identity');
+      expect(call?.containsKey('target'), isFalse);
+    });
+
     test('a method on a private class is never targeted by external call resolution', () async {
       final Extracted app = await extract('''
 import 'package:flutter/material.dart';
@@ -7142,6 +7167,28 @@ class W extends StatelessWidget {
 ''');
       final Map<String, dynamic>? call = callOf(app.only('ui.Component')['render'], 'scale');
       expect(call?['target'], isNotNull);
+    });
+
+    test('invalid Dart inside an otherwise-eligible method body still reports BRG1310, never BRG3013', () async {
+      // ADR-0031's own resolved-analyzer-errors gate runs before extraction reaches this file's own
+      // `_externalMethodTarget` at all — an analyzer-invalid method body never gets far enough for M10-A's
+      // own capability logic to run, so this stays BRG1310 by construction, not by a check this file adds.
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {
+  final int count;
+  Model(this.count);
+  int multiply(int factor) => missingIdentifier + factor;
+}
+class W extends StatelessWidget {
+  const W({super.key, required this.model});
+  final Model model;
+  @override
+  Widget build(BuildContext context) => Text(model.multiply(3).toString());
+}
+''');
+      expect(app.errors.map((d) => d.code.id), contains('BRG1310'));
+      expect(app.errors.map((d) => d.code.id), isNot(contains('BRG3013')));
     });
 
     test('the same source extracts to the same method target on a second, independent run (determinism)', () async {

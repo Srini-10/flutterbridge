@@ -26,6 +26,19 @@ describe('M10-A: a method parameter or local shadowing a field of the identical 
     expect(model!.contents).toContain('return (viaField + viaParam);');
   });
 
+  // M10-A §13/§58's own literal form: `this.value` and the shadowing parameter `value` combined in ONE
+  // expression, not two separate local declarations (`combine`, above) — proving the two identities
+  // resolve independently within a single sub-expression too.
+  it('the exact single-expression form (`this.value + value`) resolves field and parameter independently', () => {
+    const normalized = compiledFrom(instanceMethodExecutionRaw());
+    const { context } = harness(normalized);
+    const { files } = reactGenerator.generate(context);
+    const model = files.find((f) => f.path.endsWith('lib/model.ts'));
+    expect(model).toBeDefined();
+    expect(model!.contents).toContain('export function Box_exactCombine(self: Box, value: number): number {');
+    expect(model!.contents).toContain('return (self.value + value);');
+  });
+
   it('a local variable named like a field, with no parameter of the same name, still resolves `this.field` to the field', () => {
     const normalized = compiledFrom(instanceMethodExecutionRaw());
     const { context } = harness(normalized);
@@ -47,8 +60,10 @@ describe('M10-A: a method parameter or local shadowing a field of the identical 
     const component = files.find((f) => f.path.endsWith('shadowing-demo.tsx'));
     expect(component).toBeDefined();
     expect(component!.contents).toContain('Box_combine({ value: 4 }, 5)');
+    expect(component!.contents).toContain('Box_exactCombine({ value: 4 }, 5)');
     expect(component!.contents).toContain('Box_doubledViaLocal({ value: 4 })');
     expect(component!.contents).not.toContain('.combine(');
+    expect(component!.contents).not.toContain('.exactCombine(');
     expect(component!.contents).not.toContain('.doubledViaLocal(');
   });
 });

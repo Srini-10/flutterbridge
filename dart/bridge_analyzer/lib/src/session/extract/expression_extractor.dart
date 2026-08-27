@@ -1515,6 +1515,17 @@ final class ExpressionExtractor {
     if (element.enclosingElement != ownerClass) {
       return null;
     }
+    // A generic METHOD (`T identity<T>(T value) => value;`) on an otherwise-eligible, non-generic
+    // owner class is excluded here independently of `_dispatchSafeReceiverClass`'s own generic-class
+    // check (§9/§40) — that gate only ever inspects the RECEIVER's own type arguments, never the
+    // resolved member's own type parameters, so a generic method on a non-generic class would
+    // otherwise slip through. `ClassDecl.methods`'s own `FunctionDecl` shape has no type-parameter
+    // field to represent `T` faithfully in a helper signature, so this is excluded at the same layer
+    // every other unsupported method shape is, rather than discovered downstream as a generator-side
+    // `unknown`/broken-type emission.
+    if (element.typeParameters.isNotEmpty) {
+      return null;
+    }
     for (final FormalParameterElement param in element.formalParameters) {
       if (!param.isRequiredPositional) return null;
     }
