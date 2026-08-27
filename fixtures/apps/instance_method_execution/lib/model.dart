@@ -24,6 +24,15 @@ class Model {
   /// siblings) must never emit a helper for, proving reachability stays selective rather than "class is
   /// known → emit every one of its own methods."
   int unusedMultiplier(int factor) => count * factor * 100;
+
+  /// A project-class-typed parameter, `other`, of the IDENTICAL class as the one this method is declared
+  /// on — a real, pre-existing bug found while designing M10-B: `other.count` and `this.count`/bare
+  /// `count` resolve to the identical `FieldDecl` target (declaration provenance is receiver-agnostic by
+  /// design, ADR-0033), so the member-`self`-rewrite mechanism matching on `target` alone was silently
+  /// rewriting `other.count` to `self.count` — a wrong value no `tsc` check could ever catch, since both
+  /// sides are typed `Model`. Fixed by requiring the receiver be PROVABLY `this` (`isSelfReceiver`), never
+  /// merely "some receiver of the same eligible type."
+  int combineWith(Model other) => other.count;
 }
 
 /// Parameter/field-shadowing proof (M10-A §11-14) — freshly proven for a method's own parameter binding,

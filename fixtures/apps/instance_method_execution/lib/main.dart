@@ -38,6 +38,21 @@ class ExternalReceiverDemo extends StatelessWidget {
   }
 }
 
+// Not wired into the route table either — its own job is the `other.count` receiver-identity fix
+// (see `Model.combineWith`'s own doc comment). `a` and `b` are two DISTINCT `Model` instances; the
+// generated helper must read `other.count` (the argument's own field), never `self.count`.
+class CombineWithDemo extends StatelessWidget {
+  const CombineWithDemo({super.key, required this.a, required this.b});
+
+  final Model a;
+  final Model b;
+
+  @override
+  Widget build(BuildContext context) {
+    return Text('${a.combineWith(b)}');
+  }
+}
+
 // Not wired into the route table either — its own job is the parameter/field-shadowing proof
 // (M10-A §11-14), not the route table. `box.combine(5)` calls a method whose own parameter shadows the
 // field of the identical name across two separate local declarations; `box.exactCombine(5)` proves the

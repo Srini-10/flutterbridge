@@ -398,6 +398,29 @@ function isKnownProjectClassReceiver(type: Node | undefined): boolean {
 }
 
 /**
+ * Whether `receiver` is genuinely `this` (M10-B, a real, pre-existing bug found while designing member
+ * composition) — `this` is a reserved word, so `_instanceRef(node, 'this')` (`expression_extractor.dart`)
+ * is the only way a `logic.Ref` node can ever carry `name: 'this'`, with no `target` of its own (a `this`
+ * reference names no declaration as a value; `receiver.type.target`, the receiver's own resolved TYPE, is
+ * a wholly separate field this check never inspects).
+ *
+ * **Why this check exists at all**: `PropertyAccess.target`/`Ref.target` is pure declaration provenance
+ * (ADR-0033) — `other.count` and `this.count`/bare `count`, inside the identical class, resolve to the
+ * IDENTICAL `FieldDecl` id, because `_externalFieldTarget`/`_externalGetterTarget`/`_externalMethodTarget`
+ * all delegate to the same `_instanceMemberTarget` for their own final symbol (confirmed directly: a
+ * method `int combine(Model other) => other.count;` produces the exact same `target` a bare `count` read
+ * inside the identical class would). The member-`self`-rewrite blocks below matched on `target` ALONE,
+ * with no receiver-shape check — so `other.count`, inside ANOTHER member helper's own body (e.g. `combine`
+ * itself, which IS a member helper), was silently rewritten to `self.count`, a real value bug no `tsc`
+ * check could ever catch (both are typed `Model`). This function is the fix: the field/getter/method
+ * `self`-rewrite may only ever fire when the receiver is PROVABLY `this`, never merely "some receiver of
+ * the same eligible type."
+ */
+function isSelfReceiver(receiver: Node | undefined): boolean {
+  return receiver?.['kind'] === 'logic.Ref' && receiver['name'] === 'this' && receiver['target'] === undefined;
+}
+
+/**
  * Whether `type` names a member-bearing type this generator has no model for (M9-J) — a project-defined or
  * external-package class or enum, or an unrecognized SDK collection type. Reusing `typeTextOf` (`types.ts`)
  * rather than a second classification table is deliberate: `unknown` in a generated prop type and "this
@@ -861,8 +884,13 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
       // `PropertyAccess` whose own receiver is literally `this` (ADR-0033), never a bare `logic.Ref` the
       // way an implicit `count` is. The identical `self.<field>` rewrite `case 'logic.Ref':` already
       // performs for the implicit form, applied here for the explicit one — both reach the same field
-      // target, and both must lower identically.
-      if (scope.memberSelf !== undefined && typeof node['target'] === 'string') {
+      // target, and both must lower identically. Gated on `isSelfReceiver` (M10-B) — never on `target`
+      // alone: `other.count`, where `other` is some OTHER same-class value (a parameter, say), carries
+      // the identical `target` a genuine `this.count`/bare `count` read would, since `target` is pure
+      // declaration provenance (ADR-0033), receiver-agnostic by design. Matching on `target` alone here
+      // was a real, silent bug — `other.count` was being rewritten to `self.count`, a wrong value no
+      // `tsc` check could ever catch (both sides are typed identically).
+      if (scope.memberSelf !== undefined && typeof node['target'] === 'string' && isSelfReceiver(node['receiver'] as Node | undefined)) {
         const ownerClass = scope.node(scope.memberSelf.ownerClassId) as unknown as Node | undefined;
         const fields = Array.isArray(ownerClass?.['fields']) ? (ownerClass['fields'] as Node[]) : [];
         const field = fields.find((f) => f['id'] === node['target']);

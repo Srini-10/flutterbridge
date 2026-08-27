@@ -119,4 +119,22 @@ describe('M10-A: an eligible instance method call on a locally-constructed recei
     expect(model).toBeDefined();
     expect(model!.contents).not.toContain('unusedMultiplier');
   });
+
+  // A real, pre-existing bug found while designing M10-B (see `isSelfReceiver`'s own doc comment,
+  // `expression.ts`): `other.count`, where `other` is a project-class-typed PARAMETER of the identical
+  // class, was silently rewritten to `self.count` — `other.count` and `this.count`/bare `count` resolve
+  // to the identical `target` (declaration provenance is receiver-agnostic, ADR-0033), and the member-
+  // `self`-rewrite matched on `target` alone, with no check that the receiver was actually `this`.
+  it('a project-class-typed parameter reads its OWN field, never the current receiver\'s', () => {
+    const normalized = compiledFrom(instanceMethodExecutionRaw());
+    const { context, reported } = harness(normalized);
+    const { files } = reactGenerator.generate(context);
+    expect(reported.filter((d) => d.severity === 'error')).toEqual([]);
+    const model = files.find((f) => f.path.endsWith('lib/model.ts'));
+    expect(model).toBeDefined();
+    expect(model!.contents).toContain('export function Model_combineWith(self: Model, other: Model): number {\n  return other.count;\n}');
+    const component = files.find((f) => f.path.endsWith('combine-with-demo.tsx'));
+    expect(component).toBeDefined();
+    expect(component!.contents).toContain('Model_combineWith(props.a, props.b)');
+  });
 });
