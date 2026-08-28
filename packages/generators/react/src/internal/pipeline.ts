@@ -124,6 +124,7 @@ export function generateProject(context: GeneratorContext): GeneratorOutput {
     getterHelpers: resolvedGetters,
     methodHelpers: resolvedMethods,
     projectClassMethodIds: resolvedProjectClassMethodIds,
+    projectClassGetterIds: resolvedProjectClassGetterIds,
   } = emitFunctionModules(context.program.nodes, scope);
   for (const [id, info] of resolvedFunctions) {
     (scope.functionModules as Map<NodeId, { readonly path: string; readonly module: string; readonly name: string }>).set(id, info);
@@ -139,6 +140,9 @@ export function generateProject(context: GeneratorContext): GeneratorOutput {
   }
   for (const id of resolvedProjectClassMethodIds) {
     (scope.projectClassMethodIds as Set<NodeId>).add(id);
+  }
+  for (const id of resolvedProjectClassGetterIds) {
+    (scope.projectClassGetterIds as Set<NodeId>).add(id);
   }
   files.push(...functionFiles);
 
@@ -576,6 +580,7 @@ function rootScope(
   const getterHelperInfo = new Map<NodeId, { readonly path: string; readonly module: string; readonly name: string }>();
   const methodHelperInfo = new Map<NodeId, { readonly path: string; readonly module: string; readonly name: string }>();
   const projectClassMethodIds = new Set<NodeId>();
+  const projectClassGetterIds = new Set<NodeId>();
 
   const scope: EmitScope = {
     module: new ModuleBuilder('<none>'),
@@ -589,6 +594,7 @@ function rootScope(
     getterHelpers: getterHelperInfo,
     methodHelpers: methodHelperInfo,
     projectClassMethodIds,
+    projectClassGetterIds,
     node: (id: NodeId) => context.program.get(id) as AnyUirNode | undefined,
     // A bare reference at the root resolves nothing — every store member reachable here is resolved
     // explicitly, per component, by `declareStoreConsumption` (M7-F), which is the only thing that knows

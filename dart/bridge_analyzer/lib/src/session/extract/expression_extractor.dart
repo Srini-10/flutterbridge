@@ -143,14 +143,14 @@ final class ExpressionExtractor {
           node.name,
           scope,
           type: _typeOfIdentifier(node),
-          // An implicit instance-member read — `count` inside the class that declares it, or a subclass
-          // that inherits it (ADR-0033) — is checked only after `_topLevelTarget` already found nothing:
-          // the analyzer's own resolution never lets `node.element` be *both* a top-level declaration and
-          // an instance member, so the two never compete. A local/parameter that shadows the member's own
+          // An implicit instance-member read — `count`/`doubled` inside the class that declares it
+          // (ADR-0033, M10-B) — is checked only after `_topLevelTarget` already found nothing: the
+          // analyzer's own resolution never lets `node.element` be *both* a top-level declaration and an
+          // instance member, so the two never compete. A local/parameter that shadows the member's own
           // name resolves `node.element` to that local/parameter instead (Dart's own scoping, not
-          // reproduced here), so `_instanceMemberTarget` correctly returns null for it and this falls
+          // reproduced here), so `_internalMemberTarget` correctly returns null for it and this falls
           // through to `binding?.symbol` below, unchanged.
-          staticTarget: _topLevelTarget(node.element) ?? _instanceMemberTarget(node.element),
+          staticTarget: _topLevelTarget(node.element) ?? _internalMemberTarget(node.element),
         );
 
       // `MainAxisAlignment.center`, `http.get`, `Colors.blue` — the left-hand side is a *type* or an
@@ -234,14 +234,17 @@ final class ExpressionExtractor {
           fields: <String, RawValue>{
             'receiver': RawChild(extract(target, scope)),
             'property': RawLiteral(node.propertyName.name),
-            // `this.count` (ADR-0033) resolves through `_instanceMemberTarget` for a receiver that is
-            // *literally* `this`; an external receiver (`model.count`, ADR-0035) resolves through the
-            // strictly narrower `_externalFieldTarget` gate instead — never both, and never the broader
-            // `_instanceMemberTarget` unguarded, which would reopen exactly the hazard M9-J's own refusal
-            // exists to prevent for every member shape ADR-0035 does not explicitly prove safe.
+            // `this.count`/`this.doubled` resolves through `_internalMemberTarget` (M10-B: a field stays
+            // the broad, ungated M9-L identity resolution; an explicit getter is routed through the same
+            // eligibility-gated `_externalGetterTarget` an external read already uses — see that
+            // function's own doc). An external receiver (`model.count`/`model.doubled`, ADR-0035/0038)
+            // resolves through the strictly narrower `_externalFieldTarget`/`_externalGetterTarget` gate
+            // directly — never the broader `_instanceMemberTarget` unguarded, which would reopen exactly
+            // the hazard M9-J's own refusal exists to prevent for every member shape ADR-0035 does not
+            // explicitly prove safe.
             if (_storeMemberTarget(target.staticType, node.propertyName.element) ??
                     (target is ThisExpression
-                        ? _instanceMemberTarget(node.propertyName.element)
+                        ? _internalMemberTarget(node.propertyName.element)
                         : _externalFieldTarget(target.staticType, node.propertyName.element) ??
                               _externalGetterTarget(target.staticType, node.propertyName.element))
                 case final String symbol)
@@ -1054,6 +1057,50 @@ final class ExpressionExtractor {
       target = null;
     }
 
+    // A BARE instance method call (`multiply(4)`, implicit `this`, no explicit or cascade receiver at
+    // all) has no `realTarget` — the analyzer only populates it for an explicit or cascade receiver, so
+    // `target` (above) is `null` here exactly as it would be for a genuine top-level function/local
+    // closure call (M10-B, found live via a probe: `Model.multiply`'s own bare internal call reached
+    // this file as `logic.Call` with an unresolvable `callee` Ref, structurally identical to a call this
+    // generator has no member model for). Detected here, ahead of the `target == null` bare-callee
+    // branch below, by checking whether the resolved element is itself an ELIGIBLE instance method
+    // (`_externalMethodTarget`, fed `_thisType`'s own reconstructed receiver — never the unguarded
+    // `_instanceMemberTarget`, which would also admit a static/abstract/generic/optional-param method a
+    // genuine external call already refuses) — and, if so, synthesizing the identical `this`-receiver
+    // `logic.MethodCall` shape an explicit `this.multiply(4)` produces, so the generator has exactly one
+    // shape to handle either way. Anything else (a top-level function, a store/component method, or an
+    // instance method that is not independently eligible) falls through completely unchanged to the
+    // existing `target == null` branch below.
+    if (target == null) {
+      final DartType? thisType = _thisType(node.methodName.element);
+      final String? methodTarget = _externalMethodTarget(thisType, node.methodName.element);
+      if (methodTarget != null) {
+        return RawNode(
+          kind: 'logic.MethodCall',
+          span: out.span(node),
+          fields: <String, RawValue>{
+            // NOT `_instanceRef(node, 'this')` — that helper types the reference from `node.staticType`,
+            // which for a `MethodInvocation` is the CALL's own return type (`int`, `multiply`'s own
+            // return type), never the receiver's. `this` has no real AST node of its own to ask a static
+            // type of here (a bare call synthesizes no such node), so the type is built directly from
+            // `_thisType`'s own reconstructed receiver type instead (found live: the receiver's own
+            // `type` field was silently `int`, not `Model`, before this fix).
+            'receiver': RawChild(
+              RawNode(
+                kind: 'logic.Ref',
+                span: out.span(node),
+                fields: <String, RawValue>{'name': const RawLiteral('this'), 'type': out.typeRef(thisType, at: node)},
+              ),
+            ),
+            'method': RawLiteral(node.methodName.name),
+            'target': RawRef(methodTarget),
+            ..._arguments(node.argumentList, scope),
+            'type': out.typeRef(node.staticType, at: node),
+          },
+        );
+      }
+    }
+
     return RawNode(
       kind: target == null ? 'logic.Call' : 'logic.MethodCall',
       span: out.span(node),
@@ -1075,16 +1122,12 @@ final class ExpressionExtractor {
         else ...<String, RawValue>{
           'receiver': RawChild(extract(target, scope)),
           'method': RawLiteral(node.methodName.name),
-          // `_externalMethodTarget` (ADR-0039) is deliberately never reached for an implicit- or
-          // explicit-`this` receiver (`node.target`, the real syntactic receiver — never `realTarget`,
-          // which synthesizes an implicit `this` for a bare call the same way it does for a store's own
-          // action): a method calling another method or getter on the same instance is out of this
-          // milestone's own scope (M10-A §31) — the same field-only, no-member-to-member-calls boundary
-          // ADR-0038 already drew for getter bodies, kept identical here rather than re-derived.
+          // `this.multiply(4)` and an external `model.multiply(4)` both resolve through the identical
+          // `_externalMethodTarget` gate (M10-B) — `_receiverTypeFor` supplies `this`'s own reconstructed
+          // type where an ordinary expression would supply its own `staticType`, exactly as the sibling
+          // `PropertyAccess` case above already does for fields/getters.
           if (_storeMemberTarget(target.staticType, node.methodName.element) ??
-                  (node.target == null || node.target is ThisExpression
-                      ? null
-                      : _externalMethodTarget(target.staticType, node.methodName.element))
+                  _externalMethodTarget(_receiverTypeFor(target, node.methodName.element), node.methodName.element)
               case final String symbol)
             'target': RawRef(symbol),
         },
@@ -1284,6 +1327,53 @@ final class ExpressionExtractor {
     return null;
   }
 
+  /// The receiver type an INTERNAL (`this`/bare) instance-member access has, reconstructed from the
+  /// resolved [element]'s own declaring class (M10-B) — `this` has no expression of its own to ask a
+  /// static type of, and a bare identifier has no receiver expression at all, so both are recovered from
+  /// the one fact that IS available: which class this member is declared on. Used to route internal
+  /// access through the identical eligibility-gated `_external*Target` functions an external receiver
+  /// already used, rather than the separate, unguarded [_instanceMemberTarget] internal access used to
+  /// call directly — found, live, to be a real gap: `_instanceMemberTarget` does not check
+  /// static/abstract/private/override/generic/required-positional, so `this.someLateOrPrivateField` (a
+  /// field) or, once method/getter composition existed, `this.someGenericMethod()` would otherwise have
+  /// slipped through a check external access already had.
+  DartType? _thisType(Element? element) {
+    final Element? owner = element?.enclosingElement;
+    return owner is InstanceElement ? owner.thisType : null;
+  }
+
+  /// The receiver type to check member eligibility against, for either an external receiver expression
+  /// or a literal `this` one (M10-B) — `_dispatchSafeReceiverClass`, and everything downstream of it, is
+  /// a property of the member/class alone, never of how the receiver happened to be spelled, so both
+  /// route through the identical `_external*Target` gate below, fed a differently-*sourced* (never
+  /// differently-*checked*) receiver type.
+  DartType? _receiverTypeFor(Expression? target, Element? element) =>
+      target is ThisExpression ? _thisType(element) : target?.staticType;
+
+  /// Resolves an INTERNAL (`this`/bare) field or explicit-getter reference — the sibling of
+  /// `_externalFieldTarget ?? _externalGetterTarget` for an external one, except for a plain FIELD read,
+  /// which stays routed through the broader [_instanceMemberTarget] unchanged: M9-L's own established
+  /// identity-resolution scope resolves `target` for EVERY internal field read, deliberately regardless
+  /// of eligibility (a real, pre-existing, and correct test: a `static` field read inside a `static`
+  /// method still resolves) — `target` there is pure declaration provenance, and the field-shape
+  /// eligibility check (public/final/non-static/non-late) already lives, separately, at the GENERATOR
+  /// layer, in both the class's own type-interface-building code AND (M10-B) its member-`self`-rewrite,
+  /// which now independently re-checks it before ever treating a field as `self`-rewritable.
+  ///
+  /// An explicit getter is different: unlike a field, it has no second, independent generator-side
+  /// eligibility re-check the way the interface-building code already gives fields — the getter-HELPER
+  /// emission loop trusts this extractor's own gate completely to have already excluded a
+  /// static/abstract/private/`@override`d getter. So an internal getter read is routed through the
+  /// identical `_externalGetterTarget` gate an external one already uses, never `_instanceMemberTarget`
+  /// directly (M10-B: found live, an internal read of an otherwise-excluded getter would otherwise reach
+  /// a generator that has no independent eligibility check for it at all).
+  String? _internalMemberTarget(Element? element) {
+    if (element is GetterElement && element.isOriginDeclaration) {
+      return _externalGetterTarget(_thisType(element), element);
+    }
+    return _instanceMemberTarget(element);
+  }
+
   /// The class member [element] resolves to, when its own `enclosingElement` is a class (ADR-0033) —
   /// the generalization of [_storeMemberTarget] beyond `isStoreBase`, to *any* project class's own
   /// field/getter/method. Resolved the identical way: by the member's own declaring element, never by
@@ -1302,11 +1392,16 @@ final class ExpressionExtractor {
   /// receiver expression unconditionally; `target` only ever selects *how* to lower the property/method
   /// spelling, never *whether* to bypass the receiver.
   ///
-  /// Callers restrict *where* this is invoked, not what it returns: only a bare identifier (an implicit
-  /// instance-member read, reached with no receiver at all) and an explicit `this.member`/`this.method()`
-  /// (checked structurally — the receiver AST node is literally a `ThisExpression`) ever call this. An
-  /// external read (`model.count`, from outside the class) never does, so M9-J's own refusal — gated on
-  /// `target` being absent — is untouched by this function's own existence.
+  /// This is pure symbol computation, never an eligibility gate (M10-B) — every direct caller is one of
+  /// `_externalFieldTarget`/`_externalGetterTarget`/`_externalMethodTarget`, each of which checks the
+  /// member's own eligibility (public, non-static, non-abstract, no `@override`, and so on) and owner
+  /// consistency FIRST, calling this only once eligibility already passed, for BOTH an external receiver
+  /// AND an internal (`this`/bare) one — `_receiverTypeFor`/`_thisType` (above) are what let an internal
+  /// access route through the identical gate an external one always has, rather than a separately
+  /// (and, until M10-B's own investigation found it, more weakly) checked path. An external read
+  /// (`model.count`, from outside the class) reaches this exactly the same way an internal one now does,
+  /// so M9-J's own refusal — gated on `target` being absent — is untouched by this function's own
+  /// existence either way.
   String? _instanceMemberTarget(Element? element) {
     if (element == null) {
       return null;

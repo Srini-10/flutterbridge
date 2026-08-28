@@ -265,6 +265,20 @@ export interface EmitScope {
    */
   readonly projectClassMethodIds: ReadonlySet<NodeId>;
   /**
+   * Every getter declared on every `logic.ClassDecl` in the program (ADR-0038, M10-B) — the getter
+   * sibling of {@link projectClassMethodIds}, needed for the identical reason: unlike a field (which has
+   * a second, independent generator-side eligibility re-check in the class's own type-interface-building
+   * code), a getter has no such second safety net — the getter-helper emission loop trusts the Dart
+   * extractor's own `_externalGetterTarget` gate completely. `getterHelpers.get(target)` returning
+   * `undefined` is therefore ambiguous on its own (a `target` could just as easily name a FIELD, which
+   * never needs a helper and correctly falls through to `receiver.field`) — checking `target` is *in this
+   * set* first is what tells "this genuinely names a getter that failed to get a helper" (refuse) apart
+   * from "this names a field" (fall through unchanged), found live as a real gap: a `this`-read of a
+   * private/static/late field was, before this set existed, indistinguishable at this point from an
+   * eligible-but-unemitted getter.
+   */
+  readonly projectClassGetterIds: ReadonlySet<NodeId>;
+  /**
    * Set only while emitting a project-class member helper's own body (ADR-0038, M9-Q) — the receiver
    * every implicit/`this.`-qualified instance-field read inside that body must rewrite to, and the class
    * that receiver's own fields belong to (so a field embedded on a *different* class's own `ClassDecl`,
@@ -418,6 +432,30 @@ function isKnownProjectClassReceiver(type: Node | undefined): boolean {
  */
 function isSelfReceiver(receiver: Node | undefined): boolean {
   return receiver?.['kind'] === 'logic.Ref' && receiver['name'] === 'this' && receiver['target'] === undefined;
+}
+
+/**
+ * Whether `field` is part of the bounded, immutable field SHAPE (ADR-0035) — the identical
+ * public/final/non-static/non-late filter `functions.ts`'s own type-interface-building code already
+ * applies, mirrored here rather than re-derived, so the two never independently drift (M10-B): the Dart
+ * extractor's own internal-field identity resolution is DELIBERATELY eligibility-agnostic (M9-L — a
+ * `static` field read inside a `static` method still resolves a `target`, since `target` there is pure
+ * declaration provenance), so a private/static/late field's OWN read can carry a `target` that matches an
+ * entry in the owning class's own embedded `fields` array. Found live, as a real bug: the member-`self`-
+ * rewrite matched on that array alone, with no eligibility check of its own, so `this._secret`/a `static`
+ * field read inside a getter/method helper was silently emitted as `self._secret` — a real property the
+ * structural interface never declares (the interface-building filter already excludes it), reaching `tsc`
+ * as `Property '_secret' does not exist on type 'Model'` instead of this compiler's own honest `BRG3013`.
+ */
+function isEligibleStructuralField(field: Node): boolean {
+  const fieldName = typeof field['name'] === 'string' ? field['name'] : undefined;
+  return (
+    fieldName !== undefined &&
+    !fieldName.startsWith('_') &&
+    field['isFinal'] === true &&
+    field['isStatic'] !== true &&
+    field['isLate'] !== true
+  );
 }
 
 /**
@@ -604,6 +642,20 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
     case 'logic.Ref': {
       const target = node['target'];
 
+      // A member helper's own body referencing its own receiver, `this` (M10-B) — reached here whenever
+      // something ELSE (the `logic.PropertyAccess`/`logic.MethodCall` getter-helper/method-helper
+      // lookups, below and in `case 'logic.MethodCall':`) emits `this` as an ordinary sub-expression via
+      // `emitExpression(node['receiver'])`, e.g. `this.doubled` calling a SIBLING getter, or a bare
+      // `multiply(4)`'s own synthesized `this`-receiver. Resolves to the helper's own explicit `self`
+      // parameter — the one substitution every internal member-to-member call needs, and needs nowhere
+      // else: `this.count` (a FIELD) never reaches this case at all, because that field-rewrite,
+      // immediately below, short-circuits before its own receiver is ever emitted. `this` is a reserved
+      // word, so `{kind: 'logic.Ref', name: 'this'}` (no `target` of its own — see `isSelfReceiver`'s own
+      // doc) is the only shape the extractor ever produces for it.
+      if (scope.memberSelf !== undefined && node['name'] === 'this' && target === undefined) {
+        return scope.memberSelf.selfName;
+      }
+
       // A bounded getter helper's own body (ADR-0038, M9-Q): an implicit instance-field read
       // (`count`, no receiver at all — extraction's own bare-identifier shape for a member read,
       // ADR-0033) rewrites to the explicit `self` receiver every helper is given. Checked first, and
@@ -616,11 +668,50 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
         const ownerClass = scope.node(scope.memberSelf.ownerClassId) as unknown as Node | undefined;
         const fields = Array.isArray(ownerClass?.['fields']) ? (ownerClass['fields'] as Node[]) : [];
         const field = fields.find((f) => f['id'] === target);
+        // `isEligibleStructuralField` (M10-B): the Dart extractor's own internal-field identity
+        // resolution is deliberately eligibility-agnostic (M9-L) — a private/static/late field's own
+        // bare read still carries a `target` matching this array. Refused here (`BRG3013`), never
+        // rewritten to `self.<field>`: such a field is never part of the structural interface, so the
+        // rewrite would reference a real TypeScript property the emitted object never has.
+        if (field !== undefined && !isEligibleStructuralField(field)) {
+          const fieldName = typeof field['name'] === 'string' ? field['name'] : 'this field';
+          scope.report(
+            GeneratorDiagnosticCode.UnsupportedCapability,
+            'error',
+            `\`${fieldName}\` is not part of the bounded, immutable field shape (ADR-0035) — private, ` +
+              `static, late, or mutable fields are not exposed on the emitted structural object. ` +
+              `Owner: ${OWNER_LABEL['generator']}.`,
+            idOf(node),
+          );
+          return REFUSED;
+        }
         if (field !== undefined) {
           const fieldName = typeof field['name'] === 'string' ? field['name'] : undefined;
           if (fieldName !== undefined) {
             return `${scope.memberSelf.selfName}.${identifierOf(fieldName)}`;
           }
+        }
+
+        // A bare, implicit reference to a SIBLING getter (M10-B) — `int quadrupled() => doubled * 2;`:
+        // `target` here names a getter (declared on the identical class `memberSelf` already governs),
+        // never a field (the field array scan, immediately above, already ruled that out). Resolved by
+        // looking the id up in `getterHelpers`, exactly like `logic.PropertyAccess`'s own explicit-`this`
+        // sibling case — `Model_doubled(self)`, never `self.doubled` (there is no such property).
+        if (field === undefined && scope.projectClassGetterIds.has(target as NodeId)) {
+          const helper = scope.getterHelpers.get(target as NodeId);
+          if (helper === undefined) {
+            const memberName = typeof node['name'] === 'string' ? node['name'] : 'this getter';
+            scope.report(
+              GeneratorDiagnosticCode.UnsupportedCapability,
+              'error',
+              `\`${memberName}\` has no supported lowering for this read, even though its own declaration ` +
+                `is otherwise eligible (ADR-0038). FlutterBridge does not yet lower this getter's own body.`,
+              idOf(node),
+            );
+            return REFUSED;
+          }
+          const helperName = helper.path === scope.module.path ? helper.name : scope.module.use(helper.module, helper.name);
+          return `${helperName}(${scope.memberSelf.selfName})`;
         }
       }
 
@@ -894,6 +985,21 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
         const ownerClass = scope.node(scope.memberSelf.ownerClassId) as unknown as Node | undefined;
         const fields = Array.isArray(ownerClass?.['fields']) ? (ownerClass['fields'] as Node[]) : [];
         const field = fields.find((f) => f['id'] === node['target']);
+        // `isEligibleStructuralField` (M10-B) — see the identical check in `case 'logic.Ref':` for the
+        // full rationale: `this.field`'s own identity resolution is deliberately eligibility-agnostic
+        // (M9-L), so a private/static/late field must be refused here, never silently rewritten.
+        if (field !== undefined && !isEligibleStructuralField(field)) {
+          const fieldName = typeof field['name'] === 'string' ? field['name'] : 'this field';
+          scope.report(
+            GeneratorDiagnosticCode.UnsupportedCapability,
+            'error',
+            `\`${fieldName}\` is not part of the bounded, immutable field shape (ADR-0035) — private, ` +
+              `static, late, or mutable fields are not exposed on the emitted structural object. ` +
+              `Owner: ${OWNER_LABEL['generator']}.`,
+            idOf(node),
+          );
+          return REFUSED;
+        }
         if (field !== undefined) {
           const fieldName = typeof field['name'] === 'string' ? field['name'] : undefined;
           if (fieldName !== undefined) {
@@ -969,14 +1075,30 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
       // becomes a real function call over the receiver, evaluated exactly once (the receiver expression is
       // emitted a single time, below, and passed as that one call's own single argument — never inlined a
       // second time the way re-evaluating the getter's own body at each read would risk).
-      if (typeof node['target'] === 'string') {
+      //
+      // `scope.projectClassGetterIds.has(...)` (M10-B) discriminates "target genuinely names a getter"
+      // from "target names a field" — `target` alone cannot: a field never needs a helper and correctly
+      // falls through to `receiver.field`, below, while a getter that IS eligible but was never emitted a
+      // helper for (an async getter; a body referencing something unsupported) must refuse, never fall
+      // through to `receiver.doubled`, a property the emitted structural object never has — a real,
+      // pre-existing gap this milestone's own investigation found, live.
+      if (typeof node['target'] === 'string' && scope.projectClassGetterIds.has(node['target'] as NodeId)) {
         const helper = scope.getterHelpers.get(node['target'] as NodeId);
-        if (helper !== undefined) {
-          const receiver = emitExpression(node['receiver'] as Node, scope);
-          if (receiver === REFUSED) return REFUSED;
-          const name = helper.path === scope.module.path ? helper.name : scope.module.use(helper.module, helper.name);
-          return `${name}(${receiver})`;
+        if (helper === undefined) {
+          const property = String(node['property'] ?? 'this getter');
+          scope.report(
+            GeneratorDiagnosticCode.UnsupportedCapability,
+            'error',
+            `\`${property}\` has no supported lowering for this read, even though its own declaration is ` +
+              `otherwise eligible (ADR-0038). FlutterBridge does not yet lower this getter's own body.`,
+            idOf(node),
+          );
+          return REFUSED;
         }
+        const receiver = emitExpression(node['receiver'] as Node, scope);
+        if (receiver === REFUSED) return REFUSED;
+        const name = helper.path === scope.module.path ? helper.name : scope.module.use(helper.module, helper.name);
+        return `${name}(${receiver})`;
       }
 
       const receiver = emitExpression(node['receiver'] as Node, scope);

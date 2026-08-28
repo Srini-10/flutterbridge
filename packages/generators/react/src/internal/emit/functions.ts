@@ -109,57 +109,6 @@ export function reachableFunctions(nodes: readonly AnyUirNode[], scope: EmitScop
   return [...found].sort();
 }
 
-/**
- * Walks `value`, collecting the `target` of every `logic.PropertyAccess` that names a getter present in
- * `getterOwnerOf` (ADR-0038, M9-Q) — a member-execution sibling of {@link directFunctionRefs}. No
- * fixed-point walk into a discovered getter's own body is performed, or needed: the bounded getter subset
- * this milestone supports reads only fields, never another getter or method (§ the governing brief's own
- * "prefer first support set: getter→fields... do not force the full matrix"), so a getter's own body can
- * never itself reference a further getter this walk would need to discover.
- */
-function directGetterRefs(value: unknown, getterOwnerOf: ReadonlyMap<NodeId, NodeId>, found: Set<NodeId>): void {
-  if (Array.isArray(value)) {
-    for (const item of value) directGetterRefs(item, getterOwnerOf, found);
-    return;
-  }
-  if (value === null || typeof value !== 'object') return;
-  const node = value as Node;
-  if (kindOf(node) === 'logic.PropertyAccess' && typeof node['target'] === 'string') {
-    const target = node['target'] as NodeId;
-    if (getterOwnerOf.has(target)) found.add(target);
-  }
-  for (const child of Object.values(node)) directGetterRefs(child, getterOwnerOf, found);
-}
-
-/**
- * Every explicit instance getter the program reaches, directly, from a component's own render tree, a
- * `sig.Action`'s own body, or an already-reachable top-level function's own body (ADR-0038, M9-Q) —
- * the member-execution sibling of {@link reachableFunctions}. Not a fixed-point walk over getters
- * themselves (see {@link directGetterRefs}'s own note) — one pass over every already-known reachable
- * body is complete by construction.
- */
-function reachableGetters(
-  nodes: readonly AnyUirNode[],
-  reachableFns: readonly NodeId[],
-  scope: EmitScope,
-  getterOwnerOf: ReadonlyMap<NodeId, NodeId>,
-): NodeId[] {
-  const found = new Set<NodeId>();
-  for (const node of nodes as unknown as Node[]) {
-    if (kindOf(node) === 'ui.Component') {
-      directGetterRefs(node['render'], getterOwnerOf, found);
-    } else if (kindOf(node) === 'sig.Action') {
-      directGetterRefs(node['body'], getterOwnerOf, found);
-    }
-  }
-  for (const id of reachableFns) {
-    const fn = scope.node(id) as unknown as Node | undefined;
-    if (fn === undefined) continue;
-    directGetterRefs(fn['body'], getterOwnerOf, found);
-  }
-  return [...found].sort();
-}
-
 /** A reachable getter's own destination: which file it lives in, and the helper name reserved there. */
 export interface GetterHelperInfo {
   readonly path: string;
@@ -175,55 +124,105 @@ export interface MethodHelperInfo {
 }
 
 /**
- * Walks `value`, collecting the `target` of every `logic.MethodCall` that names a method present in
- * `methodOwnerOf` (ADR-0039, M10-A) — the method-execution sibling of {@link directGetterRefs}. No
- * fixed-point walk into a discovered method's own body is performed, or needed: the bounded method
- * subset this milestone supports reads only fields and its own parameters/locals, never another getter or
- * method (the identical field/parameter-only boundary ADR-0038 already drew for getter bodies, kept here
- * rather than re-derived), so a method's own body can never itself reference a further method this walk
- * would need to discover.
+ * Walks `value`, collecting the `target` of every `logic.PropertyAccess`/bare `logic.Ref` naming a getter
+ * present in `getterOwnerOf`, and every `logic.MethodCall` naming a method present in `methodOwnerOf`
+ * (ADR-0038/ADR-0039, M10-B) — the combined, cross-kind sibling of {@link directFunctionRefs}. A bare
+ * `logic.Ref` is checked against `getterOwnerOf` only, never `methodOwnerOf`: a bare method reference is
+ * always a call (`logic.MethodCall`), never a value (a method tear-off is a separate, unsupported
+ * capability — M10-B §"hard non-goals" — so the Dart extractor never produces one).
  */
-function directMethodRefs(value: unknown, methodOwnerOf: ReadonlyMap<NodeId, NodeId>, found: Set<NodeId>): void {
+function directMemberRefs(
+  value: unknown,
+  getterOwnerOf: ReadonlyMap<NodeId, NodeId>,
+  methodOwnerOf: ReadonlyMap<NodeId, NodeId>,
+  foundGetters: Set<NodeId>,
+  foundMethods: Set<NodeId>,
+): void {
   if (Array.isArray(value)) {
-    for (const item of value) directMethodRefs(item, methodOwnerOf, found);
+    for (const item of value) directMemberRefs(item, getterOwnerOf, methodOwnerOf, foundGetters, foundMethods);
     return;
   }
   if (value === null || typeof value !== 'object') return;
   const node = value as Node;
-  if (kindOf(node) === 'logic.MethodCall' && typeof node['target'] === 'string') {
+  const kind = kindOf(node);
+  if ((kind === 'logic.PropertyAccess' || kind === 'logic.Ref') && typeof node['target'] === 'string') {
     const target = node['target'] as NodeId;
-    if (methodOwnerOf.has(target)) found.add(target);
+    if (getterOwnerOf.has(target)) foundGetters.add(target);
   }
-  for (const child of Object.values(node)) directMethodRefs(child, methodOwnerOf, found);
+  if (kind === 'logic.MethodCall' && typeof node['target'] === 'string') {
+    const target = node['target'] as NodeId;
+    if (methodOwnerOf.has(target)) foundMethods.add(target);
+  }
+  for (const child of Object.values(node)) directMemberRefs(child, getterOwnerOf, methodOwnerOf, foundGetters, foundMethods);
 }
 
 /**
- * Every explicit instance method the program reaches, directly, from a component's own render tree, a
- * `sig.Action`'s own body, or an already-reachable top-level function's own body (ADR-0039, M10-A) — the
- * member-execution sibling of {@link reachableGetters}. Not a fixed-point walk over methods themselves
- * (see {@link directMethodRefs}'s own note) — one pass over every already-known reachable body is
- * complete by construction.
+ * Every explicit instance getter/method the program reaches, directly or **transitively through another
+ * reachable member's own body** (ADR-0038/ADR-0039, M10-B) — the member-execution sibling of
+ * {@link reachableFunctions}, generalized from a single, non-recursive pass (ADR-0038 §13/ADR-0039 §10's
+ * own "no cross-member matrix" scope, now closed) to a real fixed point, mirroring
+ * `component.ts`'s own `referencedActions`: seed from every component render tree, `sig.Action` body, and
+ * already-reachable top-level function body, then repeat — walk every *newly* found member's own body for
+ * more member references — until a pass adds nothing. `foundGetters`/`foundMethods` are `Set<NodeId>`, so
+ * an id already discovered is never re-queued: a self-reference (`int a() => a();`) or a mutual cycle
+ * (`a() => b(); b() => a();`) terminates on its own, with no separate cycle-detection state to keep in
+ * sync — falling out exactly as harmlessly as it does for `referencedActions`, since DISCOVERING that a
+ * recursive member is reachable is independent of whether its own helper can ever successfully EMIT (the
+ * retry-based emission loop below is what actually, correctly, refuses a self- or mutually-dependent
+ * chain, by never converging for it).
  */
-function reachableMethods(
+function reachableMembers(
   nodes: readonly AnyUirNode[],
   reachableFns: readonly NodeId[],
   scope: EmitScope,
+  getterOwnerOf: ReadonlyMap<NodeId, NodeId>,
   methodOwnerOf: ReadonlyMap<NodeId, NodeId>,
-): NodeId[] {
-  const found = new Set<NodeId>();
+  memberById: ReadonlyMap<NodeId, Node>,
+): { readonly getterIds: NodeId[]; readonly methodIds: NodeId[] } {
+  const foundGetters = new Set<NodeId>();
+  const foundMethods = new Set<NodeId>();
   for (const node of nodes as unknown as Node[]) {
     if (kindOf(node) === 'ui.Component') {
-      directMethodRefs(node['render'], methodOwnerOf, found);
+      directMemberRefs(node['render'], getterOwnerOf, methodOwnerOf, foundGetters, foundMethods);
     } else if (kindOf(node) === 'sig.Action') {
-      directMethodRefs(node['body'], methodOwnerOf, found);
+      directMemberRefs(node['body'], getterOwnerOf, methodOwnerOf, foundGetters, foundMethods);
     }
   }
   for (const id of reachableFns) {
     const fn = scope.node(id) as unknown as Node | undefined;
     if (fn === undefined) continue;
-    directMethodRefs(fn['body'], methodOwnerOf, found);
+    directMemberRefs(fn['body'], getterOwnerOf, methodOwnerOf, foundGetters, foundMethods);
   }
-  return [...found].sort();
+
+  let queueGetters = [...foundGetters];
+  let queueMethods = [...foundMethods];
+  while (queueGetters.length > 0 || queueMethods.length > 0) {
+    const discoveredGetters = new Set<NodeId>();
+    const discoveredMethods = new Set<NodeId>();
+    for (const id of [...queueGetters, ...queueMethods]) {
+      const member = memberById.get(id);
+      if (member === undefined) continue;
+      directMemberRefs(member['body'], getterOwnerOf, methodOwnerOf, discoveredGetters, discoveredMethods);
+    }
+    const nextGetters: NodeId[] = [];
+    const nextMethods: NodeId[] = [];
+    for (const id of discoveredGetters) {
+      if (!foundGetters.has(id)) {
+        foundGetters.add(id);
+        nextGetters.push(id);
+      }
+    }
+    for (const id of discoveredMethods) {
+      if (!foundMethods.has(id)) {
+        foundMethods.add(id);
+        nextMethods.push(id);
+      }
+    }
+    queueGetters = nextGetters;
+    queueMethods = nextMethods;
+  }
+
+  return { getterIds: [...foundGetters].sort(), methodIds: [...foundMethods].sort() };
 }
 
 /** A reachable function's own destination: which file it lives in, and the local name reserved there. */
@@ -326,6 +325,7 @@ export function emitFunctionModules(
   readonly getterHelpers: ReadonlyMap<NodeId, GetterHelperInfo>;
   readonly methodHelpers: ReadonlyMap<NodeId, MethodHelperInfo>;
   readonly projectClassMethodIds: ReadonlySet<NodeId>;
+  readonly projectClassGetterIds: ReadonlySet<NodeId>;
 } {
   const reachable = reachableFunctions(nodes, scope);
   const modules = new Map<string, PendingModule>();
@@ -334,42 +334,53 @@ export function emitFunctionModules(
   const getterHelpers = new Map<NodeId, GetterHelperInfo>();
   const methodHelpers = new Map<NodeId, MethodHelperInfo>();
 
-  // Every explicit getter's own owning class, by the getter's own embedded `logic.FunctionDecl` id
-  // (ADR-0038, M9-Q) — built once, from the full node list, since a `logic.FunctionDecl` embedded on
-  // `ClassDecl.methods` is not itself an independently addressable top-level record `scope.node()` can
+  // Every explicit getter/method's own owning class, by the member's own embedded `logic.FunctionDecl`
+  // id (ADR-0038/ADR-0039) — built once, from the full node list, since a `logic.FunctionDecl` embedded
+  // on `ClassDecl.methods` is not itself an independently addressable top-level record `scope.node()` can
   // find (the identical structural fact ADR-0034/ADR-0036/ADR-0037 already established for a class's own
-  // fields and constructors).
+  // fields and constructors). `memberById` is the sibling lookup `reachableMembers`'s own fixed-point walk
+  // needs to find an already-discovered member's own body (M10-B) — built in the identical pass, rather
+  // than re-scanning `nodes` a second time.
   const getterOwnerOf = new Map<NodeId, NodeId>();
+  const methodOwnerOf = new Map<NodeId, NodeId>();
+  const memberById = new Map<NodeId, Node>();
   for (const node of nodes as unknown as Node[]) {
     if (kindOf(node) !== 'logic.ClassDecl') continue;
     const classId = node['id'];
     const methods = Array.isArray(node['methods']) ? (node['methods'] as Node[]) : [];
     for (const method of methods) {
-      if (method['isGetter'] === true && typeof method['id'] === 'string' && typeof classId === 'string') {
+      if (typeof method['id'] !== 'string' || typeof classId !== 'string') continue;
+      memberById.set(method['id'] as NodeId, method);
+      if (method['isGetter'] === true) {
         getterOwnerOf.set(method['id'] as NodeId, classId as NodeId);
-      }
-    }
-  }
-  const reachableGetterIds = reachableGetters(nodes, reachable, scope, getterOwnerOf);
-
-  // Every explicit method's own owning class, by the method's own embedded `logic.FunctionDecl` id
-  // (ADR-0039, M10-A) — the method-execution sibling of `getterOwnerOf`, immediately above. Built from
-  // every method regardless of eligibility (mirroring `getterOwnerOf`'s own unconditional scan): a method
-  // with a named/optional parameter, for instance, is scanned here just the same, but can never appear in
-  // `reachableMethodIds` below, because the Dart extractor's own `_externalMethodTarget` (ADR-0039) never
-  // attaches a `MethodCall.target` to a call on one in the first place.
-  const methodOwnerOf = new Map<NodeId, NodeId>();
-  for (const node of nodes as unknown as Node[]) {
-    if (kindOf(node) !== 'logic.ClassDecl') continue;
-    const classId = node['id'];
-    const methodDecls = Array.isArray(node['methods']) ? (node['methods'] as Node[]) : [];
-    for (const method of methodDecls) {
-      if (method['isGetter'] !== true && typeof method['id'] === 'string' && typeof classId === 'string') {
+      } else {
         methodOwnerOf.set(method['id'] as NodeId, classId as NodeId);
       }
     }
   }
-  const reachableMethodIds = reachableMethods(nodes, reachable, scope, methodOwnerOf);
+  // Built from every member regardless of eligibility (an async getter, a method with a named/optional
+  // parameter, and so on are scanned just the same), so a class with such a member is treated identically
+  // to one without — but such a member can never appear in `reachableGetterIds`/`reachableMethodIds`
+  // below, because the Dart extractor's own `_externalGetterTarget`/`_externalMethodTarget` never attach
+  // a `target` to a reference to one in the first place.
+  //
+  // Computed HERE, locally, rather than read off `scope.projectClassGetterIds`/`.projectClassMethodIds`
+  // (M10-B: a real bug found live) — those fields are only threaded onto the real, shared root scope
+  // AFTER this whole function returns (`pipeline.ts`), for the identical forward-reference reason
+  // `functionModules`/`classModules` already are, but a member helper's OWN body, emitted from WITHIN
+  // this function, needs to resolve an internal composition reference (`doubled` inside `quadrupled`)
+  // during THIS function's own execution — reading the not-yet-populated outer scope's version silently
+  // produced `undefined` for every such lookup instead of a real symbol.
+  const projectClassGetterIdsLocal: ReadonlySet<NodeId> = new Set(getterOwnerOf.keys());
+  const projectClassMethodIdsLocal: ReadonlySet<NodeId> = new Set(methodOwnerOf.keys());
+  const { getterIds: reachableGetterIds, methodIds: reachableMethodIds } = reachableMembers(
+    nodes,
+    reachable,
+    scope,
+    getterOwnerOf,
+    methodOwnerOf,
+    memberById,
+  );
 
   // A getter's own owning class needs a real emitted type the moment the getter itself is reachable —
   // independent of whether that class is *also* reachable the way `reachableClassTypes` already looks for
@@ -489,114 +500,99 @@ export function emitFunctionModules(
       '',
     );
 
-    // Bounded getter execution (ADR-0038, M9-Q): one helper function per reachable, explicit instance
-    // getter this class declares, emitted into this same per-file module — a getter's own receiver type
-    // is exactly the class its own interface, immediately above, already declares, so there is nothing to
-    // import for `self`'s own type when the two are already co-located (the cross-file case goes through
-    // `classOf`, identical to a field's own type reference above).
+    // Bounded getter/method execution (ADR-0038/ADR-0039), now composable (M10-B): getters and methods
+    // share ONE reachable-member retry pool per class, attempted across passes exactly like
+    // `reachableFunctions`'s own sibling top-level-function loop below ("Attempts, not a single ordered
+    // pass") — a member whose own body references another member of the SAME class may be visited before
+    // or after the one it depends on (declaration order is not a dependency order), so a failed attempt
+    // is retried, monotonically, until a full pass makes no progress. This is what lets
+    // `int quadrupled() => doubled * 2;` succeed regardless of whether `doubled` is declared before or
+    // after it — and what correctly, structurally REFUSES a self- or mutually-recursive chain: neither
+    // member can ever be first (each depends on the other already being present), so neither ever
+    // converges, and both remain absent from `getterHelpers`/`methodHelpers` — the existing "target set
+    // but no helper -> BRG3013" refusal handles it, with no separate recursion check needed.
     const methods = Array.isArray(classDecl['methods']) ? (classDecl['methods'] as Node[]) : [];
-    for (const method of methods) {
+    const memberAttempts = methods.filter((method) => {
       const methodId = method['id'];
-      if (method['isGetter'] !== true || typeof methodId !== 'string' || !reachableGetterIds.includes(methodId as NodeId)) {
-        continue;
+      if (typeof methodId !== 'string') return false;
+      return method['isGetter'] === true
+        ? reachableGetterIds.includes(methodId as NodeId)
+        : reachableMethodIds.includes(methodId as NodeId);
+    });
+    const remainingMembers = new Set(memberAttempts.map((m) => m['id'] as NodeId));
+    let memberProgressed = true;
+    while (memberProgressed) {
+      memberProgressed = false;
+      for (const method of memberAttempts) {
+        const methodId = method['id'] as NodeId;
+        if (!remainingMembers.has(methodId)) continue;
+        const isGetter = method['isGetter'] === true;
+        const body = method['body'];
+        if (method['isAsync'] === true || !Array.isArray(body)) {
+          remainingMembers.delete(methodId);
+          continue;
+        }
+
+        const memberName = typeof method['name'] === 'string' ? method['name'] : String(methodId);
+        const helperName = pending.builder.declare(`${name}_${memberName}`, methodId);
+        const params = isGetter ? [] : Array.isArray(method['params']) ? (method['params'] as Node[]) : [];
+        const paramNames = new Map<string, string>();
+        for (const param of params) {
+          const paramName = typeof param['name'] === 'string' ? param['name'] : undefined;
+          if (paramName !== undefined) paramNames.set(paramName, identifierOf(paramName));
+        }
+
+        // Staged on a throwaway builder for this one attempt — an import a failed attempt asked for must
+        // never leak into a file another, successfully-lowered member shares. Only replayed onto the
+        // real, shared `pending.builder` once the attempt succeeds (mirroring `reachableFunctions`'s own
+        // sibling loop below).
+        const scratch = new ModuleBuilder(pending.builder.path);
+        let hadError = false;
+        const locals = localBindingsIn(body);
+        const helperScope: EmitScope = {
+          ...scope,
+          module: scratch,
+          classModules,
+          getterHelpers,
+          methodHelpers,
+          projectClassGetterIds: projectClassGetterIdsLocal,
+          projectClassMethodIds: projectClassMethodIdsLocal,
+          memberSelf: { ownerClassId: id, selfName: 'self' },
+          // No closure over any outer scope (a member helper is a plain, standalone module-level
+          // function): a name that is not one of THIS member's own parameters must fail to resolve here,
+          // never accidentally fall through to some unrelated component prop or action parameter that
+          // happens to share the name.
+          paramInScope: (paramName) => paramNames.get(paramName),
+          localName: (localId) => locals.get(localId) ?? scope.localName(localId),
+          report: (code, severity, message, nodeId) => {
+            if (severity === 'error') hadError = true;
+            else scope.report(code, severity, message, nodeId);
+          },
+        };
+        const returnType = typeTextOf(method['returnType'] as Node | undefined, (rt) => useRuntime(scratch, rt), classOf);
+        const paramList = paramListOf(params, identifierOf, (rt) => useRuntime(scratch, rt), classOf);
+        const signature = paramList.length === 0 ? `self: ${localName}` : `self: ${localName}, ${paramList}`;
+        const lines = emitStatements(body, helperScope);
+
+        if (hadError) continue; // try again next pass — a dependency this pass hadn't resolved yet might resolve then
+
+        for (const request of scratch.usedImports()) pending.builder.use(request.from, request.name, { typeOnly: request.typeOnly });
+        const capabilityLabel = isGetter
+          ? 'bounded, structural getter execution (ADR-0038)'
+          : 'bounded, structural instance method execution (ADR-0039)';
+        pending.lines.push(
+          `/** \`${name}.${memberName}\`, from ${spanFile}. A ${capabilityLabel} — never a prototype ${isGetter ? 'getter' : 'method'}; there is no runtime \`${name}\` class. */`,
+          `export function ${helperName}(${signature}): ${returnType} {`,
+          ...lines.map((line: string) => `  ${line}`),
+          '}',
+          '',
+        );
+        const helperInfo = { path: pending.builder.path, module: specifier, name: helperName };
+        if (isGetter) getterHelpers.set(methodId, helperInfo);
+        else methodHelpers.set(methodId, helperInfo);
+        remainingMembers.delete(methodId);
+        memberProgressed = true;
       }
-      const body = method['body'];
-      if (method['isAsync'] === true || !Array.isArray(body)) continue;
-
-      const getterName = typeof method['name'] === 'string' ? method['name'] : String(methodId);
-      const helperName = pending.builder.declare(`${name}_${getterName}`, methodId);
-
-      const scratch = new ModuleBuilder(pending.builder.path);
-      let hadError = false;
-      const helperScope: EmitScope = {
-        ...scope,
-        module: scratch,
-        classModules,
-        getterHelpers,
-        memberSelf: { ownerClassId: id, selfName: 'self' },
-        paramInScope: () => undefined,
-        localName: (localId) => localBindingsIn(body).get(localId) ?? scope.localName(localId),
-        report: (code, severity, message, nodeId) => {
-          if (severity === 'error') hadError = true;
-          else scope.report(code, severity, message, nodeId);
-        },
-      };
-      const returnType = typeTextOf(method['returnType'] as Node | undefined, (rt) => useRuntime(scratch, rt), classOf);
-      const lines = emitStatements(body, helperScope);
-      if (hadError) continue;
-
-      for (const request of scratch.usedImports()) pending.builder.use(request.from, request.name, { typeOnly: request.typeOnly });
-      pending.lines.push(
-        `/** \`${name}.${getterName}\`, from ${spanFile}. A bounded, structural getter execution (ADR-0038) — never a prototype getter; there is no runtime \`${name}\` class. */`,
-        `export function ${helperName}(self: ${localName}): ${returnType} {`,
-        ...lines.map((line: string) => `  ${line}`),
-        '}',
-        '',
-      );
-      getterHelpers.set(methodId as NodeId, { path: pending.builder.path, module: specifier, name: helperName });
-    }
-
-    // Bounded structural instance method execution (ADR-0039, M10-A): one helper function per reachable,
-    // explicit instance method this class declares, emitted alongside its own getter helpers immediately
-    // above, in the identical per-file module. A method whose own body reports an error while being
-    // lowered (an unsupported construct, an internal call to another member — out of this milestone's own
-    // scope — a named/optional parameter that somehow reached this far) is simply never added to
-    // `methodHelpers`; the existing `logic.MethodCall` case in `expression.ts` refuses it (`BRG3013`)
-    // rather than falling through to `receiver.method(args)`, exactly as an absent `functionModules` entry
-    // already does for a top-level function.
-    for (const method of methods) {
-      const methodId = method['id'];
-      if (method['isGetter'] === true || typeof methodId !== 'string' || !reachableMethodIds.includes(methodId as NodeId)) {
-        continue;
-      }
-      const body = method['body'];
-      if (method['isAsync'] === true || !Array.isArray(body)) continue;
-
-      const methodName = typeof method['name'] === 'string' ? method['name'] : String(methodId);
-      const helperName = pending.builder.declare(`${name}_${methodName}`, methodId);
-      const params = Array.isArray(method['params']) ? (method['params'] as Node[]) : [];
-      const paramNames = new Map<string, string>();
-      for (const param of params) {
-        const paramName = typeof param['name'] === 'string' ? param['name'] : undefined;
-        if (paramName !== undefined) paramNames.set(paramName, identifierOf(paramName));
-      }
-
-      const scratch = new ModuleBuilder(pending.builder.path);
-      let hadError = false;
-      const locals = localBindingsIn(body);
-      const helperScope: EmitScope = {
-        ...scope,
-        module: scratch,
-        classModules,
-        getterHelpers,
-        methodHelpers,
-        memberSelf: { ownerClassId: id, selfName: 'self' },
-        // No closure over any outer scope (identical to the getter helper's own scope, above): a method
-        // helper is a plain, standalone module-level function, so a name that is not one of this method's
-        // own parameters must fail to resolve here, never accidentally fall through to some unrelated
-        // component prop or action parameter that happens to share the name.
-        paramInScope: (paramName) => paramNames.get(paramName),
-        localName: (localId) => locals.get(localId) ?? scope.localName(localId),
-        report: (code, severity, message, nodeId) => {
-          if (severity === 'error') hadError = true;
-          else scope.report(code, severity, message, nodeId);
-        },
-      };
-      const returnType = typeTextOf(method['returnType'] as Node | undefined, (rt) => useRuntime(scratch, rt), classOf);
-      const paramList = paramListOf(params, identifierOf, (rt) => useRuntime(scratch, rt), classOf);
-      const signature = paramList.length === 0 ? `self: ${localName}` : `self: ${localName}, ${paramList}`;
-      const lines = emitStatements(body, helperScope);
-      if (hadError) continue;
-
-      for (const request of scratch.usedImports()) pending.builder.use(request.from, request.name, { typeOnly: request.typeOnly });
-      pending.lines.push(
-        `/** \`${name}.${methodName}\`, from ${spanFile}. A bounded, structural instance method execution (ADR-0039) — never a prototype method; there is no runtime \`${name}\` class. */`,
-        `export function ${helperName}(${signature}): ${returnType} {`,
-        ...lines.map((line: string) => `  ${line}`),
-        '}',
-        '',
-      );
-      methodHelpers.set(methodId as NodeId, { path: pending.builder.path, module: specifier, name: helperName });
     }
   }
 
@@ -716,5 +712,13 @@ export function emitFunctionModules(
     .filter((m) => m.lines.length > 0)
     .map((m) => ({ path: m.builder.path, contents: m.builder.toSource() }));
 
-  return { files, functionModules, classModules, getterHelpers, methodHelpers, projectClassMethodIds: new Set(methodOwnerOf.keys()) };
+  return {
+    files,
+    functionModules,
+    classModules,
+    getterHelpers,
+    methodHelpers,
+    projectClassMethodIds: projectClassMethodIdsLocal,
+    projectClassGetterIds: projectClassGetterIdsLocal,
+  };
 }
