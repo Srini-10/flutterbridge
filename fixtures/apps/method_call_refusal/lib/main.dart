@@ -45,3 +45,29 @@ class AsyncMethodCallOnLocal extends StatelessWidget {
     return Text('${model.scale(3)}');
   }
 }
+
+// Not wired into the route table either (M10-B). `countdown` calls itself — the fixed-point retry loop
+// can never make it succeed (its own dependency is itself), so it stays refused, with no special
+// recursion check anywhere in the generator.
+class RecursiveMethodCallOnLocal extends StatelessWidget {
+  const RecursiveMethodCallOnLocal({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final model = RecursiveModel(7);
+    return Text('${model.countdown(3)}');
+  }
+}
+
+// Not wired into the route table either (M10-B). `compute` itself meets every ADR-0039 gate, but its own
+// body calls `scaleUnsupported`, which does not — the unsupported dependency must propagate, refusing
+// `compute` too, rather than silently shipping a call to a helper that was never emitted.
+class ReachableUnsupportedDependencyDemo extends StatelessWidget {
+  const ReachableUnsupportedDependencyDemo({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final model = DependentModel(7);
+    return Text('${model.compute()}');
+  }
+}

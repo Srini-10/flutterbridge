@@ -29,3 +29,29 @@ class AsyncModel {
 
   Future<int> scale(int factor) async => count * factor;
 }
+
+/// A direct self-recursive method (M10-B §26/§48) — `countdown` meets every ADR-0039 gate on its own, but
+/// its own body calls itself: the fixed-point retry loop in `emitFunctionModules` can never make `countdown`
+/// itself first, since its own dependency IS itself, so it never converges — the existing "target set but
+/// no helper" refusal (`BRG3013`) handles it, with no separate recursion-detection code needed or added.
+class RecursiveModel {
+  final int count;
+
+  RecursiveModel(this.count);
+
+  int countdown(int n) => n <= 0 ? count : countdown(n - 1);
+}
+
+/// A method that meets every ADR-0039 gate on its own, but whose own body calls a SIBLING method that
+/// does NOT (`scaleUnsupported`'s own optional `bonus` parameter) — M10-B §45/§47's own "reachable
+/// unsupported dependency" boundary: `compute` must not silently ship with a broken internal reference;
+/// it must refuse (`BRG3013`) too, propagating the unsupported dependency rather than masking it.
+class DependentModel {
+  final int count;
+
+  DependentModel(this.count);
+
+  int scaleUnsupported(int factor, [int bonus = 0]) => count * factor + bonus;
+
+  int compute() => scaleUnsupported(2);
+}

@@ -386,3 +386,9 @@ export function instanceMethodExecutionRaw(): string {
   const path = fileURLToPath(new URL('../../../../fixtures/uir/instance_method_execution.ndjson', import.meta.url));
   return readFileSync(path, 'utf8');
 }
+
+/** The real `fixtures/apps/member_helper_composition` document, raw analyzer output (ADR-0040, M10-B) — not yet normalized. */
+export function memberHelperCompositionRaw(): string {
+  const path = fileURLToPath(new URL('../../../../fixtures/uir/member_helper_composition.ndjson', import.meta.url));
+  return readFileSync(path, 'utf8');
+}

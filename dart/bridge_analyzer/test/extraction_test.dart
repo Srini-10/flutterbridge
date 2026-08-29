@@ -7215,6 +7215,285 @@ class W extends StatelessWidget {
     });
   });
 
+  group('member helper composition provenance (ADR-0040, M10-B)', () {
+    Map<String, dynamic> classDecl(Extracted app, String name) =>
+        app.ofKind('logic.ClassDecl').singleWhere((Map<String, dynamic> d) => d['name'] == name);
+    Map<String, dynamic> method(Map<String, dynamic> cls, String name) => (cls['methods'] as List<dynamic>)
+        .cast<Map<String, dynamic>>()
+        .singleWhere((Map<String, dynamic> m) => m['name'] == name);
+    Map<String, dynamic>? readOf(Object? body, String property) {
+      if (body is Map<String, dynamic>) {
+        if ((body['kind'] == 'logic.Ref' && body['name'] == property) ||
+            (body['kind'] == 'logic.PropertyAccess' && body['property'] == property)) {
+          return body;
+        }
+        for (final Object? v in body.values) {
+          if (readOf(v, property) case final Map<String, dynamic> found) return found;
+        }
+      } else if (body is List<dynamic>) {
+        for (final Object? item in body) {
+          if (readOf(item, property) case final Map<String, dynamic> found) return found;
+        }
+      }
+      return null;
+    }
+
+    Map<String, dynamic>? callOf(Object? body, String methodName) {
+      if (body is Map<String, dynamic>) {
+        if (body['kind'] == 'logic.MethodCall' && body['method'] == methodName) return body;
+        for (final Object? v in body.values) {
+          if (callOf(v, methodName) case final Map<String, dynamic> found) return found;
+        }
+      } else if (body is List<dynamic>) {
+        for (final Object? item in body) {
+          if (callOf(item, methodName) case final Map<String, dynamic> found) return found;
+        }
+      }
+      return null;
+    }
+
+    test('a bare, implicit internal method call resolves as logic.MethodCall, never logic.Call', () async {
+      // Found live, before this milestone: a bare `multiply(4)` (implicit `this`, no explicit or cascade
+      // receiver) has no `realTarget` at all, so it reached this file as `logic.Call` with an unresolvable
+      // `callee` Ref — structurally identical to a call to a top-level function this generator has no
+      // model for. `_invocation` now detects this case ahead of that fallback and synthesizes the
+      // identical `this`-receiver `logic.MethodCall` shape an explicit `this.multiply(4)` already has.
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {
+  final int count;
+  Model(this.count);
+  int multiply(int factor) => count * factor;
+  int quadrupled() => multiply(4);
+}
+class W extends StatelessWidget {
+  const W({super.key, required this.model});
+  final Model model;
+  @override
+  Widget build(BuildContext context) => Text(model.quadrupled().toString());
+}
+''');
+      final Map<String, dynamic> cls = classDecl(app, 'Model');
+      final String multiplyId = method(cls, 'multiply')['id'] as String;
+      final List<dynamic> body = method(cls, 'quadrupled')['body'] as List<dynamic>;
+      final Map<String, dynamic>? call = callOf(body, 'multiply');
+      expect(call?['kind'], 'logic.MethodCall');
+      expect(call?['target'], multiplyId);
+      expect(call?['receiver'], isNotNull);
+      final Map<String, dynamic> receiver = call!['receiver'] as Map<String, dynamic>;
+      expect(receiver['kind'], 'logic.Ref');
+      expect(receiver['name'], 'this');
+    });
+
+    test("the bare call's own synthesized `this` receiver is typed as the owning class, not the call's own return type", () async {
+      // A real, live bug found while building this milestone: the receiver was built from the WHOLE
+      // `MethodInvocation` node's own `staticType` (the call's own return type, `int`) instead of the
+      // owning class (`Model`) — passing the entire pipeline's own type-representation checks right up
+      // until a real fixture proved the receiver's own `type.name` was silently `int`, not `Model`.
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {
+  final int count;
+  Model(this.count);
+  int multiply(int factor) => count * factor;
+  int quadrupled() => multiply(4);
+}
+class W extends StatelessWidget {
+  const W({super.key, required this.model});
+  final Model model;
+  @override
+  Widget build(BuildContext context) => Text(model.quadrupled().toString());
+}
+''');
+      final List<dynamic> body = method(classDecl(app, 'Model'), 'quadrupled')['body'] as List<dynamic>;
+      final Map<String, dynamic> call = callOf(body, 'multiply')!;
+      final Map<String, dynamic> receiver = call['receiver'] as Map<String, dynamic>;
+      final Map<String, dynamic> receiverType = receiver['type'] as Map<String, dynamic>;
+      expect(receiverType['name'], 'Model');
+    });
+
+    test('bare and explicit `this.` internal method calls target the identical declaration', () async {
+      final Extracted app = await extract(r'''
+import 'package:flutter/material.dart';
+class Model {
+  final int count;
+  Model(this.count);
+  int multiply(int factor) => count * factor;
+  int bare() => multiply(4);
+  int explicit() => this.multiply(4);
+}
+class W extends StatelessWidget {
+  const W({super.key, required this.model});
+  final Model model;
+  @override
+  Widget build(BuildContext context) => Text('${model.bare()}-${model.explicit()}');
+}
+''');
+      final Map<String, dynamic> cls = classDecl(app, 'Model');
+      final String multiplyId = method(cls, 'multiply')['id'] as String;
+      final Map<String, dynamic>? bareCall = callOf(method(cls, 'bare')['body'], 'multiply');
+      final Map<String, dynamic>? explicitCall = callOf(method(cls, 'explicit')['body'], 'multiply');
+      expect(bareCall?['target'], multiplyId);
+      expect(explicitCall?['target'], multiplyId);
+    });
+
+    test('bare and explicit `this.` internal getter reads target the identical declaration', () async {
+      final Extracted app = await extract(r'''
+import 'package:flutter/material.dart';
+class Model {
+  final int count;
+  Model(this.count);
+  int get doubled => count * 2;
+  int bare() => doubled * 2;
+  int explicit() => this.doubled * 2;
+}
+class W extends StatelessWidget {
+  const W({super.key, required this.model});
+  final Model model;
+  @override
+  Widget build(BuildContext context) => Text('${model.bare()}-${model.explicit()}');
+}
+''');
+      final Map<String, dynamic> cls = classDecl(app, 'Model');
+      final String doubledId = method(cls, 'doubled')['id'] as String;
+      final Map<String, dynamic>? bareRead = readOf(method(cls, 'bare')['body'], 'doubled');
+      final Map<String, dynamic>? explicitRead = readOf(method(cls, 'explicit')['body'], 'doubled');
+      expect(bareRead?['target'], doubledId);
+      expect(explicitRead?['target'], doubledId);
+    });
+
+    test('a generic method dependency never reaches the MethodCall/target shape at all', () async {
+      // M10-B §49: the M10-A second-pass fix (generic methods excluded via `element.typeParameters`)
+      // must not be bypassed by internal composition. `identity<int>(3)`, called bare from within the
+      // identical class, resolves the same way a static-qualified call does (above): `target` (the local
+      // variable inside `_invocation`, `node.realTarget`) is `null` for a generic method call exactly as
+      // it is for an ordinary bare call, so this reaches UIR as `logic.Call` with an unresolvable
+      // `callee` Ref — never `logic.MethodCall` — so `_externalMethodTarget` is never even consulted for
+      // it. Proven directly, live, rather than assumed from the external-call case.
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {
+  final int count;
+  Model(this.count);
+  T identity<T>(T value) => value;
+  int compute() => identity<int>(3);
+}
+class W extends StatelessWidget {
+  const W({super.key, required this.model});
+  final Model model;
+  @override
+  Widget build(BuildContext context) => Text(model.compute().toString());
+}
+''');
+      final List<dynamic> body = method(classDecl(app, 'Model'), 'compute')['body'] as List<dynamic>;
+      expect(callOf(body, 'identity'), isNull);
+      final Map<String, dynamic> ret = body.first as Map<String, dynamic>;
+      final Map<String, dynamic> value = ret['value'] as Map<String, dynamic>;
+      expect(value['kind'], 'logic.Call');
+      final Map<String, dynamic> callee = value['callee'] as Map<String, dynamic>;
+      expect(callee['name'], 'identity');
+      expect(callee.containsKey('target'), isFalse);
+    });
+
+    test('an async method dependency still resolves a target internally too — the generator excludes it', () async {
+      // M10-B §50: mirrors the identical, already-proven external-call fact (ADR-0039 §5) for an internal
+      // composition target — `_externalMethodTarget` does not check `isAsync` either way.
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {
+  final int count;
+  Model(this.count);
+  Future<int> load() async => count;
+  Future<int> compute() => load();
+}
+class W extends StatelessWidget {
+  const W({super.key, required this.model});
+  final Model model;
+  @override
+  Widget build(BuildContext context) => Text(model.compute().toString());
+}
+''');
+      final Map<String, dynamic>? call = callOf(method(classDecl(app, 'Model'), 'compute')['body'], 'load');
+      expect(call?['target'], isNotNull);
+    });
+
+    test('a static sibling method is never treated as a same-self composition target', () async {
+      // M10-B §51: `staticHelper()` called bare from within an instance method is NOT an implicit-`this`
+      // call at all (Dart forbids calling a static member without its own class qualifier from instance
+      // context unless it's literally a call to a DIFFERENT, unrelated top-level/static declaration) —
+      // this fixture instead proves the boundary the OTHER direction: a bare call inside a method that
+      // happens to share a name with an unrelated top-level function must resolve to the FUNCTION, never
+      // be misattributed to some same-named instance member.
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+int helper(int x) => x * 10;
+class Model {
+  final int count;
+  Model(this.count);
+  int compute() => helper(count);
+}
+class W extends StatelessWidget {
+  const W({super.key, required this.model});
+  final Model model;
+  @override
+  Widget build(BuildContext context) => Text(model.compute().toString());
+}
+''');
+      final List<dynamic> body = method(classDecl(app, 'Model'), 'compute')['body'] as List<dynamic>;
+      final Map<String, dynamic>? call = callOf(body, 'helper');
+      expect(call, isNull); // never reaches logic.MethodCall at all — it is logic.Call, unaffected by M10-B
+    });
+
+    test('a parameter shadowing a sibling method name resolves to the parameter, never a dependency edge', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {
+  final int count;
+  Model(this.count);
+  int multiply(int x) => count * x;
+  int compute(int multiply) => multiply;
+}
+class W extends StatelessWidget {
+  const W({super.key, required this.model});
+  final Model model;
+  @override
+  Widget build(BuildContext context) => Text(model.compute(5).toString());
+}
+''');
+      final List<dynamic> body = method(classDecl(app, 'Model'), 'compute')['body'] as List<dynamic>;
+      // The return is a bare `logic.Ref` to the PARAMETER — never a `logic.MethodCall` to `multiply`.
+      final Map<String, dynamic> ret = body.first as Map<String, dynamic>;
+      final Map<String, dynamic> value = ret['value'] as Map<String, dynamic>;
+      expect(value['kind'], 'logic.Ref');
+      expect(value['name'], 'multiply');
+      expect(value.containsKey('target'), isFalse);
+    });
+
+    test('the same source extracts to the same internal composition target on a second, independent run (determinism)', () async {
+      const String source = '''
+import 'package:flutter/material.dart';
+class Model {
+  final int count;
+  Model(this.count);
+  int get doubled => count * 2;
+  int quadrupled() => doubled * 2;
+}
+class W extends StatelessWidget {
+  const W({super.key, required this.model});
+  final Model model;
+  @override
+  Widget build(BuildContext context) => Text(model.quadrupled().toString());
+}
+''';
+      final Extracted first = await extract(source);
+      final Extracted second = await extract(source);
+      final Map<String, dynamic>? firstRead = readOf(method(classDecl(first, 'Model'), 'quadrupled')['body'], 'doubled');
+      final Map<String, dynamic>? secondRead = readOf(method(classDecl(second, 'Model'), 'quadrupled')['body'], 'doubled');
+      expect(firstRead?['target'], isNotNull);
+      expect(firstRead?['target'], secondRead?['target']);
+    });
+  });
+
   group('M9-R final closure — capability-kind separation', () {
     Map<String, dynamic> classDecl(Extracted app, String name) =>
         app.ofKind('logic.ClassDecl').singleWhere((Map<String, dynamic> d) => d['name'] == name);

@@ -1,0 +1,20 @@
+name: member_helper_composition
+description: >-
+  M10-B positive proof: one bounded executable project-class member (a method or a getter) calling
+  ANOTHER bounded executable member on the SAME receiver — `int quadrupled() => doubled * 2;` lowers to
+  `Model_quadrupled(self) { return Model_doubled(self) * 2; }`, never `self.doubled` (there is no such
+  property). Generalizes M9-Q's own bounded getter-execution architecture and ADR-0039's own bounded
+  method-execution architecture (`docs/m10/m10a-bounded-instance-method-execution.md`) from isolated
+  leaves to a same-class dependency graph, with a real fixed-point reachability/emission proof.
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

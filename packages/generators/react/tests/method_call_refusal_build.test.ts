@@ -58,4 +58,35 @@ describe('M9-R closure: a method call on a locally-constructed receiver refuses 
     ).toBe(true);
     expect(files).toEqual([]);
   });
+
+  // M10-B §26/§48: `RecursiveModel.countdown` calls itself. The fixed-point retry loop can never make it
+  // succeed — its own single unresolved dependency IS itself — so it stays refused, with no special
+  // recursion-detection code anywhere in the generator; the existing "target set but no helper" branch
+  // handles it for free. Also proves the retry loop TERMINATES (this test itself has a real timeout) —
+  // a real risk a fixed-point loop over a self-referential chain could otherwise not have.
+  it('refuses a directly self-recursive method as BRG3013, and terminates', () => {
+    const normalized = compiledFrom(methodCallRefusalRaw());
+    const { context, reported } = harness(normalized);
+    const { files } = reactGenerator.generate(context);
+    const errors = reported.filter((d) => d.severity === 'error');
+    expect(
+      errors.some((d) => d.code === 'BRG3013' && d.message.includes('countdown') && d.message.includes('otherwise eligible')),
+    ).toBe(true);
+    expect(files).toEqual([]);
+  }, 10_000);
+
+  // M10-B §45/§47: `DependentModel.compute` meets every ADR-0039 gate on its own, but its own body calls
+  // a SIBLING method (`scaleUnsupported`) that does not (an optional parameter) — the unsupported
+  // dependency must propagate: `compute` refuses too, rather than silently shipping a call to a helper
+  // that was never emitted.
+  it('refuses a method whose own body calls an unsupported sibling method, propagating the refusal', () => {
+    const normalized = compiledFrom(methodCallRefusalRaw());
+    const { context, reported } = harness(normalized);
+    const { files } = reactGenerator.generate(context);
+    const errors = reported.filter((d) => d.severity === 'error');
+    expect(
+      errors.some((d) => d.code === 'BRG3013' && d.message.includes('compute') && d.message.includes('otherwise eligible')),
+    ).toBe(true);
+    expect(files).toEqual([]);
+  });
 });
