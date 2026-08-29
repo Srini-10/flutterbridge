@@ -392,3 +392,9 @@ export function memberHelperCompositionRaw(): string {
   const path = fileURLToPath(new URL('../../../../fixtures/uir/member_helper_composition.ndjson', import.meta.url));
   return readFileSync(path, 'utf8');
 }
+
+/** The real `fixtures/apps/method_argument_semantics` document, raw analyzer output (ADR-0041, M10-C) — not yet normalized. */
+export function methodArgumentSemanticsRaw(): string {
+  const path = fileURLToPath(new URL('../../../../fixtures/uir/method_argument_semantics.ndjson', import.meta.url));
+  return readFileSync(path, 'utf8');
+}

@@ -435,19 +435,19 @@ function isSelfReceiver(receiver: Node | undefined): boolean {
 }
 
 /**
- * Whether `field` is part of the bounded, immutable field SHAPE (ADR-0035) — the identical
- * public/final/non-static/non-late filter `functions.ts`'s own type-interface-building code already
- * applies, mirrored here rather than re-derived, so the two never independently drift (M10-B): the Dart
- * extractor's own internal-field identity resolution is DELIBERATELY eligibility-agnostic (M9-L — a
+ * Whether `field` is part of the bounded, immutable field SHAPE (ADR-0035) — the ONE filter both
+ * `functions.ts`'s own type-interface-building code and (M10-C) its own transitive class-type-
+ * reachability walk import and call, rather than each keeping an independently-drifting copy (M10-B: the
+ * Dart extractor's own internal-field identity resolution is DELIBERATELY eligibility-agnostic — M9-L, a
  * `static` field read inside a `static` method still resolves a `target`, since `target` there is pure
- * declaration provenance), so a private/static/late field's OWN read can carry a `target` that matches an
- * entry in the owning class's own embedded `fields` array. Found live, as a real bug: the member-`self`-
+ * declaration provenance — so a private/static/late field's OWN read can carry a `target` that matches an
+ * entry in the owning class's own embedded `fields` array). Found live, as a real bug: the member-`self`-
  * rewrite matched on that array alone, with no eligibility check of its own, so `this._secret`/a `static`
  * field read inside a getter/method helper was silently emitted as `self._secret` — a real property the
- * structural interface never declares (the interface-building filter already excludes it), reaching `tsc`
- * as `Property '_secret' does not exist on type 'Model'` instead of this compiler's own honest `BRG3013`.
+ * structural interface never declares, reaching `tsc` as `Property '_secret' does not exist on type
+ * 'Model'` instead of this compiler's own honest `BRG3013`.
  */
-function isEligibleStructuralField(field: Node): boolean {
+export function isEligibleStructuralField(field: Node): boolean {
   const fieldName = typeof field['name'] === 'string' ? field['name'] : undefined;
   return (
     fieldName !== undefined &&

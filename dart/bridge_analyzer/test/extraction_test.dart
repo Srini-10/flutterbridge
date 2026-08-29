@@ -7105,6 +7105,32 @@ class W extends StatelessWidget {
       expect(call?.containsKey('target'), isFalse);
     });
 
+    test('a method with a function-typed parameter is never targeted (M10-C)', () async {
+      // `applyCallback`'s own parameter `fn` is required-positional — meeting the pre-M10-C gate, which
+      // checked ONLY `isRequiredPositional`, never a parameter's own TYPE — but function-typed. A real,
+      // live-probed gap: before this exclusion, `target` still resolved, and the TypeScript generator
+      // emitted a helper whose own body CALLED a parameter typed `unknown` (this generator has no
+      // lowering for a Dart function type) — code that reaches real `tsc` as "not callable", never this
+      // compiler's own honest `BRG3013`. Excluded here, at the identical gate every other unsupported
+      // parameter shape already refuses at.
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {
+  final int count;
+  Model(this.count);
+  int applyCallback(int Function(int) fn) => fn(count);
+}
+class W extends StatelessWidget {
+  const W({super.key, required this.model});
+  final Model model;
+  @override
+  Widget build(BuildContext context) => Text(model.applyCallback((x) => x * 2).toString());
+}
+''');
+      final Map<String, dynamic>? call = callOf(app.only('ui.Component')['render'], 'applyCallback');
+      expect(call?.containsKey('target'), isFalse);
+    });
+
     test('a method on a private class is never targeted by external call resolution', () async {
       final Extracted app = await extract('''
 import 'package:flutter/material.dart';

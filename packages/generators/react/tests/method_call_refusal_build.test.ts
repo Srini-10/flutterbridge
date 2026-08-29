@@ -89,4 +89,26 @@ describe('M9-R closure: a method call on a locally-constructed receiver refuses 
     ).toBe(true);
     expect(files).toEqual([]);
   });
+
+  // M10-C: `CallbackModel.applyCallback`'s own parameter is required-positional (meeting ADR-0039's own
+  // gate) but FUNCTION-TYPED — a real, live-probed gap found while investigating this milestone's own
+  // "closures/function-valued method references" non-goal. Before the fix, `target` still resolved (the
+  // pre-M10-C gate never checked a parameter's own TYPE, only its required-positional-ness), so the
+  // generator emitted a helper whose own body called a parameter typed `unknown` — code that would reach
+  // real `tsc` as "not callable", never this compiler's own honest `BRG3013`. Excluded at the identical
+  // extraction-layer gate (`_externalMethodTarget`) the generic-method and optional-parameter exclusions
+  // already live at, so `target` never resolves at all, and this reaches the pre-existing M9-J unmodelled-
+  // member-receiver refusal — the same path a call to a wholly unsupported class's method would.
+  it('refuses a method with a function-typed parameter as BRG3013, never a helper that calls `unknown`', () => {
+    const normalized = compiledFrom(methodCallRefusalRaw());
+    const { context, reported } = harness(normalized);
+    const { files } = reactGenerator.generate(context);
+    const errors = reported.filter((d) => d.severity === 'error');
+    expect(
+      errors.some(
+        (d) => d.code === 'BRG3013' && d.message.includes('applyCallback') && d.message.includes('CallbackModel'),
+      ),
+    ).toBe(true);
+    expect(files).toEqual([]);
+  });
 });

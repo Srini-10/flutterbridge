@@ -71,3 +71,15 @@ class ReachableUnsupportedDependencyDemo extends StatelessWidget {
     return Text('${model.compute()}');
   }
 }
+
+// Not wired into the route table either (M10-C). `applyCallback`'s own parameter is function-typed —
+// see `CallbackModel`'s own doc comment for the real gap this fixture proves stays closed.
+class FunctionTypedParamCallOnLocal extends StatelessWidget {
+  const FunctionTypedParamCallOnLocal({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final model = CallbackModel(7);
+    return Text('${model.applyCallback((x) => x * 2)}');
+  }
+}

@@ -1623,6 +1623,14 @@ final class ExpressionExtractor {
     }
     for (final FormalParameterElement param in element.formalParameters) {
       if (!param.isRequiredPositional) return null;
+      // A function-typed parameter (`int Function(int) fn`) — M10-C non-goal "closures/function-valued
+      // method references". Excluded here, at the identical eligibility gate every other unsupported
+      // parameter shape is refused at, rather than discovered downstream: the generator has no lowering
+      // for a Dart function type (`typeTextOf` renders it `unknown`), so admitting this method would
+      // emit a helper whose own body *calls* a parameter typed `unknown` — code that reaches `tsc` as
+      // "not callable", never this compiler's own honest `BRG3013` (a real, live-probed gap found while
+      // investigating this milestone's own non-goal list, not a hypothetical).
+      if (param.type is FunctionType) return null;
     }
     return _instanceMemberTarget(element);
   }

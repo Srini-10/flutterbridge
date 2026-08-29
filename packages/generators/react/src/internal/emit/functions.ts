@@ -8,7 +8,7 @@
 import type { AnyUirNode, NodeId } from '@bridge/uir';
 
 import { GeneratorDiagnosticCode } from '../diagnostics/codes.js';
-import { localBindingsIn, type EmitScope } from './expression.js';
+import { isEligibleStructuralField, localBindingsIn, type EmitScope } from './expression.js';
 import { fileNameOf, identifierOf, ModuleBuilder } from './module.js';
 import { useRuntime, useRuntimeType } from './runtime.js';
 import { emitStatements } from './statement.js';
@@ -254,6 +254,51 @@ function directClassTypeTargets(params: readonly Node[], found: Set<NodeId>): vo
 }
 
 /**
+ * Collects the `target` of every project-class-typed reference `classDecl` itself carries (M10-C) — its
+ * own ELIGIBLE fields' types (mirroring the identical public/final/non-static/non-late filter the
+ * interface-building loop applies, since an INELIGIBLE field's own type is never actually emitted, so
+ * chasing it would discover a class this program never needs a type for), and its own REACHABLE
+ * getters'/methods' own return AND parameter types. A class reached only through ANOTHER class's own
+ * field or member signature — `Container.model: Model`, or `Container.buildModel(): Model` — needs a
+ * real emitted type for exactly the same reason a component-param-reachable one already does; the
+ * *type*-reachability walk `reachableClassTypes` performs was, before this ADR, only ONE level deep
+ * (component/function params and return types), never chasing a discovered class's OWN member signatures
+ * for FURTHER class references — the identical "declaration order is not a dependency order" problem
+ * ADR-0040's own member-helper reachability already solved, now solved here too, for TYPES.
+ */
+function directClassTypeTargetsFromClass(
+  classDecl: Node,
+  getterOwnerOf: ReadonlyMap<NodeId, NodeId>,
+  methodOwnerOf: ReadonlyMap<NodeId, NodeId>,
+  reachableGetterIds: readonly NodeId[],
+  reachableMethodIds: readonly NodeId[],
+  found: Set<NodeId>,
+): void {
+  const classId = classDecl['id'];
+  const fields = Array.isArray(classDecl['fields']) ? (classDecl['fields'] as Node[]) : [];
+  for (const field of fields) {
+    if (!isEligibleStructuralField(field)) continue;
+    const type = field['type'] as Node | undefined;
+    const target = type?.['target'];
+    if (typeof target === 'string') found.add(target as NodeId);
+  }
+  const methods = Array.isArray(classDecl['methods']) ? (classDecl['methods'] as Node[]) : [];
+  for (const method of methods) {
+    const methodId = method['id'];
+    if (typeof methodId !== 'string') continue;
+    const isReachable =
+      method['isGetter'] === true
+        ? getterOwnerOf.get(methodId as NodeId) === classId && reachableGetterIds.includes(methodId as NodeId)
+        : methodOwnerOf.get(methodId as NodeId) === classId && reachableMethodIds.includes(methodId as NodeId);
+    if (!isReachable) continue;
+    const returnType = method['returnType'] as Node | undefined;
+    const returnTarget = returnType?.['target'];
+    if (typeof returnTarget === 'string') found.add(returnTarget as NodeId);
+    directClassTypeTargets(Array.isArray(method['params']) ? (method['params'] as Node[]) : [], found);
+  }
+}
+
+/**
  * Every `logic.ClassDecl` a component's own parameters, or an already-reachable top-level function's own
  * parameters/return type, refer to (ADR-0034 §4) — a **type**-reachability walk, deliberately structurally
  * separate from {@link reachableFunctions}'s own **value**-reachability walk (ADR-0034 §5): a type
@@ -400,6 +445,35 @@ export function emitFunctionModules(
     if (ownerId !== undefined) classIdsNeedingTypes.add(ownerId);
   }
 
+  // Transitive class-type reachability (M10-C): a class reached only through ANOTHER (already-known)
+  // class's own field or reachable-member signature — `Container.model: Model`,
+  // `Container.buildModel(): Model` — needs a real emitted type too, for the identical reason a
+  // component-param-reachable one already does. Mirrors `reachableMembers`'s own discovery fixed point
+  // (ADR-0040): seed with what is already known, then repeat — walk every *newly* found class's own
+  // field/member signatures for further class references — until a pass adds nothing. A real, live bug
+  // found while building this milestone: without it, `Container.model`'s own field type (and
+  // `Container.buildModel`'s own return type) silently fell back to `unknown` whenever `Model` was
+  // reachable ONLY through `Container`'s own signature — never through a component/function param
+  // directly — failing `tsc --strict` with `Argument of type 'unknown' is not assignable to parameter of
+  // type 'Model'` at every call site that passed the result on to a method helper.
+  let classTypeQueue = [...classIdsNeedingTypes];
+  while (classTypeQueue.length > 0) {
+    const discovered = new Set<NodeId>();
+    for (const id of classTypeQueue) {
+      const classDecl = scope.node(id) as unknown as Node | undefined;
+      if (classDecl === undefined || kindOf(classDecl) !== 'logic.ClassDecl') continue;
+      directClassTypeTargetsFromClass(classDecl, getterOwnerOf, methodOwnerOf, reachableGetterIds, reachableMethodIds, discovered);
+    }
+    const next: NodeId[] = [];
+    for (const id of discovered) {
+      if (!classIdsNeedingTypes.has(id)) {
+        classIdsNeedingTypes.add(id);
+        next.push(id);
+      }
+    }
+    classTypeQueue = next;
+  }
+
   const pendingModuleFor = (path: string, specifier: string): PendingModule => {
     let pending = modules.get(path);
     if (pending === undefined) {
@@ -420,6 +494,26 @@ export function emitFunctionModules(
   // reachable function's own params/return type), and emitting a class is unconditional (an empty
   // interface cannot itself fail to lower the way a function body can), so there is no ordering hazard
   // in building this registry first.
+  //
+  // Two passes, not one (M10-C): PASS 1 reserves every eligible class's own name/module — populating
+  // `classModules` COMPLETELY — before PASS 2 builds any interface/helper TEXT that might reference
+  // ANOTHER class via `classOf`. `[...classIdsNeedingTypes].sort()` is a canonical order (by NodeId), not
+  // a dependency order, so a single pass would leave `Container.model: Model`'s own `classOf(ModelId)`
+  // unresolved (silently falling back to `unknown`) whenever `Container`'s own id happened to sort before
+  // `Model`'s — a real, live bug found while building this milestone. Interface/helper emission is
+  // unconditional (an empty interface never fails to lower the way a function body can), so a name-first,
+  // body-second split is sufficient — no retry loop is needed here, unlike the member-helper one below,
+  // which can genuinely fail and be retried.
+  interface EligibleClass {
+    readonly id: NodeId;
+    readonly classDecl: Node;
+    readonly name: string;
+    readonly spanFile: string;
+    readonly localName: string;
+    readonly pending: PendingModule;
+    readonly specifier: string;
+  }
+  const eligibleClasses: EligibleClass[] = [];
   for (const id of [...classIdsNeedingTypes].sort()) {
     const classDecl = scope.node(id) as unknown as Node | undefined;
     if (classDecl === undefined) continue;
@@ -459,7 +553,10 @@ export function emitFunctionModules(
     const pending = pendingModuleFor(path, specifier);
     const localName = pending.builder.declare(name, id);
     classModules.set(id, { path: pending.builder.path, module: specifier, name: localName });
+    eligibleClasses.push({ id, classDecl, name, spanFile, localName, pending, specifier });
+  }
 
+  for (const { id, classDecl, name, spanFile, localName, pending, specifier } of eligibleClasses) {
     // Bounded, immutable instance-field shape (ADR-0035): a field is eligible only when public
     // (`!name.startsWith('_')` — Dart's own privacy syntax, unambiguous for a simple identifier, the
     // identical convention already used for a private *class* name above), `isFinal`, and neither
@@ -476,16 +573,8 @@ export function emitFunctionModules(
     const fields = Array.isArray(classDecl['fields']) ? (classDecl['fields'] as Node[]) : [];
     const fieldLines: string[] = [];
     for (const fieldDecl of fields) {
-      const fieldName = typeof fieldDecl['name'] === 'string' ? fieldDecl['name'] : undefined;
-      if (
-        fieldName === undefined ||
-        fieldName.startsWith('_') ||
-        fieldDecl['isFinal'] !== true ||
-        fieldDecl['isStatic'] === true ||
-        fieldDecl['isLate'] === true
-      ) {
-        continue;
-      }
+      if (!isEligibleStructuralField(fieldDecl)) continue;
+      const fieldName = fieldDecl['name'] as string;
       // `useRuntimeType`, not `useRuntime`: a field's own type is a pure type position — an interface
       // body never needs a runtime value import the way a function body's own executable use of
       // `Duration` might.

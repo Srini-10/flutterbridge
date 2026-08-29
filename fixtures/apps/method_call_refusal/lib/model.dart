@@ -55,3 +55,18 @@ class DependentModel {
 
   int compute() => scaleUnsupported(2);
 }
+
+/// `applyCallback`'s own parameter `fn` is required-positional (meeting ADR-0039's own gate as it was
+/// stated before M10-C) but FUNCTION-TYPED — a real, live-probed gap found while investigating M10-C's
+/// own "closures/function-valued method references" non-goal: this generator has no lowering for a Dart
+/// function type (`typeTextOf` renders it `unknown`), so admitting this method emitted a helper whose own
+/// body CALLED a parameter typed `unknown` — code that reached `tsc` as "not callable", never this
+/// compiler's own honest `BRG3013`. Fixed at the identical extraction-layer gate the generic-method and
+/// optional-parameter exclusions already live at (`_externalMethodTarget`).
+class CallbackModel {
+  final int count;
+
+  CallbackModel(this.count);
+
+  int applyCallback(int Function(int) fn) => fn(count);
+}

@@ -1,0 +1,19 @@
+name: method_argument_semantics
+description: >-
+  M10-C positive proof: bounded instance-method calls with MULTIPLE arguments and a variety of receiver
+  shapes (constructed, function-produced, cross-class getter/method-produced, nested) — proving the
+  receiver is evaluated before any argument, arguments are evaluated left-to-right, exactly once, and
+  every helper composition already proven in isolation (M10-A, ADR-0039) or on the same receiver
+  (M10-B, ADR-0040) still holds under multiple arguments and richer receiver expressions.
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true
