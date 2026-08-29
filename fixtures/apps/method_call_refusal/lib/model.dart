@@ -70,3 +70,53 @@ class CallbackModel {
 
   int applyCallback(int Function(int) fn) => fn(count);
 }
+
+/// `getDynamic`'s own parameter list is empty (trivially eligible), but its own RETURN type is `dynamic`
+/// — the source itself declined to state a type. A real, live-probed gap found while investigating M10-D
+/// (ADR-0042 §4): before the return-type eligibility gate existed, this still resolved a `target` and
+/// reached a real, un-refused helper whose own signature rendered the return type `unknown` — safe only
+/// by accident wherever a caller happened to consume it in a position `unknown` also satisfies, and a real
+/// `tsc --strict` failure, never this compiler's own honest `BRG3013`, the moment a caller chained a
+/// further member off the result.
+class DynamicReturnModel {
+  final int count;
+
+  DynamicReturnModel(this.count);
+
+  dynamic getDynamic() => count;
+}
+
+/// `getList`'s own return type is a generic instantiation (`List<int>`) — excluded by the identical
+/// `_dispatchSafeReceiverClass` check a RECEIVER's own type already must pass (`typeArguments.isNotEmpty`),
+/// reused verbatim for a RETURN type (ADR-0042 §3/§4).
+class GenericReturnModel {
+  final int count;
+
+  GenericReturnModel(this.count);
+
+  List<int> getList() => [count];
+}
+
+/// `getDerived`'s own return type (`Derived`) has an explicit superclass (`Base`) — excluded by the
+/// identical `_dispatchSafeReceiverClass` check a SUBCLASS-typed RECEIVER already fails (ADR-0038 §10's
+/// own dynamic-dispatch safety argument, reused verbatim for a RETURN type). Proves the refusal correctly
+/// attributes the FIRST unsupported edge (`Derived`, not `getDerived` itself) when a further member is
+/// read off the unsupported result (M9-J's own pre-existing "refuse once, at the first unsupported edge"
+/// discipline).
+class Base {
+  final int count;
+
+  Base(this.count);
+}
+
+class Derived extends Base {
+  Derived(super.count);
+}
+
+class SubclassReturnModel {
+  final int count;
+
+  SubclassReturnModel(this.count);
+
+  Derived getDerived() => Derived(count);
+}

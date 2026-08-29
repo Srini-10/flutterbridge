@@ -556,7 +556,18 @@ export function emitFunctionModules(
     eligibleClasses.push({ id, classDecl, name, spanFile, localName, pending, specifier });
   }
 
-  for (const { id, classDecl, name, spanFile, localName, pending, specifier } of eligibleClasses) {
+  interface MemberAttempt {
+    readonly method: Node;
+    readonly className: string;
+    readonly spanFile: string;
+    readonly classId: NodeId;
+    readonly localName: string;
+    readonly pending: PendingModule;
+    readonly classOf: (target: NodeId) => string | undefined;
+  }
+  const memberAttempts: MemberAttempt[] = [];
+
+  for (const { id, classDecl, name, spanFile, localName, pending } of eligibleClasses) {
     // Bounded, immutable instance-field shape (ADR-0035): a field is eligible only when public
     // (`!name.startsWith('_')` — Dart's own privacy syntax, unambiguous for a simple identifier, the
     // identical convention already used for a private *class* name above), `isFinal`, and neither
@@ -589,99 +600,115 @@ export function emitFunctionModules(
       '',
     );
 
-    // Bounded getter/method execution (ADR-0038/ADR-0039), now composable (M10-B): getters and methods
-    // share ONE reachable-member retry pool per class, attempted across passes exactly like
-    // `reachableFunctions`'s own sibling top-level-function loop below ("Attempts, not a single ordered
-    // pass") — a member whose own body references another member of the SAME class may be visited before
-    // or after the one it depends on (declaration order is not a dependency order), so a failed attempt
-    // is retried, monotonically, until a full pass makes no progress. This is what lets
-    // `int quadrupled() => doubled * 2;` succeed regardless of whether `doubled` is declared before or
-    // after it — and what correctly, structurally REFUSES a self- or mutually-recursive chain: neither
-    // member can ever be first (each depends on the other already being present), so neither ever
-    // converges, and both remain absent from `getterHelpers`/`methodHelpers` — the existing "target set
-    // but no helper -> BRG3013" refusal handles it, with no separate recursion check needed.
+    // Collected, not yet attempted (M10-D): a method's own body may reference a DIFFERENT class's own
+    // getter/method helper (return-value chaining, e.g. `model.next().multiply(3)`) — so the retry pool
+    // below must span every eligible class, not just this one, mirroring `reachableFunctions`'s own
+    // sibling top-level-function loop exactly ("Attempts, not a single ordered pass"), now extended one
+    // level further: from "a member may depend on another member of the SAME class" (ADR-0040) to "a
+    // member may depend on a member of ANY eligible class." A real, live-probed bug found while building
+    // this milestone: attempting each class's own members to a FIXED POINT before ever moving to the next
+    // class (the pre-M10-D structure) meant a class whose own id happened to sort BEFORE the class it
+    // depended on could never succeed — its own per-class retry loop exhausted itself with the dependency
+    // still unresolved, and never got a second chance once the later class's own helpers existed.
     const methods = Array.isArray(classDecl['methods']) ? (classDecl['methods'] as Node[]) : [];
-    const memberAttempts = methods.filter((method) => {
+    for (const method of methods) {
       const methodId = method['id'];
-      if (typeof methodId !== 'string') return false;
-      return method['isGetter'] === true
-        ? reachableGetterIds.includes(methodId as NodeId)
-        : reachableMethodIds.includes(methodId as NodeId);
-    });
-    const remainingMembers = new Set(memberAttempts.map((m) => m['id'] as NodeId));
-    let memberProgressed = true;
-    while (memberProgressed) {
-      memberProgressed = false;
-      for (const method of memberAttempts) {
-        const methodId = method['id'] as NodeId;
-        if (!remainingMembers.has(methodId)) continue;
-        const isGetter = method['isGetter'] === true;
-        const body = method['body'];
-        if (method['isAsync'] === true || !Array.isArray(body)) {
-          remainingMembers.delete(methodId);
-          continue;
-        }
+      if (typeof methodId !== 'string') continue;
+      const isReachable =
+        method['isGetter'] === true
+          ? reachableGetterIds.includes(methodId as NodeId)
+          : reachableMethodIds.includes(methodId as NodeId);
+      if (!isReachable) continue;
+      memberAttempts.push({ method, className: name, spanFile, classId: id, localName, pending, classOf });
+    }
+  }
 
-        const memberName = typeof method['name'] === 'string' ? method['name'] : String(methodId);
-        const helperName = pending.builder.declare(`${name}_${memberName}`, methodId);
-        const params = isGetter ? [] : Array.isArray(method['params']) ? (method['params'] as Node[]) : [];
-        const paramNames = new Map<string, string>();
-        for (const param of params) {
-          const paramName = typeof param['name'] === 'string' ? param['name'] : undefined;
-          if (paramName !== undefined) paramNames.set(paramName, identifierOf(paramName));
-        }
-
-        // Staged on a throwaway builder for this one attempt — an import a failed attempt asked for must
-        // never leak into a file another, successfully-lowered member shares. Only replayed onto the
-        // real, shared `pending.builder` once the attempt succeeds (mirroring `reachableFunctions`'s own
-        // sibling loop below).
-        const scratch = new ModuleBuilder(pending.builder.path);
-        let hadError = false;
-        const locals = localBindingsIn(body);
-        const helperScope: EmitScope = {
-          ...scope,
-          module: scratch,
-          classModules,
-          getterHelpers,
-          methodHelpers,
-          projectClassGetterIds: projectClassGetterIdsLocal,
-          projectClassMethodIds: projectClassMethodIdsLocal,
-          memberSelf: { ownerClassId: id, selfName: 'self' },
-          // No closure over any outer scope (a member helper is a plain, standalone module-level
-          // function): a name that is not one of THIS member's own parameters must fail to resolve here,
-          // never accidentally fall through to some unrelated component prop or action parameter that
-          // happens to share the name.
-          paramInScope: (paramName) => paramNames.get(paramName),
-          localName: (localId) => locals.get(localId) ?? scope.localName(localId),
-          report: (code, severity, message, nodeId) => {
-            if (severity === 'error') hadError = true;
-            else scope.report(code, severity, message, nodeId);
-          },
-        };
-        const returnType = typeTextOf(method['returnType'] as Node | undefined, (rt) => useRuntime(scratch, rt), classOf);
-        const paramList = paramListOf(params, identifierOf, (rt) => useRuntime(scratch, rt), classOf);
-        const signature = paramList.length === 0 ? `self: ${localName}` : `self: ${localName}, ${paramList}`;
-        const lines = emitStatements(body, helperScope);
-
-        if (hadError) continue; // try again next pass — a dependency this pass hadn't resolved yet might resolve then
-
-        for (const request of scratch.usedImports()) pending.builder.use(request.from, request.name, { typeOnly: request.typeOnly });
-        const capabilityLabel = isGetter
-          ? 'bounded, structural getter execution (ADR-0038)'
-          : 'bounded, structural instance method execution (ADR-0039)';
-        pending.lines.push(
-          `/** \`${name}.${memberName}\`, from ${spanFile}. A ${capabilityLabel} — never a prototype ${isGetter ? 'getter' : 'method'}; there is no runtime \`${name}\` class. */`,
-          `export function ${helperName}(${signature}): ${returnType} {`,
-          ...lines.map((line: string) => `  ${line}`),
-          '}',
-          '',
-        );
-        const helperInfo = { path: pending.builder.path, module: specifier, name: helperName };
-        if (isGetter) getterHelpers.set(methodId, helperInfo);
-        else methodHelpers.set(methodId, helperInfo);
+  // Bounded getter/method execution (ADR-0038/ADR-0039), composable across the SAME class (M10-B) and now
+  // across DIFFERENT classes too (M10-D): every eligible class's own getters and methods share ONE global
+  // reachable-member retry pool, attempted across passes until a full pass makes no progress. This is
+  // what lets `int quadrupled() => doubled * 2;` succeed regardless of whether `doubled` is declared
+  // before or after it WITHIN one class (M10-B), and what now lets `model.next().multiply(3)` succeed
+  // regardless of which of the two classes' own ids happens to sort first (M10-D) — and what correctly,
+  // structurally REFUSES a self-, mutually-, or cross-class-recursive chain: no member in the cycle can
+  // ever be first (each depends on another member of the cycle already being present), so none of them
+  // ever converges, and all remain absent from `getterHelpers`/`methodHelpers` — the existing "target set
+  // but no helper -> BRG3013" refusal handles it, with no separate recursion check needed, proven directly
+  // (a real, two-class mutual cycle via return-value chaining refuses cleanly and terminates quickly,
+  // never hangs).
+  const remainingMembers = new Set(memberAttempts.map((m) => m.method['id'] as NodeId));
+  let memberProgressed = true;
+  while (memberProgressed) {
+    memberProgressed = false;
+    for (const attempt of memberAttempts) {
+      const { method, className: name, spanFile, classId: id, localName, pending, classOf } = attempt;
+      const methodId = method['id'] as NodeId;
+      if (!remainingMembers.has(methodId)) continue;
+      const isGetter = method['isGetter'] === true;
+      const body = method['body'];
+      if (method['isAsync'] === true || !Array.isArray(body)) {
         remainingMembers.delete(methodId);
-        memberProgressed = true;
+        continue;
       }
+
+      const memberName = typeof method['name'] === 'string' ? method['name'] : String(methodId);
+      const helperName = pending.builder.declare(`${name}_${memberName}`, methodId);
+      const params = isGetter ? [] : Array.isArray(method['params']) ? (method['params'] as Node[]) : [];
+      const paramNames = new Map<string, string>();
+      for (const param of params) {
+        const paramName = typeof param['name'] === 'string' ? param['name'] : undefined;
+        if (paramName !== undefined) paramNames.set(paramName, identifierOf(paramName));
+      }
+
+      // Staged on a throwaway builder for this one attempt — an import a failed attempt asked for must
+      // never leak into a file another, successfully-lowered member shares. Only replayed onto the
+      // real, shared `pending.builder` once the attempt succeeds (mirroring `reachableFunctions`'s own
+      // sibling loop below).
+      const scratch = new ModuleBuilder(pending.builder.path);
+      let hadError = false;
+      const locals = localBindingsIn(body);
+      const helperScope: EmitScope = {
+        ...scope,
+        module: scratch,
+        classModules,
+        getterHelpers,
+        methodHelpers,
+        projectClassGetterIds: projectClassGetterIdsLocal,
+        projectClassMethodIds: projectClassMethodIdsLocal,
+        memberSelf: { ownerClassId: id, selfName: 'self' },
+        // No closure over any outer scope (a member helper is a plain, standalone module-level
+        // function): a name that is not one of THIS member's own parameters must fail to resolve here,
+        // never accidentally fall through to some unrelated component prop or action parameter that
+        // happens to share the name.
+        paramInScope: (paramName) => paramNames.get(paramName),
+        localName: (localId) => locals.get(localId) ?? scope.localName(localId),
+        report: (code, severity, message, nodeId) => {
+          if (severity === 'error') hadError = true;
+          else scope.report(code, severity, message, nodeId);
+        },
+      };
+      const returnType = typeTextOf(method['returnType'] as Node | undefined, (rt) => useRuntime(scratch, rt), classOf);
+      const paramList = paramListOf(params, identifierOf, (rt) => useRuntime(scratch, rt), classOf);
+      const signature = paramList.length === 0 ? `self: ${localName}` : `self: ${localName}, ${paramList}`;
+      const lines = emitStatements(body, helperScope);
+
+      if (hadError) continue; // try again next pass — a dependency this pass hadn't resolved yet might resolve then
+
+      for (const request of scratch.usedImports()) pending.builder.use(request.from, request.name, { typeOnly: request.typeOnly });
+      const capabilityLabel = isGetter
+        ? 'bounded, structural getter execution (ADR-0038)'
+        : 'bounded, structural instance method execution (ADR-0039)';
+      pending.lines.push(
+        `/** \`${name}.${memberName}\`, from ${spanFile}. A ${capabilityLabel} — never a prototype ${isGetter ? 'getter' : 'method'}; there is no runtime \`${name}\` class. */`,
+        `export function ${helperName}(${signature}): ${returnType} {`,
+        ...lines.map((line: string) => `  ${line}`),
+        '}',
+        '',
+      );
+      const helperInfo = { path: pending.builder.path, module: pending.specifier, name: helperName };
+      if (isGetter) getterHelpers.set(methodId, helperInfo);
+      else methodHelpers.set(methodId, helperInfo);
+      remainingMembers.delete(methodId);
+      memberProgressed = true;
     }
   }
 

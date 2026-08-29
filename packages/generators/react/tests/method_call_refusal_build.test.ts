@@ -111,4 +111,53 @@ describe('M9-R closure: a method call on a locally-constructed receiver refuses 
     ).toBe(true);
     expect(files).toEqual([]);
   });
+
+  // M10-D (ADR-0042 §4): `DynamicReturnModel.getDynamic`'s own return type is `dynamic` — the source
+  // itself declined to state a type. Before the return-type eligibility gate existed, this still resolved
+  // a `target` and reached a real, un-refused helper whose own signature rendered the return type
+  // `unknown` — a real `tsc --strict` failure waiting to happen the moment a caller chained a further
+  // member off the result, never this compiler's own honest `BRG3013`.
+  it('refuses a method with a `dynamic` return type as BRG3013, never an un-refused `unknown`-typed helper', () => {
+    const normalized = compiledFrom(methodCallRefusalRaw());
+    const { context, reported } = harness(normalized);
+    const { files } = reactGenerator.generate(context);
+    const errors = reported.filter((d) => d.severity === 'error');
+    expect(
+      errors.some(
+        (d) => d.code === 'BRG3013' && d.message.includes('getDynamic') && d.message.includes('DynamicReturnModel'),
+      ),
+    ).toBe(true);
+    expect(files).toEqual([]);
+  });
+
+  // M10-D (ADR-0042 §3/§4): `GenericReturnModel.getList`'s own return type is a generic instantiation
+  // (`List<int>`) — excluded by the identical `_dispatchSafeReceiverClass` check a RECEIVER's own type
+  // already must pass, reused verbatim for a RETURN type.
+  it('refuses a method with a generic-instantiation return type as BRG3013', () => {
+    const normalized = compiledFrom(methodCallRefusalRaw());
+    const { context, reported } = harness(normalized);
+    const { files } = reactGenerator.generate(context);
+    const errors = reported.filter((d) => d.severity === 'error');
+    expect(
+      errors.some(
+        (d) => d.code === 'BRG3013' && d.message.includes('getList') && d.message.includes('GenericReturnModel'),
+      ),
+    ).toBe(true);
+    expect(files).toEqual([]);
+  });
+
+  // M10-D (ADR-0042 §3/§4): `SubclassReturnModel.getDerived`'s own return type (`Derived`) has an explicit
+  // superclass — excluded by the identical dynamic-dispatch safety argument ADR-0038 §10 already
+  // established for a subclass-typed RECEIVER, reused verbatim for a RETURN type. The refusal correctly
+  // attributes the FIRST unsupported edge (`Derived`, the type of the chained result), not `getDerived`
+  // itself — the pre-existing M9-J "refuse once, at the first unsupported edge" discipline, unaffected by
+  // this milestone.
+  it('refuses a field read on a subclass-typed method result as BRG3013, blaming the unsupported type', () => {
+    const normalized = compiledFrom(methodCallRefusalRaw());
+    const { context, reported } = harness(normalized);
+    const { files } = reactGenerator.generate(context);
+    const errors = reported.filter((d) => d.severity === 'error');
+    expect(errors.some((d) => d.code === 'BRG3013' && d.message.includes('Derived'))).toBe(true);
+    expect(files).toEqual([]);
+  });
 });

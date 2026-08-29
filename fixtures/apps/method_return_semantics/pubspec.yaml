@@ -1,0 +1,18 @@
+name: method_return_semantics
+description: >-
+  M10-D positive proof: bounded instance-method RETURN VALUES may be consumed by arithmetic, a further
+  property read, a further eligible getter, or a further eligible method call — same class or a different
+  one, same file or a different one — proving method-after-method chaining composes to real helper
+  nesting, never a runtime-prototype-method call on the emitted structural object.
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

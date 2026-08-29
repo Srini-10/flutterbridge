@@ -83,3 +83,40 @@ class FunctionTypedParamCallOnLocal extends StatelessWidget {
     return Text('${model.applyCallback((x) => x * 2)}');
   }
 }
+
+// Not wired into the route table either (M10-D). `getDynamic`'s own return type is `dynamic` — see
+// `DynamicReturnModel`'s own doc comment for the real gap this fixture proves stays closed.
+class DynamicReturnCallOnLocal extends StatelessWidget {
+  const DynamicReturnCallOnLocal({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final model = DynamicReturnModel(7);
+    return Text('${model.getDynamic()}');
+  }
+}
+
+// Not wired into the route table either (M10-D). `getList`'s own return type is a generic instantiation
+// (`List<int>`) — see `GenericReturnModel`'s own doc comment.
+class GenericReturnCallOnLocal extends StatelessWidget {
+  const GenericReturnCallOnLocal({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final model = GenericReturnModel(7);
+    return Text('${model.getList()}');
+  }
+}
+
+// Not wired into the route table either (M10-D). `getDerived`'s own return type (`Derived`) has an
+// explicit superclass — see `SubclassReturnModel`'s own doc comment. A further field read on the result
+// (`.count`) proves the refusal correctly attributes the first unsupported edge.
+class SubclassReturnCallOnLocal extends StatelessWidget {
+  const SubclassReturnCallOnLocal({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final model = SubclassReturnModel(7);
+    return Text('${model.getDerived().count}');
+  }
+}

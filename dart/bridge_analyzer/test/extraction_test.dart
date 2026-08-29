@@ -7131,6 +7131,106 @@ class W extends StatelessWidget {
       expect(call?.containsKey('target'), isFalse);
     });
 
+    test('a method with a `dynamic` return type is never targeted (M10-D)', () async {
+      // `getDynamic`'s own return type is `dynamic` — the source itself declined to state a type. A
+      // real, live-probed gap: before this exclusion, `target` still resolved, and the TypeScript
+      // generator emitted a helper whose own signature rendered the return type `unknown` — a real `tsc`
+      // failure waiting to happen the moment a caller chained a further member off the result, never this
+      // compiler's own honest `BRG3013`. Excluded here, at a new gate checking the method's own RETURN
+      // type, mirroring the existing parameter-type gate exactly.
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {
+  final int count;
+  Model(this.count);
+  dynamic getDynamic() => count;
+}
+class W extends StatelessWidget {
+  const W({super.key, required this.model});
+  final Model model;
+  @override
+  Widget build(BuildContext context) => Text(model.getDynamic().toString());
+}
+''');
+      final Map<String, dynamic>? call = callOf(app.only('ui.Component')['render'], 'getDynamic');
+      expect(call?.containsKey('target'), isFalse);
+    });
+
+    test('a method with a generic-instantiation return type is never targeted (M10-D)', () async {
+      // `getList`'s own return type is `List<int>` — a generic instantiation, excluded by the identical
+      // `_dispatchSafeReceiverClass` check a RECEIVER's own type already must pass
+      // (`typeArguments.isNotEmpty`), reused verbatim for a RETURN type.
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {
+  final int count;
+  Model(this.count);
+  List<int> getList() => [count];
+}
+class W extends StatelessWidget {
+  const W({super.key, required this.model});
+  final Model model;
+  @override
+  Widget build(BuildContext context) => Text(model.getList().toString());
+}
+''');
+      final Map<String, dynamic>? call = callOf(app.only('ui.Component')['render'], 'getList');
+      expect(call?.containsKey('target'), isFalse);
+    });
+
+    test('a method with a subclass-typed return type is never targeted (M10-D)', () async {
+      // `getDerived`'s own return type (`Derived`) has an explicit superclass (`Base`) — excluded by the
+      // identical `_dispatchSafeReceiverClass` check a SUBCLASS-typed RECEIVER already fails (ADR-0038
+      // §10's own dynamic-dispatch safety argument), reused verbatim for a RETURN type.
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Base {
+  final int count;
+  Base(this.count);
+}
+class Derived extends Base {
+  Derived(super.count);
+}
+class Model {
+  final int count;
+  Model(this.count);
+  Derived getDerived() => Derived(count);
+}
+class W extends StatelessWidget {
+  const W({super.key, required this.model});
+  final Model model;
+  @override
+  Widget build(BuildContext context) => Text(model.getDerived().count.toString());
+}
+''');
+      final Map<String, dynamic>? call = callOf(app.only('ui.Component')['render'], 'getDerived');
+      expect(call?.containsKey('target'), isFalse);
+    });
+
+    test("an async method's return type is exempt from the M10-D return-type gate — the generator excludes it", () async {
+      // ADR-0039 §5's own established, separately-tested split deliberately keeps the async EXCLUSION at
+      // the GENERATOR layer, not here — an async method's return type is language-mandated to be
+      // `Future`/`FutureOr`/`Stream`-shaped, which the M10-D return-type gate would otherwise always
+      // reject. `element.firstFragment.isAsynchronous` exempts it, so `target` still resolves, exactly as
+      // it already did before M10-D (the sibling assertion, above, in the ADR-0039 group).
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {
+  final int count;
+  Model(this.count);
+  Future<int> scale(int factor) async => count * factor;
+}
+class W extends StatelessWidget {
+  const W({super.key, required this.model});
+  final Model model;
+  @override
+  Widget build(BuildContext context) => Text(model.scale(3).toString());
+}
+''');
+      final Map<String, dynamic>? call = callOf(app.only('ui.Component')['render'], 'scale');
+      expect(call?['target'], isNotNull);
+    });
+
     test('a method on a private class is never targeted by external call resolution', () async {
       final Extracted app = await extract('''
 import 'package:flutter/material.dart';

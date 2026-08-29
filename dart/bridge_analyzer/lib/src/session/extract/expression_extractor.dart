@@ -1576,6 +1576,23 @@ final class ExpressionExtractor {
     return _instanceMemberTarget(element);
   }
 
+  /// Whether [type] is safe to expose as a bounded instance method's own RETURN type (M10-D) — checked
+  /// entirely through the real analyzer's own resolved type identity, never a type-name string or the
+  /// generated TypeScript's own eventual `unknown` fallback text (Phase 4's own explicit requirement):
+  /// `DartType.isDartCoreInt`/`isDartCoreDouble`/`isDartCoreNum`/`isDartCoreBool`/`isDartCoreString` for a
+  /// `dart:core` value type, or [_dispatchSafeReceiverClass] — the identical gate a RECEIVER's own type
+  /// already must pass — for a project class. `void`, `dynamic`, a generic instantiation (`List<int>`,
+  /// `Future<int>`), a function type, a type parameter (`T`, from a generic method — already excluded
+  /// independently, below, but harmless to re-exclude here too), and an external/unresolvable class all
+  /// return `false`.
+  bool _isEligibleMethodReturnType(DartType? type) {
+    if (type == null) return false;
+    if (type.isDartCoreInt || type.isDartCoreDouble || type.isDartCoreNum || type.isDartCoreBool || type.isDartCoreString) {
+      return true;
+    }
+    return _dispatchSafeReceiverClass(type) != null;
+  }
+
   /// The `logic.FunctionDecl` [element] resolves to, for an EXTERNAL instance method call
   /// (`model.multiply(3)`) — ADR-0039, the method-execution sibling of [_externalGetterTarget].
   ///
@@ -1619,6 +1636,26 @@ final class ExpressionExtractor {
     // every other unsupported method shape is, rather than discovered downstream as a generator-side
     // `unknown`/broken-type emission.
     if (element.typeParameters.isNotEmpty) {
+      return null;
+    }
+    // The method's own RETURN type (M10-D) — a `dart:core` value type already representable by the
+    // existing `TypeRef`/`typeTextOf` machinery, or a project class satisfying the identical
+    // dispatch-safety gate a RECEIVER already must ([_dispatchSafeReceiverClass]) — never `dynamic`, a
+    // generic instantiation (`List<int>`), a function type, or an external/unresolvable class. A real,
+    // live-probed gap found while investigating this milestone: before this check, a method returning
+    // `dynamic` or `List<int>` still resolved a `target` and reached a real, un-refused helper whose own
+    // signature rendered the return type `unknown` — safe only by accident wherever the caller happened
+    // to consume it in a position `unknown` also satisfies (a template-literal interpolation), and a real
+    // `tsc --strict` failure, never this compiler's own honest `BRG3013`, the moment a caller chained a
+    // further member off the result or assigned it to a narrower type.
+    //
+    // Skipped entirely for an `async` method (`element.firstFragment.isAsynchronous`) — ADR-0039 §5's own
+    // established, separately-tested split deliberately keeps the async EXCLUSION at the GENERATOR layer,
+    // not here (an async method's return type is language-mandated to be `Future`/`FutureOr`/`Stream`-
+    // shaped, which this gate would otherwise always reject, moving that exclusion to the wrong,
+    // extraction, layer and breaking the pre-existing "an async method still resolves a target at THIS
+    // layer" regression test).
+    if (!element.firstFragment.isAsynchronous && !_isEligibleMethodReturnType(element.returnType)) {
       return null;
     }
     for (final FormalParameterElement param in element.formalParameters) {

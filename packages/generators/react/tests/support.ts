@@ -398,3 +398,9 @@ export function methodArgumentSemanticsRaw(): string {
   const path = fileURLToPath(new URL('../../../../fixtures/uir/method_argument_semantics.ndjson', import.meta.url));
   return readFileSync(path, 'utf8');
 }
+
+/** The real `fixtures/apps/method_return_semantics` document, raw analyzer output (ADR-0042, M10-D) — not yet normalized. */
+export function methodReturnSemanticsRaw(): string {
+  const path = fileURLToPath(new URL('../../../../fixtures/uir/method_return_semantics.ndjson', import.meta.url));
+  return readFileSync(path, 'utf8');
+}
