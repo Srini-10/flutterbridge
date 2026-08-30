@@ -40,6 +40,8 @@ class _CountersScreenState extends State<CountersScreen> {
                 Text('Left: ${_left.count} (doubled: ${_left.doubled})'),
                 ElevatedButton(onPressed: _left.increment, child: const Text('Left +1')),
                 ElevatedButton(onPressed: () => _left.add(5), child: const Text('Left +5')),
+                ElevatedButton(onPressed: () => _left.bump(), child: const Text('Left bump (default)')),
+                ElevatedButton(onPressed: () => _left.bump(10), child: const Text('Left bump (explicit)')),
                 const SizedBox(height: 24),
                 Text('Right: ${_right.count} (doubled: ${_right.doubled})'),
                 ElevatedButton(onPressed: _right.increment, child: const Text('Right +1')),

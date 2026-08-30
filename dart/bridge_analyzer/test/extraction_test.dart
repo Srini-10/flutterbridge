@@ -6911,13 +6911,39 @@ class W extends StatelessWidget {
       expect(callee!.containsKey('target'), isFalse);
     });
 
-    test('a method with an optional positional parameter is never targeted by external call resolution', () async {
+    test('a method with an optional positional parameter WITH a default value IS targeted (M10-E)', () async {
+      // Reversed from its own pre-M10-E assertion (`[int bonus = 0]` used to refuse) — the callee's own
+      // full signature (which parameters are optional, and whether each carries a default) was already
+      // available through the real analyzer's own `FormalParameterElement.hasDefaultValue`; only the
+      // generator's own parameter-list renderer had never finished consuming it (ADR-0043 §3/§4).
       final Extracted app = await extract('''
 import 'package:flutter/material.dart';
 class Model {
   final int count;
   Model(this.count);
   int scale(int factor, [int bonus = 0]) => count * factor + bonus;
+}
+class W extends StatelessWidget {
+  const W({super.key, required this.model});
+  final Model model;
+  @override
+  Widget build(BuildContext context) => Text(model.scale(3, 1).toString());
+}
+''');
+      final Map<String, dynamic>? call = callOf(app.only('ui.Component')['render'], 'scale');
+      expect(call?['target'], isNotNull);
+    });
+
+    test('a method with an optional positional parameter WITHOUT a default value is never targeted (M10-E)', () async {
+      // `[int? bonus]` — optional, but implicitly `null` when omitted, never a default VALUE. Deliberately
+      // excluded (ADR-0043 §7/§14): representing an omitted argument as JavaScript's `undefined` would be
+      // a new absent-value representation this codebase has not made anywhere else.
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {
+  final int count;
+  Model(this.count);
+  int scale(int factor, [int? bonus]) => count * factor + (bonus ?? 0);
 }
 class W extends StatelessWidget {
   const W({super.key, required this.model});

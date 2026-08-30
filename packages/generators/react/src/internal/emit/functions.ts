@@ -8,7 +8,7 @@
 import type { AnyUirNode, NodeId } from '@bridge/uir';
 
 import { GeneratorDiagnosticCode } from '../diagnostics/codes.js';
-import { isEligibleStructuralField, localBindingsIn, type EmitScope } from './expression.js';
+import { emitExpression, isEligibleStructuralField, localBindingsIn, type EmitScope } from './expression.js';
 import { fileNameOf, identifierOf, ModuleBuilder } from './module.js';
 import { useRuntime, useRuntimeType } from './runtime.js';
 import { emitStatements } from './statement.js';
@@ -687,7 +687,20 @@ export function emitFunctionModules(
         },
       };
       const returnType = typeTextOf(method['returnType'] as Node | undefined, (rt) => useRuntime(scratch, rt), classOf);
-      const paramList = paramListOf(params, identifierOf, (rt) => useRuntime(scratch, rt), classOf);
+      // `helperScope`, not the outer `scope` (M10-E): a default value can never actually reference `self`
+      // or this method's own parameters (Dart's own rule — a default is a constant expression, evaluated
+      // with no access to either), so `helperScope`'s own narrow `paramInScope` poses no risk; using it is
+      // what routes a genuinely-unsupported default value's own failure through the SAME `hadError` flag
+      // this attempt's own body already uses, so a failed default discards and retries the whole attempt
+      // (mirroring the body's own "try again next pass" discipline) rather than silently embedding a
+      // `REFUSED` sentinel into the signature text.
+      const paramList = paramListOf(
+        params,
+        identifierOf,
+        (rt) => useRuntime(scratch, rt),
+        classOf,
+        (param) => emitExpression(param['defaultValue'] as Node, helperScope),
+      );
       const signature = paramList.length === 0 ? `self: ${localName}` : `self: ${localName}, ${paramList}`;
       const lines = emitStatements(body, helperScope);
 
@@ -802,7 +815,13 @@ export function emitFunctionModules(
       const returnType = isSoleExhaustiveSwitch
         ? `: ${typeTextOf(fn['returnType'] as Node | undefined, (name) => useRuntime(scratch, name), classOf)}`
         : '';
-      const signature = `(${paramListOf(params, identifierOf, (name) => useRuntime(scratch, name), classOf)})${returnType}`;
+      const signature = `(${paramListOf(
+        params,
+        identifierOf,
+        (name) => useRuntime(scratch, name),
+        classOf,
+        (param) => emitExpression(param['defaultValue'] as Node, fnScope),
+      )})${returnType}`;
       const lines = emitStatements(body, fnScope);
 
       if (hadError) continue; // try again next pass — a callee this pass hadn't resolved yet might resolve then

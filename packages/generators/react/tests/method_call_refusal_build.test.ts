@@ -16,11 +16,16 @@ import { compiledFrom, harness, methodCallRefusalRaw } from './support.js';
 // (keyed on `TypeRef.target`, ADR-0034) now does, for exactly the receivers where `tsc`'s own inference
 // could never have legitimately differed from this generator's own type text in the first place.
 //
-// `Model.multiply`'s own SECOND parameter is optional (`[int bonus = 0]`) since M10-A — ADR-0039 requires
-// every parameter to be uniformly required-positional, so this specific method stays outside the newly-
-// supported subset even though its first parameter, and every other fact about it, would otherwise
-// qualify. `fixtures/apps/instance_method_execution` (`instance_method_execution_build.test.ts`) is the
-// sibling positive proof: the identical shape, minus the one excluding fact, now lowers to a real helper
+// `Model.multiply`'s own SECOND parameter is optional and carries NO default value (`[int? bonus]`) —
+// ADR-0043 (M10-E) requires an optional positional parameter to carry an explicit default, so this
+// specific method stays outside the supported subset even though its first parameter, and every other
+// fact about it, would otherwise qualify. (Before M10-E, `bonus` carried a default — `[int bonus = 0]` —
+// and THAT was the excluding fact under ADR-0039's own original, narrower rule; ADR-0043 widened the
+// subset to admit exactly that shape, so this fixture's own negative control moved to the one optional-
+// parameter shape still unsupported, preserving this test's original intent rather than leaving it
+// silently stale.) `fixtures/apps/instance_method_execution` (`instance_method_execution_build.test.ts`)
+// and `fixtures/apps/optional_method_parameters` (`optional_method_parameters_build.test.ts`) are the
+// sibling positive proofs: the identical shape, minus the one excluding fact, now lowers to a real helper
 // call instead of refusing.
 describe('M9-R closure: a method call on a locally-constructed receiver refuses as BRG3013, real analyzer', () => {
   it('produces no BRG1310 — the source itself is valid Dart', () => {
@@ -30,7 +35,7 @@ describe('M9-R closure: a method call on a locally-constructed receiver refuses 
     expect(reported.some((d) => d.code === 'BRG1310')).toBe(false);
   });
 
-  it('refuses the method call as BRG3013 (an optional parameter, ADR-0039) — never a silent, wrong lowering', () => {
+  it('refuses the method call as BRG3013 (an optional parameter with no default, ADR-0043) — never a silent, wrong lowering', () => {
     const normalized = compiledFrom(methodCallRefusalRaw());
     const { context, reported } = harness(normalized);
     const { files } = reactGenerator.generate(context);
@@ -158,6 +163,42 @@ describe('M9-R closure: a method call on a locally-constructed receiver refuses 
     const { files } = reactGenerator.generate(context);
     const errors = reported.filter((d) => d.severity === 'error');
     expect(errors.some((d) => d.code === 'BRG3013' && d.message.includes('Derived'))).toBe(true);
+    expect(files).toEqual([]);
+  });
+
+  // M10-E (ADR-0043 §7/§14): `NamedParamModel.scale`'s own second parameter is NAMED — out of scope
+  // regardless of whether it carries a default (a named argument has no positional call-site equivalent
+  // without either an options-object rewrite or call-site-name-threading, materially larger scope than
+  // M10-E's own). Called with named-argument syntax (`scale(3, bonus: 2)`), so this exercises the
+  // SEPARATE, pre-existing named-ARGUMENT refusal (`refuseNamedArgs`), never the method-eligibility one
+  // `Model.multiply`'s own test, above, proves — both refusal paths stay honestly distinct.
+  it('refuses a call using named-argument syntax on a method with a named parameter, via the separate named-argument path', () => {
+    const normalized = compiledFrom(methodCallRefusalRaw());
+    const { context, reported } = harness(normalized);
+    const { files } = reactGenerator.generate(context);
+    const errors = reported.filter((d) => d.severity === 'error');
+    expect(errors.some((d) => d.message.includes('named arguments'))).toBe(true);
+    expect(files).toEqual([]);
+  });
+
+  // M10-E, a real coverage gap found by adversarial mutation testing (ADR-0043 §14): the IDENTICAL method
+  // as the test above, but called WITHOUT ever using named-argument syntax at all (`bonus` omitted
+  // entirely) — `refuseNamedArgs` never fires for a call with zero named arguments, so this call site's
+  // own refusal depends entirely on `NamedParamModel.scale`'s own method-eligibility gate excluding a
+  // named parameter regardless of how any one particular call happens to spell it. Before this test
+  // existed, a mutation that removed ONLY the method-eligibility gate's own named-parameter exclusion
+  // (while leaving `refuseNamedArgs` untouched) passed the entire suite undetected — this test closes
+  // that gap.
+  it('refuses a call that never uses named-argument syntax on a method with a named parameter, via the method-eligibility path', () => {
+    const normalized = compiledFrom(methodCallRefusalRaw());
+    const { context, reported } = harness(normalized);
+    const { files } = reactGenerator.generate(context);
+    const errors = reported.filter((d) => d.severity === 'error');
+    // `.includes('NamedParamModel')`, never bare `'scale'` — `AsyncModel.scale` (above) is a DIFFERENT,
+    // pre-existing refusal in this same document that also names "scale"; a looser assertion here would
+    // pass even if `NamedParamModel.scale`'s own call silently succeeded, a real false positive this test
+    // itself was first written with and caught only by re-running the mutation this test exists to catch.
+    expect(errors.some((d) => d.code === 'BRG3013' && d.message.includes('NamedParamModel'))).toBe(true);
     expect(files).toEqual([]);
   });
 });

@@ -116,7 +116,17 @@ export function emitStore(store: Node, module: ModuleBuilder, scope: EmitScope):
       // `action<A extends readonly unknown[], R>(body: (...args: A) => R)` — because an action is a function
       // and was typed as one; nothing in the runtime changed for this.
       const body = emitStatements(node['body'], actionScope(inner, params));
-      const signature = `(${paramListOf(params, identifierOf)})`;
+      // The default value's own emission uses `inner` — the scope ENCLOSING the action, never
+      // `actionScope(inner, params)` — mirroring the identical scoping rule the Dart extractor's own
+      // `_params` already applies (M10-E, ADR-0043 §5): a default is a constant expression and cannot
+      // see the parameters it sits among.
+      const signature = `(${paramListOf(
+        params,
+        identifierOf,
+        undefined,
+        undefined,
+        (param) => emitExpression(param['defaultValue'] as Node, inner),
+      )})`;
       if (body.length === 0) {
         module.line(`const ${local} = action(${isAsync ? 'async ' : ''}${signature} => {}, '${local}');`);
         continue;

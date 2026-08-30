@@ -117,6 +117,11 @@ export function typeTextOf(
  *   import, and this is the one place a param list's own caller can supply one.
  * @param classOf - forwarded to `typeTextOf` (ADR-0034) — a project-class-typed parameter needs the
  *   same registry lookup a return type or a component prop already gets.
+ * @param defaultValueOf - (M10-E) renders a parameter's own `defaultValue` subtree (a compile-time-constant
+ *   expression, Dart's own rule) as TypeScript source text — each caller supplies its own `emitExpression`
+ *   bound to its own scope, exactly as `use`/`classOf` already do for a parameter's own type. Omitted by a
+ *   caller that has not (yet) opted in; such a caller's own optional-with-default parameters continue to
+ *   render as a plain required parameter with no default clause, exactly as before M10-E.
  * @returns the text between the parentheses.
  */
 export function paramListOf(
@@ -124,16 +129,27 @@ export function paramListOf(
   identifier: (raw: string) => string,
   use?: (name: string) => string,
   classOf?: (target: NodeId) => string | undefined,
+  defaultValueOf?: (param: Node) => string,
 ): string {
   return params
     .map((param) => {
       const name = identifier(String(param['name'] ?? '_'));
-      // Dart's optional parameter is TypeScript's `?`. A *named* parameter is not modelled: Dart's
-      // `foo({required int id})` is called `foo(id: 1)`, which has no positional equivalent, and the store
-      // emitter reports it rather than quietly turning it into a positional one at a position the caller
-      // would have to guess.
-      const optional = param['required'] === false && param['defaultValue'] === undefined ? '?' : '';
-      return `${name}${optional}: ${typeTextOf(param['type'] as Node | undefined, use, classOf)}`;
+      const defaultNode = param['defaultValue'] as Node | undefined;
+      // A *named* parameter is not modelled: Dart's `foo({required int id})` is called `foo(id: 1)`,
+      // which has no positional equivalent, and the store emitter reports it rather than quietly turning
+      // it into a positional one at a position the caller would have to guess (M10-E non-goal, unchanged).
+      //
+      // An optional parameter with NO default (`param['required'] === false`, `defaultNode === undefined`)
+      // is Dart's own `[int? bonus]` shape — TypeScript's own `?` marker (omitted becomes `undefined`).
+      // An optional parameter WITH a default (`defaultNode !== undefined`) renders a genuine TypeScript
+      // default clause instead (M10-E, ADR-0043 §8) — TypeScript's own native mechanism for "omit this
+      // trailing argument, the parameter takes its declared value," the truthful representation of Dart's
+      // own identical rule; `?` is not also needed (a default clause already makes the parameter optional
+      // at every call site).
+      const optional = param['required'] === false && defaultNode === undefined ? '?' : '';
+      const defaultText = defaultNode !== undefined ? defaultValueOf?.(param) : undefined;
+      const defaultClause = defaultText === undefined ? '' : ` = ${defaultText}`;
+      return `${name}${optional}: ${typeTextOf(param['type'] as Node | undefined, use, classOf)}${defaultClause}`;
     })
     .join(', ');
 }

@@ -1,0 +1,18 @@
+name: optional_method_parameters
+description: >-
+  M10-E positive proof: bounded instance methods may carry a trailing OPTIONAL POSITIONAL parameter with
+  an explicit default value — omitted at the call site, the generated helper's own real TypeScript default
+  clause supplies the declared value, exactly matching Dart's own semantics. Never a named parameter, and
+  never an optional parameter without a default (both remain out of scope).
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

@@ -15,14 +15,15 @@ class RootScreen extends StatelessWidget {
 
 // Not wired into the route table. `model` is a LOCAL VARIABLE — constructed in this same build method
 // (M9-O), never a parameter — and `model.multiply(3, 2)` calls an instance method whose own SECOND
-// parameter is optional, which ADR-0039/M10-A never supports (every parameter must be required-positional
-// — no optional, named, or default-valued one — excluded deliberately, not yet). Before the M9-R closure
-// fix, the pre-existing M9-J refusal's own receiver-shape check (`isParameterReceiver`) did not recognize
-// this receiver at all, so a call like this one silently lowered to `{ count: 7 }.multiply(3, 2)` — a real
-// TypeScript error, reached at `tsc` time rather than as this compiler's own honest `BRG3013`. This
-// fixture exists to prove that gap stays closed even for a method whose FIRST parameter is required-
-// positional, the exact shape M10-A does support (`fixtures/apps/instance_method_execution`) — refusal
-// here is driven by `bonus` being optional, alone.
+// parameter is optional and carries NO default value (`[int? bonus]`), which stays outside the M10-E
+// method subset even after ADR-0043 widened it (every optional positional parameter must carry an
+// explicit default — excluded deliberately, not yet). Before the M9-R closure fix, the pre-existing M9-J
+// refusal's own receiver-shape check (`isParameterReceiver`) did not recognize this receiver at all, so a
+// call like this one silently lowered to `{ count: 7 }.multiply(3, 2)` — a real TypeScript error, reached
+// at `tsc` time rather than as this compiler's own honest `BRG3013`. This fixture exists to prove that gap
+// stays closed even for a method whose FIRST parameter is required-positional, the exact shape M10-A does
+// support (`fixtures/apps/instance_method_execution`) — refusal here is driven by `bonus` having no
+// default, alone.
 class MethodCallOnLocal extends StatelessWidget {
   const MethodCallOnLocal({super.key});
 
@@ -30,6 +31,37 @@ class MethodCallOnLocal extends StatelessWidget {
   Widget build(BuildContext context) {
     final model = Model(7);
     return Text('${model.multiply(3, 2)}');
+  }
+}
+
+// Not wired into the route table either (M10-E). `NamedParamModel.scale`'s own second parameter is
+// NAMED — see its own doc comment, `model.dart` — called here with named-argument syntax, exercising the
+// separate, pre-existing named-ARGUMENT refusal rather than `MethodCallOnLocal`'s own method-eligibility
+// one, above.
+class NamedParamCallOnLocal extends StatelessWidget {
+  const NamedParamCallOnLocal({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final model = NamedParamModel(7);
+    return Text('${model.scale(3, bonus: 2)}');
+  }
+}
+
+// Not wired into the route table either (M10-E). The IDENTICAL method as `NamedParamCallOnLocal`, above,
+// but called WITHOUT ever using named-argument syntax at all (`bonus` is omitted entirely) — a real,
+// adversarial-mutation-found gap: `refuseNamedArgs` (the separate, pre-existing named-ARGUMENT refusal)
+// never fires for a call with zero named arguments, so THIS call site's own refusal depends entirely on
+// `NamedParamModel.scale`'s own method-eligibility gate correctly excluding a named parameter regardless
+// of how any one particular call happens to spell it — proven directly here, independent of
+// `NamedParamCallOnLocal`'s own coverage.
+class NamedParamOmittedCallOnLocal extends StatelessWidget {
+  const NamedParamOmittedCallOnLocal({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final model = NamedParamModel(7);
+    return Text('${model.scale(3)}');
   }
 }
 

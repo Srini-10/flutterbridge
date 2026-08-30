@@ -404,3 +404,9 @@ export function methodReturnSemanticsRaw(): string {
   const path = fileURLToPath(new URL('../../../../fixtures/uir/method_return_semantics.ndjson', import.meta.url));
   return readFileSync(path, 'utf8');
 }
+
+/** The real `fixtures/apps/optional_method_parameters` document, raw analyzer output (ADR-0043, M10-E) — not yet normalized. */
+export function optionalMethodParametersRaw(): string {
+  const path = fileURLToPath(new URL('../../../../fixtures/uir/optional_method_parameters.ndjson', import.meta.url));
+  return readFileSync(path, 'utf8');
+}

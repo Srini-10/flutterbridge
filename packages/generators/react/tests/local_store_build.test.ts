@@ -74,4 +74,24 @@ describe('M7-N build-proof: a locally-owned store instance, real analyzer to rea
     expect(reported.filter((d) => d.severity === 'error')).toEqual([]);
     typecheckEmitted(files);
   }, 120_000);
+
+  // M10-E (ADR-0043 §3) — a real, pre-existing, previously-undetected bug found while investigating M10-E's
+  // own bounded optional-method-parameter capability: `bump([int n = 5])`'s own generated action rendered
+  // `n: number` (required, no default clause) before this milestone, so `_left.bump()` (the argument
+  // omitted, a real, valid, already-supported call shape per ADR-27) failed real `tsc --strict` with
+  // "Expected 1 arguments, but got 0." Fixed as a direct, correct consequence of the ONE shared
+  // `paramListOf` fix M10-E's own method-parameter capability requires — `sig.Action` parameters share the
+  // identical renderer every M10 method helper uses.
+  it('an action with an optional-and-defaulted parameter renders a real default clause (M10-E)', () => {
+    const { context, reported } = harness(after);
+    const { files } = reactGenerator.generate(context);
+    expect(reported.filter((d) => d.severity === 'error')).toEqual([]);
+
+    const store = fileAt(files, 'src/stores/counter-store.ts') ?? '';
+    expect(store).toContain("action((n: number = 5) => {\n    _count.set(_count.peek() + n);\n  }, 'bump')");
+
+    const source = fileAt(files, 'src/components/counters-screen.tsx') ?? '';
+    expect(source).toMatch(/onPressed=\{\(\) => \{\s*return _left\.bump\(\);\s*\}\}/);
+    expect(source).toMatch(/onPressed=\{\(\) => \{\s*return _left\.bump\(10\);\s*\}\}/);
+  });
 });

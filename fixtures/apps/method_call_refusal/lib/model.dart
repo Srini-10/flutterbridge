@@ -1,19 +1,37 @@
 /// A plain, otherwise-fully-supported project-defined class — its constructor is bounded and
-/// structural (M9-O). `multiply`'s own optional positional `bonus` parameter is what keeps it outside
-/// the M10-A method subset (ADR-0039 requires every parameter to be required-positional — no optional,
-/// named, or default-valued one — kept narrow deliberately rather than re-derived): every OTHER fact
-/// about this method — public, instance, concrete, non-generic, direct-`Object`-superclass owner — is
-/// exactly the M10-A-supported shape. Deliberately positional-only at the CALL SITE too (`multiply(3, 2)`,
-/// not `multiply(3, bonus: 2)`) so this refuses via the same `MethodCall.target`-absent path an entirely
-/// unsupported method would, rather than via the separate, pre-existing named-argument refusal. Valid
+/// structural (M9-O). `multiply`'s own optional positional `bonus` parameter has NO default value
+/// (`[int? bonus]`) — which is what keeps it outside the M10-E method subset (ADR-0043 requires an
+/// optional positional parameter to carry an explicit default value; `[int? bonus]`, implicitly `null`
+/// when omitted, remains deliberately out of scope — see `Model.multiply`'s own doc comment there):
+/// every OTHER fact about this method — public, instance, concrete, non-generic, direct-`Object`-
+/// superclass owner, positional-only — is exactly the M10-E-supported shape. Deliberately positional-only
+/// at the CALL SITE too (`multiply(3, 2)`, not `multiply(3, bonus: 2)`) so this refuses via the same
+/// `MethodCall.target`-absent path an entirely unsupported method would, rather than via the separate,
+/// pre-existing named-argument refusal (see `NamedParamModel`, below, for that separate case). Valid
 /// Dart throughout: this file's own job is to prove the method call refuses honestly, not that the source
-/// itself is invalid.
+/// itself is invalid. (Before M10-E, `bonus` carried a default value — `[int bonus = 0]` — and that WAS
+/// the reason this refused; ADR-0043 made that shape eligible, so this fixture's own negative control was
+/// updated to the one optional-parameter shape still out of scope, preserving its original intent.)
 class Model {
   final int count;
 
   Model(this.count);
 
-  int multiply(int factor, [int bonus = 0]) => count * factor + bonus;
+  int multiply(int factor, [int? bonus]) => count * factor + (bonus ?? 0);
+}
+
+/// `scale`'s own second parameter is NAMED (`{int bonus = 0}`) — out of scope regardless of whether it
+/// carries a default (ADR-0043 §7/§14: a named argument has no positional call-site equivalent without
+/// either an options-object rewrite or call-site-name-threading, materially larger scope than M10-E's
+/// own). Called with named-argument syntax (`scale(3, bonus: 2)`), so this exercises the SEPARATE,
+/// pre-existing named-ARGUMENT refusal (`refuseNamedArgs`) rather than `Model.multiply`'s own
+/// method-eligibility one, above — both refusal paths stay honestly distinct.
+class NamedParamModel {
+  final int count;
+
+  NamedParamModel(this.count);
+
+  int scale(int factor, {int bonus = 0}) => count * factor + bonus;
 }
 
 /// `AsyncModel.scale` meets every ADR-0039 GATE (public, instance, concrete, non-static, required-
@@ -43,15 +61,18 @@ class RecursiveModel {
 }
 
 /// A method that meets every ADR-0039 gate on its own, but whose own body calls a SIBLING method that
-/// does NOT (`scaleUnsupported`'s own optional `bonus` parameter) — M10-B §45/§47's own "reachable
-/// unsupported dependency" boundary: `compute` must not silently ship with a broken internal reference;
-/// it must refuse (`BRG3013`) too, propagating the unsupported dependency rather than masking it.
+/// does NOT (`scaleUnsupported`'s own optional `bonus` parameter carries NO default value — `[int?
+/// bonus]`, still out of scope even after ADR-0043; before M10-E this used `[int bonus = 0]`, which ADR-
+/// 0043 made eligible, so this fixture's own negative control was updated to the one optional-parameter
+/// shape still unsupported, preserving its original intent) — M10-B §45/§47's own "reachable unsupported
+/// dependency" boundary: `compute` must not silently ship with a broken internal reference; it must
+/// refuse (`BRG3013`) too, propagating the unsupported dependency rather than masking it.
 class DependentModel {
   final int count;
 
   DependentModel(this.count);
 
-  int scaleUnsupported(int factor, [int bonus = 0]) => count * factor + bonus;
+  int scaleUnsupported(int factor, [int? bonus]) => count * factor + (bonus ?? 0);
 
   int compute() => scaleUnsupported(2);
 }

@@ -1659,7 +1659,18 @@ final class ExpressionExtractor {
       return null;
     }
     for (final FormalParameterElement param in element.formalParameters) {
-      if (!param.isRequiredPositional) return null;
+      // A NAMED parameter (required or optional) — M10-E non-goal. A named argument has no positional
+      // call-site equivalent without either an options-object rewrite (a wrong-value-at-the-wrong-
+      // position risk `refuseNamedArgs`'s own doc comment already names) or threading the parameter's
+      // own declared name to every call site — materially larger scope than this gate's own subset.
+      if (!param.isPositional) return null;
+      // An OPTIONAL positional parameter is eligible only when it carries an explicit default value
+      // (M10-E, ADR-0043 §7) — `[int bonus = 0]`, never `[int? bonus]` (implicitly `null` when omitted):
+      // representing an omitted argument as JavaScript's `undefined` would be a new absent-value
+      // representation this codebase has not made anywhere else (`typeTextOf`'s own doc comment: "Dart
+      // has one absent value and it is `null`"). `param.hasDefaultValue` is real analyzer semantic
+      // information (`FormalParameterElement`), never inferred from the parameter's own declared type.
+      if (param.isOptionalPositional && !param.hasDefaultValue) return null;
       // A function-typed parameter (`int Function(int) fn`) — M10-C non-goal "closures/function-valued
       // method references". Excluded here, at the identical eligibility gate every other unsupported
       // parameter shape is refused at, rather than discovered downstream: the generator has no lowering

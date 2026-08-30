@@ -377,7 +377,7 @@ final class DeclarationExtractor {
                 member.declaredFragment?.element.returnType ?? member.returnType?.type,
                 at: member,
               ),
-              'params': RawList(_params(member.parameters, inner)),
+              'params': RawList(_params(member.parameters, scope)),
               'body': RawList(expressions.bodyOf(member.body, inner)),
               if (member.body.isAsynchronous) 'isAsync': const RawLiteral(true),
               if (member.isStatic) 'isStatic': const RawLiteral(true),
@@ -413,7 +413,7 @@ final class DeclarationExtractor {
             node.declaredFragment?.element.returnType ?? node.returnType?.type,
             at: node,
           ),
-          'params': RawList(_params(function.parameters, inner)),
+          'params': RawList(_params(function.parameters, scope)),
           'body': RawList(expressions.bodyOf(function.body, inner)),
           if (function.body.isAsynchronous) 'isAsync': const RawLiteral(true),
         },
@@ -421,6 +421,13 @@ final class DeclarationExtractor {
     );
   }
 
+  /// [scope] is the one *enclosing* the declaration (never one that already binds the parameter list's
+  /// own names) — the scope Dart itself evaluates a default value in (M10-E): a default is a constant
+  /// expression and cannot see the parameters it sits among, so extracting it against a parameter-bound
+  /// scope could resolve an identifier to the wrong declaration in the rare case a default's own constant
+  /// expression shares a name with one of the parameters it precedes. Mirrors `SignalExtractor`'s own
+  /// identical `_params`/scoping convention for `sig.Action` parameters exactly, extended here to plain
+  /// class methods and top-level functions.
   List<RawValue> _params(FormalParameterList? list, Scope scope) => <RawValue>[
     for (final FormalParameter parameter in list?.parameters ?? const <FormalParameter>[])
       RawMap(<String, RawValue>{
@@ -428,6 +435,11 @@ final class DeclarationExtractor {
         'type': out.typeRef(parameter.declaredFragment?.element.type, at: parameter),
         if (parameter.isNamed) 'named': const RawLiteral(true),
         if (parameter.isRequired) 'required': const RawLiteral(true),
+        // `[int n = 0]` and `{int n = 0}` — the only two places a default can be written. Lowered
+        // through the ordinary expression path: a default is an expression, and it is not a special
+        // kind of one.
+        if (parameter.defaultClause case final FormalParameterDefaultClause clause)
+          'defaultValue': RawChild(expressions.extract(clause.value, scope)),
       }),
   ];
 
