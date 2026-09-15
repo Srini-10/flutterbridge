@@ -121,15 +121,28 @@ export interface MethodHelperInfo {
   readonly path: string;
   readonly module: string;
   readonly name: string;
+  /**
+   * Whether this helper is a STATIC method's own lowering (M11-A, ADR-0045) — no `self` receiver was
+   * synthesized into its signature, and a call site must not append one. Absent (falsy) for an ordinary
+   * instance method, mirroring every other boolean UIR/generator flag's own "absent means false"
+   * convention.
+   */
+  readonly isStatic?: boolean;
 }
 
 /**
  * Walks `value`, collecting the `target` of every `logic.PropertyAccess`/bare `logic.Ref` naming a getter
- * present in `getterOwnerOf`, and every `logic.MethodCall` naming a method present in `methodOwnerOf`
- * (ADR-0038/ADR-0039, M10-B) — the combined, cross-kind sibling of {@link directFunctionRefs}. A bare
- * `logic.Ref` is checked against `getterOwnerOf` only, never `methodOwnerOf`: a bare method reference is
- * always a call (`logic.MethodCall`), never a value (a method tear-off is a separate, unsupported
- * capability — M10-B §"hard non-goals" — so the Dart extractor never produces one).
+ * present in `getterOwnerOf`, every `logic.MethodCall` naming a method present in `methodOwnerOf`
+ * (ADR-0038/ADR-0039, M10-B), and every `logic.Call` whose own `callee` is a `logic.Ref` naming a STATIC
+ * method present in `methodOwnerOf` (M11-A, ADR-0045) — the combined, cross-kind sibling of
+ * {@link directFunctionRefs}. A bare `logic.Ref` (never wrapped in a `logic.Call`) is checked against
+ * `getterOwnerOf` only, never `methodOwnerOf`: a bare method reference is always a call, never a value (a
+ * method tear-off is a separate, unsupported capability — M10-B §"hard non-goals" — so the Dart extractor
+ * never produces one). A static method call is `logic.Call`, never `logic.MethodCall` (it has no
+ * receiver at all — ADR-0045 §6) — `scope.node()` cannot resolve its `callee`'s own `target` (a static
+ * method's own `logic.FunctionDecl` is embedded on `ClassDecl.methods`, never top-level-emitted, the
+ * identical structural fact that keeps an INSTANCE member out of {@link directFunctionRefs}'s own walk),
+ * so this is the one place its reachability can be discovered at all.
  */
 function directMemberRefs(
   value: unknown,
@@ -152,6 +165,15 @@ function directMemberRefs(
   if (kind === 'logic.MethodCall' && typeof node['target'] === 'string') {
     const target = node['target'] as NodeId;
     if (methodOwnerOf.has(target)) foundMethods.add(target);
+  }
+  if (kind === 'logic.Call') {
+    const callee = node['callee'];
+    if (callee !== null && typeof callee === 'object' && kindOf(callee as Node) === 'logic.Ref') {
+      const calleeTarget = (callee as Node)['target'];
+      if (typeof calleeTarget === 'string' && methodOwnerOf.has(calleeTarget as NodeId)) {
+        foundMethods.add(calleeTarget as NodeId);
+      }
+    }
   }
   for (const child of Object.values(node)) directMemberRefs(child, getterOwnerOf, methodOwnerOf, foundGetters, foundMethods);
 }
@@ -701,23 +723,40 @@ export function emitFunctionModules(
         classOf,
         (param) => emitExpression(param['defaultValue'] as Node, helperScope),
       );
-      const signature = paramList.length === 0 ? `self: ${localName}` : `self: ${localName}, ${paramList}`;
+      // A static method has no receiver at all (M11-A, ADR-0045 §8) — no `self` parameter is synthesized
+      // for it, mirroring a plain top-level function's own signature exactly. Dart itself forbids a static
+      // method's own body from referencing `this`/an instance member unqualified, so `helperScope`'s own
+      // `memberSelf` (left set, unconditionally, below) is simply never reached for one — no special-case
+      // body handling is needed, only the signature text itself.
+      const isStatic = method['isStatic'] === true;
+      const signature = isStatic
+        ? paramList
+        : paramList.length === 0
+          ? `self: ${localName}`
+          : `self: ${localName}, ${paramList}`;
       const lines = emitStatements(body, helperScope);
 
       if (hadError) continue; // try again next pass — a dependency this pass hadn't resolved yet might resolve then
 
       for (const request of scratch.usedImports()) pending.builder.use(request.from, request.name, { typeOnly: request.typeOnly });
-      const capabilityLabel = isGetter
-        ? 'bounded, structural getter execution (ADR-0038)'
-        : 'bounded, structural instance method execution (ADR-0039)';
+      const capabilityLabel = isStatic
+        ? 'bounded static method access (ADR-0045)'
+        : isGetter
+          ? 'bounded, structural getter execution (ADR-0038)'
+          : 'bounded, structural instance method execution (ADR-0039)';
       pending.lines.push(
-        `/** \`${name}.${memberName}\`, from ${spanFile}. A ${capabilityLabel} — never a prototype ${isGetter ? 'getter' : 'method'}; there is no runtime \`${name}\` class. */`,
+        `/** \`${name}.${memberName}\`, from ${spanFile}. A ${capabilityLabel} — never a prototype ${isGetter ? 'getter' : 'method'}${isStatic ? ' or a real static member' : ''}; there is no runtime \`${name}\` class. */`,
         `export function ${helperName}(${signature}): ${returnType} {`,
         ...lines.map((line: string) => `  ${line}`),
         '}',
         '',
       );
-      const helperInfo = { path: pending.builder.path, module: pending.specifier, name: helperName };
+      const helperInfo = {
+        path: pending.builder.path,
+        module: pending.specifier,
+        name: helperName,
+        ...(isStatic ? { isStatic: true } : {}),
+      };
       if (isGetter) getterHelpers.set(methodId, helperInfo);
       else methodHelpers.set(methodId, helperInfo);
       remainingMembers.delete(methodId);

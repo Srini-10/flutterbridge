@@ -1201,7 +1201,9 @@ final class ExpressionExtractor {
               scope,
               type: _typeOfIdentifier(node.methodName),
               staticTarget:
-                  _enumConstantTarget(node.methodName.element) ?? _topLevelTarget(node.methodName.element),
+                  _enumConstantTarget(node.methodName.element) ??
+                  _topLevelTarget(node.methodName.element) ??
+                  _staticMemberTarget(node.methodName.element),
             ),
           ),
           ..._arguments(node.argumentList, scope),
@@ -1585,6 +1587,62 @@ final class ExpressionExtractor {
     return null;
   }
 
+  /// The `logic.FunctionDecl` [element] resolves to, when it is a project-defined class's own STATIC
+  /// method (M11-A, ADR-0045) — the static-namespace sibling of [_instanceMemberTarget]: identical owner-
+  /// qualified symbol reconstruction (`Symbols.functionIn(library, name, owner: ownerName, ...)`, the
+  /// SAME scheme `declaration_extractor.dart`'s own `_methods` already assigns a static method when
+  /// declaring it), but requiring `isStatic == true` where `_instanceMemberTarget`'s own callers all
+  /// require the opposite. There is no receiver to be dispatch-unsafe about (a static reference has none
+  /// at all), so no `_dispatchSafeReceiverClass`-style gate applies here.
+  ///
+  /// Static FIELDS and static GETTERS are deliberately excluded (ADR-0045 §14/§18/§20): a static field
+  /// hits the separate, pre-existing, documented M8-P `logic.FieldDecl`-lowering boundary — wiring its
+  /// `target` alone would not fix its refusal, since the declaration lowering itself, not merely its
+  /// targeting, is the missing capability. A static getter is a real, narrow, independently-understandable
+  /// follow-on this milestone did not need to touch to deliver real value.
+  String? _staticMemberTarget(Element? element) {
+    if (element is! MethodElement || !element.isStatic) {
+      return null;
+    }
+    if (element.isAbstract || element.isExternal || element.isPrivate || element.metadata.hasOverride) {
+      return null;
+    }
+    if (element.isOperator) {
+      return null;
+    }
+    final Element? owner = element.enclosingElement;
+    if (owner is! InstanceElement) {
+      return null;
+    }
+    // Mirrors `_instanceMemberTarget`'s own exclusion (a component/`State`/store's own members are
+    // already correctly bound through their own, separate mechanisms — never through this one).
+    if (registry.isComponentBase(owner.thisType) ||
+        registry.isStateBase(owner.thisType) ||
+        registry.isStoreBase(owner.thisType)) {
+      return null;
+    }
+    // The identical generic/return-type/parameter shape gate `_externalMethodTarget` applies to an
+    // instance method — reused, never re-derived, here (found live: a first cut of this function forgot
+    // the return-type half, reproducing the exact `unknown`-return silent-wrong-code shape ADR-0042
+    // already closed once for instance methods — see `_isEligibleMethodShape`'s own doc comment).
+    if (!_isEligibleMethodShape(element)) {
+      return null;
+    }
+    final String? ownerName = owner.name;
+    final String? name = element.name;
+    if (ownerName == null || name == null) {
+      return null;
+    }
+    return Symbols.functionIn(
+      owner.library.identifier,
+      name,
+      owner: ownerName,
+      packageName: out.packageName,
+      localPackages: out.localPackageNames,
+      extractedDependencyFiles: out.extractedDependencyFiles,
+    );
+  }
+
   /// The `logic.FieldDecl` [element] resolves to, for an EXTERNAL field read (`model.count` — the
   /// receiver is some other expression, never `this`) — ADR-0035.
   ///
@@ -1749,60 +1807,61 @@ final class ExpressionExtractor {
     if (element.enclosingElement != ownerClass) {
       return null;
     }
-    // A generic METHOD (`T identity<T>(T value) => value;`) on an otherwise-eligible, non-generic
-    // owner class is excluded here independently of `_dispatchSafeReceiverClass`'s own generic-class
-    // check (§9/§40) — that gate only ever inspects the RECEIVER's own type arguments, never the
-    // resolved member's own type parameters, so a generic method on a non-generic class would
-    // otherwise slip through. `ClassDecl.methods`'s own `FunctionDecl` shape has no type-parameter
-    // field to represent `T` faithfully in a helper signature, so this is excluded at the same layer
-    // every other unsupported method shape is, rather than discovered downstream as a generator-side
-    // `unknown`/broken-type emission.
-    if (element.typeParameters.isNotEmpty) {
+    if (!_isEligibleMethodShape(element)) {
       return null;
-    }
-    // The method's own RETURN type (M10-D) — a `dart:core` value type already representable by the
-    // existing `TypeRef`/`typeTextOf` machinery, or a project class satisfying the identical
-    // dispatch-safety gate a RECEIVER already must ([_dispatchSafeReceiverClass]) — never `dynamic`, a
-    // generic instantiation (`List<int>`), a function type, or an external/unresolvable class. A real,
-    // live-probed gap found while investigating this milestone: before this check, a method returning
-    // `dynamic` or `List<int>` still resolved a `target` and reached a real, un-refused helper whose own
-    // signature rendered the return type `unknown` — safe only by accident wherever the caller happened
-    // to consume it in a position `unknown` also satisfies (a template-literal interpolation), and a real
-    // `tsc --strict` failure, never this compiler's own honest `BRG3013`, the moment a caller chained a
-    // further member off the result or assigned it to a narrower type.
-    //
-    // Skipped entirely for an `async` method (`element.firstFragment.isAsynchronous`) — ADR-0039 §5's own
-    // established, separately-tested split deliberately keeps the async EXCLUSION at the GENERATOR layer,
-    // not here (an async method's return type is language-mandated to be `Future`/`FutureOr`/`Stream`-
-    // shaped, which this gate would otherwise always reject, moving that exclusion to the wrong,
-    // extraction, layer and breaking the pre-existing "an async method still resolves a target at THIS
-    // layer" regression test).
-    if (!element.firstFragment.isAsynchronous && !_isEligibleMethodReturnType(element.returnType)) {
-      return null;
-    }
-    for (final FormalParameterElement param in element.formalParameters) {
-      // A NAMED parameter (required or optional) — M10-E non-goal. A named argument has no positional
-      // call-site equivalent without either an options-object rewrite (a wrong-value-at-the-wrong-
-      // position risk `refuseNamedArgs`'s own doc comment already names) or threading the parameter's
-      // own declared name to every call site — materially larger scope than this gate's own subset.
-      if (!param.isPositional) return null;
-      // An OPTIONAL positional parameter is eligible only when it carries an explicit default value
-      // (M10-E, ADR-0043 §7) — `[int bonus = 0]`, never `[int? bonus]` (implicitly `null` when omitted):
-      // representing an omitted argument as JavaScript's `undefined` would be a new absent-value
-      // representation this codebase has not made anywhere else (`typeTextOf`'s own doc comment: "Dart
-      // has one absent value and it is `null`"). `param.hasDefaultValue` is real analyzer semantic
-      // information (`FormalParameterElement`), never inferred from the parameter's own declared type.
-      if (param.isOptionalPositional && !param.hasDefaultValue) return null;
-      // A function-typed parameter (`int Function(int) fn`) — M10-C non-goal "closures/function-valued
-      // method references". Excluded here, at the identical eligibility gate every other unsupported
-      // parameter shape is refused at, rather than discovered downstream: the generator has no lowering
-      // for a Dart function type (`typeTextOf` renders it `unknown`), so admitting this method would
-      // emit a helper whose own body *calls* a parameter typed `unknown` — code that reaches `tsc` as
-      // "not callable", never this compiler's own honest `BRG3013` (a real, live-probed gap found while
-      // investigating this milestone's own non-goal list, not a hypothetical).
-      if (param.type is FunctionType) return null;
     }
     return _instanceMemberTarget(element);
+  }
+
+  /// Whether [element]'s own SHAPE (independent of static-ness, owner, or receiver) is representable by
+  /// the bounded method-helper machinery — shared by [_externalMethodTarget] (an instance method) and
+  /// [_staticMemberTarget] (M11-A, ADR-0045 §3's own explicit note: the reconstruction machinery already
+  /// existed in full; this is the one piece a naive first cut of a static-method gate could otherwise
+  /// forget, since `MethodElement` carries these facts identically whether the method is static or not).
+  ///
+  /// - A generic METHOD (`T identity<T>(T value) => value;`) on an otherwise-eligible, non-generic
+  ///   owner class is excluded here independently of `_dispatchSafeReceiverClass`'s own generic-class
+  ///   check (§9/§40) — that gate only ever inspects the RECEIVER's own type arguments, never the
+  ///   resolved member's own type parameters, so a generic method on a non-generic class would
+  ///   otherwise slip through. `ClassDecl.methods`'s own `FunctionDecl` shape has no type-parameter
+  ///   field to represent `T` faithfully in a helper signature, so this is excluded at the same layer
+  ///   every other unsupported method shape is, rather than discovered downstream as a generator-side
+  ///   `unknown`/broken-type emission.
+  /// - The method's own RETURN type (M10-D) — a `dart:core` value type already representable by the
+  ///   existing `TypeRef`/`typeTextOf` machinery, or a project class satisfying the identical
+  ///   dispatch-safety gate a RECEIVER already must ([_dispatchSafeReceiverClass]) — never `dynamic`, a
+  ///   generic instantiation (`List<int>`), a function type, or an external/unresolvable class. A real,
+  ///   live-probed gap found while investigating M10-D: before this check, a method returning `dynamic`
+  ///   or `List<int>` still resolved a `target` and reached a real, un-refused helper whose own
+  ///   signature rendered the return type `unknown` — safe only by accident wherever the caller happened
+  ///   to consume it in a position `unknown` also satisfies (a template-literal interpolation), and a real
+  ///   `tsc --strict` failure, never this compiler's own honest `BRG3013`, the moment a caller chained a
+  ///   further member off the result or assigned it to a narrower type. Re-confirmed live for the STATIC
+  ///   case specifically while building M11-A's own mutation-testing pass — the identical `unknown` shape
+  ///   was reproduced for a static method before this function was shared, not merely hypothesized.
+  ///   Skipped entirely for an `async` method (`element.firstFragment.isAsynchronous`) — ADR-0039 §5's own
+  ///   established, separately-tested split deliberately keeps the async EXCLUSION at the GENERATOR layer,
+  ///   not here (an async method's return type is language-mandated to be `Future`/`FutureOr`/`Stream`-
+  ///   shaped, which this gate would otherwise always reject).
+  /// - Every parameter must be positional (a NAMED parameter, required or optional, is an M10-E non-goal:
+  ///   no positional call-site equivalent without an options-object rewrite or call-site-name-threading);
+  ///   an OPTIONAL positional parameter is eligible only with an explicit default value (M10-E, ADR-0043
+  ///   §7 — `[int bonus = 0]`, never `[int? bonus]`); no parameter may be function-typed (M10-C non-goal —
+  ///   `typeTextOf` renders a function type `unknown`, and a helper body calling an `unknown`-typed
+  ///   parameter reaches `tsc` as "not callable", never this compiler's own honest `BRG3013`).
+  bool _isEligibleMethodShape(MethodElement element) {
+    if (element.typeParameters.isNotEmpty) {
+      return false;
+    }
+    if (!element.firstFragment.isAsynchronous && !_isEligibleMethodReturnType(element.returnType)) {
+      return false;
+    }
+    for (final FormalParameterElement param in element.formalParameters) {
+      if (!param.isPositional) return false;
+      if (param.isOptionalPositional && !param.hasDefaultValue) return false;
+      if (param.type is FunctionType) return false;
+    }
+    return true;
   }
 
   RawNode _construction(InstanceCreationExpression node, Scope scope) {

@@ -234,4 +234,52 @@ describe('M9-R closure: a method call on a locally-constructed receiver refuses 
     ).toBe(true);
     expect(files).toEqual([]);
   });
+
+  // M11-A (ADR-0045 §14): `StaticAccessModel.marker` is a static CONST field — a separate, pre-existing,
+  // documented M8-P boundary (this generator does not yet lower a `logic.FieldDecl` to a module-level
+  // declaration at all), unrelated to this milestone's own static-METHOD targeting work. Unaffected by
+  // this milestone's own extraction change — confirmed the identical `BRG3006` refusal fires, unchanged.
+  it('refuses a static field/const reference as BRG3006, unaffected by static method access', () => {
+    const normalized = compiledFrom(methodCallRefusalRaw());
+    const { context, reported } = harness(normalized);
+    const { files } = reactGenerator.generate(context);
+    const errors = reported.filter((d) => d.severity === 'error');
+    expect(errors.some((d) => d.code === 'BRG3006' && d.message.includes('StaticAccessModel.marker'))).toBe(true);
+    expect(files).toEqual([]);
+  });
+
+  // M11-A (ADR-0045 §14): `StaticAccessModel.callHidden`'s own body calls a PRIVATE static sibling method
+  // (`_hidden`) — excluded by `_staticMemberTarget`'s own `isPrivate` check. `callHidden` itself is
+  // otherwise eligible, but its own body references something unsupported — the identical reachable-
+  // unsupported-dependency propagation M10-B/D already established for instance methods (`compute`/
+  // `countdown`, above), proven here for static ones: the OBSERVABLE diagnostic names `callHidden` itself,
+  // "otherwise eligible", never the inner `_hidden` reference directly (the identical propagation shape
+  // the safe-navigation `describeBuilder` test, above, already documents for a different construct).
+  it('refuses a static method whose own body references a private static sibling as BRG3013, propagating through the method helper', () => {
+    const normalized = compiledFrom(methodCallRefusalRaw());
+    const { context, reported } = harness(normalized);
+    const { files } = reactGenerator.generate(context);
+    const errors = reported.filter((d) => d.severity === 'error');
+    expect(
+      errors.some(
+        (d) => d.code === 'BRG3013' && d.message.includes('callHidden') && d.message.includes('otherwise eligible'),
+      ),
+    ).toBe(true);
+    expect(files).toEqual([]);
+  });
+
+  // M11-A (ADR-0045): a real, live-probed gap found while mutation-testing this milestone's own first
+  // implementation — `_staticMemberTarget`'s first cut reused `_instanceMemberTarget` directly without
+  // also reusing `_externalMethodTarget`'s own return-type eligibility gate, reproducing the exact
+  // `unknown`-return silent-wrong-code shape ADR-0042 already closed once for `DynamicReturnModel`,
+  // above (an INSTANCE method). Fixed by sharing `_isEligibleMethodShape` between both gates — this is
+  // the permanent regression proof at the generation layer.
+  it('refuses a static method with an ineligible (dynamic) return type as BRG3006, unaffected by static method access', () => {
+    const normalized = compiledFrom(methodCallRefusalRaw());
+    const { context, reported } = harness(normalized);
+    const { files } = reactGenerator.generate(context);
+    const errors = reported.filter((d) => d.severity === 'error');
+    expect(errors.some((d) => d.code === 'BRG3006' && d.message.includes('StaticAccessModel.getDynamic'))).toBe(true);
+    expect(files).toEqual([]);
+  });
 });

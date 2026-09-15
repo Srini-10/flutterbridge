@@ -721,6 +721,33 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
         const local = scope.localName(target);
         if (local !== undefined) return local;
 
+        // A project-defined class's own STATIC method (M11-A, ADR-0045) — `Model.compute`, `target`
+        // resolved by the analyzer's own element model to the declaring class's own embedded
+        // `logic.FunctionDecl`, never `scope.node()` (a static method's own declaration is not a
+        // top-level document record, the identical structural fact that already keeps an instance
+        // method out of this same lookup). Checked here, ahead of `scope.node(target)`, because a static
+        // method's own id is never present there. `scope.projectClassMethodIds` already includes every
+        // class-embedded method regardless of static-ness (`functions.ts`'s own unconditional population
+        // loop), but only a STATIC one is ever reached as a bare `logic.Ref` — an instance method call
+        // always extracts as `logic.MethodCall`, with an explicit or synthesized `this` receiver (M10-A/B,
+        // and a method tear-off is a separate, unsupported capability the extractor never produces) — so
+        // no `self` argument is ever appended here, unlike the sibling getter-helper branch above.
+        if (scope.projectClassMethodIds.has(target as NodeId)) {
+          const helper = scope.methodHelpers.get(target as NodeId);
+          if (helper === undefined) {
+            const memberName = typeof node['name'] === 'string' ? node['name'] : 'this method';
+            scope.report(
+              GeneratorDiagnosticCode.UnsupportedCapability,
+              'error',
+              `\`${memberName}\` has no supported lowering for this call, even though its own declaration ` +
+                `is otherwise eligible (ADR-0045). FlutterBridge does not yet lower this method's own body.`,
+              idOf(node),
+            );
+            return REFUSED;
+          }
+          return helper.path === scope.module.path ? helper.name : scope.module.use(helper.module, helper.name);
+        }
+
         // An application enum constant (M8-D) — `Stage.ready`, `target` resolved by the analyzer's own
         // element model to the declaring `logic.EnumDecl` (never by matching this string against
         // anything). No runtime kit or generated declaration models a Dart enum's *type* today — no

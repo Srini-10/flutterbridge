@@ -6872,12 +6872,15 @@ class W extends StatelessWidget {
       expect(call?.containsKey('target'), isFalse);
     });
 
-    test('a static method call never reaches the MethodCall/target shape at all', () async {
-      // `Model.scale(3)` is a static-qualified call — `_invocation`'s own `_isStaticQualifier` check
-      // means this reaches UIR as `logic.Call` with a qualified `callee` reference (`'Model.scale'`),
-      // never `logic.MethodCall` — so `_externalMethodTarget` is never even consulted for it, the same
-      // structural reason a static getter/field was never reachable through `_externalGetterTarget` /
-      // `_externalFieldTarget` either.
+    test('a static method call reaches logic.Call with a targeted callee, never logic.MethodCall (M11-A)', () async {
+      // Reversed from its own pre-M11-A assertion (`callee.containsKey('target')` used to be `isFalse`) —
+      // ADR-0045 gave `_staticMemberTarget` the identical owner-qualified symbol reconstruction
+      // `_instanceMemberTarget` already used for an instance member, applied here to a static one. The
+      // SHAPE this test's own name describes is unchanged and still true: `Model.scale(3)` is a static-
+      // qualified call — `_invocation`'s own `_isStaticQualifier` check means this reaches UIR as
+      // `logic.Call` with a qualified `callee` reference (`'Model.scale'`), never `logic.MethodCall` — so
+      // `_externalMethodTarget` (the INSTANCE-member gate) is still never consulted for it. Only whether
+      // the callee now carries a `target` has reversed.
       final Extracted app = await extract('''
 import 'package:flutter/material.dart';
 class Model {
@@ -6908,7 +6911,7 @@ class W extends StatelessWidget {
       expect(callOf(app.only('ui.Component')['render'], 'scale'), isNull);
       final Map<String, dynamic>? callee = calleeOf(app.only('ui.Component')['render']);
       expect(callee, isNotNull);
-      expect(callee!.containsKey('target'), isFalse);
+      expect(callee!.containsKey('target'), isTrue);
     });
 
     test('a method with an optional positional parameter WITH a default value IS targeted (M10-E)', () async {
@@ -7525,6 +7528,218 @@ class W extends StatelessWidget {
               as Map<String, dynamic>)['parts']
           as List<dynamic>;
       expect(parts.whereType<Map<String, dynamic>>().any((Map<String, dynamic> p) => p['kind'] == 'logic.Conditional'), isTrue);
+    });
+  });
+
+  group('bounded static method access provenance (ADR-0045, M11-A)', () {
+    Map<String, dynamic>? callOf(Object? node) {
+      if (node is Map<String, dynamic>) {
+        if (node['kind'] == 'logic.Call') return node;
+        for (final Object? value in node.values) {
+          if (callOf(value) case final Map<String, dynamic> found) return found;
+        }
+      } else if (node is List) {
+        for (final Object? value in node) {
+          if (callOf(value) case final Map<String, dynamic> found) return found;
+        }
+      }
+      return null;
+    }
+
+    test('a static method call resolves a real target, never a bare dotted name', () async {
+      final Extracted app = await extract(r'''
+import 'package:flutter/material.dart';
+class Model {
+  static int compute(int x) => x * 2;
+}
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => Text('${Model.compute(3)}');
+}
+''');
+      final Map<String, dynamic> call = callOf(app.only('ui.Component')['render'])!;
+      final Map<String, dynamic> callee = call['callee'] as Map<String, dynamic>;
+      expect(callee['kind'], 'logic.Ref');
+      expect(callee.containsKey('target'), isTrue);
+      final Map<String, dynamic> model = app
+          .ofKind('logic.ClassDecl')
+          .singleWhere((Map<String, dynamic> d) => d['name'] == 'Model');
+      final Map<String, dynamic> compute = (model['methods'] as List<dynamic>)
+          .cast<Map<String, dynamic>>()
+          .singleWhere((Map<String, dynamic> m) => m['name'] == 'compute');
+      expect(callee['target'], compute['id']);
+    });
+
+    test('two classes with a same-named static method resolve to two distinct targets', () async {
+      final Extracted app = await extract(r'''
+import 'package:flutter/material.dart';
+class Model {
+  static int compute(int x) => x * 2;
+}
+class Other {
+  static int compute(int x) => x * 5;
+}
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => Text('${Model.compute(3)} / ${Other.compute(3)}');
+}
+''');
+      final List<Map<String, dynamic>> calls = <Map<String, dynamic>>[];
+      void collect(Object? node) {
+        if (node is Map<String, dynamic>) {
+          if (node['kind'] == 'logic.Call') calls.add(node);
+          node.values.forEach(collect);
+        } else if (node is List) {
+          node.forEach(collect);
+        }
+      }
+
+      collect(app.only('ui.Component')['render']);
+      expect(calls, hasLength(2));
+      final Set<String> targets = calls
+          .map((Map<String, dynamic> c) => (c['callee'] as Map<String, dynamic>)['target'] as String)
+          .toSet();
+      expect(targets, hasLength(2));
+    });
+
+    test('a private static method never resolves a target', () async {
+      final Extracted app = await extract(r'''
+import 'package:flutter/material.dart';
+class Model {
+  static int _hidden(int x) => x * 3;
+  static int callHidden(int x) => Model._hidden(x);
+}
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => Text('${Model.callHidden(3)}');
+}
+''');
+      final Map<String, dynamic> model = app
+          .ofKind('logic.ClassDecl')
+          .singleWhere((Map<String, dynamic> d) => d['name'] == 'Model');
+      final Map<String, dynamic> callHidden = (model['methods'] as List<dynamic>)
+          .cast<Map<String, dynamic>>()
+          .singleWhere((Map<String, dynamic> m) => m['name'] == 'callHidden');
+      final Map<String, dynamic> call = callOf(callHidden['body'])!;
+      final Map<String, dynamic> callee = call['callee'] as Map<String, dynamic>;
+      expect(callee.containsKey('target'), isFalse);
+    });
+
+    test('a static field reference never resolves a target through this capability', () async {
+      final Extracted app = await extract(r'''
+import 'package:flutter/material.dart';
+class Model {
+  static const int marker = 7;
+}
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => Text('${Model.marker}');
+}
+''');
+      final Map<String, dynamic> render = app.only('ui.Component')['render'] as Map<String, dynamic>;
+      Map<String, dynamic>? refOf(Object? node) {
+        if (node is Map<String, dynamic>) {
+          if (node['kind'] == 'logic.Ref' && node['name'] == 'Model.marker') return node;
+          for (final Object? value in node.values) {
+            if (refOf(value) case final Map<String, dynamic> found) return found;
+          }
+        } else if (node is List) {
+          for (final Object? value in node) {
+            if (refOf(value) case final Map<String, dynamic> found) return found;
+          }
+        }
+        return null;
+      }
+
+      final Map<String, dynamic>? ref = refOf(render);
+      expect(ref, isNotNull);
+      expect(ref!.containsKey('target'), isFalse);
+    });
+
+    // A real, live-probed gap found while mutation-testing this milestone's own first implementation
+    // (not a hypothetical): `_staticMemberTarget`'s first cut reused `_instanceMemberTarget` directly
+    // without ALSO reusing `_externalMethodTarget`'s own return-type/parameter shape gate, reproducing
+    // the exact `unknown`-return silent-wrong-code shape ADR-0042 already closed once for INSTANCE
+    // methods. Fixed by sharing `_isEligibleMethodShape` between both functions — these two tests are the
+    // permanent regression proof.
+    test('a static method with an ineligible (dynamic) return type never resolves a target', () async {
+      final Extracted app = await extract(r'''
+import 'package:flutter/material.dart';
+class Model {
+  static dynamic getDynamic() => 5;
+}
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => Text('${Model.getDynamic()}');
+}
+''');
+      final Map<String, dynamic>? call = callOf(app.only('ui.Component')['render']);
+      expect(call, isNotNull);
+      final Map<String, dynamic> callee = call!['callee'] as Map<String, dynamic>;
+      expect(callee.containsKey('target'), isFalse);
+    });
+
+    // A real test-coverage gap found via mutation testing (M11-A's own Phase 7): removing the `isStatic`
+    // check from `_staticMemberTarget` was not caught by any of the tests above, because none of them
+    // constructed the one scenario where `_staticMemberTarget` becomes reachable for a genuinely NON-
+    // static method: a bare call, from WITHIN a subclass, to a NEW (non-override) method that subclass
+    // itself declares. `_externalMethodTarget`'s own bare-call attempt fails for it — not because the
+    // method is private/abstract/`@override`, but because `_dispatchSafeReceiverClass` rejects `Derived`
+    // itself (it has an explicit superclass, ADR-0038 §10) — so it falls through to the generic
+    // `target == null` branch, exactly where `_staticMemberTarget` is consulted next. Without the
+    // `isStatic` check, `_staticMemberTarget`'s own `owner is InstanceElement` test does not re-check
+    // superclass-ness at all, and would incorrectly admit it — a real dynamic-dispatch-safety gap, not
+    // merely a hypothetical. Added as a permanent regression test, per the governing brief's own explicit
+    // instruction not to manufacture coverage without a genuine gap to close.
+    test('a bare call to a non-static, non-override method declared on a SUBCLASS never resolves a '
+        'target through the static-member path', () async {
+      final Extracted app = await extract(r'''
+import 'package:flutter/material.dart';
+class Base {}
+class Derived extends Base {
+  int multiply(int x) => x * 2;
+  int callBare(int x) => multiply(x);
+}
+class W extends StatelessWidget {
+  const W({super.key, required this.model});
+  final Derived model;
+  @override
+  Widget build(BuildContext context) => Text('${model.callBare(3)}');
+}
+''');
+      final Map<String, dynamic> derived = app
+          .ofKind('logic.ClassDecl')
+          .singleWhere((Map<String, dynamic> d) => d['name'] == 'Derived');
+      final Map<String, dynamic> callBare = (derived['methods'] as List<dynamic>)
+          .cast<Map<String, dynamic>>()
+          .singleWhere((Map<String, dynamic> m) => m['name'] == 'callBare');
+      final Map<String, dynamic>? call = callOf(callBare['body']);
+      expect(call, isNotNull);
+      final Map<String, dynamic> callee = call!['callee'] as Map<String, dynamic>;
+      expect(callee.containsKey('target'), isFalse);
+    });
+
+    test('a static method with a named parameter never resolves a target', () async {
+      final Extracted app = await extract(r'''
+import 'package:flutter/material.dart';
+class Model {
+  static int scale(int x, {int bonus = 0}) => x * 2 + bonus;
+}
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => Text('${Model.scale(3, bonus: 1)}');
+}
+''');
+      final Map<String, dynamic>? call = callOf(app.only('ui.Component')['render']);
+      expect(call, isNotNull);
+      final Map<String, dynamic> callee = call!['callee'] as Map<String, dynamic>;
+      expect(callee.containsKey('target'), isFalse);
     });
   });
 

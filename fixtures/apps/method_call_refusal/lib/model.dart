@@ -167,3 +167,29 @@ class NavModel {
 /// A top-level function returning a nullable `NavModel` — a null-aware access on ITS OWN RESULT is a
 /// CALL receiver, never a bare reference.
 NavModel? maybeNavModel() => NavModel(7);
+
+/// M11-A (ADR-0045 §14) — proves a static member reference outside the newly-supported subset stays
+/// refused honestly, exactly as before this milestone.
+class StaticAccessModel {
+  /// A static CONST field. Deliberately excluded (ADR-0045 §14/§16): wiring a `target` alone would not
+  /// fix its refusal, since the SEPARATE, pre-existing, documented M8-P boundary — this generator does
+  /// not yet lower a `logic.FieldDecl` to a module-level declaration at all — is what actually refuses
+  /// it, unrelated to this milestone's own targeting work.
+  static const int marker = 7;
+
+  /// A PRIVATE static method — excluded by the identical `isPrivate` check every other member-eligibility
+  /// gate in this codebase already applies (ADR-0045 §14's own explicit exclusion).
+  static int _hidden(int x) => x * 3;
+
+  /// Calls the private static method above with an explicit qualifier, so a REAL call site exists to
+  /// refuse (a declaration with no reference is dead code, not a call-site refusal proof).
+  static int callHidden(int x) => StaticAccessModel._hidden(x);
+
+  /// A static method whose own RETURN type is `dynamic` — a real, live-probed gap found while mutation-
+  /// testing M11-A's own first implementation: `_staticMemberTarget`'s first cut reused
+  /// `_instanceMemberTarget` directly without also reusing `_externalMethodTarget`'s own return-type
+  /// eligibility gate, reproducing the exact `unknown`-return silent-wrong-code shape ADR-0042 already
+  /// closed once for INSTANCE methods (see `DynamicReturnModel`, above, its static sibling). Fixed by
+  /// sharing `_isEligibleMethodShape` between both extraction-side gates.
+  static dynamic getDynamic() => 5;
+}

@@ -418,3 +418,9 @@ export function safeNavigationMemberAccessRaw(): string {
   );
   return readFileSync(path, 'utf8');
 }
+
+/** The real `fixtures/apps/static_method_access` document, raw analyzer output (ADR-0045, M11-A) — not yet normalized. */
+export function staticMethodAccessRaw(): string {
+  const path = fileURLToPath(new URL('../../../../fixtures/uir/static_method_access.ndjson', import.meta.url));
+  return readFileSync(path, 'utf8');
+}

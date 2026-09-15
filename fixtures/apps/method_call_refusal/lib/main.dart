@@ -176,3 +176,40 @@ class SafeNavGetterReceiverCallOnLocal extends StatelessWidget {
     return Text('${model.describeBuilder()}');
   }
 }
+
+// Not wired into the route table either (M11-A). `StaticAccessModel.marker` is a static CONST field — the
+// separate, pre-existing M8-P `FieldDecl`-lowering boundary, unrelated to this milestone's own static-
+// METHOD targeting work. See `StaticAccessModel`'s own doc comment.
+class StaticFieldAccessOnLocal extends StatelessWidget {
+  const StaticFieldAccessOnLocal({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Text('${StaticAccessModel.marker}');
+  }
+}
+
+// Not wired into the route table either (M11-A). `StaticAccessModel.callHidden`'s own body calls a
+// PRIVATE static sibling method — the reachable-unsupported-dependency propagation M10-B/D already
+// established for instance methods, proven here for static ones: `callHidden` itself is otherwise
+// eligible, but must still refuse because its own body references something unsupported.
+class PrivateStaticCallOnLocal extends StatelessWidget {
+  const PrivateStaticCallOnLocal({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Text('${StaticAccessModel.callHidden(3)}');
+  }
+}
+
+// Not wired into the route table either (M11-A). `StaticAccessModel.getDynamic`'s own return type is
+// `dynamic` — the static sibling of `DynamicReturnCallOnLocal`, above. See `StaticAccessModel`'s own doc
+// comment.
+class StaticDynamicReturnCallOnLocal extends StatelessWidget {
+  const StaticDynamicReturnCallOnLocal({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Text('${StaticAccessModel.getDynamic()}');
+  }
+}
