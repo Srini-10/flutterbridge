@@ -228,30 +228,31 @@ final class ExpressionExtractor {
         if (_componentProp(target, node.propertyName.name, node) case final RawNode prop) {
           return prop;
         }
-        return RawNode(
-          kind: 'logic.PropertyAccess',
-          span: out.span(node),
-          fields: <String, RawValue>{
-            'receiver': RawChild(extract(target, scope)),
-            'property': RawLiteral(node.propertyName.name),
-            // `this.count`/`this.doubled` resolves through `_internalMemberTarget` (M10-B: a field stays
-            // the broad, ungated M9-L identity resolution; an explicit getter is routed through the same
-            // eligibility-gated `_externalGetterTarget` an external read already uses — see that
-            // function's own doc). An external receiver (`model.count`/`model.doubled`, ADR-0035/0038)
-            // resolves through the strictly narrower `_externalFieldTarget`/`_externalGetterTarget` gate
-            // directly — never the broader `_instanceMemberTarget` unguarded, which would reopen exactly
-            // the hazard M9-J's own refusal exists to prevent for every member shape ADR-0035 does not
-            // explicitly prove safe.
-            if (_storeMemberTarget(target.staticType, node.propertyName.element) ??
-                    (target is ThisExpression
-                        ? _internalMemberTarget(node.propertyName.element)
-                        : _externalFieldTarget(target.staticType, node.propertyName.element) ??
-                              _externalGetterTarget(target.staticType, node.propertyName.element))
-                case final String symbol)
-              'target': RawRef(symbol),
-            'type': out.typeRef(node.staticType, at: node),
-          },
-        );
+        // Safe navigation (`model?.count`/`model?.doubled`, M10-F, ADR-0044) — checked here, ahead of the
+        // ordinary read below: `node.isNullAware` is real, already-resolved analyzer information
+        // (`PropertyAccess.isNullAware`), and nothing downstream of this point has ever inspected it —
+        // silently dropping it reached real `tsc --strict` as a `possibly null` failure, never this
+        // compiler's own honest `BRG3013` (a real, live-probed gap, not a hypothetical). A bare-reference
+        // receiver (`_isSafeToDuplicateNullAwareReceiver`) lowers to a real conditional, evaluated
+        // exactly the way Dart's own `?.` already does; anything else withholds `target` instead, routing
+        // through the pre-existing M9-J unmodelled-member refusal rather than silently attempting an
+        // unsafe duplicate evaluation.
+        if (node.isNullAware) {
+          if (_isSafeToDuplicateNullAwareReceiver(target)) {
+            return RawNode(
+              kind: 'logic.Conditional',
+              span: out.span(node),
+              fields: <String, RawValue>{
+                'test': RawChild(_nullAwareGuard(target, scope)),
+                'then': RawChild(_propertyAccessOn(node, target, scope, suppressTarget: false)),
+                'otherwise': RawChild(_nullLiteral(node)),
+                'type': out.typeRef(node.staticType, at: node),
+              },
+            );
+          }
+          return _propertyAccessOn(node, target, scope, suppressTarget: true);
+        }
+        return _propertyAccessOn(node, target, scope, suppressTarget: false);
 
       case MethodInvocation():
         return _invocation(node, scope);
@@ -1035,6 +1036,90 @@ final class ExpressionExtractor {
     };
   }
 
+  /// The ordinary (non-null-aware-semantics) `logic.PropertyAccess` for [node], receiver [target] — the
+  /// identical shape this case has always built, factored out so the safe-navigation guard (M10-F,
+  /// ADR-0044) can reuse it UNCHANGED as its own guarded `then` branch, rather than duplicating the
+  /// target-resolution logic.
+  ///
+  /// [suppressTarget], when true, withholds `target` regardless of what the member would otherwise
+  /// resolve to — used only for an unsupported safe-navigation receiver shape (ADR-0044 §6), forcing the
+  /// pre-existing M9-J unmodelled-member refusal rather than silently reaching a member this extractor
+  /// would, in every OTHER respect, treat as eligible.
+  RawNode _propertyAccessOn(PropertyAccess node, Expression target, Scope scope, {required bool suppressTarget}) =>
+      RawNode(
+        kind: 'logic.PropertyAccess',
+        span: out.span(node),
+        fields: <String, RawValue>{
+          'receiver': RawChild(extract(target, scope)),
+          'property': RawLiteral(node.propertyName.name),
+          // `this.count`/`this.doubled` resolves through `_internalMemberTarget` (M10-B: a field stays
+          // the broad, ungated M9-L identity resolution; an explicit getter is routed through the same
+          // eligibility-gated `_externalGetterTarget` an external read already uses — see that
+          // function's own doc). An external receiver (`model.count`/`model.doubled`, ADR-0035/0038)
+          // resolves through the strictly narrower `_externalFieldTarget`/`_externalGetterTarget` gate
+          // directly — never the broader `_instanceMemberTarget` unguarded, which would reopen exactly
+          // the hazard M9-J's own refusal exists to prevent for every member shape ADR-0035 does not
+          // explicitly prove safe.
+          if (_storeMemberTarget(target.staticType, node.propertyName.element) ??
+                  (target is ThisExpression
+                      ? _internalMemberTarget(node.propertyName.element)
+                      : _externalFieldTarget(target.staticType, node.propertyName.element) ??
+                            _externalGetterTarget(target.staticType, node.propertyName.element))
+              case final String symbol when !suppressTarget)
+            'target': RawRef(symbol),
+          'type': out.typeRef(node.staticType, at: node),
+        },
+      );
+
+  /// Whether [target] is safe to evaluate TWICE in a synthesized safe-navigation guard (M10-F, ADR-0044)
+  /// — once in the guard's own `!= null` test, once inside the guarded access itself, mirroring the
+  /// identical, already-shipped M8-B render-tree-local pattern (`_reference`'s own `binding?.inlineValue`
+  /// re-extraction), safe there, and here, for the identical reason: no side effect is representable
+  /// anywhere in this bounded structural model, so re-reading the same PURE reference twice can never
+  /// observe a different value.
+  ///
+  /// Eligible only for: a bare `SimpleIdentifier` whose resolved element is a true parameter or local
+  /// variable (`FormalParameterElement`/`LocalVariableElement`), or a field-backed getter
+  /// (`GetterElement.isOriginVariable` — a component's own constructor field, or an internal `self` field)
+  /// — mirroring `_instanceMemberTarget`'s own established field/getter distinction (ADR-0033), reused
+  /// here as the "safe to duplicate" boundary rather than invented fresh. A GENUINE (computed) getter is
+  /// deliberately excluded — provably pure in this bounded model, but duplicating it would cross this
+  /// project's own consistent "receiver evaluated exactly once, no exceptions" discipline (ADR-0041 §5
+  /// onward) for no real capability gain (ADR-0044 §5/§19). A method call or a constructed value is
+  /// excluded outright — duplicating either would call it, or construct it, twice.
+  bool _isSafeToDuplicateNullAwareReceiver(Expression target) {
+    if (target is! SimpleIdentifier) return false;
+    final Element? element = target.element;
+    if (element is FormalParameterElement || element is LocalVariableElement) return true;
+    return element is GetterElement && element.isOriginVariable;
+  }
+
+  /// A synthetic `null` literal (M10-F, ADR-0044) — no real AST node exists to ask `node.staticType` of,
+  /// so the `TypeRef` is hand-built, mirroring the identical established pattern this file already uses
+  /// for a synthesized value with no source node of its own (e.g. a `String`-typed synthesized literal
+  /// elsewhere in this file). `logic.Lit` with no `value` field is the extractor's own existing
+  /// representation for `null` (`_literal`'s own `if (value != null) 'value': ...` guard) — reused
+  /// verbatim, never a new literal shape.
+  RawNode _nullLiteral(AstNode at) => RawNode(
+    kind: 'logic.Lit',
+    span: out.span(at),
+    fields: const <String, RawValue>{'type': RawMap(<String, RawValue>{'name': RawLiteral('Null')})},
+  );
+
+  /// `<receiver> != null` (M10-F, ADR-0044) — the guard a synthesized safe-navigation conditional tests.
+  /// `bool`'s own `TypeRef` is hand-built for the identical reason [_nullLiteral]'s is: the comparison
+  /// itself has no real AST node.
+  RawNode _nullAwareGuard(Expression target, Scope scope) => RawNode(
+    kind: 'logic.Binary',
+    span: out.span(target),
+    fields: <String, RawValue>{
+      'operator': const RawLiteral('!='),
+      'left': RawChild(extract(target, scope)),
+      'right': RawChild(_nullLiteral(target)),
+      'type': const RawMap(<String, RawValue>{'name': RawLiteral('bool'), 'library': RawLiteral('dart:core')}),
+    },
+  );
+
   RawNode _invocation(MethodInvocation node, Scope scope) {
     // A navigation is a method invocation, and this is the one place every invocation is reached with
     // the scope its arguments must bind against. The transition it emits is a *separate* top-level
@@ -1101,11 +1186,11 @@ final class ExpressionExtractor {
       }
     }
 
-    return RawNode(
-      kind: target == null ? 'logic.Call' : 'logic.MethodCall',
-      span: out.span(node),
-      fields: <String, RawValue>{
-        if (target == null)
+    if (target == null) {
+      return RawNode(
+        kind: 'logic.Call',
+        span: out.span(node),
+        fields: <String, RawValue>{
           // The callee's type is the *function's* type, not the call's. A method name identifier has
           // no static type of its own — it is not a value — and asking it for one is what produced ten
           // false BRG1303s on `setState(...)` alone.
@@ -1118,8 +1203,47 @@ final class ExpressionExtractor {
               staticTarget:
                   _enumConstantTarget(node.methodName.element) ?? _topLevelTarget(node.methodName.element),
             ),
-          )
-        else ...<String, RawValue>{
+          ),
+          ..._arguments(node.argumentList, scope),
+          'type': out.typeRef(node.staticType, at: node),
+        },
+      );
+    }
+
+    // Safe navigation (`model?.multiply(3)`, M10-F, ADR-0044) — the identical guard the sibling
+    // `PropertyAccess` case above applies, for the identical reason: `node.isNullAware` is real,
+    // already-resolved analyzer information nothing downstream of this point has ever inspected before
+    // this milestone, and silently dropping it reached real `tsc --strict` as an argument-type failure,
+    // never this compiler's own honest `BRG3013`. Dart's own short-circuit already never evaluates the
+    // call's own arguments when the receiver is null — achieved for free here, since `_arguments` is
+    // only ever reached INSIDE `_methodCallOn`'s own guarded `then` branch, never in the guard itself.
+    if (node.isNullAware) {
+      if (_isSafeToDuplicateNullAwareReceiver(target)) {
+        return RawNode(
+          kind: 'logic.Conditional',
+          span: out.span(node),
+          fields: <String, RawValue>{
+            'test': RawChild(_nullAwareGuard(target, scope)),
+            'then': RawChild(_methodCallOn(node, target, scope, suppressTarget: false)),
+            'otherwise': RawChild(_nullLiteral(node)),
+            'type': out.typeRef(node.staticType, at: node),
+          },
+        );
+      }
+      return _methodCallOn(node, target, scope, suppressTarget: true);
+    }
+    return _methodCallOn(node, target, scope, suppressTarget: false);
+  }
+
+  /// The ordinary (non-null-aware-semantics) `logic.MethodCall` for [node], receiver [target] — the
+  /// identical shape this function has always built for an explicit-receiver call, factored out so the
+  /// safe-navigation guard (M10-F, ADR-0044) can reuse it UNCHANGED as its own guarded `then` branch. See
+  /// [_propertyAccessOn]'s own doc for [suppressTarget]'s meaning — identical here.
+  RawNode _methodCallOn(MethodInvocation node, Expression target, Scope scope, {required bool suppressTarget}) =>
+      RawNode(
+        kind: 'logic.MethodCall',
+        span: out.span(node),
+        fields: <String, RawValue>{
           'receiver': RawChild(extract(target, scope)),
           'method': RawLiteral(node.methodName.name),
           // `this.multiply(4)` and an external `model.multiply(4)` both resolve through the identical
@@ -1128,14 +1252,12 @@ final class ExpressionExtractor {
           // `PropertyAccess` case above already does for fields/getters.
           if (_storeMemberTarget(target.staticType, node.methodName.element) ??
                   _externalMethodTarget(_receiverTypeFor(target, node.methodName.element), node.methodName.element)
-              case final String symbol)
+              case final String symbol when !suppressTarget)
             'target': RawRef(symbol),
+          ..._arguments(node.argumentList, scope),
+          'type': out.typeRef(node.staticType, at: node),
         },
-        ..._arguments(node.argumentList, scope),
-        'type': out.typeRef(node.staticType, at: node),
-      },
-    );
-  }
+      );
 
   /// The enum declaration [element] belongs to, when it is an enum constant declared in this project
   /// (M8-D).

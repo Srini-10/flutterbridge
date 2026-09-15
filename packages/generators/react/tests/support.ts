@@ -410,3 +410,11 @@ export function optionalMethodParametersRaw(): string {
   const path = fileURLToPath(new URL('../../../../fixtures/uir/optional_method_parameters.ndjson', import.meta.url));
   return readFileSync(path, 'utf8');
 }
+
+/** The real `fixtures/apps/safe_navigation_member_access` document, raw analyzer output (ADR-0044, M10-F) — not yet normalized. */
+export function safeNavigationMemberAccessRaw(): string {
+  const path = fileURLToPath(
+    new URL('../../../../fixtures/uir/safe_navigation_member_access.ndjson', import.meta.url),
+  );
+  return readFileSync(path, 'utf8');
+}

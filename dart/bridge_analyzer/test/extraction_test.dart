@@ -7367,6 +7367,167 @@ class W extends StatelessWidget {
     });
   });
 
+  group('bounded safe-navigation member access provenance (ADR-0044, M10-F)', () {
+    Map<String, dynamic>? propertyAccessOf(Object? node, String property) {
+      if (node is Map<String, dynamic>) {
+        if (node['kind'] == 'logic.PropertyAccess' && node['property'] == property) {
+          return node;
+        }
+        for (final Object? value in node.values) {
+          if (propertyAccessOf(value, property) case final Map<String, dynamic> found) {
+            return found;
+          }
+        }
+      } else if (node is List) {
+        for (final Object? value in node) {
+          if (propertyAccessOf(value, property) case final Map<String, dynamic> found) {
+            return found;
+          }
+        }
+      }
+      return null;
+    }
+
+    test('a safe-navigated field read on a bare nullable parameter lowers to logic.Conditional', () async {
+      final Extracted app = await extract(r'''
+import 'package:flutter/material.dart';
+class Model {
+  final int count;
+  Model(this.count);
+}
+class W extends StatelessWidget {
+  const W({super.key, required this.model});
+  final Model? model;
+  @override
+  Widget build(BuildContext context) => Text('${model?.count}');
+}
+''');
+      final Map<String, dynamic> conditional = app.only('ui.Component')['render'] as Map<String, dynamic>;
+      // The interpolation's own single expression part is the synthesized `logic.Conditional`.
+      final List<dynamic> parts = ((conditional['value'] as Map<String, dynamic>)['expr']
+              as Map<String, dynamic>)['parts']
+          as List<dynamic>;
+      final Map<String, dynamic> guarded = parts.whereType<Map<String, dynamic>>().firstWhere(
+        (Map<String, dynamic> p) => p['kind'] == 'logic.Conditional',
+      );
+      expect(guarded['kind'], 'logic.Conditional');
+      final Map<String, dynamic> test = guarded['test'] as Map<String, dynamic>;
+      expect(test['kind'], 'logic.Binary');
+      expect(test['operator'], '!=');
+      final Map<String, dynamic> then = guarded['then'] as Map<String, dynamic>;
+      expect(then['kind'], 'logic.PropertyAccess');
+      expect(then['target'], isNotNull);
+      final Map<String, dynamic> otherwise = guarded['otherwise'] as Map<String, dynamic>;
+      expect(otherwise['kind'], 'logic.Lit');
+      expect(otherwise.containsKey('value'), isFalse);
+    });
+
+    test('a safe-navigated method call on a bare nullable parameter lowers to logic.Conditional', () async {
+      final Extracted app = await extract(r'''
+import 'package:flutter/material.dart';
+class Model {
+  final int count;
+  Model(this.count);
+  int multiply(int factor) => count * factor;
+}
+class W extends StatelessWidget {
+  const W({super.key, required this.model});
+  final Model? model;
+  @override
+  Widget build(BuildContext context) => Text('${model?.multiply(3)}');
+}
+''');
+      final Map<String, dynamic> conditional = app.only('ui.Component')['render'] as Map<String, dynamic>;
+      final List<dynamic> parts = ((conditional['value'] as Map<String, dynamic>)['expr']
+              as Map<String, dynamic>)['parts']
+          as List<dynamic>;
+      final Map<String, dynamic> guarded = parts.whereType<Map<String, dynamic>>().firstWhere(
+        (Map<String, dynamic> p) => p['kind'] == 'logic.Conditional',
+      );
+      final Map<String, dynamic> then = guarded['then'] as Map<String, dynamic>;
+      expect(then['kind'], 'logic.MethodCall');
+      expect(then['target'], isNotNull);
+      expect(then['args'], hasLength(1));
+    });
+
+    test('a safe-navigated access on a CONSTRUCTED/CALLED receiver never resolves a target', () async {
+      // `maybeModel()?.count` — the null-aware receiver is a call, never a bare reference (ADR-0044 §6):
+      // `target` must stay absent, routing through the pre-existing M9-J refusal, rather than silently
+      // duplicating the call.
+      final Extracted app = await extract(r'''
+import 'package:flutter/material.dart';
+class Model {
+  final int count;
+  Model(this.count);
+}
+Model? maybeModel() => Model(7);
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => Text('${maybeModel()?.count}');
+}
+''');
+      final Map<String, dynamic>? access = propertyAccessOf(app.only('ui.Component')['render'], 'count');
+      expect(access, isNotNull);
+      expect(access!.containsKey('target'), isFalse);
+      // Never synthesized as a conditional either — an unsupported shape refuses, it does not attempt
+      // an unsafe duplicate evaluation of the call.
+      expect(access['kind'], 'logic.PropertyAccess');
+    });
+
+    test('a safe-navigated access on a bare reference resolving to a genuine getter never resolves a target', () async {
+      // `builder?.doubled`, `builder` a genuine (computed) getter, not field-backed (ADR-0044 §5/§19) —
+      // provably pure, but excluded to preserve this project's own "receiver evaluated exactly once, no
+      // exceptions" discipline.
+      final Extracted app = await extract(r'''
+import 'package:flutter/material.dart';
+class Model {
+  final int count;
+  Model(this.count);
+  Model? get builder => Model(count);
+  int get doubled => count * 2;
+  int describeBuilder() => builder?.doubled ?? -1;
+}
+class W extends StatelessWidget {
+  const W({super.key, required this.model});
+  final Model model;
+  @override
+  Widget build(BuildContext context) => Text('${model.describeBuilder()}');
+}
+''');
+      final Map<String, dynamic> model = app
+          .ofKind('logic.ClassDecl')
+          .singleWhere((Map<String, dynamic> d) => d['name'] == 'Model');
+      final Map<String, dynamic>? access = propertyAccessOf(model, 'doubled');
+      expect(access, isNotNull);
+      expect(access!.containsKey('target'), isFalse);
+    });
+
+    test('a safe-navigated field read on a LOCAL bound to a nullable parameter also lowers to logic.Conditional', () async {
+      final Extracted app = await extract(r'''
+import 'package:flutter/material.dart';
+class Model {
+  final int count;
+  Model(this.count);
+}
+class W extends StatelessWidget {
+  const W({super.key, required this.model});
+  final Model? model;
+  @override
+  Widget build(BuildContext context) {
+    final local = model;
+    return Text('${local?.count}');
+  }
+}
+''');
+      final Map<String, dynamic> conditional = app.only('ui.Component')['render'] as Map<String, dynamic>;
+      final List<dynamic> parts = ((conditional['value'] as Map<String, dynamic>)['expr']
+              as Map<String, dynamic>)['parts']
+          as List<dynamic>;
+      expect(parts.whereType<Map<String, dynamic>>().any((Map<String, dynamic> p) => p['kind'] == 'logic.Conditional'), isTrue);
+    });
+  });
+
   group('member helper composition provenance (ADR-0040, M10-B)', () {
     Map<String, dynamic> classDecl(Extracted app, String name) =>
         app.ofKind('logic.ClassDecl').singleWhere((Map<String, dynamic> d) => d['name'] == name);

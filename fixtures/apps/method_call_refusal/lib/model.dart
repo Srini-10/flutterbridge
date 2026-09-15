@@ -141,3 +141,29 @@ class SubclassReturnModel {
 
   Derived getDerived() => Derived(count);
 }
+
+/// M10-F (ADR-0044 §6) — proves safe navigation on a receiver that is NOT a bare reference refuses
+/// honestly rather than silently duplicating a call or a computed-getter evaluation.
+class NavModel {
+  final int count;
+
+  NavModel(this.count);
+
+  int get doubled => count * 2;
+
+  /// A genuine (computed) getter, never field-backed — a safe-navigated receiver of THIS shape is
+  /// deliberately excluded (ADR-0044 §5/§19): provably pure in this bounded model, but duplicating it
+  /// would cross this project's own "receiver evaluated exactly once" discipline for no real capability
+  /// gain. Nullable so a null-aware access on it is meaningful, not merely redundant.
+  NavModel? get builder => NavModel(count);
+
+  /// `builder` is a BARE (implicit-`this`) reference here — a `SimpleIdentifier`, exactly like a true
+  /// parameter or field, but resolving to a GENUINE getter rather than a field. Proves the "safe to
+  /// duplicate" boundary is drawn on the RESOLVED ELEMENT (`GetterElement.isOriginVariable`), never on
+  /// the AST shape alone.
+  int describeBuilder() => builder?.doubled ?? -1;
+}
+
+/// A top-level function returning a nullable `NavModel` — a null-aware access on ITS OWN RESULT is a
+/// CALL receiver, never a bare reference.
+NavModel? maybeNavModel() => NavModel(7);

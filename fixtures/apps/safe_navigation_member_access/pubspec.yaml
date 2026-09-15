@@ -1,0 +1,18 @@
+name: safe_navigation_member_access
+description: >-
+  M10-F positive proof: a null-aware access (`?.`) on a bare reference receiver — a component prop, a
+  local bound to one, or a method parameter — lowers to a real, single-evaluation conditional, matching
+  Dart's own short-circuit semantics exactly. Never a call or constructed receiver (both remain out of
+  scope, refused honestly rather than silently duplicated).
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

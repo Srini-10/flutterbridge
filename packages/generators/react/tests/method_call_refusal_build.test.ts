@@ -201,4 +201,37 @@ describe('M9-R closure: a method call on a locally-constructed receiver refuses 
     expect(errors.some((d) => d.code === 'BRG3013' && d.message.includes('NamedParamModel'))).toBe(true);
     expect(files).toEqual([]);
   });
+
+  // M10-F (ADR-0044 §6): `maybeNavModel()?.count` — the null-aware receiver is a CALL, never a bare
+  // reference. Refuses honestly rather than silently duplicating the call.
+  it('refuses safe navigation on a constructed/called receiver as BRG3013', () => {
+    const normalized = compiledFrom(methodCallRefusalRaw());
+    const { context, reported } = harness(normalized);
+    const { files } = reactGenerator.generate(context);
+    const errors = reported.filter((d) => d.severity === 'error');
+    expect(errors.some((d) => d.code === 'BRG3013' && d.message.includes('NavModel'))).toBe(true);
+    expect(files).toEqual([]);
+  });
+
+  // M10-F (ADR-0044 §6): `NavModel.describeBuilder`'s own body safe-navigates on `builder`, a bare
+  // reference resolving to a GENUINE getter, never a field — deliberately excluded (provably pure, but
+  // duplicating it would cross this project's own "receiver evaluated exactly once" discipline). The
+  // inner refusal (withheld `target` on `.doubled`, reaching the M9-J unmodelled-member check) happens
+  // INSIDE `describeBuilder`'s own method-helper attempt, whose own `report` routes every error through
+  // this attempt's `hadError` flag rather than a directly-observable diagnostic (the identical, already-
+  // established propagation shape the `compute`/`countdown` reachable-unsupported-dependency tests above
+  // already prove) — so the OBSERVABLE diagnostic names `describeBuilder` itself, "otherwise eligible",
+  // never the inner `doubled` access directly.
+  it('refuses safe navigation on a bare reference resolving to a genuine getter as BRG3013, propagating through the method helper', () => {
+    const normalized = compiledFrom(methodCallRefusalRaw());
+    const { context, reported } = harness(normalized);
+    const { files } = reactGenerator.generate(context);
+    const errors = reported.filter((d) => d.severity === 'error');
+    expect(
+      errors.some(
+        (d) => d.code === 'BRG3013' && d.message.includes('describeBuilder') && d.message.includes('otherwise eligible'),
+      ),
+    ).toBe(true);
+    expect(files).toEqual([]);
+  });
 });

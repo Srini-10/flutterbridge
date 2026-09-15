@@ -152,3 +152,27 @@ class SubclassReturnCallOnLocal extends StatelessWidget {
     return Text('${model.getDerived().count}');
   }
 }
+
+// Not wired into the route table either (M10-F). `maybeNavModel()?.count` — the null-aware receiver is a
+// CALL, never a bare reference. See `NavModel`'s own doc comment.
+class SafeNavConstructedCallOnLocal extends StatelessWidget {
+  const SafeNavConstructedCallOnLocal({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Text('${maybeNavModel()?.count}');
+  }
+}
+
+// Not wired into the route table either (M10-F). `NavModel.describeBuilder`'s own body safe-navigates on
+// `builder`, a BARE reference resolving to a GENUINE getter, never a field — see `NavModel`'s own doc
+// comment.
+class SafeNavGetterReceiverCallOnLocal extends StatelessWidget {
+  const SafeNavGetterReceiverCallOnLocal({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final model = NavModel(7);
+    return Text('${model.describeBuilder()}');
+  }
+}
