@@ -458,3 +458,25 @@ export function renderTreeCallbackShadowRefusalRaw(): string {
   );
   return readFileSync(path, 'utf8');
 }
+
+/**
+ * The real `fixtures/apps/m11e_project_widget_composition` document, raw analyzer output (M11-E,
+ * ADR-0047) — not yet normalized.
+ */
+export function projectWidgetCompositionRaw(): string {
+  const path = fileURLToPath(
+    new URL('../../../../fixtures/uir/m11e_project_widget_composition.ndjson', import.meta.url),
+  );
+  return readFileSync(path, 'utf8');
+}
+
+/**
+ * The real `fixtures/apps/m11e_project_widget_name_collision` document, raw analyzer output (M11-E,
+ * ADR-0047) — not yet normalized.
+ */
+export function projectWidgetNameCollisionRaw(): string {
+  const path = fileURLToPath(
+    new URL('../../../../fixtures/uir/m11e_project_widget_name_collision.ndjson', import.meta.url),
+  );
+  return readFileSync(path, 'utf8');
+}

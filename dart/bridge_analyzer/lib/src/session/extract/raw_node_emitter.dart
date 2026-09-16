@@ -182,6 +182,12 @@ final class RawNodeEmitter {
       // it must *map*. C1 turned on this distinction, and got it wrong 18 times by guessing from the
       // name. Here it is not a guess, and it is not ours: the adapters say which libraries are theirs.
       if (library != null) 'userDefined': RawLiteral(!registry.isFrameworkLibrary(library)),
+      // ADR-0047: a project-declared widget's own `ui.Component`, by declaration-tier identity —
+      // the same `componentSymbolOf` mechanism `route_extractor.dart`/`transition_extractor.dart`
+      // already use for `app.Route`/`app.RouteTransition` component targets, applied here so a
+      // *composed* reference resolves the same way a *routed* one already does. `null` for a
+      // framework widget, unchanged.
+      if (componentSymbolOf(type, name) case final String symbol) 'target': RawRef(symbol),
     });
   }
 

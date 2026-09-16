@@ -74,6 +74,10 @@
         "userDefined": {
           "type": "boolean",
           "description": "Whether the application declares this widget.\n\nC1 evidence: a user's own screens are what the compiler *generates*, not constructs it must map. Reporting them as unknown constructs was a false positive that would have opened every compatibility report with a lie."
+        },
+        "target": {
+          "$ref": "shared.json#/$defs/NodeId",
+          "description": "The `ui.Component` this reference names, when it is a component this compiler also extracts a declaration for (ADR-0047). Declaration provenance only — identical in kind to `TypeRef.target` (ADR-0034): it states a resolved fact about identity, never a claim that the generator can render this reference. Absent for a framework widget, an SDK widget, or an unresolvable external reference."
         }
       }
     },

@@ -1023,6 +1023,7 @@ function childScope(
     storeMembers: parent.storeMembers,
     storeExports: parent.storeExports,
     componentModules: parent.componentModules,
+    componentModulesById: parent.componentModulesById,
     functionModules: parent.functionModules,
     classModules: parent.classModules,
     getterHelpers: parent.getterHelpers,
@@ -1255,13 +1256,25 @@ function emitElement(node: Node, module: ModuleBuilder, scope: EmitScope, depth:
   const componentRef = node['component'] as Node | undefined;
   const widgetName = String(componentRef?.['name'] ?? '');
 
-  // A reference to a *project-declared* sibling component (M8-F) — `ui.Element.component.library`
-  // reconstructs the exact anchor `scope.componentModules` indexes every `ui.Component` by, so this is
-  // a lookup by the declaration's own identity, never a guess from `userDefined` alone (a widget this
+  // A reference to a *project-declared* sibling component (M8-F, resolved-target lookup ADR-0047) — a
+  // lookup by the declaration's own identity, never a guess from `userDefined` alone (a widget this
   // generator has simply never catalogued would also read `userDefined: true`, and must still be
   // refused — see the fall-through below). Checked ahead of the catalog: the catalog is Flutter SDK
   // vocabulary, and a project's own component was never going to be in it.
+  //
+  // `componentRef.target` (ADR-0047) is checked first: a resolved `NodeId`, minted at extraction time
+  // from the identical `componentSymbolOf` mechanism `app.Route`/`app.RouteTransition` targets already
+  // use, so it is correct regardless of whether the referenced component is declared in the same
+  // project (where `ui.Component.anchor` is project-relative) or a local path dependency (where it is a
+  // `package:` URI, M8-F) — the two cases an anchor reconstruction from `component.library` alone could
+  // not tell apart (`component.library` is always a package URI; only a same-project anchor differs).
+  // The anchor-string lookup remains as a fallback for a document a pre-ADR-0047 analyzer produced.
   if (componentRef !== undefined) {
+    const targetId = componentRef['target'];
+    const byId = typeof targetId === 'string' ? scope.componentModulesById.get(targetId as NodeId) : undefined;
+    if (byId !== undefined) {
+      return emitComponentReference(node, byId, module, scope);
+    }
     const anchor = `${String(componentRef['library'] ?? '')}#${widgetName}`;
     const target = scope.componentModules.get(anchor);
     if (target !== undefined) {

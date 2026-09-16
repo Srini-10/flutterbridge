@@ -199,6 +199,7 @@ function storeScope(
     storeMembers: parent.storeMembers,
     storeExports: parent.storeExports,
     componentModules: parent.componentModules,
+    componentModulesById: parent.componentModulesById,
     functionModules: parent.functionModules,
     classModules: parent.classModules,
     getterHelpers: parent.getterHelpers,

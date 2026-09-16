@@ -1,0 +1,20 @@
+name: m11e_project_widget_name_collision
+description: >-
+  M11-E negative proof: two DIFFERENT project-defined widget classes that happen to share a class name
+  (declared in different files — legal Dart, nothing requires class names to be unique across files)
+  refuse honestly as `BRG3009` rather than silently colliding on the same output file
+  (`src/components/<name>.tsx`). Found while building `m11e_project_widget_composition`'s own R5 rung
+  (ADR-0047 §"a real, newly-found, separate bug"): before the guard, whichever component's own file
+  write happened last silently overwrote the other, and BOTH source references rendered the survivor.
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

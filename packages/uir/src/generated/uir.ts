@@ -14,7 +14,7 @@ import { createHash } from 'node:crypto';
 export const UIR_VERSION = '1.15.0' as const;
 
 /** A hash of the schema sources this module was generated from. */
-export const UIR_SCHEMA_HASH = 'e72e6f6adf244f93' as const;
+export const UIR_SCHEMA_HASH = 'a235008f16feb545' as const;
 
 /** Node kind -> the fields of that node which hold `NodeId` references. */
 export const UIR_REFERENCE_FIELDS: Readonly<Record<string, readonly string[]>> = {
@@ -870,6 +870,8 @@ export interface WidgetRef {
   readonly library?: string;
   /// The class name, e.g. `Scaffold`.
   readonly name: string;
+  /// The `ui.Component` this reference names, when it is a component this compiler also extracts a declaration for (ADR-0047). Declaration provenance only — identical in kind to `TypeRef.target` (ADR-0034): it states a resolved fact about identity, never a claim that the generator can render this reference. Absent for a framework widget, an SDK widget, or an unresolvable external reference.
+  readonly target?: NodeId;
   /// Whether the application declares this widget.
   ///
   /// C1 evidence: a user's own screens are what the compiler *generates*, not constructs it must map. Reporting them as unknown constructs was a false positive that would have opened every compatibility report with a lie.
@@ -2581,6 +2583,7 @@ export function parseWidgetRef(value: unknown, path = 'WidgetRef'): WidgetRef {
     ...(own(o, 'constructorName') === undefined || own(o, 'constructorName') === null ? {} : { constructorName: asString(own(o, 'constructorName'), `${path}.constructorName`) }),
     ...(own(o, 'library') === undefined || own(o, 'library') === null ? {} : { library: asString(own(o, 'library'), `${path}.library`) }),
     name: asString(req(o, 'name', path), `${path}.name`),
+    ...(own(o, 'target') === undefined || own(o, 'target') === null ? {} : { target: parseNodeId(own(o, 'target'), `${path}.target`) }),
     ...(own(o, 'userDefined') === undefined || own(o, 'userDefined') === null ? {} : { userDefined: asBool(own(o, 'userDefined'), `${path}.userDefined`) }),
   };
 }

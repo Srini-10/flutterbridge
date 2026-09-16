@@ -99,19 +99,26 @@ export function generateProject(context: GeneratorContext): GeneratorOutput {
   // Every non-app-root component's own output path and export name, decided once, before any component
   // is emitted (M8-F) — so a component processed earlier in the program's fixed order can still
   // reference one processed later, by anchor (`ui.Element.component`'s own `library`+`name`, which
-  // reconstructs exactly the string a `ui.Component`'s own `anchor` already is). `fileNameOf`/`isAppRoot`
-  // are pure functions of the node alone, so computing this ahead of the loop that actually emits changes
-  // nothing about what gets emitted — it only lets the two questions ("where does X live" and "render X
-  // now") happen in either order.
+  // reconstructs exactly the string a `ui.Component`'s own `anchor` already is — kept only as a fallback
+  // for a document a pre-ADR-0047 analyzer produced) and, primarily, by the component's own declaration
+  // id (ADR-0047), what `WidgetRef.target` resolves against. `fileNameOf`/`isAppRoot` are pure functions
+  // of the node alone, so computing this ahead of the loop that actually emits changes nothing about what
+  // gets emitted — it only lets the two questions ("where does X live" and "render X now") happen in
+  // either order.
   for (const component of context.program.ofKind('ui.Component') as unknown as Node[]) {
     if (isAppRoot(component)) continue;
     const anchor = component['anchor'];
     if (typeof anchor !== 'string') continue;
     const base = fileNameOf(String(component['name'] ?? 'component'));
-    (scope.componentModules as Map<string, { readonly module: string; readonly name: string }>).set(anchor, {
-      module: `@/components/${base}`,
-      name: String(component['name'] ?? ''),
-    });
+    const info = { module: `@/components/${base}`, name: String(component['name'] ?? '') };
+    (scope.componentModules as Map<string, { readonly module: string; readonly name: string }>).set(anchor, info);
+    const id = component['id'];
+    if (typeof id === 'string') {
+      (scope.componentModulesById as Map<NodeId, { readonly module: string; readonly name: string }>).set(
+        id as NodeId,
+        info,
+      );
+    }
   }
 
   // Every reachable, self-contained top-level function this program emits, decided once, before any
@@ -232,6 +239,17 @@ export function generateProject(context: GeneratorContext): GeneratorOutput {
 
   // ── components ──
   const componentModules = new Map<string, { readonly module: string; readonly name: string }>();
+  // What component already claimed each output path (ADR-0047 §"a real, newly-found, separate bug") —
+  // `fileNameOf` keys purely on the class NAME, so two DIFFERENT project classes that happen to share a
+  // name (declared in different files — nothing in Dart requires class names to be unique across files)
+  // silently collided on the same `src/components/<name>.tsx`, and whichever was emitted last silently
+  // overwrote the other: BOTH source references still typechecked and still rendered *something*, just
+  // not the something either one of them named. Composing a project widget as a child (ADR-0047) is what
+  // surfaced this — a same-name collision was reachable before, but nothing had ever exercised two
+  // same-named, differently-declared components in one program until this milestone's own R5 rung. This
+  // is not `SymbolCollision`'s existing generalized case (it is unused elsewhere in this file); it is the
+  // one place a `ui.Component`'s own emitted identity — file path plus exported name — is decided.
+  const claimedComponentPaths = new Map<string, string>();
   for (const component of context.program.ofKind('ui.Component') as unknown as Node[]) {
     // An application root emits no file. Everything a `MaterialApp` carries has already been consumed —
     // `home:`/`routes:` into `app.Route`, `theme:` into the tokens N10 expands — and `layout.tsx`,
@@ -244,6 +262,21 @@ export function generateProject(context: GeneratorContext): GeneratorOutput {
     }
     const base = fileNameOf(String(component['name'] ?? 'component'));
     const path = `src/components/${base}.tsx`;
+    const componentId = String(component['id'] ?? '');
+    const claimant = claimedComponentPaths.get(path);
+    if (claimant !== undefined) {
+      report(
+        GeneratorDiagnosticCode.SymbolCollision,
+        'error',
+        `\`${String(component['name'])}\` would emit to \`${path}\`, which another component of the same ` +
+          `name (declared elsewhere in the program) already claims. Two different project classes sharing ` +
+          `a name is legal Dart; this generator has no second name to give the file, so it refuses rather ` +
+          `than let one silently overwrite the other.`,
+        componentId === '' ? undefined : componentId,
+      );
+      continue;
+    }
+    claimedComponentPaths.set(path, componentId);
     const module = new ModuleBuilder(path);
     module.setBanner(banner(`\`${String(component['name'])}\``));
     // Every component is client-scoped until `rsc-split` exists — see project.ts on why erring this way is
@@ -570,6 +603,9 @@ function rootScope(
   // reference from a component processed earlier in the program's fixed order to one processed later
   // must still resolve.
   const componentModuleInfo = new Map<string, { readonly module: string; readonly name: string }>();
+  // The sibling of `componentModuleInfo`, keyed by declaration id rather than anchor (ADR-0047) —
+  // populated by the same pre-pass, at the same call site.
+  const componentModuleInfoById = new Map<NodeId, { readonly module: string; readonly name: string }>();
 
   // Populated immediately after this function returns (ADR-29, M8-U) — the sibling of `componentModuleInfo`
   // above, for the same forward-reference reason: `emitFunctionModules` runs once, before any component or
@@ -589,6 +625,7 @@ function rootScope(
     storeMembers: storeMemberInfo,
     storeExports: storeExportInfo,
     componentModules: componentModuleInfo,
+    componentModulesById: componentModuleInfoById,
     functionModules: functionModuleInfo,
     classModules: classModuleInfo,
     getterHelpers: getterHelperInfo,

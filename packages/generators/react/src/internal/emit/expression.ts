@@ -209,6 +209,15 @@ export interface EmitScope {
    */
   readonly componentModules: ReadonlyMap<string, { readonly module: string; readonly name: string }>;
   /**
+   * The sibling of {@link componentModules}, keyed by the component's own declaration id rather than its
+   * anchor string (ADR-0047) — what `WidgetRef.target` resolves against. `WidgetRef.component`'s own
+   * `library`+`name` pair reconstructs an anchor that only ever matched by coincidence (a cross-package
+   * reference's own anchor happens to already be library-URI-shaped; a same-project one is not — ADR-0047
+   * §2) — `target` is a resolved fact, not a reconstruction, so a composed reference checks this map
+   * first and falls back to the anchor lookup only for a document a pre-ADR-0047 analyzer produced.
+   */
+  readonly componentModulesById: ReadonlyMap<NodeId, { readonly module: string; readonly name: string }>;
+  /**
    * Every reachable, self-contained project-defined top-level `logic.FunctionDecl` this program actually
    * emits, keyed by its own declaration id (ADR-29, M8-U) — what a targeted `logic.Ref` to one needs to
    * resolve to: the file it lives in (`path`, for telling a same-file call from a cross-file one), the

@@ -1,0 +1,21 @@
+name: m11e_project_widget_composition
+description: >-
+  M11-E positive proof: a project-defined widget composed as a CHILD of another widget's own render
+  tree (`Scaffold(body: ChildWidget())`) resolves to a real, declaration-tier `target` and renders as an
+  ordinary imported React component reference — never `BRG3001`. Covers a direct child, a nested slot,
+  a cross-file declaration, a repeated reference (including through an import alias), and a sibling
+  widget sharing a name with a DIFFERENT class in a DIFFERENT file. A reference to a framework widget
+  (`Scaffold`, `Column`, ...) remains unaffected — no `target`, still resolved through the existing
+  widget-mapping catalog.
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

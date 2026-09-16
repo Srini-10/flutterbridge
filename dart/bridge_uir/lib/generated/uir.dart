@@ -31,7 +31,7 @@ const String uirVersion = '1.15.0';
 /// A hash of the schema sources this library was generated from.
 ///
 /// Stamped into every emitted manifest: a UIR document always says which schema produced it.
-const String uirSchemaHash = 'e72e6f6adf244f93';
+const String uirSchemaHash = 'a235008f16feb545';
 
 /// Node kind -> the fields of that node which hold `NodeId` references.
 ///
@@ -1779,6 +1779,7 @@ final class WidgetRef {
     required this.name,
     this.constructorName,
     this.library,
+    this.target,
     this.userDefined,
   });
 
@@ -1789,6 +1790,7 @@ final class WidgetRef {
       constructorName: json['constructorName'] == null ? null : _asString(json['constructorName'], '$path.constructorName'),
       library: json['library'] == null ? null : _asString(json['library'], '$path.library'),
       name: _asString(_req(json, 'name', path), '$path.name'),
+      target: json['target'] == null ? null : _asString(json['target'], '$path.target'),
       userDefined: json['userDefined'] == null ? null : _asBool(json['userDefined'], '$path.userDefined'),
     );
   }
@@ -1802,6 +1804,9 @@ final class WidgetRef {
   /// The class name, e.g. `Scaffold`.
   final String name;
 
+  /// The `ui.Component` this reference names, when it is a component this compiler also extracts a declaration for (ADR-0047). Declaration provenance only — identical in kind to `TypeRef.target` (ADR-0034): it states a resolved fact about identity, never a claim that the generator can render this reference. Absent for a framework widget, an SDK widget, or an unresolvable external reference.
+  final NodeId? target;
+
   /// Whether the application declares this widget.
   ///
   /// C1 evidence: a user's own screens are what the compiler *generates*, not constructs it must map. Reporting them as unknown constructs was a false positive that would have opened every compatibility report with a lie.
@@ -1812,6 +1817,7 @@ final class WidgetRef {
     'constructorName': constructorName,
     'library': library,
     'name': name,
+    'target': target,
     'userDefined': userDefined,
   })! as Map<String, Object?>;
 
@@ -1823,12 +1829,14 @@ final class WidgetRef {
     String? constructorName,
     String? library,
     String? name,
+    NodeId? target,
     bool? userDefined,
   }) {
     return WidgetRef(
       constructorName: constructorName ?? this.constructorName,
       library: library ?? this.library,
       name: name ?? this.name,
+      target: target ?? this.target,
       userDefined: userDefined ?? this.userDefined,
     );
   }
@@ -1840,6 +1848,7 @@ final class WidgetRef {
         _equality.equals(other.constructorName, constructorName) &&
         _equality.equals(other.library, library) &&
         _equality.equals(other.name, name) &&
+        _equality.equals(other.target, target) &&
         _equality.equals(other.userDefined, userDefined);
   }
 
@@ -1849,6 +1858,7 @@ final class WidgetRef {
     _equality.hash(constructorName),
     _equality.hash(library),
     _equality.hash(name),
+    _equality.hash(target),
     _equality.hash(userDefined),
   ]);
 }

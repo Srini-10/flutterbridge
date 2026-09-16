@@ -2291,6 +2291,191 @@ class W extends StatelessWidget {
     });
   });
 
+  group('project-widget composition target (ADR-0047, M11-E)', () {
+    // A project-defined widget composed as a CHILD of another widget's own render tree
+    // (`Scaffold(body: ChildWidget())`) now carries a `target: NodeId` on its own `WidgetRef`
+    // (`ui.Element.component`), resolved by `RawNodeEmitter.componentSymbolOf` — the same mechanism
+    // `route_extractor.dart`/`transition_extractor.dart` already use for `app.Route`/
+    // `app.RouteTransition` component targets, applied at a third call site (`widget_extractor.dart`'s
+    // own `widgetRef`).
+
+    Map<String, dynamic> componentNamed(Extracted app, String name) =>
+        app.ofKind('ui.Component').singleWhere((Map<String, dynamic> c) => c['name'] == name);
+
+    test("R2/R3 — a direct child composition carries a target resolving to the child's own ui.Component", () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class ParentScreen extends StatelessWidget {
+  const ParentScreen({super.key});
+  @override
+  Widget build(BuildContext context) => Scaffold(body: ChildWidget());
+}
+class ChildWidget extends StatelessWidget {
+  const ChildWidget({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('child');
+}
+''');
+      expect(app.errors, isEmpty);
+      final Map<String, dynamic> child = componentNamed(app, 'ChildWidget');
+      final Map<String, dynamic> parent = componentNamed(app, 'ParentScreen');
+      final Map<String, dynamic> ref = (parent['render'] as Map<String, dynamic>)['slots']
+          as Map<String, dynamic>;
+      final Map<String, dynamic> body = ref['body'] as Map<String, dynamic>;
+      final Map<String, dynamic> component = body['component'] as Map<String, dynamic>;
+      expect(component['target'], child['id']);
+    });
+
+    test("R4 — a cross-file composition resolves to the declaring file's own component, by symbol", () async {
+      final Extracted app = await extract(
+        '''
+import 'package:flutter/material.dart';
+import 'child.dart';
+class ParentScreen extends StatelessWidget {
+  const ParentScreen({super.key});
+  @override
+  Widget build(BuildContext context) => Scaffold(body: ChildWidget());
+}
+''',
+        extra: <String, String>{
+          'child.dart': '''
+import 'package:flutter/material.dart';
+class ChildWidget extends StatelessWidget {
+  const ChildWidget({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('child');
+}
+''',
+        },
+      );
+      expect(app.errors, isEmpty);
+      final Map<String, dynamic> child = componentNamed(app, 'ChildWidget');
+      final Map<String, dynamic> parent = componentNamed(app, 'ParentScreen');
+      final Map<String, dynamic> body =
+          ((parent['render'] as Map<String, dynamic>)['slots'] as Map<String, dynamic>)['body']
+              as Map<String, dynamic>;
+      final Map<String, dynamic> component = body['component'] as Map<String, dynamic>;
+      expect(component['target'], child['id']);
+      expect(child['anchor'], 'lib/child.dart#ChildWidget');
+    });
+
+    test('R5 — two different widgets, same name, in different files, resolve to distinct targets', () async {
+      final Extracted app = await extract(
+        '''
+import 'package:flutter/material.dart';
+import 'a.dart' as a;
+import 'b.dart' as b;
+class ParentScreen extends StatelessWidget {
+  const ParentScreen({super.key});
+  @override
+  Widget build(BuildContext context) => Column(children: [a.Label(), b.Label()]);
+}
+''',
+        extra: <String, String>{
+          'a.dart': '''
+import 'package:flutter/material.dart';
+class Label extends StatelessWidget {
+  const Label({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('a');
+}
+''',
+          'b.dart': '''
+import 'package:flutter/material.dart';
+class Label extends StatelessWidget {
+  const Label({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('b');
+}
+''',
+        },
+      );
+      expect(app.errors, isEmpty);
+      final List<Map<String, dynamic>> labels =
+          app.ofKind('ui.Component').where((Map<String, dynamic> c) => c['name'] == 'Label').toList();
+      expect(labels, hasLength(2));
+      expect(labels[0]['id'], isNot(labels[1]['id']));
+      final Map<String, dynamic> parent = componentNamed(app, 'ParentScreen');
+      final List<dynamic> children =
+          (parent['render'] as Map<String, dynamic>)['children'] as List<dynamic>;
+      final List<String> targets = children
+          .map((dynamic c) => ((c as Map<String, dynamic>)['component'] as Map<String, dynamic>)['target'] as String)
+          .toList();
+      expect(targets.toSet(), labels.map((Map<String, dynamic> l) => l['id']).toSet());
+    });
+
+    test('a framework widget reference carries no target', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => const Scaffold(body: Text('x'));
+}
+''');
+      expect(app.errors, isEmpty);
+      final Map<String, dynamic> w = componentNamed(app, 'W');
+      final Map<String, dynamic> scaffold = w['render'] as Map<String, dynamic>;
+      final Map<String, dynamic> component = scaffold['component'] as Map<String, dynamic>;
+      expect(component['name'], 'Scaffold');
+      expect(component.containsKey('target'), isFalse);
+    });
+
+    test('a cross-package composition (M8-F) still resolves, through the identical mechanism', () async {
+      final Extracted app = await extract(
+        '''
+import 'package:flutter/material.dart';
+import 'package:ui_kit/greeting_card.dart';
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => Scaffold(body: const GreetingCard(name: 'Ada'));
+}
+''',
+        localDependencies: <String, Map<String, String>>{
+          'ui_kit': <String, String>{
+            'greeting_card.dart': r'''
+import 'package:flutter/material.dart';
+class GreetingCard extends StatelessWidget {
+  const GreetingCard({required this.name, super.key});
+  final String name;
+  @override
+  Widget build(BuildContext context) => Card(child: Text('Hello, $name'));
+}
+''',
+          },
+        },
+      );
+      expect(app.errors, isEmpty);
+      final Map<String, dynamic> card = componentNamed(app, 'GreetingCard');
+      final Map<String, dynamic> w = componentNamed(app, 'W');
+      final Map<String, dynamic> body =
+          ((w['render'] as Map<String, dynamic>)['slots'] as Map<String, dynamic>)['body']
+              as Map<String, dynamic>;
+      final Map<String, dynamic> component = body['component'] as Map<String, dynamic>;
+      expect(component['target'], card['id']);
+    });
+
+    test('the same source extracts to the same target on a second, independent run (determinism)', () async {
+      const String source = '''
+import 'package:flutter/material.dart';
+class ParentScreen extends StatelessWidget {
+  const ParentScreen({super.key});
+  @override
+  Widget build(BuildContext context) => Scaffold(body: ChildWidget());
+}
+class ChildWidget extends StatelessWidget {
+  const ChildWidget({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('child');
+}
+''';
+      final Extracted first = await extract(source);
+      final Extracted second = await extract(source);
+      expect(first.bytes, second.bytes);
+    });
+  });
+
   group('top-level declaration identity (M8-J)', () {
     // A bare or import-prefixed reference to a top-level const/final/function/getter resolved by
     // `package:analyzer`'s own element model, never by matching a name against another file's.
