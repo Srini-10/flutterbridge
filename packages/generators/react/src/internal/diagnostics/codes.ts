@@ -167,6 +167,13 @@ export const GeneratorDiagnosticCode = {
    * INV-22 exists for. So generation reports this and stops, exactly as `UnsupportedStatement`/`BRG3003`
    * does for any other construct this generator cannot represent faithfully — it does not silently emit the
    * invalid TypeScript above.
+   *
+   * Extended (M11-F) to the identical failure from the other direction: a `logic.VarDecl` in this same flat
+   * list that shares a name with the *enclosing callback's own parameter* — `Checkbox(onChanged: (value) {
+   * setState(() { final value = true; ... }); })`, a real, cataloged, reachable parameterized callback, not
+   * a hypothetical one. Declaration identity is correct here too (the read targets the local); the
+   * parameter and the spliced-open local land in the same emitted function scope with no block boundary
+   * between them, `(value) => { const value = true; ... }`, `TS2300: Duplicate identifier 'value'`.
    */
   DuplicateLocalDeclaration: 'BRG3019',
 } as const;

@@ -480,3 +480,25 @@ export function projectWidgetNameCollisionRaw(): string {
   );
   return readFileSync(path, 'utf8');
 }
+
+/**
+ * The real `fixtures/apps/m11f_callback_parameter_identity` document, raw analyzer output (M11-F) — not
+ * yet normalized.
+ */
+export function callbackParameterIdentityRaw(): string {
+  const path = fileURLToPath(
+    new URL('../../../../fixtures/uir/m11f_callback_parameter_identity.ndjson', import.meta.url),
+  );
+  return readFileSync(path, 'utf8');
+}
+
+/**
+ * The real `fixtures/apps/m11f_callback_parameter_collision` document, raw analyzer output (M11-F) —
+ * not yet normalized.
+ */
+export function callbackParameterCollisionRaw(): string {
+  const path = fileURLToPath(
+    new URL('../../../../fixtures/uir/m11f_callback_parameter_collision.ndjson', import.meta.url),
+  );
+  return readFileSync(path, 'utf8');
+}

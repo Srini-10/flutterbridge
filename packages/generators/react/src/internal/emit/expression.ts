@@ -543,10 +543,14 @@ const DURATION_GETTERS: Readonly<Record<string, (millis: string) => string>> = {
  * own extractor pair uses and for the same reason. It is a hook set once at module load, not per-request
  * state: nothing here is shipped to a server, and nothing about it varies between programs.
  */
-let lowerStatements: ((body: unknown, scope: EmitScope) => string[]) | undefined;
+let lowerStatements:
+  | ((body: unknown, scope: EmitScope, reservedNames?: ReadonlySet<string>) => string[])
+  | undefined;
 
 /** Wires the statement emitter in. Called once, by `statement.ts`. */
-export function setStatementLowering(lower: (body: unknown, scope: EmitScope) => string[]): void {
+export function setStatementLowering(
+  lower: (body: unknown, scope: EmitScope, reservedNames?: ReadonlySet<string>) => string[],
+): void {
   lowerStatements = lower;
 }
 
@@ -1592,6 +1596,11 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
       // Resolution is by name and innermost-first, which is ordinary lexical scoping: a parameter shadows an
       // outer name of the same spelling, exactly as it does in Dart.
       const names = new Set(declared);
+      // The emitted-identifier form of `names` (M11-F) — what a `logic.VarDecl`'s own emitted name is
+      // actually compared against in `emitStatements`, which reads `identifierOf(...)` on each
+      // declaration; `names` itself stays the raw Dart spelling, which is what `paramInScope` below
+      // compares a `logic.Ref`'s own (also raw) name against.
+      const reservedNames = new Set(declared.map((name) => identifierOf(name)));
       // A local this lambda itself declares (ADR-28) — reached here rather than through N5's lift path
       // because this lambda was never lifted (it writes no signal state, e.g. a form validator), so its
       // body is lowered inline instead of becoming a standalone `sig.Action`.
@@ -1624,7 +1633,14 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
           );
           return 'undefined';
         }
-        const lines = lowerStatements(body, inner);
+        // `names` (this lambda's own parameters) is passed as `reservedNames` (ADR-0047-adjacent, M11-F)
+        // — a local declared anywhere in this SAME flat top-level body (whether the lambda's own, or one
+        // spliced open from a nested state-batch call, INV-22) that shares a parameter's own name would
+        // land in the identical emitted function scope as that parameter, with no block boundary between
+        // them (`(value) => { const value = ...; ... }`), which is `SyntaxError`/`TS2300`, not merely a
+        // different program from the one Dart described — the same failure class M11-D's own `BRG3019`
+        // catches for two sibling declarations, extended here to a declaration-vs-parameter collision.
+        const lines = lowerStatements(body, inner, reservedNames);
         return `(${params}) => {\n${lines.map((line) => `  ${line}`).join('\n')}\n}`;
       }
 

@@ -2476,6 +2476,142 @@ class ChildWidget extends StatelessWidget {
     });
   });
 
+  group('callback parameter declaration identity (M11-F)', () {
+    // `Checkbox.onChanged` (`test/support/temp_project.dart`'s own stub, matching the real Flutter SDK
+    // shape) is a real, cataloged, statement-bodied, PARAMETERIZED callback — M11-D/M11-E's own belief
+    // that no such construct existed was based on incomplete widget-catalog knowledge. Its own parameter
+    // is read exactly like an ordinary local (`logic.Ref`, name-based — parameters never carry a
+    // declaration-tier `target`, matching every other parameter in this compiler, ADR-28 §4). When a
+    // NESTED closure (`setState`) declares a same-named local, that local's own identity is correct and
+    // distinct (the read targets it, never the parameter) — the risk this milestone found live is
+    // entirely at the GENERATOR's own emission layer (`packages/generators/react/tests/
+    // m11f_callback_parameter_collision_build.test.ts`), not here.
+
+    const String statefulWrapper = '''
+import 'package:flutter/material.dart';
+class Home extends StatefulWidget {
+  const Home({super.key});
+  @override
+  State<Home> createState() => _HomeState();
+}
+class _HomeState extends State<Home> {
+  bool _checked = false;
+  @override
+  Widget build(BuildContext context) {
+    {{BODY}}
+  }
+}
+''';
+
+    List<Map<String, dynamic>> refsNamed(Extracted app, String name) =>
+        app.ofKind('logic.Ref').where((Map<String, dynamic> r) => r['name'] == name).toList();
+
+    test('a parameter read directly (no nesting) has no target, resolved by name', () async {
+      final Extracted app = await extract(
+        statefulWrapper.replaceFirst('{{BODY}}', '''
+    return Checkbox(
+      value: _checked,
+      onChanged: (value) {
+        _checked = value ?? false;
+      },
+    );
+'''),
+      );
+      expect(app.errors, isEmpty);
+      final Map<String, dynamic> ref = refsNamed(app, 'value').single;
+      expect(
+        ref.containsKey('target'),
+        isFalse,
+        reason: 'a callback parameter carries no declaration-tier identity, matching every other '
+            'parameter in this compiler (ADR-28 §4) — resolved by name at the generator layer',
+      );
+    });
+
+    test('a parameter captured by a nested setState closure has no target, resolved by name', () async {
+      final Extracted app = await extract(
+        statefulWrapper.replaceFirst('{{BODY}}', '''
+    return Checkbox(
+      value: _checked,
+      onChanged: (value) {
+        setState(() {
+          _checked = value ?? false;
+        });
+      },
+    );
+'''),
+      );
+      expect(app.errors, isEmpty);
+      final Map<String, dynamic> ref = refsNamed(app, 'value').single;
+      expect(ref.containsKey('target'), isFalse);
+    });
+
+    test('a parameter shadowed by a same-named nested local: the local gets a real, distinct target, and the read resolves to it', () async {
+      final Extracted app = await extract(
+        statefulWrapper.replaceFirst('{{BODY}}', '''
+    return Checkbox(
+      value: _checked,
+      onChanged: (value) {
+        setState(() {
+          final value = true;
+          _checked = value;
+        });
+      },
+    );
+'''),
+      );
+      expect(app.errors, isEmpty);
+      final Map<String, dynamic> local =
+          app.ofKind('logic.VarDecl').singleWhere((Map<String, dynamic> d) => d['name'] == 'value');
+      final Map<String, dynamic> ref = refsNamed(app, 'value').single;
+      expect(
+        ref['target'],
+        local['id'],
+        reason: 'correct declaration identity here is a separate claim from whether the generator can '
+            "faithfully LOWER it (M11-F: it cannot, and refuses as BRG3019 — see the react generator's "
+            'own m11f_callback_parameter_collision_build test)',
+      );
+    });
+
+    test('a parameter and a differently-named captured local never cross-resolve', () async {
+      final Extracted app = await extract(
+        statefulWrapper.replaceFirst('{{BODY}}', '''
+    return Checkbox(
+      value: _checked,
+      onChanged: (value) {
+        final fallback = true;
+        setState(() {
+          _checked = value ?? fallback;
+        });
+      },
+    );
+'''),
+      );
+      expect(app.errors, isEmpty);
+      final Map<String, dynamic> local =
+          app.ofKind('logic.VarDecl').singleWhere((Map<String, dynamic> d) => d['name'] == 'fallback');
+      final Map<String, dynamic> fallbackRef = refsNamed(app, 'fallback').single;
+      expect(fallbackRef['target'], local['id']);
+      final Map<String, dynamic> paramRef = refsNamed(app, 'value').single;
+      expect(paramRef.containsKey('target'), isFalse);
+    });
+
+    test('the same source extracts to the same bytes on a second, independent run (determinism)', () async {
+      final String source = statefulWrapper.replaceFirst('{{BODY}}', '''
+    return Checkbox(
+      value: _checked,
+      onChanged: (value) {
+        setState(() {
+          _checked = value ?? false;
+        });
+      },
+    );
+''');
+      final Extracted first = await extract(source);
+      final Extracted second = await extract(source);
+      expect(first.bytes, second.bytes);
+    });
+  });
+
   group('top-level declaration identity (M8-J)', () {
     // A bare or import-prefixed reference to a top-level const/final/function/getter resolved by
     // `package:analyzer`'s own element model, never by matching a name against another file's.

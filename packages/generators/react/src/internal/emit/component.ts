@@ -812,10 +812,17 @@ function declareLocalActions(
     const isAsync = action['isAsync'] === true;
     module.line(`const ${names.get(id)!} = ${isAsync ? 'async ' : ''}(${actionParams}) => {`);
     module.block(() => {
+      // `declared`'s own emitted-identifier names, reserved (M11-F) — a `sig.Action` promoted from an
+      // inline event-prop callback (`onChanged: (value) { setState(() { final value = ...; ... }); }`,
+      // live-probed against `Checkbox.onChanged`, a real cataloged parameterized callback) carries its
+      // own parameters here exactly as `logic.Lambda` does; a local sharing one of their names is the
+      // identical `(value) => { const value = ...; ... }` collision `emitStatements` already refuses.
+      const reservedNames = new Set(declared.map((param) => identifierOf(String(param['name'] ?? '_'))));
       module.lineAll(
         emitActionBody(
           action,
           actionScope(scope, signals, declared, names, componentParams, localBindingsIn(action['body'])),
+          reservedNames,
         ),
       );
     });
@@ -1650,6 +1657,6 @@ export function emitBinding(
 }
 
 /** Emits a `sig.Action` body as a lambda, for an event prop. */
-export function emitActionBody(action: Node, scope: EmitScope): string[] {
-  return emitStatements(action['body'], scope);
+export function emitActionBody(action: Node, scope: EmitScope, reservedNames?: ReadonlySet<string>): string[] {
+  return emitStatements(action['body'], scope, reservedNames);
 }

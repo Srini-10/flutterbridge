@@ -1,0 +1,23 @@
+name: m11f_callback_parameter_collision
+description: >-
+  M11-F negative proof: a real, cataloged, parameterized callback's own parameter
+  (`Checkbox.onChanged: (value) { ... }`), SHADOWED by a same-named local declared inside a nested
+  `setState(() { ... })` call, refuses honestly as `BRG3019` rather than emitting invalid TypeScript
+  (`(value) => { const value = ...; ... }`, `TS2300: Duplicate identifier 'value'`). Found live while
+  investigating M11-E's own "callback parameter/local collision" frontier lead — M11-E's own conclusion
+  that no cataloged parameterized callback exists was based on incomplete widget-catalog knowledge;
+  `Checkbox`/`Switch`/`Radio`/`Slider`'s own `onChanged` are real, reachable, statement-bodied,
+  parameterized callbacks today. A store action's own parameter, shadowed the same way inside a nested
+  bare block, refuses through the identical mechanism — see the second widget below.
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

@@ -127,7 +127,13 @@ export function emitStore(store: Node, module: ModuleBuilder, scope: EmitScope):
       // resolution mechanism) or to nested block scopes (`{ ... }` inside an action body, also proven
       // correctly targeted at extraction already).
       const locals = localBindingsIn(node['body']);
-      const body = emitStatements(node['body'], actionScope(inner, params, locals));
+      // `params`'s own emitted-identifier names, reserved (M11-F) — the identical collision
+      // `component.ts`'s own action-body emission now guards against: a local (an action's own top-level
+      // declaration, or one a nested bare block/state-batch splice flattens into this same list) sharing
+      // a parameter's name lands in the same emitted function scope with no block boundary left between
+      // them.
+      const reservedNames = new Set(params.map((param) => identifierOf(String(param['name'] ?? '_'))));
+      const body = emitStatements(node['body'], actionScope(inner, params, locals), reservedNames);
       // The default value's own emission uses `inner` — the scope ENCLOSING the action, never
       // `actionScope(inner, params)` — mirroring the identical scoping rule the Dart extractor's own
       // `_params` already applies (M10-E, ADR-0043 §5): a default is a constant expression and cannot

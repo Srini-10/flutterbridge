@@ -115,7 +115,11 @@ function isProvablyExhaustiveEnumSwitch(node: Node, scope: EmitScope): boolean {
  * @param scope - what is in scope, and where to report.
  * @returns the lines, unindented. The caller places them.
  */
-export function emitStatements(statements: unknown, scope: EmitScope): string[] {
+export function emitStatements(
+  statements: unknown,
+  scope: EmitScope,
+  reservedNames: ReadonlySet<string> = EMPTY_RESERVED_NAMES,
+): string[] {
   const seen = new Set<string>();
   return asArray(statements).flatMap((statement) => {
     // A state-batch call is spliced open at extraction time (INV-22), with no JS-level block left to mark
@@ -123,6 +127,17 @@ export function emitStatements(statements: unknown, scope: EmitScope): string[] 
     // on Dart's own nested scope to make that legal (`GeneratorDiagnosticCode.DuplicateLocalDeclaration`).
     // Checked in the same flat list `emitStatements` already walks — a genuinely nested block (an `if`/
     // `while`/`for` body) is never in this same list; it is lowered by its own case, wrapped in real `{ }`.
+    //
+    // `reservedNames` (M11-F) is the SAME failure class from the other direction: the enclosing
+    // callback's own parameters — passed by `expression.ts`'s `logic.Lambda` case (an in-place callback,
+    // e.g. `TextFormField.validator`) and by `component.ts`'s/`store.ts`'s own action-body emission (a
+    // callback N5 promoted to a `sig.Action`, e.g. `Checkbox.onChanged`) — already occupy this identical
+    // emitted scope, so a `logic.VarDecl` landing here — the callback's own top-level local, or one
+    // spliced open from a nested `setState`/bare-block — that shares a parameter's name is exactly as
+    // unrepresentable as two siblings sharing one: `(value) => { const value = ...; ... }` is
+    // `TS2300`/`SyntaxError`, live-probed against both call sites (`Checkbox.onChanged`,
+    // `TextFormField.validator` — real, cataloged, reachable parameterized callbacks, not hypothetical
+    // ones).
     if (kindOf(statement) === 'logic.VarDecl') {
       const name = identifierOf(String(statement['name'] ?? '_'));
       if (seen.has(name)) {
@@ -137,11 +152,25 @@ export function emitStatements(statements: unknown, scope: EmitScope): string[] 
         );
         return [];
       }
+      if (reservedNames.has(name)) {
+        scope.report(
+          GeneratorDiagnosticCode.DuplicateLocalDeclaration,
+          'error',
+          `\`${name}\` is already the enclosing callback's own parameter — a state-batch call's own body ` +
+            'may have been spliced open here (INV-22), leaving no block boundary to shadow the parameter ' +
+            'within, so this generator cannot represent both without inventing a rename the program never ' +
+            'wrote',
+          idOf(statement),
+        );
+        return [];
+      }
       seen.add(name);
     }
     return emitStatement(statement, scope);
   });
 }
+
+const EMPTY_RESERVED_NAMES: ReadonlySet<string> = new Set();
 
 /** Lowers one statement. Returns its lines; a block returns several. */
 export function emitStatement(statement: Stmt | Node | undefined, scope: EmitScope): string[] {
@@ -449,7 +478,7 @@ function indent(lines: readonly string[]): string[] {
 // Hands the statement emitter to the expression emitter, which needs it for a lambda with a statement body
 // and cannot import it without creating a cycle. See `setStatementLowering` for why the dependency runs this
 // way round.
-setStatementLowering((body, scope) => emitStatements(body, scope));
+setStatementLowering((body, scope, reservedNames) => emitStatements(body, scope, reservedNames));
 
 /**
  * The `Destination` literal for a transition — the kit's own vocabulary, not the compiler's.
