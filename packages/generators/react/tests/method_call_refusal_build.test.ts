@@ -47,20 +47,22 @@ describe('M9-R closure: a method call on a locally-constructed receiver refuses 
     expect(files).toEqual([]);
   });
 
-  // ADR-0039 §5: `AsyncModel.scale` meets every OTHER method-eligibility gate — `_externalMethodTarget`
-  // does not check `isAsync`, so this still resolves a `target` at the extraction layer. The generator's
-  // own `emitFunctionModules` loop declines to emit a helper for an `async` method, and the `target`-set-
-  // but-no-helper branch this ADR added must refuse (`BRG3013`) rather than falling through to the naive
-  // `receiver.method(args)` lowering below it — the identical silent-wrong-code shape the M9-R closure fix
-  // exists to prevent, reopened for this narrower, method-specific gate if this branch were ever removed.
-  it('refuses an async method call as BRG3013, even though every other ADR-0039 gate is met', () => {
+  // Reversed from its own pre-M11-B assertion (ADR-0039 §5's own original claim: `_externalMethodTarget`
+  // does not check `isAsync` at all, so a bare, un-awaited call used to still resolve a `target` at the
+  // extraction layer, reaching the "target set but no helper" BRG3013 message with its own "otherwise
+  // eligible" wording). M11-B (ADR-0046) moved the "is this genuinely awaited" decision to the SAME
+  // extraction layer: `AsyncModel.scale`, called un-awaited (`model.scale(3)`, no `await`), now resolves
+  // NO target at all — reaching the EARLIER, generic "calls a member of X, a class this generator has no
+  // member model for" refusal instead (the M9-J unmodelled-receiver check) — still an honest `BRG3013`,
+  // still zero files emitted, just a different (and, for an un-awaited async call specifically, more
+  // precise) message. See `extraction_test.dart`'s own ADR-0046 group for the direct target-resolution
+  // proof, and `async_method_await_build.test.ts` for the positive, genuinely-awaited counterpart.
+  it('refuses an un-awaited async method call as BRG3013, even though every other ADR-0039 gate is met', () => {
     const normalized = compiledFrom(methodCallRefusalRaw());
     const { context, reported } = harness(normalized);
     const { files } = reactGenerator.generate(context);
     const errors = reported.filter((d) => d.severity === 'error');
-    expect(
-      errors.some((d) => d.code === 'BRG3013' && d.message.includes('scale') && d.message.includes('otherwise eligible')),
-    ).toBe(true);
+    expect(errors.some((d) => d.code === 'BRG3013' && d.message.includes('AsyncModel'))).toBe(true);
     expect(files).toEqual([]);
   });
 
@@ -280,6 +282,65 @@ describe('M9-R closure: a method call on a locally-constructed receiver refuses 
     const { files } = reactGenerator.generate(context);
     const errors = reported.filter((d) => d.severity === 'error');
     expect(errors.some((d) => d.code === 'BRG3006' && d.message.includes('StaticAccessModel.getDynamic'))).toBe(true);
+    expect(files).toEqual([]);
+  });
+
+  // M11-B (ADR-0046 §6): `AsyncGenericCallOnLocal` calls `AsyncRefusalModel.callIdentity()` un-awaited
+  // from a component's own (necessarily synchronous) render tree — real Dart cannot `await` inside
+  // `build()`, so a genuinely-awaited-but-still-ineligible-for-a-DIFFERENT-reason case (the inner generic
+  // method) is proven at the extraction layer instead (`extraction_test.dart`'s own ADR-0046 group); this
+  // test proves the OUTER, un-awaited call itself refuses, exactly as every other async method already
+  // does (`AsyncModel`, above), regardless of what its own body goes on to do.
+  it('refuses an un-awaited call to a method whose own body would await a generic method as BRG3013', () => {
+    const normalized = compiledFrom(methodCallRefusalRaw());
+    const { context, reported } = harness(normalized);
+    const { files } = reactGenerator.generate(context);
+    const errors = reported.filter((d) => d.severity === 'error');
+    expect(errors.some((d) => d.code === 'BRG3013' && d.message.includes('callIdentity'))).toBe(true);
+    expect(files).toEqual([]);
+  });
+
+  // M11-B (ADR-0046 §6): identical shape, an un-awaited call whose own body would await a `Future<dynamic>`-
+  // returning method.
+  it('refuses an un-awaited call to a method whose own body would await a Future<dynamic> method as BRG3013', () => {
+    const normalized = compiledFrom(methodCallRefusalRaw());
+    const { context, reported } = harness(normalized);
+    const { files } = reactGenerator.generate(context);
+    const errors = reported.filter((d) => d.severity === 'error');
+    expect(errors.some((d) => d.code === 'BRG3013' && d.message.includes('callDynamicAsync'))).toBe(true);
+    expect(files).toEqual([]);
+  });
+
+  // M11-B (ADR-0046 §6): identical shape, an un-awaited call whose own body would await a PRIVATE method.
+  it('refuses an un-awaited call to a method whose own body would await a private method as BRG3013', () => {
+    const normalized = compiledFrom(methodCallRefusalRaw());
+    const { context, reported } = harness(normalized);
+    const { files } = reactGenerator.generate(context);
+    const errors = reported.filter((d) => d.severity === 'error');
+    expect(errors.some((d) => d.code === 'BRG3013' && d.message.includes('callHiddenAsync'))).toBe(true);
+    expect(files).toEqual([]);
+  });
+
+  // M11-B (ADR-0046 §6): a directly self-recursive async method — the identical fixed-point non-
+  // convergence refusal (ADR-0040 §10), unaffected by `async`/`await`.
+  it('refuses a self-recursive async method as BRG3013', () => {
+    const normalized = compiledFrom(methodCallRefusalRaw());
+    const { context, reported } = harness(normalized);
+    const { files } = reactGenerator.generate(context);
+    const errors = reported.filter((d) => d.severity === 'error');
+    expect(errors.some((d) => d.code === 'BRG3013' && d.message.includes('countdownAsync'))).toBe(true);
+    expect(files).toEqual([]);
+  });
+
+  // M11-B (ADR-0046 §6): `AsyncSubclass.useNew`'s own body bare-calls a NEW (non-override) async method it
+  // itself declares — the identical subclass-dispatch-safety exclusion M11-A's own mutation testing
+  // already established for the synchronous case (ADR-0045's own mutation 1a), unaffected by `async`.
+  it('refuses a bare call, awaited, to a new async method a subclass itself declares as BRG3013', () => {
+    const normalized = compiledFrom(methodCallRefusalRaw());
+    const { context, reported } = harness(normalized);
+    const { files } = reactGenerator.generate(context);
+    const errors = reported.filter((d) => d.severity === 'error');
+    expect(errors.some((d) => d.code === 'BRG3013' && d.message.includes('useNew'))).toBe(true);
     expect(files).toEqual([]);
   });
 });

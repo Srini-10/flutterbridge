@@ -1,0 +1,18 @@
+name: async_method_await
+description: >-
+  M11-B positive proof: a call to a project-defined class's own `async` method — instance or static —
+  resolves a real target and lowers to a real, `Promise`-returning, callable function ONLY when the Dart
+  call is the direct operand of an explicit `await`. A bare, un-awaited call to the identical method stays
+  refused, unchanged (see `fixtures/apps/method_call_refusal`'s own `AsyncModel`).
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

@@ -667,7 +667,14 @@ export function emitFunctionModules(
       if (!remainingMembers.has(methodId)) continue;
       const isGetter = method['isGetter'] === true;
       const body = method['body'];
-      if (method['isAsync'] === true || !Array.isArray(body)) {
+      // An `async` method is no longer excluded here (M11-B, ADR-0046) — whether one may ever be REACHED
+      // at all is already decided upstream, at extraction: `_externalMethodTarget`/`_staticMemberTarget`
+      // only resolve a `target` for an `async` method when the Dart call is the direct operand of an
+      // `AwaitExpression` (never inferred, never name-based). A method that reaches this loop with
+      // `isAsync === true` is therefore already known to be genuinely awaited somewhere — this loop's own
+      // job is only to ADAPT its emitted shape (the `async` keyword, `Promise<...>` wrapping, below),
+      // never to re-decide eligibility a different layer already owns.
+      if (!Array.isArray(body)) {
         remainingMembers.delete(methodId);
         continue;
       }
@@ -708,7 +715,14 @@ export function emitFunctionModules(
           else scope.report(code, severity, message, nodeId);
         },
       };
-      const returnType = typeTextOf(method['returnType'] as Node | undefined, (rt) => useRuntime(scratch, rt), classOf);
+      // `method['returnType']` already describes the VALUE type, never the `Future<...>` wrapper — the
+      // extractor itself unwraps a `Future<T>` return type to `T` for an `async` method (M11-B, ADR-0046,
+      // `declaration_extractor.dart`'s own `_valueReturnTypeOf`), since `typeTextOf` has no generic-
+      // instantiation parsing and would otherwise silently render `Future<int>` as `unknown`. `isAsync`
+      // is what drives re-wrapping the result in `Promise<...>` here, at render time.
+      const isMemberAsync = method['isAsync'] === true;
+      const valueReturnType = typeTextOf(method['returnType'] as Node | undefined, (rt) => useRuntime(scratch, rt), classOf);
+      const returnType = isMemberAsync ? `Promise<${valueReturnType}>` : valueReturnType;
       // `helperScope`, not the outer `scope` (M10-E): a default value can never actually reference `self`
       // or this method's own parameters (Dart's own rule — a default is a constant expression, evaluated
       // with no access to either), so `helperScope`'s own narrow `paramInScope` poses no risk; using it is
@@ -739,14 +753,16 @@ export function emitFunctionModules(
       if (hadError) continue; // try again next pass — a dependency this pass hadn't resolved yet might resolve then
 
       for (const request of scratch.usedImports()) pending.builder.use(request.from, request.name, { typeOnly: request.typeOnly });
-      const capabilityLabel = isStatic
-        ? 'bounded static method access (ADR-0045)'
-        : isGetter
-          ? 'bounded, structural getter execution (ADR-0038)'
-          : 'bounded, structural instance method execution (ADR-0039)';
+      const capabilityLabel = isMemberAsync
+        ? 'bounded async method call via explicit `await` (ADR-0046)'
+        : isStatic
+          ? 'bounded static method access (ADR-0045)'
+          : isGetter
+            ? 'bounded, structural getter execution (ADR-0038)'
+            : 'bounded, structural instance method execution (ADR-0039)';
       pending.lines.push(
         `/** \`${name}.${memberName}\`, from ${spanFile}. A ${capabilityLabel} — never a prototype ${isGetter ? 'getter' : 'method'}${isStatic ? ' or a real static member' : ''}; there is no runtime \`${name}\` class. */`,
-        `export function ${helperName}(${signature}): ${returnType} {`,
+        `export ${isMemberAsync ? 'async ' : ''}function ${helperName}(${signature}): ${returnType} {`,
         ...lines.map((line: string) => `  ${line}`),
         '}',
         '',

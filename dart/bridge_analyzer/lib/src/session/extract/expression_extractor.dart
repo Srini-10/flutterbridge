@@ -346,11 +346,25 @@ final class ExpressionExtractor {
         return lambda(node, scope);
 
       case AwaitExpression():
+        // `await model.load()` (M11-B, ADR-0046) — parentheses are grouping, not semantics (identical
+        // discipline to `ParenthesizedExpression`'s own case, above), so they are unwrapped before asking
+        // whether the awaited operand is a bare method call. Only a DIRECT method-call operand is ever
+        // routed with `awaited: true` — a `Future`-typed value read some other way (a field, a variable, a
+        // getter) still extracts through the ordinary path, unaffected, and still cannot resolve an async
+        // method's own `target` anywhere else, because `awaited` defaults to `false` everywhere but here.
+        Expression awaitedOperand = node.expression;
+        while (awaitedOperand is ParenthesizedExpression) {
+          awaitedOperand = awaitedOperand.expression;
+        }
         return RawNode(
           kind: 'logic.Await',
           span: out.span(node),
           fields: <String, RawValue>{
-            'operand': RawChild(extract(node.expression, scope)),
+            'operand': RawChild(
+              awaitedOperand is MethodInvocation
+                  ? _invocation(awaitedOperand, scope, awaited: true)
+                  : extract(node.expression, scope),
+            ),
             'type': out.typeRef(node.staticType, at: node),
           },
         );
@@ -1120,7 +1134,12 @@ final class ExpressionExtractor {
     },
   );
 
-  RawNode _invocation(MethodInvocation node, Scope scope) {
+  /// [awaited] is true only when [node] is the DIRECT operand of an `AwaitExpression` (M11-B, ADR-0046) —
+  /// never inferred from `node`'s own resolved return type. It is the one fact that lets an otherwise-
+  /// refused `async` method's own target resolve at all; every other caller of this function passes the
+  /// default (`false`), so a bare, un-awaited call to an `async` method continues to refuse exactly as it
+  /// did before this milestone.
+  RawNode _invocation(MethodInvocation node, Scope scope, {bool awaited = false}) {
     // A navigation is a method invocation, and this is the one place every invocation is reached with
     // the scope its arguments must bind against. The transition it emits is a *separate* top-level
     // record — the imperative call still becomes the `logic.MethodCall` below, because the code does
@@ -1158,7 +1177,7 @@ final class ExpressionExtractor {
     // existing `target == null` branch below.
     if (target == null) {
       final DartType? thisType = _thisType(node.methodName.element);
-      final String? methodTarget = _externalMethodTarget(thisType, node.methodName.element);
+      final String? methodTarget = _externalMethodTarget(thisType, node.methodName.element, awaited: awaited);
       if (methodTarget != null) {
         return RawNode(
           kind: 'logic.MethodCall',
@@ -1203,7 +1222,7 @@ final class ExpressionExtractor {
               staticTarget:
                   _enumConstantTarget(node.methodName.element) ??
                   _topLevelTarget(node.methodName.element) ??
-                  _staticMemberTarget(node.methodName.element),
+                  _staticMemberTarget(node.methodName.element, awaited: awaited),
             ),
           ),
           ..._arguments(node.argumentList, scope),
@@ -1226,23 +1245,28 @@ final class ExpressionExtractor {
           span: out.span(node),
           fields: <String, RawValue>{
             'test': RawChild(_nullAwareGuard(target, scope)),
-            'then': RawChild(_methodCallOn(node, target, scope, suppressTarget: false)),
+            'then': RawChild(_methodCallOn(node, target, scope, suppressTarget: false, awaited: awaited)),
             'otherwise': RawChild(_nullLiteral(node)),
             'type': out.typeRef(node.staticType, at: node),
           },
         );
       }
-      return _methodCallOn(node, target, scope, suppressTarget: true);
+      return _methodCallOn(node, target, scope, suppressTarget: true, awaited: awaited);
     }
-    return _methodCallOn(node, target, scope, suppressTarget: false);
+    return _methodCallOn(node, target, scope, suppressTarget: false, awaited: awaited);
   }
 
   /// The ordinary (non-null-aware-semantics) `logic.MethodCall` for [node], receiver [target] — the
   /// identical shape this function has always built for an explicit-receiver call, factored out so the
   /// safe-navigation guard (M10-F, ADR-0044) can reuse it UNCHANGED as its own guarded `then` branch. See
   /// [_propertyAccessOn]'s own doc for [suppressTarget]'s meaning — identical here.
-  RawNode _methodCallOn(MethodInvocation node, Expression target, Scope scope, {required bool suppressTarget}) =>
-      RawNode(
+  RawNode _methodCallOn(
+    MethodInvocation node,
+    Expression target,
+    Scope scope, {
+    required bool suppressTarget,
+    bool awaited = false,
+  }) => RawNode(
         kind: 'logic.MethodCall',
         span: out.span(node),
         fields: <String, RawValue>{
@@ -1253,7 +1277,11 @@ final class ExpressionExtractor {
           // type where an ordinary expression would supply its own `staticType`, exactly as the sibling
           // `PropertyAccess` case above already does for fields/getters.
           if (_storeMemberTarget(target.staticType, node.methodName.element) ??
-                  _externalMethodTarget(_receiverTypeFor(target, node.methodName.element), node.methodName.element)
+                  _externalMethodTarget(
+                    _receiverTypeFor(target, node.methodName.element),
+                    node.methodName.element,
+                    awaited: awaited,
+                  )
               case final String symbol when !suppressTarget)
             'target': RawRef(symbol),
           ..._arguments(node.argumentList, scope),
@@ -1600,7 +1628,11 @@ final class ExpressionExtractor {
   /// `target` alone would not fix its refusal, since the declaration lowering itself, not merely its
   /// targeting, is the missing capability. A static getter is a real, narrow, independently-understandable
   /// follow-on this milestone did not need to touch to deliver real value.
-  String? _staticMemberTarget(Element? element) {
+  ///
+  /// [awaited] (M11-B, ADR-0046) admits an `async` static method ONLY when true, for the identical reason
+  /// [_externalMethodTarget]'s own [awaited] parameter exists — a static reference reuses this milestone's
+  /// gate verbatim, never a second, static-specific async check.
+  String? _staticMemberTarget(Element? element, {bool awaited = false}) {
     if (element is! MethodElement || !element.isStatic) {
       return null;
     }
@@ -1608,6 +1640,9 @@ final class ExpressionExtractor {
       return null;
     }
     if (element.isOperator) {
+      return null;
+    }
+    if (element.firstFragment.isAsynchronous && !awaited) {
       return null;
     }
     final Element? owner = element.enclosingElement;
@@ -1789,7 +1824,11 @@ final class ExpressionExtractor {
   /// no optional, named, or default-valued parameter — mirroring the identical boundary ADR-0037 already
   /// drew for a constructor's own field-formals, kept narrow deliberately rather than re-derived per
   /// capability.
-  String? _externalMethodTarget(DartType? receiverType, Element? element) {
+  ///
+  /// [awaited] (M11-B, ADR-0046) admits an `async` method ONLY when true — the call this target feeds is
+  /// the DIRECT operand of an `AwaitExpression` (`_invocation`'s own doc comment). A non-`async` method's
+  /// own eligibility is completely unaffected by [awaited] either way.
+  String? _externalMethodTarget(DartType? receiverType, Element? element, {bool awaited = false}) {
     final ClassElement? ownerClass = _dispatchSafeReceiverClass(receiverType);
     if (ownerClass == null) {
       return null;
@@ -1802,6 +1841,9 @@ final class ExpressionExtractor {
         element.isExternal ||
         element.isPrivate ||
         element.metadata.hasOverride) {
+      return null;
+    }
+    if (element.firstFragment.isAsynchronous && !awaited) {
       return null;
     }
     if (element.enclosingElement != ownerClass) {
@@ -1839,10 +1881,13 @@ final class ExpressionExtractor {
   ///   further member off the result or assigned it to a narrower type. Re-confirmed live for the STATIC
   ///   case specifically while building M11-A's own mutation-testing pass — the identical `unknown` shape
   ///   was reproduced for a static method before this function was shared, not merely hypothesized.
-  ///   Skipped entirely for an `async` method (`element.firstFragment.isAsynchronous`) — ADR-0039 §5's own
-  ///   established, separately-tested split deliberately keeps the async EXCLUSION at the GENERATOR layer,
-  ///   not here (an async method's return type is language-mandated to be `Future`/`FutureOr`/`Stream`-
-  ///   shaped, which this gate would otherwise always reject).
+  ///   For an `async` method (`element.firstFragment.isAsynchronous`), Dart requires the DECLARED return
+  ///   type be `Future<T>`-shaped (never checked directly — `T` itself is what this gate must judge): the
+  ///   Future's own single type argument is checked against the identical
+  ///   [_isEligibleMethodReturnType] gate a synchronous method's own return type already must pass (M11-B,
+  ///   ADR-0046) — never `Future<dynamic>`, `Future<List<int>>`, or a non-`Future` async return
+  ///   (`FutureOr<T>`/`Stream<T>`, which `async` itself cannot declare, so `returnType.isDartAsyncFuture`
+  ///   failing here is a defensive, not a reachable, exclusion).
   /// - Every parameter must be positional (a NAMED parameter, required or optional, is an M10-E non-goal:
   ///   no positional call-site equivalent without an options-object rewrite or call-site-name-threading);
   ///   an OPTIONAL positional parameter is eligible only with an explicit default value (M10-E, ADR-0043
@@ -1853,7 +1898,15 @@ final class ExpressionExtractor {
     if (element.typeParameters.isNotEmpty) {
       return false;
     }
-    if (!element.firstFragment.isAsynchronous && !_isEligibleMethodReturnType(element.returnType)) {
+    if (element.firstFragment.isAsynchronous) {
+      final DartType returnType = element.returnType;
+      if (returnType is! InterfaceType || !returnType.isDartAsyncFuture) {
+        return false;
+      }
+      if (!_isEligibleMethodReturnType(returnType.typeArguments.firstOrNull)) {
+        return false;
+      }
+    } else if (!_isEligibleMethodReturnType(element.returnType)) {
       return false;
     }
     for (final FormalParameterElement param in element.formalParameters) {

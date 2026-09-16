@@ -213,3 +213,69 @@ class StaticDynamicReturnCallOnLocal extends StatelessWidget {
     return Text('${StaticAccessModel.getDynamic()}');
   }
 }
+
+// Not wired into the route table either (M11-B). `AsyncRefusalModel.callIdentity`'s own body awaits a
+// GENERIC async method — the identical M10-B/M11-A generic-method exclusion, unaffected by `async`.
+class AsyncGenericCallOnLocal extends StatelessWidget {
+  const AsyncGenericCallOnLocal({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final model = AsyncRefusalModel(7);
+    return Text('${model.callIdentity()}');
+  }
+}
+
+// Not wired into the route table either (M11-B). `AsyncRefusalModel.callDynamicAsync`'s own body awaits an
+// async method whose own return type is `Future<dynamic>` — the unwrapped `dynamic` still fails the
+// return-type gate, unaffected by `async`.
+class AsyncDynamicReturnCallOnLocal extends StatelessWidget {
+  const AsyncDynamicReturnCallOnLocal({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final model = AsyncRefusalModel(7);
+    return Text('${model.callDynamicAsync()}');
+  }
+}
+
+// Not wired into the route table either (M11-B). `AsyncRefusalModel.callHiddenAsync`'s own body awaits a
+// PRIVATE async method — the identical privacy exclusion every other gate already applies.
+class AsyncPrivateCallOnLocal extends StatelessWidget {
+  const AsyncPrivateCallOnLocal({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final model = AsyncRefusalModel(7);
+    return Text('${model.callHiddenAsync()}');
+  }
+}
+
+// Not wired into the route table either (M11-B). `AsyncRefusalModel.countdownAsync` is directly self-
+// recursive, awaited — the identical fixed-point non-convergence refusal (ADR-0040 §10), unaffected by
+// `async`.
+class AsyncRecursionCallOnLocal extends StatelessWidget {
+  const AsyncRecursionCallOnLocal({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final model = AsyncRefusalModel(7);
+    return Text('${model.countdownAsync(3)}');
+  }
+}
+
+// Not wired into the route table either (M11-B). `AsyncSubclass.useNew`'s own body bare-calls a NEW
+// (non-override) async method IT ITSELF declares — the identical subclass-dispatch-safety exclusion
+// M11-A's own mutation testing already established for the synchronous case, unaffected by `async`.
+// `model` is a PARAMETER, never constructed locally — `AsyncSubclass` has an explicit superclass, so
+// constructing one directly hits the separate, pre-existing, unrelated M9-O subclass-construction
+// boundary first; a parameter isolates the SPECIFIC refusal this widget exists to prove.
+class AsyncSubclassOwnMethodCallOnLocal extends StatelessWidget {
+  const AsyncSubclassOwnMethodCallOnLocal({super.key, required this.model});
+  final AsyncSubclass model;
+
+  @override
+  Widget build(BuildContext context) {
+    return Text('${model.useNew()}');
+  }
+}

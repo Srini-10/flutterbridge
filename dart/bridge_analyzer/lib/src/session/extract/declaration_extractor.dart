@@ -12,6 +12,7 @@ library;
 
 import 'package:analyzer/dart/ast/ast.dart';
 import 'package:analyzer/dart/element/element.dart';
+import 'package:analyzer/dart/element/type.dart';
 import 'package:bridge_analyzer/src/model/raw_node.dart';
 import 'package:bridge_analyzer/src/session/extract/component_extractor.dart';
 import 'package:bridge_analyzer/src/session/extract/expression_extractor.dart';
@@ -374,7 +375,10 @@ final class DeclarationExtractor {
             fields: <String, RawValue>{
               'name': RawLiteral(member.name.lexeme),
               'returnType': out.typeRef(
-                member.declaredFragment?.element.returnType ?? member.returnType?.type,
+                _valueReturnTypeOf(
+                  member.declaredFragment?.element.returnType ?? member.returnType?.type,
+                  isAsync: member.body.isAsynchronous,
+                ),
                 at: member,
               ),
               'params': RawList(_params(member.parameters, scope)),
@@ -388,6 +392,25 @@ final class DeclarationExtractor {
       );
     }
     return methods;
+  }
+
+  /// The DartType a `logic.FunctionDecl.returnType` should describe (M11-B, ADR-0046) — for an `async`
+  /// method, the Future's own single type argument (`Future<int>` → `int`), never the wrapper itself:
+  /// `typeTextOf` (the generator) has no generic-instantiation parsing at all, and would otherwise
+  /// silently render `Future<int>`'s own opaque `TypeRef.name` string as `unknown` (confirmed live —
+  /// M11-B's own investigation). `isAsync` (already captured, unconditionally, alongside this field) is
+  /// what tells the generator to re-wrap the result in `Promise<...>` at render time — the returnType
+  /// field itself always describes the VALUE, exactly as a synchronous method's own returnType already
+  /// does; `_isEligibleMethodShape` (`expression_extractor.dart`) is what actually judges whether that
+  /// value type is eligible, reusing the identical gate a synchronous return type already must pass.
+  /// [declared] is never null for a real `async` method (Dart requires its return type resolve to
+  /// `Future<T>`), so an unexpected non-`Future` shape is passed through unchanged rather than guessed at
+  /// — `_isEligibleMethodShape`'s own defensive `returnType.isDartAsyncFuture` check is what refuses it.
+  DartType? _valueReturnTypeOf(DartType? declared, {required bool isAsync}) {
+    if (isAsync && declared is InterfaceType && declared.isDartAsyncFuture) {
+      return declared.typeArguments.firstOrNull;
+    }
+    return declared;
   }
 
   void _function(FunctionDeclaration node, Scope scope) {

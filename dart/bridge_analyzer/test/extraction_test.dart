@@ -7236,27 +7236,35 @@ class W extends StatelessWidget {
       expect(call?.containsKey('target'), isFalse);
     });
 
-    test("an async method's return type is exempt from the M10-D return-type gate — the generator excludes it", () async {
-      // ADR-0039 §5's own established, separately-tested split deliberately keeps the async EXCLUSION at
-      // the GENERATOR layer, not here — an async method's return type is language-mandated to be
-      // `Future`/`FutureOr`/`Stream`-shaped, which the M10-D return-type gate would otherwise always
-      // reject. `element.firstFragment.isAsynchronous` exempts it, so `target` still resolves, exactly as
-      // it already did before M10-D (the sibling assertion, above, in the ADR-0039 group).
-      final Extracted app = await extract('''
+    test("an async method's own unwrapped Future<T> return type still passes the M10-D return-type gate, when awaited (M11-B)", () async {
+      // Reversed from its own pre-M11-B assertion (a BARE, un-awaited `model.scale(3).toString()` used to
+      // resolve `target` unconditionally — ADR-0039 §5's own original split deliberately kept the async
+      // EXCLUSION at the generator layer only). M11-B (ADR-0046) makes the extraction-layer gate itself
+      // return-type-aware for async too: `Future<int>` is unwrapped to `int`, which still passes the
+      // IDENTICAL `_isEligibleMethodReturnType` gate a synchronous method's own return type already must —
+      // but `target` now resolves ONLY when the call is genuinely awaited, never for a bare reference.
+      final Extracted app = await extract(r'''
 import 'package:flutter/material.dart';
 class Model {
   final int count;
   Model(this.count);
   Future<int> scale(int factor) async => count * factor;
+  Future<int> use() async => await scale(3);
 }
 class W extends StatelessWidget {
   const W({super.key, required this.model});
   final Model model;
   @override
-  Widget build(BuildContext context) => Text(model.scale(3).toString());
+  Widget build(BuildContext context) => Text('${model.count}');
 }
 ''');
-      final Map<String, dynamic>? call = callOf(app.only('ui.Component')['render'], 'scale');
+      final Map<String, dynamic> model = app
+          .ofKind('logic.ClassDecl')
+          .singleWhere((Map<String, dynamic> d) => d['name'] == 'Model');
+      final Map<String, dynamic> use = (model['methods'] as List<dynamic>)
+          .cast<Map<String, dynamic>>()
+          .singleWhere((Map<String, dynamic> m) => m['name'] == 'use');
+      final Map<String, dynamic>? call = callOf(use['body'], 'scale');
       expect(call?['target'], isNotNull);
     });
 
@@ -7299,13 +7307,14 @@ class W extends StatelessWidget {
       expect(call?['target'], isNotNull);
     });
 
-    test('an async method still resolves a `target` at this layer — the generator, not the extractor, excludes it', () async {
-      // `_externalMethodTarget` (ADR-0039) deliberately checks the identical facts `_externalGetterTarget`
-      // does, and neither checks `isAsync` — a real, pre-existing asymmetry this project already carries
-      // for getters (a `Future`-returning async getter can pass this same gate). The TypeScript generator
-      // is the layer responsible for declining an async method's own helper emission and refusing
-      // (`BRG3013`) rather than falling through to a broken call — proven at that layer, not this one
-      // (`packages/generators/react`).
+    test('an awaited async method resolves a `target` at this layer; a bare, un-awaited one does not (M11-B)', () async {
+      // Reversed from its own pre-M11-B assertion (`_externalMethodTarget` used to admit ANY async
+      // method's bare reference unconditionally — ADR-0039's own original design deliberately deferred
+      // the async EXCLUSION to the generator layer alone). M11-B (ADR-0046) moved the "is this call
+      // genuinely awaited" decision to THIS layer, at the one place the analyzer's own `AwaitExpression`
+      // is visible: `model.scale(3).toString()` (no `await` at all) now correctly resolves no target,
+      // while `await model.scale(3)` does — proven together, in the SAME fixture, so this test cannot
+      // pass by accident on either shape alone.
       final Extracted app = await extract('''
 import 'package:flutter/material.dart';
 class Model {
@@ -7320,7 +7329,30 @@ class W extends StatelessWidget {
   Widget build(BuildContext context) => Text(model.scale(3).toString());
 }
 ''');
-      final Map<String, dynamic>? call = callOf(app.only('ui.Component')['render'], 'scale');
+      final Map<String, dynamic>? bare = callOf(app.only('ui.Component')['render'], 'scale');
+      expect(bare?['target'], isNull);
+
+      final Extracted awaited = await extract('''
+import 'package:flutter/material.dart';
+class Model {
+  final int count;
+  Model(this.count);
+  Future<int> scale(int factor) async => count * factor;
+  Future<int> use() async => await scale(3);
+}
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('root');
+}
+''');
+      final Map<String, dynamic> model = awaited
+          .ofKind('logic.ClassDecl')
+          .singleWhere((Map<String, dynamic> d) => d['name'] == 'Model');
+      final Map<String, dynamic> use = (model['methods'] as List<dynamic>)
+          .cast<Map<String, dynamic>>()
+          .singleWhere((Map<String, dynamic> m) => m['name'] == 'use');
+      final Map<String, dynamic>? call = callOf(use['body'], 'scale');
       expect(call?['target'], isNotNull);
     });
 
@@ -7743,6 +7775,207 @@ class W extends StatelessWidget {
     });
   });
 
+  group('bounded async method call provenance (ADR-0046, M11-B)', () {
+    Map<String, dynamic>? awaitOf(Object? node) {
+      if (node is Map<String, dynamic>) {
+        if (node['kind'] == 'logic.Await') return node;
+        for (final Object? value in node.values) {
+          if (awaitOf(value) case final Map<String, dynamic> found) return found;
+        }
+      } else if (node is List) {
+        for (final Object? value in node) {
+          if (awaitOf(value) case final Map<String, dynamic> found) return found;
+        }
+      }
+      return null;
+    }
+
+    Map<String, dynamic>? callOf(Object? node) {
+      if (node is Map<String, dynamic>) {
+        if (node['kind'] == 'logic.Call') return node;
+        for (final Object? value in node.values) {
+          if (callOf(value) case final Map<String, dynamic> found) return found;
+        }
+      } else if (node is List) {
+        for (final Object? value in node) {
+          if (callOf(value) case final Map<String, dynamic> found) return found;
+        }
+      }
+      return null;
+    }
+
+    test('an awaited instance method call resolves a real target, its return type unwrapped', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {
+  final int count;
+  Model(this.count);
+  Future<int> load() async => count * 2;
+  Future<int> use() async => await load();
+}
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('root');
+}
+''');
+      final Map<String, dynamic> model = app
+          .ofKind('logic.ClassDecl')
+          .singleWhere((Map<String, dynamic> d) => d['name'] == 'Model');
+      final Map<String, dynamic> load = (model['methods'] as List<dynamic>)
+          .cast<Map<String, dynamic>>()
+          .singleWhere((Map<String, dynamic> m) => m['name'] == 'load');
+      // The DECLARATION's own returnType is the unwrapped VALUE type, never `Future<int>`.
+      expect(load['returnType'], <String, dynamic>{'library': 'dart:core', 'name': 'int'});
+      final Map<String, dynamic> use = (model['methods'] as List<dynamic>)
+          .cast<Map<String, dynamic>>()
+          .singleWhere((Map<String, dynamic> m) => m['name'] == 'use');
+      final Map<String, dynamic> await_ = awaitOf(use['body'])!;
+      expect(await_['type'], <String, dynamic>{'library': 'dart:core', 'name': 'int'});
+      final Map<String, dynamic> call = await_['operand'] as Map<String, dynamic>;
+      expect(call.containsKey('target'), isTrue);
+    });
+
+    test('a bare, un-awaited call to the identical async method never resolves a target', () async {
+      final Extracted app = await extract(r'''
+import 'package:flutter/material.dart';
+class Model {
+  final int count;
+  Model(this.count);
+  Future<int> load() async => count * 2;
+}
+class W extends StatelessWidget {
+  const W({super.key, required this.model});
+  final Model model;
+  @override
+  Widget build(BuildContext context) => Text('${model.load()}');
+}
+''');
+      final Map<String, dynamic> render = app.only('ui.Component')['render'] as Map<String, dynamic>;
+      Map<String, dynamic>? callOf(Object? node) {
+        if (node is Map<String, dynamic>) {
+          if (node['kind'] == 'logic.MethodCall' && node['method'] == 'load') return node;
+          for (final Object? value in node.values) {
+            if (callOf(value) case final Map<String, dynamic> found) return found;
+          }
+        } else if (node is List) {
+          for (final Object? value in node) {
+            if (callOf(value) case final Map<String, dynamic> found) return found;
+          }
+        }
+        return null;
+      }
+
+      final Map<String, dynamic>? call = callOf(render);
+      expect(call, isNotNull);
+      expect(call!.containsKey('target'), isFalse);
+    });
+
+    test('an awaited static async method call resolves a real target, its return type unwrapped', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {
+  static Future<int> loadStatic(int x) async => x * 3;
+  Future<int> use() async => await Model.loadStatic(5);
+}
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('root');
+}
+''');
+      final Map<String, dynamic> model = app
+          .ofKind('logic.ClassDecl')
+          .singleWhere((Map<String, dynamic> d) => d['name'] == 'Model');
+      final Map<String, dynamic> loadStatic = (model['methods'] as List<dynamic>)
+          .cast<Map<String, dynamic>>()
+          .singleWhere((Map<String, dynamic> m) => m['name'] == 'loadStatic');
+      expect(loadStatic['returnType'], <String, dynamic>{'library': 'dart:core', 'name': 'int'});
+      final Map<String, dynamic> use = (model['methods'] as List<dynamic>)
+          .cast<Map<String, dynamic>>()
+          .singleWhere((Map<String, dynamic> m) => m['name'] == 'use');
+      final Map<String, dynamic> await_ = awaitOf(use['body'])!;
+      final Map<String, dynamic> call = await_['operand'] as Map<String, dynamic>;
+      final Map<String, dynamic> callee = call['callee'] as Map<String, dynamic>;
+      expect(callee.containsKey('target'), isTrue);
+    });
+
+    // A real test-coverage gap found via mutation testing (M11-B's own Phase 20): removing the
+    // `isAsynchronous && !awaited` gate from `_staticMemberTarget` specifically was not caught by any
+    // existing test — the sibling instance-method test, above, only proves the AWAITED shape resolves; no
+    // test anywhere proved the un-awaited STATIC shape refuses. Added as a permanent regression test, per
+    // the governing brief's own explicit instruction not to manufacture coverage without a genuine gap.
+    test('a bare, un-awaited call to a static async method never resolves a target', () async {
+      final Extracted app = await extract(r'''
+import 'package:flutter/material.dart';
+class Model {
+  static Future<int> loadStatic(int x) async => x * 3;
+}
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => Text('${Model.loadStatic(5)}');
+}
+''');
+      final Map<String, dynamic> render = app.only('ui.Component')['render'] as Map<String, dynamic>;
+      final Map<String, dynamic>? call = callOf(render);
+      expect(call, isNotNull);
+      final Map<String, dynamic> callee = call!['callee'] as Map<String, dynamic>;
+      expect(callee.containsKey('target'), isFalse);
+    });
+
+    test('an awaited method with an ineligible (dynamic) return type never resolves a target', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {
+  Future<dynamic> getDynamic() async => 5;
+  Future<int> use() async => await getDynamic();
+}
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('root');
+}
+''');
+      final Map<String, dynamic> model = app
+          .ofKind('logic.ClassDecl')
+          .singleWhere((Map<String, dynamic> d) => d['name'] == 'Model');
+      final Map<String, dynamic> use = (model['methods'] as List<dynamic>)
+          .cast<Map<String, dynamic>>()
+          .singleWhere((Map<String, dynamic> m) => m['name'] == 'use');
+      final Map<String, dynamic> await_ = awaitOf(use['body'])!;
+      final Map<String, dynamic> call = await_['operand'] as Map<String, dynamic>;
+      expect(call.containsKey('target'), isFalse);
+    });
+
+    test('await on a parenthesized method call resolves identically to an unparenthesized one', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class Model {
+  final int count;
+  Model(this.count);
+  Future<int> load() async => count * 2;
+  Future<int> use() async => await (load());
+}
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('root');
+}
+''');
+      final Map<String, dynamic> model = app
+          .ofKind('logic.ClassDecl')
+          .singleWhere((Map<String, dynamic> d) => d['name'] == 'Model');
+      final Map<String, dynamic> use = (model['methods'] as List<dynamic>)
+          .cast<Map<String, dynamic>>()
+          .singleWhere((Map<String, dynamic> m) => m['name'] == 'use');
+      final Map<String, dynamic> await_ = awaitOf(use['body'])!;
+      final Map<String, dynamic> call = await_['operand'] as Map<String, dynamic>;
+      expect(call['kind'], 'logic.MethodCall');
+      expect(call.containsKey('target'), isTrue);
+    });
+  });
+
   group('member helper composition provenance (ADR-0040, M10-B)', () {
     Map<String, dynamic> classDecl(Extracted app, String name) =>
         app.ofKind('logic.ClassDecl').singleWhere((Map<String, dynamic> d) => d['name'] == name);
@@ -7923,9 +8156,13 @@ class W extends StatelessWidget {
       expect(callee.containsKey('target'), isFalse);
     });
 
-    test('an async method dependency still resolves a target internally too — the generator excludes it', () async {
-      // M10-B §50: mirrors the identical, already-proven external-call fact (ADR-0039 §5) for an internal
-      // composition target — `_externalMethodTarget` does not check `isAsync` either way.
+    test('an AWAITED async method dependency resolves a target internally; a bare, un-awaited one does not (M11-B)', () async {
+      // Reversed from its own pre-M11-B assertion (M10-B §50's own original claim: `_externalMethodTarget`
+      // does not check `isAsync` either way, so a BARE, un-awaited internal call — `Future<int> compute()
+      // => load();`, returning the `Future` directly without awaiting it — used to resolve `target`
+      // unconditionally). M11-B (ADR-0046) makes this internal-composition path await-aware too: the bare
+      // reference below now resolves no target, while an explicitly `await`ed one, in a sibling method,
+      // does — proven together so this test cannot pass by accident on either shape alone.
       final Extracted app = await extract('''
 import 'package:flutter/material.dart';
 class Model {
@@ -7933,6 +8170,7 @@ class Model {
   Model(this.count);
   Future<int> load() async => count;
   Future<int> compute() => load();
+  Future<int> computeAwaited() async => await load();
 }
 class W extends StatelessWidget {
   const W({super.key, required this.model});
@@ -7941,8 +8179,11 @@ class W extends StatelessWidget {
   Widget build(BuildContext context) => Text(model.compute().toString());
 }
 ''');
-      final Map<String, dynamic>? call = callOf(method(classDecl(app, 'Model'), 'compute')['body'], 'load');
-      expect(call?['target'], isNotNull);
+      final Map<String, dynamic> model = classDecl(app, 'Model');
+      final Map<String, dynamic>? bare = callOf(method(model, 'compute')['body'], 'load');
+      expect(bare?['target'], isNull);
+      final Map<String, dynamic>? awaited = callOf(method(model, 'computeAwaited')['body'], 'load');
+      expect(awaited?['target'], isNotNull);
     });
 
     test('a static sibling method is never treated as a same-self composition target', () async {

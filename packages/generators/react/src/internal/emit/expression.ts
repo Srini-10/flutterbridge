@@ -1623,7 +1623,15 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
     }
 
     case 'logic.Await':
-      return `await ${emitExpression(node['operand'] as Node, scope)}`;
+      // Self-wrapped (M11-B, ADR-0046) — the identical `paren(...)` discipline `logic.Binary`/
+      // `logic.Unary`/`logic.Conditional`/`logic.NullCheck` already apply to themselves, extended here for
+      // the identical reason: `await` binds looser than member access, so an un-parenthesized `await
+      // Model_createOther(self).count` would read the property off the CALL, not the awaited value — a
+      // real bug, found live (M10-D return-value chaining composed with `await` for the first time here;
+      // no prior milestone could reach this shape, since an async call never resolved a target before
+      // this one). `paren(...)` unconditionally, matching every sibling low-precedence node, rather than
+      // asking every future consumer to remember to wrap an `Await` receiver specifically.
+      return paren(`await ${emitExpression(node['operand'] as Node, scope)}`);
 
     case 'logic.Cast':
       // Dart's `as` is a *checked* downcast that throws; TypeScript's is erased. Emitting `as` would silently

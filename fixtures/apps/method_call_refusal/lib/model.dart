@@ -193,3 +193,58 @@ class StaticAccessModel {
   /// sharing `_isEligibleMethodShape` between both extraction-side gates.
   static dynamic getDynamic() => 5;
 }
+
+/// M11-B (ADR-0046 §6) — proves every async shape OUTSIDE the newly-supported subset stays refused
+/// honestly, even when genuinely awaited.
+class AsyncRefusalModel {
+  final int count;
+  AsyncRefusalModel(this.count);
+
+  /// A generic async method — the identical M10-B/M11-A `typeParameters.isNotEmpty` exclusion, unaffected
+  /// by `async`.
+  Future<T> identity<T>(T value) async => value;
+
+  /// Calls the generic method above WITH `await` — proves genuine awaiting does not bypass the pre-
+  /// existing generic-method exclusion.
+  Future<int> callIdentity() async => await identity(count);
+
+  /// An async method whose own return type is `Future<dynamic>` — the unwrapped `dynamic` still fails the
+  /// identical `_isEligibleMethodReturnType` gate a synchronous `dynamic` return already must (M11-B §7).
+  Future<dynamic> getDynamicAsync() async => count;
+
+  /// Calls the above WITH `await` — proves genuine awaiting does not bypass the return-type gate.
+  Future<int> callDynamicAsync() async => await getDynamicAsync() as int;
+
+  /// A PRIVATE async method — excluded by the identical `isPrivate` check every other gate applies,
+  /// unaffected by `async`/`await`.
+  Future<int> _hiddenAsync() async => count * 3;
+
+  /// Calls the private async method above WITH `await` — proves genuine awaiting does not bypass privacy.
+  Future<int> callHiddenAsync() async => await _hiddenAsync();
+
+  /// A directly self-recursive async method, awaited — the identical fixed-point non-convergence argument
+  /// (ADR-0040 §10) refuses it, unaffected by `async`/`await`: no member in the cycle can ever be "first."
+  Future<int> countdownAsync(int n) async => n <= 0 ? count : await countdownAsync(n - 1);
+}
+
+/// A base class with a real async method, and a SUBCLASS that declares its OWN new (non-override) async
+/// method, calling it bare (M11-B §6/§8, mirroring M11-A's own identical subclass-dispatch-safety
+/// mutation-testing finding, ADR-0045 mutation 1a): the bare call's own owner class (`AsyncSubclass`
+/// itself) has an explicit superclass, so `_dispatchSafeReceiverClass` refuses it — unaffected by
+/// `async`/`await`. (An INHERITED, non-overridden method called bare from a subclass — the OTHER shape —
+/// already resolves correctly, since the bare-call path's own receiver type is reconstructed from the
+/// method's OWN declaring class, not the calling context's; this fixture does not need to re-prove that
+/// positive case, already covered by `fixtures/apps/async_method_await`.)
+class AsyncBase {
+  final int count;
+  AsyncBase(this.count);
+}
+
+class AsyncSubclass extends AsyncBase {
+  AsyncSubclass(super.count);
+
+  Future<int> loadNew() async => count * 2;
+
+  /// Calls `loadNew` bare (implicit `this`), awaited.
+  Future<int> useNew() async => await loadNew();
+}

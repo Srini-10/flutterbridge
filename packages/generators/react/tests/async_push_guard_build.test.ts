@@ -150,7 +150,10 @@ describe('M7-H/M7-J build-proof: an awaited, mounted-guarded push, real analyzer
     // The real await between the two state writes and the guard: `Future.delayed(Duration(...))` lowered
     // to the kit's `delay(Duration)`, `Duration(milliseconds: 30)` surviving as `new Duration({ ... })`
     // rather than a bare number (M7-L) — a reviewer reading this beside the Dart sees the same call.
-    expect(source).toMatch(/_isSubmitting\.set\(true\);\s*await delay\(new Duration\(\{ milliseconds: 30 \}\)\);\s*if \(\(!mounted\.current\)\) {\s*return;/);
+    // `logic.Await` now self-parenthesizes unconditionally (M11-B, ADR-0046 §9 — the identical `paren(...)`
+    // discipline `logic.Binary`/`logic.Conditional` already apply to themselves), so a bare `await`
+    // STATEMENT carries one harmless, correct outer paren pair it did not before this milestone.
+    expect(source).toMatch(/_isSubmitting\.set\(true\);\s*\(await delay\(new Duration\(\{ milliseconds: 30 \}\)\)\);\s*if \(\(!mounted\.current\)\) {\s*return;/);
     // The push itself is still there, after the guard, unconditionally reached once the guard passes.
     expect(source).toMatch(/router\.push\(/);
   });
