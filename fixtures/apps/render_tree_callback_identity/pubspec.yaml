@@ -1,0 +1,24 @@
+name: render_tree_callback_identity
+description: >-
+  M11-D positive proof: an ordinary local declared inside an inline render-tree callback (`onPressed: ()
+  { ... }`) and read from that same callback, or from a NESTED callback closing over it (`setState`),
+  resolves to a real, stable declaration-tier target — never `BRG3006`. Covers a direct (non-nested) read,
+  a nested-closure read, sibling callbacks (same and different local names), two widgets independently
+  declaring a structurally-identical local (the M11-C R5 cross-widget collision, now eliminated), a
+  mutable (reassigned) local, multiple reads of the same declaration, multiple captured locals from one
+  callback, and a captured local sharing a name with a collection-for loop item (a deliberately separate
+  identity mechanism, M9-F) and with a class member. A local SHADOWED across the erased boundary of a
+  spliced-open `setState` call is a SEPARATE, deliberately-refused finding — see
+  `fixtures/apps/render_tree_callback_shadow_refusal` and the M11-D milestone doc.
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

@@ -116,7 +116,31 @@ function isProvablyExhaustiveEnumSwitch(node: Node, scope: EmitScope): boolean {
  * @returns the lines, unindented. The caller places them.
  */
 export function emitStatements(statements: unknown, scope: EmitScope): string[] {
-  return asArray(statements).flatMap((statement) => emitStatement(statement, scope));
+  const seen = new Set<string>();
+  return asArray(statements).flatMap((statement) => {
+    // A state-batch call is spliced open at extraction time (INV-22), with no JS-level block left to mark
+    // where it began — so two `logic.VarDecl`s that would generate the same name here can no longer rely
+    // on Dart's own nested scope to make that legal (`GeneratorDiagnosticCode.DuplicateLocalDeclaration`).
+    // Checked in the same flat list `emitStatements` already walks — a genuinely nested block (an `if`/
+    // `while`/`for` body) is never in this same list; it is lowered by its own case, wrapped in real `{ }`.
+    if (kindOf(statement) === 'logic.VarDecl') {
+      const name = identifierOf(String(statement['name'] ?? '_'));
+      if (seen.has(name)) {
+        scope.report(
+          GeneratorDiagnosticCode.DuplicateLocalDeclaration,
+          'error',
+          `\`${name}\` is already declared earlier in this scope — a state-batch call's own body was ` +
+            'spliced open here (INV-22) and no longer has a block boundary to shadow within, so this ' +
+            'generator cannot represent both declarations without inventing a rename the program never ' +
+            'wrote',
+          idOf(statement),
+        );
+        return [];
+      }
+      seen.add(name);
+    }
+    return emitStatement(statement, scope);
+  });
 }
 
 /** Lowers one statement. Returns its lines; a block returns several. */

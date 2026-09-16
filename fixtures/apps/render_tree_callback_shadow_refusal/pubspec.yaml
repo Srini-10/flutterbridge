@@ -1,0 +1,22 @@
+name: render_tree_callback_shadow_refusal
+description: >-
+  M11-D negative proof: a local declared inside an inline render-tree callback, SHADOWED by a
+  same-named local declared inside a NESTED `setState(() { ... })` call, refuses honestly as `BRG3019`
+  rather than emitting invalid TypeScript. `setState`'s own body is spliced open at extraction time
+  (INV-22, `statement_extractor.dart`) — its statements are concatenated directly into the enclosing
+  block's own statement list, with no block boundary left for the second `const value = ...;` to shadow
+  within. Declaration identity itself is resolved correctly and distinctly (the read targets the INNER
+  declaration, proven in `fixtures/apps/render_tree_callback_identity`); what has no faithful lowering is
+  the flattening, once it produces a same-name collision in the same emitted scope.
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

@@ -3601,10 +3601,13 @@ class _WState extends State<W> {
     // (`Scope.forBody` is only ever entered for an action/function body, never a `build()` render tree).
     //
     // `Scope.forWidgetTree` is a *separate* owner/ordinal pair from the one `Scope.forBody` populates —
-    // never `Scope.forBody` reused — so this carries no risk of also, as a side effect, giving an
+    // never `Scope.forBody` reused — so this carried no risk of also, as a side effect, giving an
     // ordinary local or a statement-level for/catch binding declared inside an inline callback found
-    // within the same render tree an identity it does not have today (a real, separately-evidenced,
-    // pre-existing gap this milestone found and left exactly as it was, documented not fixed).
+    // within the same render tree an identity it did not have (a real, separately-evidenced gap this
+    // milestone found and left exactly as it was, documented not fixed). M11-D closed that gap
+    // separately: `Scope.forWidgetTree` now starts a REAL `_owner`/`_ordinals` pair too, from the same
+    // `_ordinalsOf` pass — see 'render-tree-embedded callback local declaration identity (ADR-28, M11-D)'
+    // below.
     //
     // `item` stays a `bind.Param` (a real generated `.map()` callback parameter — not a `let`, unlike an
     // ordinary local, which is exactly why M9-A's own `Binds.local` choice does not transfer here) — but
@@ -3968,6 +3971,303 @@ class _HomeState extends State<Home> {
       final String source = widgetWrapper.replaceFirst('{{BODY}}', '''
     final items = ['A', 'B'];
     return Column(children: [for (final item in items) Text(item)]);
+''');
+      final Extracted first = await extract(source);
+      final Extracted second = await extract(source);
+      expect(first.bytes, second.bytes);
+    });
+  });
+
+  group('render-tree-embedded callback local declaration identity (ADR-28, M11-D)', () {
+    // An ordinary local declared inside an INLINE render-tree callback (`onPressed: () { ... }`) —
+    // architecturally the same kind of binding a statement-level local already gets declaration-tier
+    // identity for (ADR-28) — had none, for the identical structural reason the F-group above once
+    // documented for collection-for items: `Scope.forWidgetTree` (M9-F) inherited `_owner`/`_ordinals`
+    // unchanged from its enclosing scope, which is `null` all the way from `classState.scope` (nothing
+    // between a component's class scope and its render tree ever called `Scope.forBody`). A fresh M11-D
+    // probe proved this was not specific to a NESTED closure read (`setState`) — a DIRECT read, in the
+    // very same callback that declared the local, failed identically. `Scope.forWidgetTree` now runs the
+    // same `_ordinalsOf` pass it already ran for its own widget-ordinal pair and starts a real
+    // `_owner`/`_ordinals` pair from it too — the one `_localSymbol` reads. `build()`'s own leading
+    // locals (M8-B's `inlineValue`) are unaffected: `_structuredBody` never routes those through
+    // `_localSymbol`, and `_reference` checks `inlineValue` first regardless.
+
+    const String statefulWrapper = '''
+import 'package:flutter/material.dart';
+class Home extends StatefulWidget {
+  const Home({super.key});
+  @override
+  State<Home> createState() => _HomeState();
+}
+class _HomeState extends State<Home> {
+  int _result = 0;
+  @override
+  Widget build(BuildContext context) {
+    {{BODY}}
+  }
+}
+''';
+
+    Map<String, dynamic> declNamed(Extracted app, String name) =>
+        app.ofKind('logic.VarDecl').singleWhere((Map<String, dynamic> d) => d['name'] == name);
+
+    List<Map<String, dynamic>> refsNamed(Extracted app, String name) =>
+        app.ofKind('logic.Ref').where((Map<String, dynamic> r) => r['name'] == name).toList();
+
+    test('R1 — a local read directly in the same callback (no nesting) targets its own declaration', () async {
+      final Extracted app = await extract(
+        statefulWrapper.replaceFirst('{{BODY}}', r'''
+    return ElevatedButton(
+      onPressed: () {
+        final r = 1;
+        _result = r;
+      },
+      child: Text('$_result'),
+    );
+'''),
+      );
+      expect(app.errors, isEmpty);
+      final Map<String, dynamic> decl = declNamed(app, 'r');
+      final Map<String, dynamic> ref = refsNamed(app, 'r').single;
+      expect(ref['target'], decl['id']);
+    });
+
+    test('R2 — a local captured by a NESTED closure (setState) targets its own declaration', () async {
+      final Extracted app = await extract(
+        statefulWrapper.replaceFirst('{{BODY}}', r'''
+    return ElevatedButton(
+      onPressed: () {
+        final value = 5;
+        setState(() {
+          _result = value;
+        });
+      },
+      child: Text('$_result'),
+    );
+'''),
+      );
+      expect(app.errors, isEmpty);
+      final Map<String, dynamic> decl = declNamed(app, 'value');
+      final Map<String, dynamic> ref = refsNamed(app, 'value').single;
+      expect(ref['target'], decl['id']);
+    });
+
+    test('R3 — sibling callbacks sharing a local name never resolve to each other', () async {
+      final Extracted app = await extract(
+        statefulWrapper.replaceFirst('{{BODY}}', '''
+    return Row(children: [
+      ElevatedButton(
+        onPressed: () {
+          final value = 10;
+          setState(() { _result = value; });
+        },
+        child: Text('a'),
+      ),
+      ElevatedButton(
+        onPressed: () {
+          final value = 20;
+          setState(() { _result = value; });
+        },
+        child: Text('b'),
+      ),
+    ]);
+'''),
+      );
+      expect(app.errors, isEmpty);
+      final List<Map<String, dynamic>> decls = app.ofKind('logic.VarDecl').where((Map<String, dynamic> d) => d['name'] == 'value').toList();
+      expect(decls, hasLength(2));
+      expect(decls[0]['id'], isNot(decls[1]['id']));
+      final List<Map<String, dynamic>> refs = refsNamed(app, 'value');
+      expect(refs, hasLength(2));
+      final Set<String> declIds = decls.map((Map<String, dynamic> d) => d['id'] as String).toSet();
+      final Set<String> refTargets = refs.map((Map<String, dynamic> r) => r['target'] as String).toSet();
+      expect(refTargets, declIds, reason: 'each sibling read targets a declaration, and together they cover both — never the same one twice');
+    });
+
+    test('R5 — two DIFFERENT WIDGETS independently declaring a structurally-identical local never collide', () async {
+      final Extracted app = await extract(r'''
+import 'package:flutter/material.dart';
+class WidgetA extends StatefulWidget {
+  const WidgetA({super.key});
+  @override
+  State<WidgetA> createState() => _WidgetAState();
+}
+class _WidgetAState extends State<WidgetA> {
+  int _result = 0;
+  @override
+  Widget build(BuildContext context) => ElevatedButton(
+    onPressed: () {
+      final value = 5;
+      setState(() { _result = value; });
+    },
+    child: Text('$_result'),
+  );
+}
+class WidgetB extends StatefulWidget {
+  const WidgetB({super.key});
+  @override
+  State<WidgetB> createState() => _WidgetBState();
+}
+class _WidgetBState extends State<WidgetB> {
+  int _result = 0;
+  @override
+  Widget build(BuildContext context) => ElevatedButton(
+    onPressed: () {
+      final value = 5;
+      setState(() { _result = value; });
+    },
+    child: Text('$_result'),
+  );
+}
+''');
+      expect(app.errors, isEmpty);
+      final List<Map<String, dynamic>> decls = app.ofKind('logic.VarDecl').where((Map<String, dynamic> d) => d['name'] == 'value').toList();
+      expect(decls, hasLength(2));
+      expect(
+        decls[0]['id'],
+        isNot(decls[1]['id']),
+        reason: 'before M11-D these fell back to the SAME content-addressed NodeId — no symbol, identical structure',
+      );
+      final List<Map<String, dynamic>> refs = refsNamed(app, 'value');
+      expect(refs, hasLength(2));
+      final Set<String> declIds = decls.map((Map<String, dynamic> d) => d['id'] as String).toSet();
+      final Set<String> refTargets = refs.map((Map<String, dynamic> r) => r['target'] as String).toSet();
+      expect(refTargets, declIds, reason: "each widget's own read targets its own declaration, never the other widget's");
+    });
+
+    test('R6 — a local shadowed by a same-named local inside a nested setState call: identity is still correct (the read targets the INNER declaration)', () async {
+      final Extracted app = await extract(
+        statefulWrapper.replaceFirst('{{BODY}}', r'''
+    return ElevatedButton(
+      onPressed: () {
+        final value = 1;
+        setState(() {
+          final value = 2;
+          _result = value;
+        });
+      },
+      child: Text('$_result'),
+    );
+'''),
+      );
+      expect(app.errors, isEmpty);
+      final List<Map<String, dynamic>> decls = app.ofKind('logic.VarDecl').where((Map<String, dynamic> d) => d['name'] == 'value').toList();
+      expect(decls, hasLength(2));
+      final Map<String, dynamic> outer = decls.firstWhere((Map<String, dynamic> d) => d['id'] != decls.last['id'] || decls.length == 1, orElse: () => decls.first);
+      final Map<String, dynamic> inner = decls.last;
+      expect(outer['id'], isNot(inner['id']));
+      final Map<String, dynamic> ref = refsNamed(app, 'value').single;
+      expect(
+        ref['target'],
+        inner['id'],
+        reason: 'correct declaration identity here is a separate claim from whether the generator can '
+            "faithfully LOWER it (M11-D: it cannot, and refuses as BRG3019 — see the react generator's "
+            'own render_tree_callback_shadow_refusal_build test)',
+      );
+    });
+
+    test('R8 — a mutable (var, reassigned) local captured by a nested closure targets its own declaration', () async {
+      final Extracted app = await extract(
+        statefulWrapper.replaceFirst('{{BODY}}', r'''
+    return ElevatedButton(
+      onPressed: () {
+        var count = 0;
+        count = count + 1;
+        setState(() {
+          _result = count;
+        });
+      },
+      child: Text('$_result'),
+    );
+'''),
+      );
+      expect(app.errors, isEmpty);
+      final Map<String, dynamic> decl = declNamed(app, 'count');
+      final List<Map<String, dynamic>> refs = refsNamed(app, 'count');
+      expect(refs, isNotEmpty);
+      expect(refs.every((Map<String, dynamic> r) => r['target'] == decl['id']), isTrue);
+    });
+
+    test('R11 — a captured local and a collection-for item sharing a name never cross-resolve', () async {
+      final Extracted app = await extract(
+        statefulWrapper.replaceFirst('{{BODY}}', r'''
+    final items = ['a', 'b'];
+    return Column(children: [
+      for (final value in items) Text(value),
+      ElevatedButton(
+        onPressed: () {
+          final value = 1;
+          setState(() { _result = value; });
+        },
+        child: Text('$_result'),
+      ),
+    ]);
+'''),
+      );
+      expect(app.errors, isEmpty);
+      // Both the collection-for item and the ordinary captured local are `logic.VarDecl`s named
+      // `value` (M9-F's `itemDecl` mirrors `logic.For`'s own `loopVariable`/`loopDecl` pair) — two
+      // distinct declarations, minted through two deliberately separate mechanisms
+      // (`ordinalOfInWidgetTree` vs `ordinalOf`), which is exactly the cross-mechanism claim this test
+      // makes. Distinguished here by the item declaration's own reference from `ui.List.itemDecl`.
+      final List<Map<String, dynamic>> decls = app.ofKind('logic.VarDecl').where((Map<String, dynamic> d) => d['name'] == 'value').toList();
+      expect(decls, hasLength(2));
+      final Map<String, dynamic> list = app.only('ui.List');
+      final String itemDeclId = (list['itemDecl'] as Map<String, dynamic>)['id'] as String;
+      final Map<String, dynamic> local = decls.singleWhere((Map<String, dynamic> d) => d['id'] != itemDeclId);
+      expect(local['id'], isNot(itemDeclId));
+      final Map<String, dynamic> ref = refsNamed(app, 'value').single;
+      expect(ref['target'], local['id']);
+    });
+
+    test('R12 — a captured local sharing a name with a class member getter resolves to the local', () async {
+      final Extracted app = await extract(r'''
+import 'package:flutter/material.dart';
+class Home extends StatefulWidget {
+  const Home({super.key});
+  @override
+  State<Home> createState() => _HomeState();
+}
+class _HomeState extends State<Home> {
+  int _result = 0;
+  int get helper => 99;
+  @override
+  Widget build(BuildContext context) => ElevatedButton(
+    onPressed: () {
+      final helper = 5;
+      setState(() { _result = helper; });
+    },
+    child: Text('$_result'),
+  );
+}
+''');
+      expect(app.errors, isEmpty);
+      final Map<String, dynamic> decl = declNamed(app, 'helper');
+      final Map<String, dynamic> ref = refsNamed(app, 'helper').single;
+      expect(ref['target'], decl['id']);
+    });
+
+    test("build()'s own leading locals still use inlineValue, never this pair (M8-B unaffected)", () async {
+      final Extracted app = await extract(
+        statefulWrapper.replaceFirst('{{BODY}}', '''
+    final prefix = 'Item';
+    return Text(prefix);
+'''),
+      );
+      expect(app.errors, isEmpty);
+      expect(refsNamed(app, 'prefix'), isEmpty, reason: 'inlined at its reference site (M8-B), not a logic.Ref');
+      expect(app.ofKind('logic.VarDecl'), isEmpty);
+    });
+
+    test('the same source extracts to the same bytes on a second, independent run (determinism)', () async {
+      final String source = statefulWrapper.replaceFirst('{{BODY}}', r'''
+    return ElevatedButton(
+      onPressed: () {
+        final value = 5;
+        setState(() { _result = value; });
+      },
+      child: Text('$_result'),
+    );
 ''');
       final Extracted first = await extract(source);
       final Extracted second = await extract(source);

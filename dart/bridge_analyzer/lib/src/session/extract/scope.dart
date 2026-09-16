@@ -187,29 +187,43 @@ final class Scope {
     enclosing._widgetOrdinals,
   );
 
-  /// A fresh scope for a `ui.Component`'s own render tree, named [owner] (M9-F).
+  /// A fresh scope for a `ui.Component`'s own render tree, named [owner] (M9-F, declaration-tier
+  /// ordinals amended M11-D).
   ///
-  /// A **separate** owner/ordinal pair from [_owner]/[_ordinals] — never [Scope.forBody] itself, and
-  /// never exposed through [owner]/[ordinalOf] — so this carries no risk of also, as a side effect,
-  /// giving an ordinary local or a statement-level `for`/`catch` binding declared inside an inline
-  /// callback *found within this same render tree* a declaration-tier identity it does not have today.
-  /// That would be a real, separately-evidenced fix this milestone did not investigate or validate;
-  /// [widgetOwner]/[ordinalOfInWidgetTree] are read by exactly one call site
-  /// (`widget_extractor.dart`'s own collection-for handling), never by `statement_extractor.dart`'s own
-  /// `_localSymbol`-family helpers, which continue to read only [owner]/[ordinalOf], unchanged.
+  /// [widgetOwner]/[ordinalOfInWidgetTree] stay a **separate** pair from [owner]/[ordinalOf] — read by
+  /// exactly one call site (`widget_extractor.dart`'s own collection-for handling) — but M11-D also
+  /// starts a real [_owner]/[_ordinals] pair here, the one `statement_extractor.dart`'s own
+  /// `_localSymbol`-family helpers read. Before M11-D this scope inherited [_owner]/[_ordinals]
+  /// unchanged from [enclosing] (`null`, all the way from `classState.scope`: nothing between a
+  /// component's class scope and its render tree ever calls [Scope.forBody]), so an ordinary local
+  /// declared inside an inline callback *found within this render tree* — `onPressed: () { final v =
+  /// ...; ... }` — never had a declaration-tier symbol, regardless of whether the read was nested
+  /// (`setState(() { ... v ... })`) or direct (right there in the same callback, M11-D's own R1
+  /// rung proved this is not a nesting-specific gap). Every such read fell back to a bare, target-less
+  /// `logic.Ref`, and the generator refused it honestly (`BRG3006`) — never silently wrong, but a real,
+  /// live-probed missing capability, and (M11-D §11) two widgets independently declaring a
+  /// structurally-identical local produced the *same* content-addressed `NodeId` for their own
+  /// `logic.VarDecl` nodes, a real cross-widget collision the content-address fallback exists to make
+  /// unreachable for a symbol-bearing declaration but cannot prevent for a symbol-less one.
   ///
-  /// Runs [_ordinalsOf] over [body] (the component's own render tree) once, the same "one pre-order pass,
-  /// keyed by resolved `Element`" scheme [Scope.forBody] already uses — nested/sibling collection-fors,
-  /// however deep, are numbered by the identical mechanism that already proved collision-free for
-  /// statement-level `for`-loops (M9-A).
-  factory Scope.forWidgetTree(Scope enclosing, {required String owner, required AstNode body}) => Scope._(
-    const <String, Binding>{},
-    enclosing,
-    enclosing._owner,
-    enclosing._ordinals,
-    owner,
-    _ordinalsOf(body),
-  );
+  /// Runs [_ordinalsOf] over [body] (the component's own render tree) **once**, reusing the same "one
+  /// pre-order pass, keyed by resolved `Element`" scheme [Scope.forBody] already uses, for *both* pairs —
+  /// nested/sibling callbacks and collection-fors, however deep, are numbered by the identical mechanism
+  /// that already proved collision-free for statement-level `for`-loops (M9-A) and, since M11-B/M11-C,
+  /// for a store/component action's own locals. [owner] mints as both this render tree's collection-for
+  /// owner and its declaration-tier owner — the *same* string is safe for both because it is the
+  /// component's own unique symbol, never shared with any action's or method's own [Scope.forBody] call
+  /// (`declaration_extractor.dart`, `signal_extractor.dart` each mint a distinct owner per declaration).
+  ///
+  /// This does not reach `build()`'s own leading locals (M8-B's "structured build-method extraction",
+  /// `component_extractor.dart`'s `_structuredBody`): those are carried by [Binding.inlineValue], checked
+  /// first in `expression_extractor.dart`'s `_reference`, and never routed through
+  /// `statement_extractor.dart`'s own `_localSymbol` at all — this pair is consulted only when
+  /// [Binding.inlineValue] is absent, so the two mechanisms cannot disagree about the same declaration.
+  factory Scope.forWidgetTree(Scope enclosing, {required String owner, required AstNode body}) {
+    final Map<Element, int> ordinals = _ordinalsOf(body);
+    return Scope._(const <String, Binding>{}, enclosing, owner, ordinals, owner, ordinals);
+  }
 
   final Map<String, Binding> _bindings;
   final Scope? _parent;

@@ -147,6 +147,28 @@ export const GeneratorDiagnosticCode = {
    * `docs/m6/GAP-route-constructor-arguments.md`.
    */
   RouteComponentArguments: 'BRG3018',
+  /**
+   * Two `logic.VarDecl`s in the same emitted statement list would generate the same local name (M11-D).
+   *
+   * Reachable only once a shadowed callback local carries real declaration identity (M11-D): a state-batch
+   * call (`setState(() { ... })`) is spliced open at extraction time (INV-22, `statement_extractor.dart`) —
+   * its own body's statements are concatenated directly into the enclosing block's own statement list, with
+   * no JS-level `{ ... }` marking where it began. Dart's own nested block scope let two `final`/`var`
+   * declarations share a name only because the inner one shadows the outer *within its own braces*; once
+   * those braces are erased, both declarations land in the same flat, brace-less list, and TypeScript's
+   * `const`/`let` has no block boundary left to make the second one legal — `const value = 1; const value =
+   * 2;` in a row is `SyntaxError: Identifier 'value' has already been declared`, not merely a different
+   * program from the one Dart described.
+   *
+   * The two identities are not in question — extraction resolves them correctly and distinctly (M11-D's
+   * own R6 rung proved this: two separate `logic.VarDecl` ids, and the read targets the inner one). What has
+   * no faithful lowering is the *flattening*, once it produces a name collision. Renaming one of the two
+   * would invent a name the program never wrote; wrapping the splice back in a block would undo the erasure
+   * INV-22 exists for. So generation reports this and stops, exactly as `UnsupportedStatement`/`BRG3003`
+   * does for any other construct this generator cannot represent faithfully — it does not silently emit the
+   * invalid TypeScript above.
+   */
+  DuplicateLocalDeclaration: 'BRG3019',
 } as const;
 
 /** A diagnostic code owned by the React generator. */

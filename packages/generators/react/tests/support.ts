@@ -436,3 +436,25 @@ export function actionScopeRaw(): string {
   const path = fileURLToPath(new URL('../../../../fixtures/uir/action_scope.ndjson', import.meta.url));
   return readFileSync(path, 'utf8');
 }
+
+/**
+ * The real `fixtures/apps/render_tree_callback_identity` document, raw analyzer output (M11-D) — not yet
+ * normalized.
+ */
+export function renderTreeCallbackIdentityRaw(): string {
+  const path = fileURLToPath(
+    new URL('../../../../fixtures/uir/render_tree_callback_identity.ndjson', import.meta.url),
+  );
+  return readFileSync(path, 'utf8');
+}
+
+/**
+ * The real `fixtures/apps/render_tree_callback_shadow_refusal` document, raw analyzer output (M11-D) —
+ * not yet normalized.
+ */
+export function renderTreeCallbackShadowRefusalRaw(): string {
+  const path = fileURLToPath(
+    new URL('../../../../fixtures/uir/render_tree_callback_shadow_refusal.ndjson', import.meta.url),
+  );
+  return readFileSync(path, 'utf8');
+}
