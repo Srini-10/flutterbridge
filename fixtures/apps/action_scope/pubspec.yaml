@@ -1,0 +1,19 @@
+name: action_scope
+description: >-
+  M11-C positive proof: a local variable declared inside a store action's own body, and read by a LATER
+  statement in the same body, resolves correctly — never `BRG3006`. Covers a smallest reproducer, sibling-
+  scope isolation, nested block scope, shadowing a field-backed signal, and a mutable (reassigned) local.
+  A local declared inside an INLINE render-tree callback (e.g. `onPressed: () { ... }`) is a SEPARATE,
+  deliberately out-of-scope finding — see ADR/milestone doc.
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

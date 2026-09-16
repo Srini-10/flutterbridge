@@ -430,3 +430,9 @@ export function asyncMethodAwaitRaw(): string {
   const path = fileURLToPath(new URL('../../../../fixtures/uir/async_method_await.ndjson', import.meta.url));
   return readFileSync(path, 'utf8');
 }
+
+/** The real `fixtures/apps/action_scope` document, raw analyzer output (M11-C) — not yet normalized. */
+export function actionScopeRaw(): string {
+  const path = fileURLToPath(new URL('../../../../fixtures/uir/action_scope.ndjson', import.meta.url));
+  return readFileSync(path, 'utf8');
+}

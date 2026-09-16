@@ -25,7 +25,7 @@
 import type { NodeId } from '@bridge/uir';
 
 import { GeneratorDiagnosticCode } from '../diagnostics/codes.js';
-import { emitExpression, type EmitScope } from './expression.js';
+import { emitExpression, localBindingsIn, type EmitScope } from './expression.js';
 import { emitStatements } from './statement.js';
 import { identifierOf, type ModuleBuilder } from './module.js';
 import { paramListOf, refuseNamedParams } from './types.js';
@@ -115,7 +115,19 @@ export function emitStore(store: Node, module: ModuleBuilder, scope: EmitScope):
       // rather than to nothing (Spec v2.5 §A18). The kit's facade already takes them —
       // `action<A extends readonly unknown[], R>(body: (...args: A) => R)` — because an action is a function
       // and was typed as one; nothing in the runtime changed for this.
-      const body = emitStatements(node['body'], actionScope(inner, params));
+      //
+      // `localBindingsIn(node['body'])` (M11-C) — a local this action's own body declares (ADR-28), the
+      // identical mechanism `functions.ts`'s own member-helper loop and `component.ts`'s own action-body
+      // emission already use (`localBindingsIn`, keyed by the declaration's own stable `NodeId`, never by
+      // name). Its own absence here was a real, live-probed, pre-existing gap: extraction already resolves
+      // a `target` for a local declared and later read within a store action's own body (confirmed
+      // unchanged before and after normalization), but this scope never consulted it, so EVERY such read
+      // refused honestly as `BRG3006` — never silently wrong, but a genuine missing capability all the
+      // same, unrelated to mutability (a `var`/reassigned local hits the identical, unmodified target-
+      // resolution mechanism) or to nested block scopes (`{ ... }` inside an action body, also proven
+      // correctly targeted at extraction already).
+      const locals = localBindingsIn(node['body']);
+      const body = emitStatements(node['body'], actionScope(inner, params, locals));
       // The default value's own emission uses `inner` — the scope ENCLOSING the action, never
       // `actionScope(inner, params)` — mirroring the identical scoping rule the Dart extractor's own
       // `_params` already applies (M10-E, ADR-0043 §5): a default is a constant expression and cannot
@@ -144,19 +156,31 @@ export function emitStore(store: Node, module: ModuleBuilder, scope: EmitScope):
 }
 
 /**
- * A scope that resolves an action's parameters, by name (§A18.3).
+ * A scope that resolves an action's parameters, by name (§A18.3), and its own locals, by declaration
+ * identity (M11-C).
  *
  * Layered over the store's scope rather than merged into it, so a parameter is visible only inside the action
  * that declares it — which is what "the action's scope" means, and what stops one action's `id` resolving
- * inside another's body.
+ * inside another's body. `locals` is keyed by the declaration's own `NodeId` (`localBindingsIn`, never by
+ * name), the identical mechanism `component.ts`'s own sibling `actionScope` already uses for a component's
+ * own action bodies — reused here, not re-derived, so a local declared in ONE action can never resolve
+ * inside a DIFFERENT action's own body (`localBindingsIn` is computed per-action, at the call site, and
+ * this scope is never shared across actions).
  */
-function actionScope(parent: EmitScope, params: readonly Node[]): EmitScope {
+function actionScope(parent: EmitScope, params: readonly Node[], locals: ReadonlyMap<NodeId, string> = new Map()): EmitScope {
   const names = new Map<string, string>();
   for (const param of params) {
     const name = String(param['name'] ?? '');
     if (name !== '') names.set(name, identifierOf(name));
   }
-  return { ...parent, paramInScope: (name) => names.get(name) ?? parent.paramInScope(name) };
+  return {
+    ...parent,
+    paramInScope: (name) => names.get(name) ?? parent.paramInScope(name),
+    // A local's own binding first (ADR-28) — it can never collide with anything `parent.localName` might
+    // otherwise resolve (the two id spaces are disjoint by construction, a real declaration-tier `NodeId`
+    // vs. whatever the enclosing scope already knew), so checking `locals` first is always safe.
+    localName: (id) => locals.get(id) ?? parent.localName(id),
+  };
 }
 
 
