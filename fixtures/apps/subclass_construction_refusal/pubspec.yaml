@@ -1,0 +1,17 @@
+name: subclass_construction_refusal
+description: >-
+  M11-I (plan Phase J) proof: a generated program cannot construct a subclass, so a Base-typed receiver never
+  holds a Child. That is the fact that makes the statically bound getter helper for Base.value sound
+  (ADR-0038 section 10 argues from the receiver's own eligibility, which does not cover this case).
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

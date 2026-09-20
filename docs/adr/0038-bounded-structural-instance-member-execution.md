@@ -215,3 +215,28 @@ Nothing here forecloses a future method milestone, a richer member-to-member rea
 ever truly warranted) a runtime-class migration — this ADR's own helper model, receiver rewrite, and
 identity scheme are additive and were not designed around getters specifically; a method would reuse every
 piece of this ADR except the missing argument-evaluation-order proof §14 names as the actual gap.
+
+## Amendment (M11-I, 2026-09-20) — what actually makes §10 sound
+
+§10 concludes that "the entire dynamic-dispatch exclusion follows from the first clause alone" — that a receiver
+typed `Child` can never reach a helper. That is true and does not address the case that matters: a receiver typed
+`Base` that *holds* a `Child`. §10 deliberately targets that receiver ("reading the identical getter directly off
+a `Base`-typed receiver, by contrast, is targeted"), and in Dart `Show(base: Child())` reads `Child.value`, where
+the emitted `Base_value(props.base)` computes `Base.value`.
+
+Nothing in §10 rules that out, and the M9-J test that was meant to (`unmodelled_class_member_build.test.ts`,
+"never statically bound") was passing for an unrelated reason: its committed golden predated `isGetter`, so the
+getter *looked* ineligible. Refreshing the golden (M11-I) showed `Base_value` being emitted.
+
+It is nonetheless sound, for a reason §10 does not give: **a generated program cannot construct a class with an
+explicit superclass.** `new Child(…)` is refused (`BRG3002`, "this generator does not emit class declarations"),
+observed by building the source above. Every instance of a project class in generated output is therefore built
+by the bounded structural construction of ADR-0036/0037, which admits only classes whose superclass is `Object`.
+No `Child` can reach a `Base`-typed value, so there is nothing to dispatch to.
+
+That makes the guarantee **conditional on subclass construction staying refused**, and it was previously an
+accident of two ADRs. It is now pinned: `subclass_construction_refusal_build.test.ts` builds exactly that program
+from real analyzer output and fails if the construction is ever accepted — at which point §10 must be
+reconsidered (a "has an overriding subclass" pass, which §10 rejected as unnecessary, would then be necessary).
+Instances arriving from outside the program (an external package's subclass) are outside this ADR's model and are
+not covered by it.

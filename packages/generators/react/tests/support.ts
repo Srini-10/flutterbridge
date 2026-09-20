@@ -562,3 +562,9 @@ export function reservedIdentifiersRaw(): string {
   const path = fileURLToPath(new URL('../../../../fixtures/uir/reserved_identifiers.ndjson', import.meta.url));
   return readFileSync(path, 'utf8');
 }
+
+/** The real `fixtures/apps/subclass_construction_refusal` document, raw analyzer output (M11-I) — not yet normalized. */
+export function subclassConstructionRefusalRaw(): string {
+  const path = fileURLToPath(new URL('../../../../fixtures/uir/subclass_construction_refusal.ndjson', import.meta.url));
+  return readFileSync(path, 'utf8');
+}
