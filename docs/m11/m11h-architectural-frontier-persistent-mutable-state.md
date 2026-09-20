@@ -191,8 +191,11 @@ So the generated re-render schedule is a strict subset of Dart's rebuild schedul
 `var count = 0; onPressed: () { count++; setState(() { _result = count; }); }` Dart resets `count` on
 every rebuild, so `_result` stays at 1. A per-render `let` would reset only when `_result` *changes*:
 press 1 → `_result` 0→1, re-render, `count` = 0; press 2 → `_result.set(1)` is equal, **no re-render**, the
-same closure survives with `count` = 1, so press 2 yields `_result` = 2. That divergence is derived from
-the two observed facts above; it was **not** executed in a browser **[not run]**. Hypothesis A therefore
+same closure survives; press 3 → that closure's `count` is 2, so `_result` = 2. Dart never leaves 1.
+**Correction (M11-H follow-up, ADR-0048):** this paragraph originally placed the divergence at press 2; the
+model was later *executed* and the divergence is at press 3 (`[r=1, r=1, r=2, r=1]`, real React + real runtime
+`signal`, against real Flutter's `[r=1, r=1, r=1, r=1]`). The conclusion stands; the derived detail was off
+by one, which is itself the argument for executing rather than deriving. Hypothesis A therefore
 does not preserve Dart semantics without changing the rebuild trigger — runtime architecture.
 
 **B — generated component-local mutable cell (`useState`/`useRef`).** Creation once per mount, remount
@@ -282,8 +285,7 @@ Categories are grouped; each was probed, is impossible by construction, or is re
   unrelated to this milestone, not investigated further — flagged only.
 - **Local-function write bypassing `BRG1311`** — **[observed]** it never reaches `_target`; safe because the
   generator refuses the opaque declaration. Layered protection, not a hole.
-- **Rebuild-schedule divergence (Hypothesis A)** — derived from two observed facts; **[not run]** in a
-  browser. This is the reason for A3, not a defect in shipped code (no such binding is emitted).
+- **Rebuild-schedule divergence (Hypothesis A)** — derived from two observed facts, later **[runtime-executed]** in jsdom by the M11-H follow-up (ADR-0048). This is the reason for A3, not a defect in shipped code (no such binding is emitted).
 - **Incidental, unrelated [observed]:** `ListView.builder(itemBuilder: (c, i) { return Text('$i'); })` with a
   block-bodied builder emits `<ListView />` with **no diagnostic** at all, even with no captured local
   (control probe `q_builder_ctl`). The `itemBuilder` prop is present in the UIR and not emitted. This is
@@ -304,7 +306,7 @@ repository; they are not committed and are not fixtures.
 
 No browser path was executed. Directly executed: the real `@bridge/runtime-react` `signal`/`subscribe`
 in Node (§8/A). Everything about React render timing beyond that — including the press-2 scenario — is
-derived, not run **[not run]**. No claim of runtime correctness is made for any binding kind here.
+derived, not run **[not run]** *at the time of this section; the follow-up executed it in jsdom — see §19*. No claim of runtime correctness is made for any binding kind here.
 
 ## 17. Relationship to `rsc-split`
 
@@ -316,14 +318,63 @@ way.
 
 Any future work on this frontier needs, *before* a design is proposed:
 
-1. A decision, by the spec's owner, on the contract: is the target's semantics "per-`build()` call" (needs
+1. *(Resolved by ADR-0048, §19.)* A decision, by the spec's owner, on the contract: is the target's semantics "per-`build()` call" (needs
    rebuild-equivalence) or an explicitly documented "per-render" approximation? Everything downstream
    depends on this and it is not a compiler-internal question.
 2. If rebuild-equivalence is wanted: evidence of what re-render trigger the runtime could honour for
    `setState(() {})` and equal-value writes, and its cost — an ADR against ADR-20 R3.
 3. Only then, an ADR for a UIR binding node, evidenced by a *proven contradiction* with the spec.
-4. A browser-executed check of the press-2 scenario (§8/A) to convert the derived divergence to an observed
+4. *(Executed in jsdom by §19; a real browser was not used.)* A browser-executed check of the press-2 scenario (§8/A) to convert the derived divergence to an observed
    one, using an existing browser path if one applies.
 
 Separately, and not part of this frontier: the silent `ListView.builder` block-bodied `itemBuilder` drop
 (§13) deserves its own investigation.
+
+## 19. Follow-up: the semantic decision (ADR-0048)
+
+Written after §1–§18, on the same baseline (`725310b`, worktree drift unchanged). It answers the one
+question §18 left open — *what is the lifetime of a build-local across generated re-renders, and what
+triggers a rebuild* — and records the decision as **ADR-0048**, which this section summarises.
+No code, schema, test or fixture changed.
+
+**What changed our evidence.** §8 *derived* the Hypothesis A/B divergence. This follow-up *executed* it, and
+the derivation was wrong in a detail (§8 now carries a correction). Ground truth came from real Flutter
+(`flutter test`), the candidates from hand-written models on the real `react`, `react-dom` and
+`@bridge/runtime-react` in jsdom:
+
+| Scenario | Real Flutter | A: per-render `let` | B: persistent cell |
+|---|---|---|---|
+| S1 `var count=0; count++; setState(() { _result = count; })`, 4 taps | `[1,1,1,1]` (5 builds) | `[1,1,2,1]` | `[1,2,3,4]` |
+| S2 `inc, inc, show(setState(){}), inc, show` | `[2,1]` | `[1,2]` | — |
+| S3 State field | `[1,2,3,4]` | — | (B is this shape) |
+
+StrictMode changed only render counts. The models are hand-written because `BRG1311` correctly prevents
+generating them; they reject A and B by counter-example and prove nothing positive.
+
+**Exact triggers (all observed).** Generated: an `Object.is`-changing write to a signal read via
+`useSignal`; a parent render (no `memo`); a consumed provider changing. Flutter: every `setState`
+(unconditionally), a non-identical parent rebuild, an inherited-widget change. `setState(() {})` compiles to an
+empty handler; an equal `set` notifies nobody; a State-field write *without* `setState` re-renders (Flutter
+would not). The full difference table is ADR-0048 D3.
+
+**Decision (ADR-0048).** The contract preserves the rendered result as a function of props, State fields
+and inherited state — not `build()` invocations. A build-local therefore has **no lifetime**: it is a name
+for an expression, which is what `inlineValue` already is. Mutating one depends on exactly what the contract
+declines to preserve, so `BRG1311` is the contract's boundary and stays; the supported alternative is a
+State field. A faithful implementation would need seven pieces (ADR-0048 D6), three of them unbounded, and
+a spec-level decision to make Flutter's rebuild schedule normative. **No schema change is required** by the
+decision (D7).
+
+**Incidental, both [observed], neither investigated further.** (1) Tested in-place mutations of a State-held
+collection are refused loudly — `.add` fails strict `tsc` (`TS2339`), index assignment is `BRG3004`/`BRG3006`,
+a project-class field write is `BRG3013` — so none was found to go silently stale; this is a sample, not a
+proof. (2) `bridge build` reported "succeeded" for the `.add` probe until `tsc` ran, because dependencies were
+not installed and the typecheck step was skipped ("dependencies are not installed") — expected, but it means
+a `bridge build` without `npm install` is not a typecheck.
+
+**Reproduction.** S1 (Flutter): a `StatefulWidget` whose `build` declares `var count = 0;` and whose
+`ElevatedButton.onPressed` does `count++; setState(() { _result = count; });`, tapped four times with
+`tester.tap` + `pump`, reading the `Text` after each. Models (JS): `S1_A` declares `let count = 0` in the
+component body beside `const [_result] = useState(() => signal(0))` and `_result.set(count)` in the handler;
+`S1_B` keeps `count` in a second `useState(() => signal(0))`. Both mount under `createRoot` with `act`,
+dispatch four click events, and read `textContent`.
