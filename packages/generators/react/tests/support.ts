@@ -556,3 +556,9 @@ export function lifecycleErasableRaw(): string {
   const path = fileURLToPath(new URL('../../../../fixtures/uir/lifecycle_erasable.ndjson', import.meta.url));
   return readFileSync(path, 'utf8');
 }
+
+/** The real `fixtures/apps/reserved_identifiers` document, raw analyzer output (M11-I) — not yet normalized. */
+export function reservedIdentifiersRaw(): string {
+  const path = fileURLToPath(new URL('../../../../fixtures/uir/reserved_identifiers.ndjson', import.meta.url));
+  return readFileSync(path, 'utf8');
+}

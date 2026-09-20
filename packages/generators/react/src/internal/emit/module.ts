@@ -52,6 +52,42 @@ const RESERVED = new Set([
 ]);
 
 /**
+ * Names the *generated code itself* binds or calls unqualified, which a user identifier must therefore never be.
+ *
+ * A Dart State field called `signal` (wifi strength) became `const [signal] = useState(() => signal(0))` — a
+ * reference to itself before it is initialised; a local called `delay` shadowed the kit's `delay` in the handler
+ * that awaited it. Both failed `tsc` (TS7022, TS2349) rather than silently, but only when `tsc` ran, and neither
+ * said which of the author's names was the problem. `identifierOf` now renames such a name (`signal_`), the same
+ * treatment a reserved word gets.
+ *
+ * Three groups, all deliberate:
+ *
+ *   - `arguments` and `eval`: legal Dart names, illegal binding names in a module (strict mode, TS1215);
+ *   - `props`: the component function's own parameter, which a State field would shadow;
+ *   - every **lowercase-initial value export of `@bridge/runtime-react`**, plus the React hooks the generator uses.
+ *     Capitalised exports are widgets and types, and a Dart variable is not named `Column`. This list is copied,
+ *     because the generator must not import the kit (ADR-19), and a copy drifts — `runtime_names.test.ts`
+ *     compares it with the kit's actual exports and fails when the kit gains one.
+ */
+const GENERATED_NAMES: ReadonlySet<string> = new Set([
+  'arguments', 'eval', 'props',
+  'useState', 'useRef', 'useEffect', 'useMemo', 'useCallback', 'useContext', 'useReducer',
+  'alignItems', 'alignmentStyle', 'alphaBlend', 'aspectRatioStyle', 'batch', 'borderRadiusStyle', 'boxShapeStyle',
+  'clipStyle', 'componentDefault', 'constraintStyle', 'controlStyle', 'createRouter', 'createTheme',
+  'createThemeSurface', 'cssColor', 'decorationStyle', 'defineStore', 'delay', 'derived', 'doubleToString',
+  'edgeInsetsStyle', 'effect', 'elevationOverlay', 'extent', 'flexDirection', 'formatColor', 'fractionStyle',
+  'instantiateStore', 'intrinsicStyle', 'isRepresentableAlignment', 'justifyContent', 'mainAxisExtent',
+  'mergeStyles', 'objectFit', 'overflowBoxStyle', 'parseColor', 'resolveImage', 'safeAreaStyle', 'shadowStyle',
+  'signal', 'sizeStyle', 'stateLayer', 'subscribe', 'surfaceTintOpacity', 'textAlign', 'transitionStyle',
+  'typographyIfDefined', 'untracked', 'useAssetManifest', 'useDerived', 'useLocalStore', 'useMountEffect',
+  'useMounted', 'useRouter', 'useSignal', 'useSignalEffect', 'useSnackbarHost', 'useStore', 'useTheme',
+  'useThemeSurface', 'useUnmountEffect', 'useUpdateEffect', 'withOpacity', 'wrapAlignItems',
+]);
+
+/** Whether `name` is one the generated code binds or calls unqualified. Exported for the drift-guard test. */
+export const isGeneratedName = (name: string): boolean => GENERATED_NAMES.has(name);
+
+/**
  * Turns any string into a legal TypeScript identifier.
  *
  * Deterministic and total: the same input always gives the same output, and every input gives *some* output.
@@ -67,7 +103,7 @@ export function identifierOf(raw: string): string {
   // A private Dart field is `_favoriteIds`; the underscore carries no meaning in the output and reads as a
   // convention it does not have here. It is kept anyway — renaming it would make the generated symbol stop
   // matching the source the reviewer is diffing against, which is the property ADR-6 protects.
-  return RESERVED.has(cleaned) ? `${cleaned}_` : cleaned;
+  return RESERVED.has(cleaned) || GENERATED_NAMES.has(cleaned) ? `${cleaned}_` : cleaned;
 }
 
 /** `favorites_store` / `FavoritesStore` → `favorites-store`, for file names. */

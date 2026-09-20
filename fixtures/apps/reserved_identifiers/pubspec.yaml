@@ -1,0 +1,18 @@
+name: reserved_identifiers
+description: >-
+  M11-I (plan Phase L) proof: a Dart name that is legal but that the generated code itself binds or calls
+  (signal, useState, delay, props) or that a module cannot bind (arguments, eval) must not become a
+  self-referencing or shadowing identifier. State fields with those names, on a component that also has a
+  widget prop.
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true
