@@ -2737,6 +2737,33 @@ class _HomeState extends State<Home> {
       expect(app.ofKind('ui.Component'), isEmpty);
     });
 
+    test('the refusal is actionable: the hint names the contract and the supported alternative (C2)', () async {
+      final Extracted app = await extract(
+        statefulWrapper.replaceFirst('{{BODY}}', r'''
+    var count = 0;
+    return ElevatedButton(
+      onPressed: () {
+        count++;
+      },
+      child: Text('$_result'),
+    );
+'''),
+      );
+      final Diagnostic refusal = app.errors.single;
+      expect(refusal.code.id, 'BRG1311');
+      expect(refusal.hint, isNotNull);
+      expect(refusal.hint, contains('ADR-0048'));
+      expect(refusal.hint, contains('State class'));
+      expect(refusal.hint, contains('setState'));
+    });
+
+    test('the code documents the contract it enforces, so the rationale cannot drift from ADR-0048 (C2)', () {
+      final String explanation = Codes.writeToInlinedLocal.explanation;
+      expect(explanation, contains('ADR-0048'));
+      expect(explanation, contains('no lifetime'));
+      expect(explanation, contains('State'));
+    });
+
     test('a plain-assignment write to a build()-level local refuses as BRG1311', () async {
       final Extracted app = await extract(
         statefulWrapper.replaceFirst('{{BODY}}', r'''

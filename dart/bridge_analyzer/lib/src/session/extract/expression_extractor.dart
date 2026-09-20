@@ -700,7 +700,14 @@ final class ExpressionExtractor {
         // emitted `0++`/`0 = ...` — invalid TypeScript, silently). Refused here, before `_reference` is
         // ever reached, rather than downstream once the damage is already a malformed node.
         if (scope.lookup(node.name)?.inlineValue != null) {
-          out.report(Codes.writeToInlinedLocal, 'Cannot write to `${node.name}`, a build-method local.', node);
+          out.report(
+            Codes.writeToInlinedLocal,
+            'Cannot write to `${node.name}`, a build-method local.',
+            node,
+            hint: 'A build-method local has no lifetime of its own across rebuilds (ADR-0048). Declare it '
+                'inside the callback that mutates it, or make it a field on the State class and change it '
+                'in setState.',
+          );
           return out.opaqueExpr(node, 'write to a build-method local', type: writeType);
         }
         return _reference(node, node.name, scope, type: writeType);

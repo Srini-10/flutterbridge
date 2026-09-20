@@ -334,10 +334,18 @@ abstract final class Codes {
         'this position, and doing so silently would risk emitting a write to the inlined *initializer* '
         'expression instead of to any real place (M11-G).\n'
         '\n'
+        'This is a boundary of the compiler contract, not a missing feature (ADR-0048). FlutterBridge '
+        'preserves what a component renders as a function of its props, its `State` fields and inherited '
+        'state; it does not preserve how many times, or when, `build()` runs. A `build()`-level local '
+        'therefore has no lifetime of its own — in Flutter it is a fresh variable on every `build()` call, '
+        'and in the generated program neither a per-render variable nor a persistent one behaves the same '
+        'way (the M11-H evidence runs both against real Flutter). A callback that mutates one observes '
+        'exactly that unpreserved quantity.\n'
+        '\n'
         'A local mutated anywhere is not eligible for this position. Declare it inside the callback that '
         'mutates it instead (a local declaration-tier identity, ADR-28, already fully supports this — '
-        'M11-D), or, if the mutation must be observed across rebuilds, as a field on the `State` class '
-        'and mutate it through `setState` (already supported, M9-L/M11-D).',
+        'M11-D), or, if the value must survive between callbacks or across rebuilds, make it a field on '
+        'the `State` class and mutate it through `setState` (already supported, M9-L/M11-D).',
   );
 
   // ── BRG12xx — the canonical builder and the emitter ───────────────────────────────────────────
