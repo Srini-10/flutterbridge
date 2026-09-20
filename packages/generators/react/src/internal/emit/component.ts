@@ -78,8 +78,16 @@ export function emitComponent(component: Node, module: ModuleBuilder, scope: Emi
   // component declares no parameter: `props` identity is how a parent's rebuild is told from the component's own.
   const effects = effectsOf(component, scope);
   const updatesWithProps = effects.some((e) => methodOf(e) === 'didUpdateWidget' && behaviourOf(e).length > 0);
+  // A constructor parameter that is not `required` (`this.nested = false`, `this.onTap`) may be omitted by the caller, and
+  // Dart then supplies its default — or `null`. JSX omits it as `undefined`, so the component resolves the omission once,
+  // at the top, and the body reads `props.x` as before (ADR-0053).
+  const defaulted = params.filter((param) => param['required'] !== true);
   const propsType =
-    params.length > 0 ? `props: ${name}Props` : updatesWithProps ? 'props: Record<string, never>' : '';
+    params.length > 0
+      ? `${defaulted.length > 0 ? 'rawProps' : 'props'}: ${name}Props`
+      : updatesWithProps
+        ? 'props: Record<string, never>'
+        : '';
   if (params.length > 0) {
     module.line(`/** Props for {@link ${name}}. */`);
     module.line(`export interface ${name}Props {`);
@@ -105,6 +113,14 @@ export function emitComponent(component: Node, module: ModuleBuilder, scope: Emi
   module.line(`/** \`${component['name']}\`, from ${spanOf(component)}. */`);
   module.line(`export function ${name}(${propsType}) {`);
   module.block(() => {
+    if (defaulted.length > 0) {
+      const useDefaults = useRuntime(module, 'useDefaults');
+      const entries = defaulted.map((param) => {
+        const value = param['defaultValue'] === undefined ? 'null' : emitExpression(param['defaultValue'] as Node, scope);
+        return `${identifierOf(String(param['name'] ?? '_'))}: ${value}`;
+      });
+      module.line(`const props = ${useDefaults}(rawProps, { ${entries.join(', ')} });`);
+    }
     // The router and the mounted ref, before anything that could use either — an action body is emitted
     // by `declareLocalActions` below, and a navigation or a liveness read inside one reads these names.
     const routerLocal = declareRouter(component, module, scope);
@@ -145,7 +161,9 @@ export function emitComponent(component: Node, module: ModuleBuilder, scope: Emi
     const storeInstanceReads = declareStoreInstanceReads(component, module, outer, storeInstances);
     // Actions the tree calls, declared before the tree that calls them. See `declareLocalActions`.
     const actions = declareLocalActions(component, module, outer, signals, params, effects);
-    declareLifecycle(effects, module, outer, signals, actions, params, `${name}Props`);
+    const resolvedProps =
+      defaulted.length > 0 ? `${useRuntimeType(module, 'ResolvedProps')}<${name}Props>` : `${name}Props`;
+    declareLifecycle(effects, module, outer, signals, actions, params, resolvedProps);
     const inner = childScope(outer, signals, params, actions, subscriptions, storeInstanceReads);
     const tree = component['render'];
     if (tree === undefined) {

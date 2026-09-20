@@ -89,6 +89,20 @@ final class ComponentExtractor {
     final List<RawValue> params = <RawValue>[];
     final List<Binding> paramBindings = <Binding>[];
 
+    // What the widget's own constructor says about each field: `this.nested = false` is optional with a default,
+    // `required this.name` is required. Before ADR-0053 every field with no initializer was `required`, so a defaulted
+    // constructor parameter — one of the commonest idioms in Flutter — lost its default and became a mandatory prop.
+    final Map<String, FormalParameter> constructorParams = <String, FormalParameter>{};
+    for (final ClassMember member in node.body.members) {
+      if (member is ConstructorDeclaration && member.name == null) {
+        for (final FormalParameter parameter in member.parameters.parameters) {
+          if (parameter is FieldFormalParameter) {
+            constructorParams[parameter.name.lexeme] = parameter;
+          }
+        }
+      }
+    }
+
     for (final ClassMember member in node.body.members) {
       if (member is! FieldDeclaration || member.isStatic) {
         continue;
@@ -98,11 +112,15 @@ final class ComponentExtractor {
         if (field == 'key') {
           continue;
         }
+        final FormalParameter? formal = constructorParams[field];
+        final bool required = formal != null ? formal.isRequired : variable.initializer == null;
         params.add(
           RawMap(<String, RawValue>{
             'name': RawLiteral(field),
             'type': out.typeRef(variable.declaredFragment?.element.type, at: variable),
-            if (variable.initializer == null) 'required': const RawLiteral(true),
+            if (required) 'required': const RawLiteral(true),
+            if (formal?.defaultClause case final FormalParameterDefaultClause clause)
+              'defaultValue': RawChild(signals.expressions.extract(clause.value, enclosing)),
           }),
         );
         paramBindings.add(Binding(name: field, binds: Binds.parameter));

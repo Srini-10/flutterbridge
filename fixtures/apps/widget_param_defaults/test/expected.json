@@ -1,0 +1,31 @@
+{
+  "DefaultsHost": [
+    [
+      "> tag1 none 3 false no-note true",
+      "> tag2 a 3 false no-note true",
+      "> tag3 none 9 true no-note true",
+      "> tag4 none 3 false n false",
+      "> tag5 z 0 true q false",
+      "> tag6 off 3 false x false",
+      "> tag7 none 2 false no-note true"
+    ],
+    [
+      "> tag1 none 3 false no-note true",
+      "> tag2 a 3 false no-note true",
+      "> tag3 none 9 true no-note true",
+      "> tag4 none 3 false n false",
+      "> tag5 z 0 true q false",
+      "> tag6 on 3 false no-note true",
+      "> tag7 none 1 false no-note true"
+    ],
+    [
+      "> tag1 none 3 false no-note true",
+      "> tag2 a 3 false no-note true",
+      "> tag3 none 9 true no-note true",
+      "> tag4 none 3 false n false",
+      "> tag5 z 0 true q false",
+      "> tag6 off 3 false x false",
+      "> tag7 none 2 false no-note true"
+    ]
+  ]
+}

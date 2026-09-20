@@ -167,6 +167,19 @@ final class WidgetExtractor {
 
   // ── elements ──────────────────────────────────────────────────────────────────────────────────
 
+  /// The name of the [index]th positional parameter of the constructor [node] invokes, if it is resolved.
+  static String? _positionalParameterName(Expression node, int index) {
+    if (node is! InstanceCreationExpression) {
+      return null;
+    }
+    final List<FormalParameterElement> positional = <FormalParameterElement>[
+      for (final FormalParameterElement parameter
+          in node.constructorName.element?.formalParameters ?? const <FormalParameterElement>[])
+        if (parameter.isPositional) parameter,
+    ];
+    return index < positional.length ? positional[index].name : null;
+  }
+
   RawNode _element(
     Expression node, {
     required String name,
@@ -263,8 +276,12 @@ final class WidgetExtractor {
         // rather than rendering it wrong.
         if (argument is Expression) {
           final int index = positional++;
-          final String label =
-              registry.positionalPropOf(name, constructorName, index) ?? '_positional$index';
+          // The catalog names a framework widget's positional parameter (ADR-0023); a widget the application declares
+          // is named by its own constructor — `const Tag(this.id, …)` passes `id`, which is the prop the component
+          // declares. Before ADR-0053 it fell through to `_positional0`, a prop no component has.
+          final String label = registry.positionalPropOf(name, constructorName, index) ??
+              _positionalParameterName(node, index) ??
+              '_positional$index';
           props[label] = RawChild(bindings.extract(argument, scope));
         }
         continue;

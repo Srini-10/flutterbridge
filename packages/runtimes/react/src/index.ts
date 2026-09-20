@@ -295,6 +295,7 @@ export {
 } from './internal/react/context.js';
 
 export {
+  useDefaults,
   useDidUpdateWidget,
   useInitState,
   useLifecycle,
@@ -303,6 +304,7 @@ export {
   useUnmountEffect,
   useUpdateEffect,
 } from './internal/react/lifecycle.js';
+export type { ResolvedProps } from './internal/react/lifecycle.js';
 
 // ── Widgets (ADR-6) ───────────────────────────────────────────────────────────────────────────────
 //

@@ -1,0 +1,20 @@
+name: widget_param_defaults
+description: >-
+  M11 (ADR-0053): a widget's constructor defaults (`this.count = 3`) and optional parameters (`this.note`) — what a caller
+  gets when it omits them. Run by Flutter and as the generated component, compared.
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

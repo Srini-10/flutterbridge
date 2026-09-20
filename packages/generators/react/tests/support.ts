@@ -593,3 +593,9 @@ export function lifecycleLoweringRaw(): string {
   const path = join(here, '..', '..', '..', '..', 'fixtures', 'uir', 'lifecycle_lowering.ndjson');
   return readFileSync(path, 'utf8');
 }
+
+/** The real `fixtures/apps/widget_param_defaults` document, raw analyzer output (M11, ADR-0053) — not yet normalized. */
+export function widgetParamDefaultsRaw(): string {
+  const path = join(here, '..', '..', '..', '..', 'fixtures', 'uir', 'widget_param_defaults.ndjson');
+  return readFileSync(path, 'utf8');
+}

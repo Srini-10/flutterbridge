@@ -35,7 +35,7 @@
 // *component lifecycle*, which React owns; the graph knows only 'an effect that reruns when its
 // dependencies change'."
 
-import { useEffect, useRef, useState, type RefObject } from 'react';
+import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 
 /**
  * Runs `body` once, after the component first mounts — the runtime form of a `sig.Effect` with
@@ -228,4 +228,32 @@ export function useDidUpdateWidget<P>(props: P, update: (oldWidget: P) => void):
     previous.current = props;
     latest.current(old);
   });
+}
+
+/** A component's props with every omission resolved: optional keys are required and never `undefined`. */
+export type ResolvedProps<P> = { readonly [K in keyof P]-?: Exclude<P[K], undefined> };
+
+/**
+ * Resolves the props a caller omitted to the defaults the Dart constructor declares (`this.nested = false`), or `null`
+ * for an omitted nullable one — Dart has one absent value and it is `null`, JSX's is `undefined` (ADR-0053).
+ *
+ * The result is memoised on the **props object**, so it is a new object exactly when React handed the component a new one:
+ * that is what lets `useDidUpdateWidget` tell a parent's rebuild from the component's own re-render.
+ *
+ * @param raw - the props React passed.
+ * @param defaults - one entry per optional parameter: its default, or `null`.
+ */
+export function useDefaults<P extends object>(
+  raw: P,
+  defaults: { readonly [K in keyof P]?: P[K] | null },
+): ResolvedProps<P> {
+  // The defaults object is a fresh literal each render; it is read only when `raw` changed, so it is not a dependency.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  return useMemo(() => {
+    const resolved: Record<string, unknown> = { ...(raw as Record<string, unknown>) };
+    for (const [key, value] of Object.entries(defaults)) {
+      if (resolved[key] === undefined) resolved[key] = value;
+    }
+    return resolved as ResolvedProps<P>;
+  }, [raw]);
 }
