@@ -12,7 +12,7 @@ Flutter project → Universal Semantic Compiler → UIR → N generators (React/
 
 Read [README.md](README.md) for the package layout. It was rewritten at M5-C and its status numbers are
 measured rather than estimated; the stale milestone table this file used to warn about is gone. `docs/spec/`
-carries amendments through v2.5 and ADRs run to 0024.
+carries amendments through v2.5; ADRs live in `docs/adr/` (the highest-numbered file is the latest).
 
 Milestone reports live in `docs/m0/` … `docs/m5/` and are the best record of *why* things are as they are.
 `docs/m5/m5e-release-candidate.md` is the current state of play.

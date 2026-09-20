@@ -48,6 +48,11 @@ A Dart construct extraction does not model yet. Measured frequency:
 
 Rewriting the expression is usually possible: `'a' 'b'` → `'ab'`, a cascade → separate statements.
 
+The message quotes the first line of the source and the reason the analyzer recorded (`build body with
+statements`, `local function declaration`, `write target`, …). A `build()` body that is anything other than
+leading `final`/`var` declarations followed by a `return` (or an early-return `if` chain) is one such case — move
+the logic into a helper widget or a State field.
+
 ## `BRG3013` — a capability is not built yet
 
 The message names it and the owner. The big ones:

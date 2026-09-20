@@ -1,6 +1,6 @@
 # ADR-49 — `dart:core` value semantics, and State-held collections
 
-- **Status:** Accepted (M11-I, plan Phase E). Extends the M8-V numeric rule; **clarifies** ADR-4 and ADR-20 (R3);
+- **Status:** Accepted (M11-I, plan Phase E). Extends the M8-V numeric rule (and, from D3a, covers operators as well as methods); **clarifies** ADR-4 and ADR-20 (R3);
   amends nothing. Records one decision as **deliberately not made** (D4).
 - **Date:** 2026-09-20
 
@@ -55,6 +55,17 @@ is refused by name (`BRG3002`) with the reason. "A different one needs its own e
 **D3 — What is refused.** Every other method on a `List`, `Set`, `Map` or `Iterable`; and interpolating a
 `List`, `Set`, `Map`, `Iterable` or `num` (an int or a double at runtime — JavaScript cannot say which). A
 project class's own `add`/`join` is a different receiver type and is unaffected.
+
+**D3a — Bit and shift operators (added M11-I, after the audit's numeric probe).** `SAFE_BINARY` had listed
+`& | ^ << >>` as "the same in both languages". Twelve cases run against real Dart showed five wrong: JavaScript's
+are 32-bit and Dart's `int` is 64-bit (`1 << 40` → `256` for `1099511627776`; `0xFFFFFFFF & 0xFFFF0000` →
+`-65536` for `4294901760`; `1 << 31` negative; `4294967296 | 1` → `1`), and on a `bool`, `&`/`|`/`^` return a
+`number` in JavaScript (`true & false` → `0`). Now: two integer literals **fold** to Dart's exact 64-bit result
+when it is a safe integer (`1 << 20` flags stay usable); `bool & | ^` lowers to `Boolean(Number(a) op Number(b))`
+(valid strict TypeScript, both operands still evaluated); every other `int` operand, and unary `~`, is refused by
+name. **Left as known:** ordinary `+ - *` on an `int` silently loses precision beyond 2^53
+(`3037000499 * 3037000499` → `…000` for `…001`); an operator cannot be refused on a value it cannot see, and the
+domain is ADR-5 D2's. It is a limitation, not a decision made here.
 
 **D4 — State-held collection mutation is not supported, and the mechanism is not decided.** Support needs a rule
 for *how a State-held collection notifies*, and every candidate changes a contract:

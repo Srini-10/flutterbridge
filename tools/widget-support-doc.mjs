@@ -109,6 +109,12 @@ code is at fault.
 | Platform channels, plugins with native code | — | out of scope |
 | \`FutureBuilder\`/\`StreamBuilder\` | \`BRG3007\` | rendering a future needs loading and error branches, and inventing either is what a generator must not do |
 | User-defined classes as values | \`BRG3002\` | no class emission yet |
+| Lifecycle methods with behaviour — \`initState\`, \`didUpdateWidget\`, \`didChangeDependencies\`, \`dispose\` | \`BRG3013\` | no lowering: where it runs relative to the first render, development StrictMode's double invocation, and which component owns it are undecided. A \`super.\` call and a framework controller's own \`dispose()\` are fine. Put an initial value in the field's declaration |
+| \`List\` / \`Set\` / \`Map\` methods (\`add\`, \`remove\`, \`sort\`, \`contains\`, …) | \`BRG3002\` | only \`List.join\`, \`indexOf\`, \`lastIndexOf\`, \`forEach\`, \`every\` lower ([ADR-0049](../adr/0049-dart-core-value-semantics-and-state-held-collections.md)). Mutating a State-held collection in place needs a notification rule that is not yet decided; replacing it whole (\`_items = <int>[]\`) works |
+| Interpolating a \`List\`, \`Set\`, \`Map\` or \`num\` (\`'$items'\`) | \`BRG3002\` | Dart prints \`[1, 2]\` and JavaScript \`1,2\`. A \`double\` and an \`int\` interpolate exactly as Dart prints them |
+| \`ListView.builder\` / \`GridView.builder\` whose index does not walk one collection; \`ListView.separated\`; \`PageView.builder\` | \`BRG3001\` | expanded only when \`itemCount\` is \`items.length\` and the builder indexes \`items\`; a conditional return, a bare count or a nested builder is refused rather than rendered empty |
+| Bit and shift operators on a runtime \`int\` (\`<<\`, \`&\`, \`|\`, \`^\`, \`~\`) | \`BRG3002\` | JavaScript's are 32-bit and a Dart \`int\` is 64-bit. Two integer literals fold exactly (\`1 << 20\`), and \`bool\` \`&\`, \`|\`, \`^\` lower ([ADR-0049](../adr/0049-dart-core-value-semantics-and-state-held-collections.md) D3a) |
+| Writing a \`build()\`-level local from a callback | \`BRG1311\` | a build-local has no lifetime of its own ([ADR-0048](../adr/0048-build-local-lifetime-and-rebuild-contract.md)); use a State field and \`setState\` |
 
 Navigation is the largest of these, and what it costs a real application is measured rather than guessed —
 see the [navigation model validation](../m6/m6d-navigation-model-validation.md), which counts every

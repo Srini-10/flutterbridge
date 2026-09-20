@@ -66,7 +66,7 @@ You need a Flutter SDK; it bundles the Dart the analyzer runs on. Nothing else.
 - [Quick start](docs/guide/quick-start.md)
 - [`examples/counter`](examples/counter) — a build that succeeds
 - [CLI reference](docs/guide/cli.md) · [Configuration](docs/guide/configuration.md)
-- [Supported widgets](docs/guide/supported-widgets.md) — 90 today, and what each refusal means
+- [Supported widgets](docs/guide/supported-widgets.md) — the generated list, and what each refusal means
 - [CI and release qualification](docs/guide/ci.md) — the cross-platform matrix
 - [Version compatibility](docs/guide/compatibility.md) · [Plugins and generators](docs/guide/plugins.md)
 - [Troubleshooting](docs/troubleshooting.md) — ordered by how often real apps hit each thing
