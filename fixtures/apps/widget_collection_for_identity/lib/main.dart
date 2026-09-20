@@ -75,7 +75,7 @@ class _HomeScreenState extends State<HomeScreen> {
             Column(
               children: [
                 for (final entry in group)
-                  Text('$group: $entry'),
+                  Text('${group.length}: $entry'),
               ],
             ),
         ],

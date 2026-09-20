@@ -29,7 +29,10 @@ describe('M8-Z build-proof: enum .values recognition, real analyzer to real tsc'
     const { context } = harness(after);
     const { files } = reactGenerator.generate(context);
     const source = fileAt(files, 'src/generated/dart/app/lib/main.ts') ?? '';
-    expect(source).toContain("export function aSimplest() {\n  return ['idle', 'ready'].join();\n}");
+    // `join()` with no argument lowers to `join('')`: Dart's separator defaults to `""` and JavaScript's to
+    // `","`, so the verbatim `.join()` this once pinned rendered `idle,ready` for what Dart prints as
+    // `idleready` (M11-I; each observed by running the two languages).
+    expect(source).toContain("export function aSimplest() {\n  return ['idle', 'ready'].join('');\n}");
   });
 
   it('an enhanced enum (constructor and field) shape lowers correctly, declaration order preserved', () => {
@@ -49,7 +52,7 @@ describe('M8-Z build-proof: enum .values recognition, real analyzer to real tsc'
     // Both G1 and G2 emit the identical-looking array by coincidence (same member names) — the real
     // identity proof is upstream, in the raw-UIR test (enum_values_recognition.test.ts); this only
     // confirms the generator does not error or conflate the two declarations while lowering each.
-    expect(source).toContain("export function gCollision() {\n  return `${['ready', 'waiting'].join()}${['ready', 'waiting'].join()}`;\n}");
+    expect(source).toContain("export function gCollision() {\n  return `${['ready', 'waiting'].join('')}${['ready', 'waiting'].join('')}`;\n}");
   });
 
   it('.length/indexing/repeated-reads/stored-in-local/returned-from-function all lower correctly', () => {
@@ -59,7 +62,7 @@ describe('M8-Z build-proof: enum .values recognition, real analyzer to real tsc'
     expect(source).toContain("['idle', 'ready'].length");
     expect(source).toContain("['idle', 'ready'][0]");
     expect(source).toContain("const first = ['idle', 'ready'];\n  const second = ['idle', 'ready'];");
-    expect(source).toContain("const all = ['idle', 'ready'];\n  return all.join();");
+    expect(source).toContain("const all = ['idle', 'ready'];\n  return all.join('');");
     expect(source).toContain("export function _allStages() {\n  return ['idle', 'ready'];\n}");
   });
 

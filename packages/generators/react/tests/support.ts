@@ -532,3 +532,15 @@ export function jsxChildPositionsRaw(): string {
   const path = fileURLToPath(new URL('../../../../fixtures/uir/jsx_child_positions.ndjson', import.meta.url));
   return readFileSync(path, 'utf8');
 }
+
+/** The real `fixtures/apps/sdk_lowering` document, raw analyzer output (M11-I) — not yet normalized. */
+export function sdkLoweringRaw(): string {
+  const path = fileURLToPath(new URL('../../../../fixtures/uir/sdk_lowering.ndjson', import.meta.url));
+  return readFileSync(path, 'utf8');
+}
+
+/** The real `fixtures/apps/sdk_collection_refusal` document, raw analyzer output (M11-I) — not yet normalized. */
+export function sdkCollectionRefusalRaw(): string {
+  const path = fileURLToPath(new URL('../../../../fixtures/uir/sdk_collection_refusal.ndjson', import.meta.url));
+  return readFileSync(path, 'utf8');
+}

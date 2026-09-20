@@ -373,6 +373,36 @@ function sdkTypeOf(type: Node | undefined): string | undefined {
   return rawName.endsWith('?') ? rawName.slice(0, -1) : rawName;
 }
 
+/** The generic-free name of a `dart:core` type: `Set<int>` → `Set`, `double?` → `double`. */
+function sdkBaseTypeOf(type: Node | undefined): string | undefined {
+  return sdkTypeOf(type)?.split('<')[0];
+}
+
+/** The `dart:core` collection types whose methods are *not* a JavaScript collection's methods. */
+const SDK_COLLECTIONS: ReadonlySet<string> = new Set(['List', 'Set', 'Map', 'Iterable']);
+
+/**
+ * The `List` methods this generator lowers — the ones whose JavaScript spelling means what the Dart one does.
+ *
+ * Checked by the receiver's resolved `dart:core` type, never by the bare name (the M8-V rule for numbers): a
+ * project class's own `join` is not this. Everything else on a `List`, `Set`, `Map` or `Iterable` is refused,
+ * because the fallthrough used to emit `receiver.method(args)` verbatim and JavaScript agrees with Dart only
+ * by coincidence of name — and a coincidence is worse than a failure:
+ *
+ *   - `join()` — Dart's separator defaults to `""`, JavaScript's to `","`. Lowered to `join('')`.
+ *   - `sort()` — same name, but JavaScript compares as strings (`[10, 9, 1]` → `[1, 10, 9]`) and both sort *in
+ *     place*, which a signal cannot observe: the screen never updates. Refused.
+ *   - `add`, `remove`, `contains`, `addAll`, … do not exist on an array, so the emitted call was a `tsc` error at
+ *     best and a `TypeError` in the browser where the type checker was skipped.
+ */
+const LOWERED_LIST_METHODS: ReadonlySet<string> = new Set(['join', 'indexOf', 'lastIndexOf', 'forEach', 'every']);
+
+/** Collection methods that change the receiver in place — the ones a State field's signal cannot observe. */
+const IN_PLACE_MUTATORS: ReadonlySet<string> = new Set([
+  'add', 'addAll', 'insert', 'insertAll', 'remove', 'removeAt', 'removeLast', 'removeRange', 'removeWhere',
+  'retainWhere', 'clear', 'sort', 'shuffle', 'fillRange', 'setAll', 'setRange', 'replaceRange',
+]);
+
 /**
  * Whether `receiver` is a **parameter** read — a bare `logic.Ref` with no `target` that resolves through
  * `scope.paramInScope` (a component prop, or an action/function parameter) — the *only* UIR shape whose
@@ -1290,6 +1320,35 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
         return REFUSED;
       }
 
+      // A `dart:core` collection receiver (M11-I). Reached by the resolved type of the receiver, so a project
+      // class's own `add` is untouched. See {@link LOWERED_LIST_METHODS} for why the old verbatim emission was
+      // unsafe, and for the two ways it went wrong silently.
+      const collection = sdkBaseTypeOf(methodReceiverType);
+      if (receiver !== REFUSED && node['target'] === undefined && collection !== undefined && SDK_COLLECTIONS.has(collection)) {
+        const rawArgs = asArray(node['args']);
+        if (collection === 'List' && LOWERED_LIST_METHODS.has(method)) {
+          if (method === 'join' && rawArgs.length === 0) return `${receiver}.join('')`;
+          if (rawArgs.length === 1) {
+            return `${receiver}.${method}(${emitArguments(node['args'], scope)})`;
+          }
+        }
+        scope.report(
+          GeneratorDiagnosticCode.UnsupportedExpression,
+          'error',
+          `\`${collection}.${method}\` has no lowering. ` +
+            (IN_PLACE_MUTATORS.has(method)
+              ? `It changes the ${collection.toLowerCase()} in place, which a State field's signal cannot observe ` +
+                `(ADR-20 R3: the same object is \`Object.is\`-equal), so the screen would not update where ` +
+                `Flutter's \`setState\` would. Supporting it needs a rule for how a State-held collection ` +
+                `notifies, which ADR-0049 records as not yet decided.`
+              : `This generator lowers only ${[...LOWERED_LIST_METHODS].map((m) => `\`${m}\``).join(', ')} on a ` +
+                `\`List\` — the methods real evidence has needed and whose JavaScript spelling means the same ` +
+                `thing. A different one needs its own evidence before it can be added.`),
+          idOf(node),
+        );
+        return REFUSED;
+      }
+
       const args = emitArguments(node['args'], scope);
       return `${receiver}.${identifierOf(method)}(${args})`;
     }
@@ -1579,7 +1638,35 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
         if (kindOf(item) === 'logic.Lit' && typeof item['value'] === 'string') {
           return (item['value'] as string).replace(/\\/g, '\\\\').replace(/`/g, '\\`').replace(/\$/g, '\\$');
         }
-        return `\${${emitExpression(item, scope)}}`;
+        // What Dart prints for a value depends on its *static type*, and JavaScript has one `number` and one
+        // array-to-string that are not Dart's (M11-I, each observed by running both):
+        //   `double` `1.0` → Dart `1.0`, JavaScript `1`           → `doubleToString`
+        //   `List`   `[1, 2]` → Dart `[1, 2]`, JavaScript `1,2`    → refused
+        //   `Map`/`Set`      → Dart `{a: 1}`, JavaScript `[object Map]` → refused
+        //   `num`    an int or a double at runtime, and JavaScript cannot tell → refused
+        //
+        // The inner expression is emitted first, and only a value that was *not* already refused is judged
+        // here: a `List` returned by a method the generator refused (`BRG3013`) has one refusal already, at its
+        // source, and a second one on top would only bury it.
+        const base = sdkBaseTypeOf(item['type'] as Node | undefined);
+        const inner = emitExpression(item, scope);
+        if (inner !== REFUSED && base === 'double') {
+          return `\${${scope.module.use(RUNTIME, 'doubleToString')}(${inner})}`;
+        }
+        if (inner !== REFUSED && (base === 'num' || (base !== undefined && SDK_COLLECTIONS.has(base)))) {
+          scope.report(
+            GeneratorDiagnosticCode.UnsupportedExpression,
+            'error',
+            `Interpolating a \`${base}\` has no lowering: ` +
+              (base === 'num'
+                ? `Dart prints an int as \`1\` and a double as \`1.0\`, and a JavaScript number cannot say which it is. ` +
+                  `Give the value a \`double\` or \`int\` type.`
+                : `Dart prints \`[1, 2]\` or \`{a: 1}\` where JavaScript prints \`1,2\` or \`[object Map]\`. ` +
+                  `Build the text from the elements instead.`),
+            idOf(item),
+          );
+        }
+        return `\${${inner}}`;
       });
       return `\`${parts.join('')}\``;
     }

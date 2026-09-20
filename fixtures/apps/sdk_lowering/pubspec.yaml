@@ -1,0 +1,15 @@
+name: sdk_lowering
+description: >-
+  M11-I (plan Phase E) positive proof: the dart:core lowerings whose JavaScript spelling had to be corrected or was already right. Executed in the runtime harness against real Dart output.
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

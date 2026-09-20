@@ -76,7 +76,10 @@ describe('M9-F build-proof: widget-tree collection-for item declaration identity
     const { files } = reactGenerator.generate(context);
     const source = fileAt(files, 'src/components/home-screen.tsx') ?? '';
     expect(source).toContain('group.map((entry, index) =>');
-    expect(source).toContain('<Text>{`${group}: ${entry}`}</Text>');
+    // The outer item is read through `.length`, not interpolated: Dart prints a `List` as `[One, Two]` and
+    // JavaScript as `One,Two`, so this fixture's original `'$group: $entry'` was pinning a wrong rendering
+    // (M11-I). The identity being proved — the inner template resolves the *outer* item — is unchanged.
+    expect(source).toContain('<Text>{`${group.length}: ${entry}`}</Text>');
   });
 
   it('Flutter → analyzer → compiler (N1–N11, unmodified) → generator → tsc', () => {

@@ -1,0 +1,15 @@
+name: sdk_collection_refusal
+description: >-
+  M11-I (plan Phase E) negative proof: dart:core collection methods and interpolations with no faithful lowering are refused by name, never emitted verbatim. One component per shape.
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

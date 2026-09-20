@@ -575,12 +575,28 @@ describe('the real hello_bridge document', () => {
       // resolve or vanish before the generator is reached (M7-N). See docs/m7/m7d-reality-audit.md,
       // docs/m7/m7j-mounted-lifecycle-implementation.md, docs/m7/m7k-material-theme-token-completeness.md,
       // docs/adr/0027-local-store-instances-and-member-identity.md.
+      //
+      // `BRG3002` contributes again, for a different reason (M11-I): `FavoritesStore` calls `Set.contains`,
+      // `Set.add` and `Set.remove`, none of which exists on the `Set` the store emits — JavaScript's is
+      // `has`/`add`/`delete`. The generator used to emit them verbatim, so this fixture "generated" code that
+      // could not run; now each is refused by name (asserted below), which is the honest state of a program that
+      // was never compilable.
+      'BRG3002',
       'BRG3013',
       // `MaterialApp.themeMode` — switching brightness after mount
       'BRG3016',
       // the roll-up: nothing is emitted from a program carrying an error
       'BRG3005',
     ].sort());
+  });
+
+  it('names the Set operations it cannot lower, instead of emitting methods a Set does not have (M11-I)', () => {
+    const { context, reported } = harness(helloBridge());
+    reactGenerator.generate(context);
+    const messages = reported.filter((d) => d.code === 'BRG3002' && d.severity === 'error').map((d) => d.message);
+    for (const method of ['Set.contains', 'Set.add', 'Set.remove']) {
+      expect(messages.some((m) => m.startsWith(`\`${method}\` has no lowering`)), method).toBe(true);
+    }
   });
 
   it('recovers declaration names from the references to them', () => {
