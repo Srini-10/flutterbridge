@@ -6,6 +6,11 @@
     "emitDeclarationOnly": false,
     "noEmit": true,
     "rootDir": ".",
+    "lib": [
+      "ES2023",
+      "DOM",
+      "DOM.Iterable"
+    ],
     "types": [
       "node"
     ]

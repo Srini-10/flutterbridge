@@ -157,9 +157,21 @@ final class SignalExtractor {
           continue;
         }
 
-        final bool reactive = !member.fields.isFinal ||
-            mutated.names.contains(name) ||
-            registry.isStateHolder(fieldType);
+        // A `List`/`Set`/`Map` is reactive even when `final`: `final List<int> _items = [];` is the idiomatic
+        // declaration and it is *mutated in place* (`_items.add(x)`), which `mutated` — a set of assigned names —
+        // never sees. Treating it as an immutable constant made every read of it `BRG3006` (M11, ADR-0051).
+        //
+        // A `final` field with no initializer — `final List<int> items;` a constructor fills (`this.items`) — is a
+        // widget's prop, not state the class owns: it is received, never re-assigned, and whoever owns the collection
+        // (a parent's signal) is told of an in-place change by the runtime's ownership registry. It used to become a
+        // signal whenever a mutating call named it (`items.add(…)`), created empty and never read.
+        final bool constructorFilled = member.fields.isFinal && variable.initializer == null;
+        final bool reactive = registry.isStateHolder(fieldType) ||
+            (!constructorFilled &&
+                (!member.fields.isFinal ||
+                    mutated.names.contains(name) ||
+                    (fieldType != null &&
+                        (fieldType.isDartCoreList || fieldType.isDartCoreSet || fieldType.isDartCoreMap))));
 
         if (!reactive) {
           // A constant of the object. No symbol: nothing declares it as a node, so a reference to it

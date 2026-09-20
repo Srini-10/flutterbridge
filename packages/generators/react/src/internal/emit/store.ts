@@ -28,7 +28,7 @@ import { GeneratorDiagnosticCode } from '../diagnostics/codes.js';
 import { emitExpression, localBindingsIn, type EmitScope } from './expression.js';
 import { emitStatements } from './statement.js';
 import { identifierOf, type ModuleBuilder } from './module.js';
-import { paramListOf, refuseNamedParams } from './types.js';
+import { paramListOf, refuseNamedParams, signalTypeArgumentOf } from './types.js';
 
 const RUNTIME = '@bridge/runtime-react';
 
@@ -98,8 +98,9 @@ export function emitStore(store: Node, module: ModuleBuilder, scope: EmitScope):
   module.block(() => {
     for (const [id, local] of signals) {
       const node = scope.node(id) as unknown as Node;
-      const initial = node['initial'] === undefined ? 'undefined' : emitExpression(node['initial'] as Node, inner);
-      module.line(`const ${local} = signal(${initial});`);
+      const initial = node['initial'] === undefined ? 'null' : emitExpression(node['initial'] as Node, inner);
+      const typeArgument = signalTypeArgumentOf(node['type'] as Node | undefined);
+      module.line(`const ${local} = signal${typeArgument === undefined ? '' : `<${typeArgument}>`}(${initial});`);
     }
     for (const [id, local] of derived) {
       const node = scope.node(id) as unknown as Node;

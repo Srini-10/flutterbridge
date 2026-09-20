@@ -34,26 +34,14 @@ const refuse = () => {
   return { files, errors: reported.filter((d) => d.code === 'BRG3002' && d.severity === 'error') };
 };
 
-describe('a dart:core collection method or interpolation with no faithful lowering is refused by name', () => {
-  it('refuses all six shapes and emits nothing', () => {
+describe('what the collection policy still refuses, and what it now lowers (ADR-0049 D4, superseded for collections by ADR-0051)', () => {
+  it('refuses only the two interpolations; the four collection methods now lower', () => {
     const { files, errors } = refuse();
-    expect(errors).toHaveLength(6);
+    expect(errors.map((d) => d.message.split(' ').slice(0, 3).join(' '))).toEqual([
+      'Interpolating a `List`',
+      'Interpolating a `num`',
+    ]);
     expect(files).toEqual([]);
-  });
-
-  it('an in-place mutator says why the screen would not update', () => {
-    const messages = refuse().errors.map((d) => d.message);
-    for (const method of ['List.sort', 'List.add', 'Map.remove']) {
-      const message = messages.find((m) => m.startsWith(`\`${method}\` has no lowering`)) ?? '';
-      expect(message, method).toContain('in place');
-      expect(message, method).toContain('ADR-20 R3');
-      expect(message, method).toContain('ADR-0049');
-    }
-  });
-
-  it('a method that is not a mutator names what *is* lowered', () => {
-    const message = refuse().errors.find((d) => d.message.startsWith('`Set.contains`'))?.message ?? '';
-    expect(message).toContain('`join`, `indexOf`, `lastIndexOf`, `forEach`, `every`');
   });
 
   it('a List or num in an interpolation is refused, with what Dart and JavaScript each print', () => {

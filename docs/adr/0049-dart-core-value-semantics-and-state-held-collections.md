@@ -69,7 +69,7 @@ name. **Left as known:** ordinary `+ - *` on an `int` silently loses precision b
 (`3037000499 * 3037000499` → `…000` for `…001`); an operator cannot be refused on a value it cannot see, and the
 domain is ADR-5 D2's. It is a limitation, not a decision made here.
 
-**D4 — State-held collection mutation is not supported, and the mechanism is not decided.** Support needs a rule
+**D4 — State-held collection mutation is not supported, and the mechanism is not decided. Superseded by [ADR-0051](0051-state-held-collection-mutation.md):** decided and implemented — mutate in place, and the runtime helper announces to every signal that owns the collection. What follows is the record of the position at the time. Support needs a rule
 for *how a State-held collection notifies*, and every candidate changes a contract:
 
 - *Copy-on-write* (`add(x)` → `set([...items, x])`): notifies, but breaks aliasing — `final other = _items;

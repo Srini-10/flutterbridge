@@ -7,6 +7,7 @@
 import type { NodeId } from '@bridge/uir';
 
 import { GeneratorDiagnosticCode } from '../diagnostics/codes.js';
+import { typeArgumentsOf } from './collections.js';
 
 /** A `TypeRef`, loosely typed: nested values are not `AnyUirNode`. */
 type Node = Record<string, unknown>;
@@ -100,10 +101,109 @@ export function typeTextOf(
     return nullable ? `${base} | null` : base;
   }
 
+  // A `dart:core` collection, spelled with its element types (ADR-0051). Until M11 every `List<T>`, `Set<T>` and
+  // `Map<K, V>` was `unknown`, so a signal holding one was typed by inference alone — `signal([])` is `never[]` — and a
+  // parameter of one could be read but not used.
+  const collection = collectionTypeText(type, name, use, classOf);
+  if (collection !== undefined) return nullable ? `${collection} | null` : collection;
+
+  // A function type — `void Function()` (what `VoidCallback` displays as), `int Function(int, String)`. Until M11 every
+  // one was `unknown`, so a component that *called* a callback prop (`onChanged()`) was a `tsc` error. Positional
+  // parameters only: an optional or named parameter list is left `unknown` rather than approximated.
+  const fn = functionTypeText(name, use, classOf);
+  if (fn !== undefined) return nullable ? `(${fn}) | null` : fn;
+
   const base = PRIMITIVES[name] ?? 'unknown';
   // Dart's nullable `int?` is `number | null`, not `number | undefined`: Dart has one absent value and it is
   // `null`, and a Dart `null` crossing into JavaScript is still `null`.
   return nullable ? `${base} | null` : base;
+}
+
+/** Splits `text` on the commas that are not inside `<>`, `()`, `{}` or `[]`. */
+function splitTopLevel(text: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === '<' || c === '(' || c === '{' || c === '[') depth++;
+    else if (c === '>' || c === ')' || c === '}' || c === ']') depth--;
+    else if (c === ',' && depth === 0) {
+      parts.push(text.slice(start, i).trim());
+      start = i + 1;
+    }
+  }
+  const last = text.slice(start).trim();
+  if (last !== '') parts.push(last);
+  return parts;
+}
+
+/** `int Function(int, String)` → `(p0: number, p1: string) => number`; `undefined` when `name` is not a plain function type. */
+function functionTypeText(
+  name: string,
+  use?: (name: string) => string,
+  classOf?: (target: NodeId) => string | undefined,
+): string | undefined {
+  const marker = name.indexOf(' Function(');
+  if (marker <= 0 || !name.endsWith(')')) return undefined;
+  const returnType = name.slice(0, marker);
+  const inner = name.slice(marker + ' Function('.length, -1);
+  if (returnType.includes('Function') || /[{[]/.test(inner) || inner.includes('Function')) return undefined;
+  const params = splitTopLevel(inner).map((p, i) => {
+    const typed = typeTextOf({ name: p, nullable: p.endsWith('?') }, use, classOf);
+    return `p${i}: ${typed}`;
+  });
+  const result = typeTextOf({ name: returnType, nullable: returnType.endsWith('?') }, use, classOf);
+  return `(${params.join(', ')}) => ${result}`;
+}
+
+/** `List<int>` → `number[]`, `Set<String>` → `Set<string>`, `Map<String, int>` → `Map<string, number>`; else `undefined`. */
+function collectionTypeText(
+  type: Node | undefined,
+  name: string,
+  use?: (name: string) => string,
+  classOf?: (target: NodeId) => string | undefined,
+): string | undefined {
+  const library = type?.['library'];
+  if (library !== undefined && library !== 'dart:core') return undefined;
+  const base = name.split('<')[0];
+  if (base !== 'List' && base !== 'Set' && base !== 'Map' && base !== 'Iterable') return undefined;
+  const args = typeArgumentsOf(name).map((argument) => {
+    const inner = typeTextOf({ name: argument, nullable: argument.endsWith('?') }, use, classOf);
+    return inner;
+  });
+  const need = base === 'Map' ? 2 : 1;
+  const filled = args.length === need ? args : Array.from({ length: need }, () => 'unknown');
+  const element = filled[0] as string;
+  if (base === 'Set') return `Set<${element}>`;
+  if (base === 'Map') return `Map<${element}, ${filled[1] as string}>`;
+  return element.includes(' | ') ? `(${element})[]` : `${element}[]`;
+}
+
+/**
+ * The explicit type argument a signal needs — `<number[]>`, `<number | null>` — or `undefined` when inference is right.
+ *
+ * A signal holding a collection, or a nullable, is where TypeScript's inference from the initial value is *wrong*:
+ * `signal([])` is `never[]` (nothing can be added), and `signal(null)` is `null` (nothing can be assigned). Both were
+ * loud `tsc` failures, and are why `List<int> _items = []` and `int? _n;` did not build (ADR-0051).
+ *
+ * @param type - the signal's `TypeRef`.
+ * @param use - forwarded to {@link typeTextOf}.
+ * @param classOf - forwarded to {@link typeTextOf}.
+ * @returns the text to put between `<` and `>`, or `undefined`.
+ */
+export function signalTypeArgumentOf(
+  type: Node | undefined,
+  use?: (name: string) => string,
+  classOf?: (target: NodeId) => string | undefined,
+): string | undefined {
+  const declared = typeof type?.['name'] === 'string' ? type['name'] : '';
+  const nullable = type?.['nullable'] === true || declared.endsWith('?');
+  const base = declared.replace(/\?$/, '').split('<')[0];
+  const collection = base === 'List' || base === 'Set' || base === 'Map' || base === 'Iterable';
+  if (!nullable && !collection) return undefined;
+  const text = typeTextOf(type, use, classOf);
+  return text === 'unknown' ? undefined : text;
 }
 
 /**

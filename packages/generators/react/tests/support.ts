@@ -100,7 +100,8 @@ export function fileAt(files: readonly { path: string; contents: string }[], pat
 // shell-script shim that fails silently on Windows (see `build.test.ts`'s own comment on that, kept
 // there rather than duplicated here).
 
-const here = fileURLToPath(new URL('.', import.meta.url));
+// A string path, not `new URL('.', import.meta.url)`: under jsdom `URL` is jsdom's, which `fileURLToPath` rejects.
+const here = dirname(fileURLToPath(import.meta.url));
 const packageRoot = join(here, '..');
 const repoRoot = join(packageRoot, '..', '..', '..');
 const runtimeSrc = join(packageRoot, '..', '..', 'runtimes', 'react', 'src', 'index.ts');
@@ -578,5 +579,11 @@ export function intBitOperatorsRaw(): string {
 /** The real `fixtures/apps/int_bit_refusal` document, raw analyzer output (M11-I) — not yet normalized. */
 export function intBitRefusalRaw(): string {
   const path = fileURLToPath(new URL('../../../../fixtures/uir/int_bit_refusal.ndjson', import.meta.url));
+  return readFileSync(path, 'utf8');
+}
+
+/** The real `fixtures/apps/collection_mutation` document, raw analyzer output (M11, ADR-0051) — not yet normalized. */
+export function collectionMutationRaw(): string {
+  const path = join(here, '..', '..', '..', '..', 'fixtures', 'uir', 'collection_mutation.ndjson');
   return readFileSync(path, 'utf8');
 }

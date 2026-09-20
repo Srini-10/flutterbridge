@@ -1,0 +1,21 @@
+name: collection_mutation
+description: >-
+  M11 (ADR-0051): in-place mutation of State-held List/Set/Map — inside and outside setState, through aliases, props,
+  callbacks and nesting. Every scenario is executed twice: by Flutter itself (test/), and by the generated React
+  component in jsdom, and the two are compared step by step.
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

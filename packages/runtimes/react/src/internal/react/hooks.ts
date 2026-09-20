@@ -30,7 +30,7 @@
 
 import { useCallback, useDebugValue, useEffect, useRef, useSyncExternalStore } from 'react';
 
-import { derived, effect, subscribe, type Dispose, type ReadableSignal } from '../state/graph.js';
+import { derived, effect, subscribe, versionOf, type Dispose, type ReadableSignal } from '../state/graph.js';
 
 /**
  * Subscribes a component to a signal and returns its current value.
@@ -55,10 +55,14 @@ export function useSignal<T>(source: ReadableSignal<T>): T {
     (onStoreChange: () => void): Dispose => subscribe(source, onStoreChange),
     [source],
   );
-  // `peek`: reading must not subscribe the graph to the render (see this file's header). React's own
-  // subscription is the edge, and it is the only one.
-  const snapshot = useCallback((): T => source.peek(), [source]);
-  const value = useSyncExternalStore(subscribeToSource, snapshot, snapshot);
+  // The snapshot is the source's **version**, not its value. A value snapshot cannot see a collection mutated in
+  // place — same reference, `Object.is`-equal — and React would never re-render (ADR-0051). The version moves exactly
+  // when the value changes (R3) and when `touch` declares an in-place change, so an equal write still renders nothing.
+  const snapshot = useCallback((): number => versionOf(source), [source]);
+  useSyncExternalStore(subscribeToSource, snapshot, snapshot);
+  // `peek`: reading must not subscribe the graph to the render (see this file's header). React's own subscription is
+  // the edge, and it is the only one.
+  const value = source.peek();
   useDebugValue(value);
   return value;
 }

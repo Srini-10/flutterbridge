@@ -29,7 +29,7 @@ import { GeneratorDiagnosticCode } from '../diagnostics/codes.js';
 import { emitExpression, isScaffoldMessengerCall, localBindingsIn, stringLiteral, type EmitScope } from './expression.js';
 import { emitStatements } from './statement.js';
 import { identifierOf, type ModuleBuilder } from './module.js';
-import { typeTextOf } from './types.js';
+import { signalTypeArgumentOf, typeTextOf } from './types.js';
 import { useRuntime, useRuntimeType } from './runtime.js';
 import {
   missingCapabilityOf,
@@ -620,8 +620,10 @@ function declareLocalSignals(
     }
     const local = identifierOf(nameOfSignal(node, id, scope));
     signals.set(id, local);
-    const initial = node['initial'] === undefined ? 'undefined' : emitExpression(node['initial'] as Node, scope);
-    module.line(`const [${local}] = ${useState}(() => ${signalFn}(${initial}));`);
+    // An absent initialiser is Dart's `null` (`int? _n;`), not JavaScript's `undefined` — `'$_n'` prints `null` in Dart.
+    const initial = node['initial'] === undefined ? 'null' : emitExpression(node['initial'] as Node, scope);
+    const typeArgument = signalTypeArgumentOf(node['type'] as Node | undefined, (name) => useRuntimeType(module, name));
+    module.line(`const [${local}] = ${useState}(() => ${signalFn}${typeArgument === undefined ? '' : `<${typeArgument}>`}(${initial}));`);
   }
 
   // The subscriptions, after every declaration — so the emitted block reads as "here is the state, here is

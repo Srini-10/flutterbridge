@@ -84,6 +84,12 @@ const GENERATED_NAMES: ReadonlySet<string> = new Set([
   'useThemeSurface', 'useUnmountEffect', 'useUpdateEffect', 'withOpacity', 'wrapAlignItems',
   'intAdd', 'intAnd', 'intMod', 'intMul', 'intNot', 'intOr', 'intShl', 'intShr', 'intSub', 'intTruncDiv', 'intUshr',
   'intXor', 'numMod', 'numTruncDiv',
+  'versionOf', 'inheritOwners', 'notifyMutation', 'defaultCompare', 'listAdd', 'listAddAll', 'listAny', 'listClear', 'listContains',
+  'listFirst', 'listInsert', 'listInsertAll', 'listLast', 'listMap', 'listRemove', 'listRemoveAt', 'listRemoveLast',
+  'listRemoveWhere', 'listRetainWhere', 'listReversed', 'listSetAt', 'listShuffle', 'listSkip', 'listSort',
+  'listSublist', 'listTake', 'listToList', 'listWhere', 'mapAddAll', 'mapClear', 'mapContainsKey',
+  'mapContainsValue', 'mapEntries', 'mapGet', 'mapKeys', 'mapPutIfAbsent', 'mapRemove', 'mapSet', 'mapValues',
+  'setAdd', 'setAddAll', 'setClear', 'setContains', 'setRemove', 'setToList',
 ]);
 
 /** Whether `name` is one the generated code binds or calls unqualified. Exported for the drift-guard test. */

@@ -66,6 +66,8 @@ export const RuntimeDiagnosticCode = {
   IntegerDivisionByZero: 'BRG4012',
   /** A shift by a negative count, or a non-integer where an `int` is required. */
   InvalidIntegerOperand: 'BRG4013',
+  /** A collection operation Dart would reject with a `RangeError`, an `ArgumentError` or a `StateError` (ADR-0051). */
+  CollectionOperation: 'BRG4014',
 } as const;
 
 /** A diagnostic code owned by the runtime kit (ADR-20). */

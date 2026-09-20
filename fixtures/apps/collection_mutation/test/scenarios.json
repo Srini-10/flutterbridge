@@ -1,0 +1,17 @@
+{
+  "ListOps": ["add", "insert", "removeAt", "remove", "sort", "assign", "addAll", "removeWhere", "insertAll", "removeLast", "reset", "add", "clear", "addAll", "sort", "reset", "insert", "removeLast"],
+  "FinalListOps": ["add", "add", "removeAt", "add", "clear", "add"],
+  "SetOps": ["add2", "add2again", "remove1", "remove9", "addAll", "clear", "add2"],
+  "MapOps": ["setA", "bumpA", "setB", "removeA", "putIfAbsentB", "putIfAbsentC", "addAll", "clear", "setA"],
+  "NestedOps": ["addToFirst", "addRow", "addToLast", "dropFromSecond", "bucketA", "bucketAagain", "cellAssign", "addToLast"],
+  "AliasOps": ["viaLocalAlias", "viaChainedAlias", "viaCopy", "viaLocalAlias"],
+  "PropsParent": ["parentAdd", "childAdd", "childAdd", "parentAdd"],
+  "CallbackCapture": ["push", "pushTwice", "push"],
+  "MultiMutation": ["many", "many"],
+  "NoopMutations": ["removeMissing", "addPresent", "assignSame", "sortSorted", "emptySetState"],
+  "NoSetState": ["silentAdd", "rebuild", "silentAdd", "silentAdd", "rebuild"],
+  "ParentRebuild": ["childAdd", "rebuildParent", "childAdd", "rebuildParent"],
+  "CollectionFor": ["add", "removeFirst", "add", "removeFirst", "removeFirst"],
+  "ComparatorSort": ["sortDesc", "sortAsc", "sortDesc"],
+  "ShuffleSort": ["shuffleThenSort"]
+}

@@ -250,6 +250,7 @@ final class ExpressionExtractor {
               },
             );
           }
+          if (_isSdkMember(node.propertyName.element)) return _nullAwareSdk(node, scope);
           return _propertyAccessOn(node, target, scope, suppressTarget: true);
         }
         return _propertyAccessOn(node, target, scope, suppressTarget: false);
@@ -741,6 +742,22 @@ final class ExpressionExtractor {
           fields: <String, RawValue>{
             'receiver': RawChild(extract(node.target!, scope)),
             'property': RawLiteral(node.propertyName.name),
+            'type': out.typeRef(writeType, at: node),
+          },
+        );
+      case IndexExpression():
+        // `items[i] = v`, `cache[key] += 1`: an index write. The schema has always said an `Assign` target may be
+        // "a `Ref`, a `PropertyAccess`, or an index", and an index *read* is the `MethodCall` named `[]`; the write
+        // target is that same node, typed by the assignment (`[]=` takes the value as its second argument). The
+        // generator lowers it by the receiver's type — `listSetAt`, `mapSet` — instead of the old opaque `write
+        // target`, which dropped the write with only a warning (M11, ADR-0051).
+        return RawNode(
+          kind: 'logic.MethodCall',
+          span: out.span(node),
+          fields: <String, RawValue>{
+            'receiver': RawChild(extract(node.realTarget, scope)),
+            'method': const RawLiteral('[]'),
+            'args': RawList(<RawValue>[RawChild(extract(node.index, scope))]),
             'type': out.typeRef(writeType, at: node),
           },
         );
@@ -1271,9 +1288,33 @@ final class ExpressionExtractor {
           },
         );
       }
+      if (_isSdkMember(node.methodName.element)) return _nullAwareSdk(node, scope);
       return _methodCallOn(node, target, scope, suppressTarget: true, awaited: awaited);
     }
     return _methodCallOn(node, target, scope, suppressTarget: false, awaited: awaited);
+  }
+
+  /// Whether [element] is a member of an SDK library (`dart:core`, `dart:async`, …) — one that has no project
+  /// `target` for the unmodelled-member refusal to key on.
+  bool _isSdkMember(Element? element) => element?.library?.uri.scheme == 'dart';
+
+  /// A null-aware `?.` on an SDK member whose receiver is not a plain variable.
+  ///
+  /// The receiver cannot be duplicated to guard it (`_isSafeToDuplicateNullAwareReceiver`), and the other
+  /// non-duplicable path withholds the member's `target` so that a later stage refuses the call. An SDK member has
+  /// no `target` to withhold, so that path silently dropped the `?.`: `m['k']?.join(',')` became `m['k'].join(',')`,
+  /// which throws where Dart yields `null`. It is preserved as an opaque expression instead — refused by name, with
+  /// its source — until a guard that evaluates the receiver once exists.
+  RawNode _nullAwareSdk(Expression node, Scope scope) {
+    const String reason =
+        'null-aware `?.` on a receiver that is not a plain variable (bind the receiver to a local first)';
+    out.report(
+      Codes.unsupportedSyntax,
+      'A $reason has no UIR representation: guarding it would evaluate the receiver twice, and dropping the `?.` '
+      'would throw where Dart yields null. It is preserved as an opaque expression.',
+      node,
+    );
+    return out.opaqueExpr(node, reason);
   }
 
   /// The ordinary (non-null-aware-semantics) `logic.MethodCall` for [node], receiver [target] — the
@@ -2059,6 +2100,32 @@ final class ExpressionExtractor {
   );
 
   RawNode _mapLiteral(SetOrMapLiteral node, Scope scope) {
+    // A set literal is a `ListLit` whose *type* is a `Set` — the schema has no set node, and the type is what says
+    // which it is. Until M11 the elements of `<int>{1, 2}` were reported and **dropped**, so the emitted program
+    // held `new Set([])` with only a warning.
+    if (node.isSet) {
+      if (node.elements.every((CollectionElement e) => e is Expression)) {
+        return RawNode(
+          kind: 'logic.ListLit',
+          span: out.span(node),
+          fields: <String, RawValue>{
+            'elements': RawList(<RawValue>[
+              for (final CollectionElement element in node.elements)
+                RawChild(extract(element as Expression, scope)),
+            ]),
+            'type': out.typeRef(node.staticType, at: node),
+          },
+        );
+      }
+      return _unsupported(node, scope);
+    }
+
+    // A map literal whose elements are not all `key: value` entries (a spread, `if`, `for`) cannot be paired
+    // positionally: the whole literal is opaque, so it is refused rather than silently emitted without them.
+    if (node.elements.any((CollectionElement e) => e is! MapLiteralEntry)) {
+      return _unsupported(node, scope);
+    }
+
     final List<RawValue> keys = <RawValue>[];
     final List<RawValue> values = <RawValue>[];
 
@@ -2066,14 +2133,6 @@ final class ExpressionExtractor {
       if (element is MapLiteralEntry) {
         keys.add(RawChild(extract(element.key, scope)));
         values.add(RawChild(extract(element.value, scope)));
-      } else {
-        // A set literal, or a spread/if/for inside a map. Keys and values are paired positionally by
-        // the schema, so there is no honest way to put a lone element into one of them.
-        out.report(
-          Codes.unsupportedSyntax,
-          'This collection element has no UIR representation inside a map or set literal.',
-          element,
-        );
       }
     }
 

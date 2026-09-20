@@ -201,6 +201,85 @@ function flush(): void {
   }
 }
 
+// ── Ownership: which signals hold a collection (ADR-0051) ───────────────────────────────────────────────────────
+//
+// A Dart collection is mutated in place and is reachable through aliases (`final b = _items; b.add(1)`), props and
+// nesting (`_grid[0].add(1)`). Which signal to notify therefore cannot be read off the receiver expression at compile
+// time, so the runtime keeps the answer: every signal registers the collection graph it holds, and a mutator helper
+// notifies the owners of the collection it mutated. Correct for every alias by construction.
+//
+// **Over-notification is allowed; under-notification is not.** An element removed from a list stays registered, so
+// mutating it later still touches the signal that once held it — one extra, harmless render, and never a missed one.
+
+/** The signals whose value graph contains an object. Weak: a collection nobody holds takes its entry with it. */
+const OWNERS = new WeakMap<object, Set<{ touch(): void }>>();
+
+/** Whether `value` is a container whose contents are part of the graph a signal owns. */
+function isContainer(value: unknown): value is object {
+  if (value === null || typeof value !== 'object') return false;
+  if (Array.isArray(value) || value instanceof Set || value instanceof Map) return true;
+  const prototype = Object.getPrototypeOf(value) as unknown;
+  return prototype === Object.prototype || prototype === null; // a plain object: the shape a Dart class lowers to
+}
+
+/**
+ * Registers `owner` for `value` and everything reachable from it through arrays, sets, maps and plain objects.
+ *
+ * @param value - the value a signal holds, or an element just inserted into one.
+ * @param owner - the signal (anything with a `touch`).
+ */
+function adopt(value: unknown, owner: { touch(): void }, seen: Set<object> = new Set()): void {
+  if (!isContainer(value) || seen.has(value)) return;
+  seen.add(value);
+  let owners = OWNERS.get(value);
+  if (owners === undefined) {
+    owners = new Set();
+    OWNERS.set(value, owners);
+  }
+  owners.add(owner);
+  if (Array.isArray(value)) {
+    for (const element of value) adopt(element, owner, seen);
+  } else if (value instanceof Set) {
+    for (const element of value) adopt(element, owner, seen);
+  } else if (value instanceof Map) {
+    for (const [key, element] of value) {
+      adopt(key, owner, seen);
+      adopt(element, owner, seen);
+    }
+  } else {
+    for (const element of Object.values(value)) adopt(element, owner, seen);
+  }
+}
+
+/**
+ * Announces that `target` — a `List`, `Set` or `Map` — was mutated in place: touches every signal that holds it.
+ *
+ * Called by the runtime's collection helpers after each change, so generated code never says which signal (ADR-0051).
+ * Several owners are notified in one batch.
+ *
+ * @param target - the collection that was mutated.
+ */
+export function notifyMutation(target: object): void {
+  const owners = OWNERS.get(target);
+  if (owners === undefined || owners.size === 0) return;
+  batch(() => {
+    for (const owner of [...owners]) owner.touch();
+  });
+}
+
+/**
+ * Gives an element just inserted into `parent` the same owners `parent` has, so a later mutation of the element — a
+ * nested list — reaches the signal too.
+ *
+ * @param element - what was inserted.
+ * @param parent - the collection it was inserted into.
+ */
+export function inheritOwners(element: unknown, parent: object): void {
+  const owners = OWNERS.get(parent);
+  if (owners === undefined || !isContainer(element)) return;
+  for (const owner of owners) adopt(element, owner);
+}
+
 /** A writable unit of reactive state — the runtime form of `sig.Signal` (ADR-4). */
 class SignalNode<T> implements Producer {
   public version = 1;
@@ -209,6 +288,7 @@ class SignalNode<T> implements Producer {
 
   public constructor(initial: T) {
     this.value = initial;
+    adopt(initial, this);
   }
 
   /** Signals are always current; the method exists so a consumer can refresh any producer uniformly. */
@@ -226,6 +306,7 @@ class SignalNode<T> implements Producer {
   public set(next: T): void {
     if (Object.is(next, this.value)) return; // R3: an equal write is not a change.
     this.value = next;
+    adopt(next, this);
     this.version++;
     globalVersion++;
     markDependents(this, new Set());
@@ -235,6 +316,17 @@ class SignalNode<T> implements Producer {
   public update(mutator: (current: T) => T): void {
     // `peek`, not `get`: an update must not subscribe the enclosing computation to the signal it writes.
     this.set(mutator(this.peek()));
+  }
+
+  public touch(): void {
+    // A change that `set` cannot see: the *same object*, mutated in place. The value is identical, so R3's
+    // `Object.is` cutoff would call it "no change" — but a collection mutated in place *has* changed, and it is the
+    // only way to keep a Dart `List`'s identity (`final other = items; items.add(1)` must reach `other`). So this is
+    // the deliberate, explicit exception to R3 (ADR-0051): the caller says "I changed it", the graph believes it.
+    this.version++;
+    globalVersion++;
+    markDependents(this, new Set());
+    if (batchDepth === 0) flush();
   }
 }
 
@@ -359,6 +451,12 @@ export interface WritableSignal<T> extends ReadableSignal<T> {
   set(next: T): void;
   /** `set(mutator(peek()))`. Reads untracked, so writing a signal never subscribes you to it. */
   update(mutator: (current: T) => T): void;
+  /**
+   * Declares that the value was **mutated in place** and notifies as if it had changed, though `Object.is` says it
+   * did not (ADR-0051, the one explicit exception to ADR-20 R3). For a collection held in state: its identity must
+   * survive the change, so the graph cannot be told by writing a new value.
+   */
+  touch(): void;
 }
 
 /** Disposes an effect or subscription. Idempotent. */
@@ -482,4 +580,19 @@ export function subscribe<T>(source: ReadableSignal<T>, listener: () => void): D
     if (primed) listener();
     primed = true;
   }, 'subscription');
+}
+
+/**
+ * The change counter of a signal or derived — what `useSignal` snapshots.
+ *
+ * A value snapshot cannot see an in-place mutation (the reference is the same), so the hook watches this instead. It
+ * moves exactly when `set` changes the value (R3), when a derived recomputes to a different value, or when `touch`
+ * declares an in-place change. `peek` first, so a derived is brought up to date before its version is read.
+ *
+ * @param source - a signal or a derived.
+ * @returns its current version.
+ */
+export function versionOf(source: ReadableSignal<unknown>): number {
+  source.peek();
+  return (source as unknown as { readonly version: number }).version;
 }

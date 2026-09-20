@@ -25,6 +25,14 @@ import type { AnyUirNode, Expr, NodeId } from '@bridge/uir';
 import { GeneratorDiagnosticCode } from '../diagnostics/codes.js';
 import { identifierOf, type ModuleBuilder } from './module.js';
 import { RUNTIME_MODULE as RUNTIME, isKitProvided } from './runtime.js';
+import {
+  collectionKindOf,
+  lowerCollectionMethod,
+  lowerCollectionProperty,
+  lowerIndexWrite,
+  unsupportedCollectionMethod,
+  type CollectionDeps,
+} from './collections.js';
 import { typeTextOf } from './types.js';
 import { OWNER_LABEL, missingCapabilityOf, opaqueDetailOf, opaqueReasonSuffix } from './unsupported.js';
 
@@ -373,6 +381,30 @@ function sdkTypeOf(type: Node | undefined): string | undefined {
   return rawName.endsWith('?') ? rawName.slice(0, -1) : rawName;
 }
 
+/** What `collections.ts` needs from this emitter (ADR-0051). */
+function collectionDeps(scope: EmitScope): CollectionDeps {
+  return {
+    emit: (node) => emitExpression(node, scope),
+    refused: REFUSED,
+    baseType: sdkBaseTypeOf,
+    fullType: sdkTypeOf,
+    use: (name) => scope.module.use(RUNTIME, name),
+  };
+}
+
+/** Whether evaluating `node` twice is the same as once: a literal, a reference, or an index/property chain of them. */
+function isPureChain(node: Node | undefined): boolean {
+  if (node === undefined) return false;
+  const kind = kindOf(node);
+  if (kind === 'logic.Lit' || kind === 'logic.Ref') return true;
+  if (kind === 'logic.PropertyAccess') return isPureChain(node['receiver'] as Node | undefined);
+  if (kind === 'logic.MethodCall' && node['method'] === '[]') {
+    const args = Array.isArray(node['args']) ? (node['args'] as Node[]) : [];
+    return isPureChain(node['receiver'] as Node | undefined) && args.every((a) => isPureChain(a));
+  }
+  return false;
+}
+
 /** The generic-free name of a `dart:core` type: `Set<int>` → `Set`, `double?` → `double`. */
 function sdkBaseTypeOf(type: Node | undefined): string | undefined {
   return sdkTypeOf(type)?.split('<')[0];
@@ -381,27 +413,6 @@ function sdkBaseTypeOf(type: Node | undefined): string | undefined {
 /** The `dart:core` collection types whose methods are *not* a JavaScript collection's methods. */
 const SDK_COLLECTIONS: ReadonlySet<string> = new Set(['List', 'Set', 'Map', 'Iterable']);
 
-/**
- * The `List` methods this generator lowers — the ones whose JavaScript spelling means what the Dart one does.
- *
- * Checked by the receiver's resolved `dart:core` type, never by the bare name (the M8-V rule for numbers): a
- * project class's own `join` is not this. Everything else on a `List`, `Set`, `Map` or `Iterable` is refused,
- * because the fallthrough used to emit `receiver.method(args)` verbatim and JavaScript agrees with Dart only
- * by coincidence of name — and a coincidence is worse than a failure:
- *
- *   - `join()` — Dart's separator defaults to `""`, JavaScript's to `","`. Lowered to `join('')`.
- *   - `sort()` — same name, but JavaScript compares as strings (`[10, 9, 1]` → `[1, 10, 9]`) and both sort *in
- *     place*, which a signal cannot observe: the screen never updates. Refused.
- *   - `add`, `remove`, `contains`, `addAll`, … do not exist on an array, so the emitted call was a `tsc` error at
- *     best and a `TypeError` in the browser where the type checker was skipped.
- */
-const LOWERED_LIST_METHODS: ReadonlySet<string> = new Set(['join', 'indexOf', 'lastIndexOf', 'forEach', 'every']);
-
-/** Collection methods that change the receiver in place — the ones a State field's signal cannot observe. */
-const IN_PLACE_MUTATORS: ReadonlySet<string> = new Set([
-  'add', 'addAll', 'insert', 'insertAll', 'remove', 'removeAt', 'removeLast', 'removeRange', 'removeWhere',
-  'retainWhere', 'clear', 'sort', 'shuffle', 'fillRange', 'setAll', 'setRange', 'replaceRange',
-]);
 
 /**
  * Whether `receiver` is a **parameter** read — a bare `logic.Ref` with no `target` that resolves through
@@ -1343,6 +1354,9 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
         return `${name}(${receiver})`;
       }
 
+      const collectionProperty = lowerCollectionProperty(node, collectionDeps(scope));
+      if (collectionProperty !== undefined) return collectionProperty;
+
       const receiver = emitExpression(node['receiver'] as Node, scope);
       return `${receiver}.${identifierOf(String(node['property'] ?? ''))}`;
     }
@@ -1354,6 +1368,14 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
       // (`missingCapabilityOf('ScaffoldMessenger.of', ...)`) even on a call this generator does support.
       if (isScaffoldMessengerCall(node)) {
         return lowerScaffoldMessengerCall(node, scope);
+      }
+
+      // A `List`/`Set`/`Map`/`Iterable` receiver goes to the exact-Dart collection lowering (ADR-0051) *before*
+      // anything else touches it — including the subscript fast path below, which emitted `map['a']` for a `Map` and
+      // so read `undefined` where Dart reads the value.
+      if (node['target'] === undefined) {
+        const collection = lowerCollectionMethod(node, collectionDeps(scope));
+        if (collection !== undefined) return collection;
       }
 
       const receiver = emitExpression(node['receiver'] as Node, scope);
@@ -1492,30 +1514,14 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
         return REFUSED;
       }
 
-      // A `dart:core` collection receiver (M11-I). Reached by the resolved type of the receiver, so a project
-      // class's own `add` is untouched. See {@link LOWERED_LIST_METHODS} for why the old verbatim emission was
-      // unsafe, and for the two ways it went wrong silently.
-      const collection = sdkBaseTypeOf(methodReceiverType);
-      if (receiver !== REFUSED && node['target'] === undefined && collection !== undefined && SDK_COLLECTIONS.has(collection)) {
-        const rawArgs = asArray(node['args']);
-        if (collection === 'List' && LOWERED_LIST_METHODS.has(method)) {
-          if (method === 'join' && rawArgs.length === 0) return `${receiver}.join('')`;
-          if (rawArgs.length === 1) {
-            return `${receiver}.${method}(${emitArguments(node['args'], scope)})`;
-          }
-        }
+      // A collection method with no row in `collections.ts`: refused by name, never emitted as the JavaScript method of
+      // the same name (ADR-0051; `LOWERED_LIST_METHODS` of ADR-0049 is superseded by the tables there).
+      const collection = collectionKindOf(methodReceiverType, collectionDeps(scope));
+      if (receiver !== REFUSED && node['target'] === undefined && collection !== undefined) {
         scope.report(
           GeneratorDiagnosticCode.UnsupportedExpression,
           'error',
-          `\`${collection}.${method}\` has no lowering. ` +
-            (IN_PLACE_MUTATORS.has(method)
-              ? `It changes the ${collection.toLowerCase()} in place, which a State field's signal cannot observe ` +
-                `(ADR-20 R3: the same object is \`Object.is\`-equal), so the screen would not update where ` +
-                `Flutter's \`setState\` would. Supporting it needs a rule for how a State-held collection ` +
-                `notifies, which ADR-0049 records as not yet decided.`
-              : `This generator lowers only ${[...LOWERED_LIST_METHODS].map((m) => `\`${m}\``).join(', ')} on a ` +
-                `\`List\` — the methods real evidence has needed and whose JavaScript spelling means the same ` +
-                `thing. A different one needs its own evidence before it can be added.`),
+          unsupportedCollectionMethod(collection, method),
           idOf(node),
         );
         return REFUSED;
@@ -1786,6 +1792,9 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
 
     case 'logic.ListLit': {
       const elements = asArray(node['elements']).map((e) => emitExpression(e, scope));
+      // A Dart set literal is a `ListLit` whose *type* is a `Set` (the schema has no set node, and the analyzer used
+      // to drop the elements of `{1, 2}`): `new Set([1, 2])`, since an array has none of a `Set`'s operations.
+      if (sdkBaseTypeOf(node['type'] as Node | undefined) === 'Set') return `new Set([${elements.join(', ')}])`;
       return `[${elements.join(', ')}]`;
     }
 
@@ -2280,6 +2289,11 @@ function lowerShowSnackBar(node: Node, scope: EmitScope, snackbarHost: string): 
 function emitAssignment(node: Node, scope: EmitScope): string {
   const operator = String(node['operator'] ?? '');
   const target = node['target'] as Node;
+
+  // `items[i] = v`, `cache[k] += 1`, `counts[k]++`: an index write (ADR-0051).
+  if (kindOf(target) === 'logic.MethodCall' && target['method'] === '[]') {
+    return emitIndexAssignment(node, target, operator, scope);
+  }
   const targetText = emitTarget(target, scope);
   const valueNode = node['value'] as Node | undefined;
 
@@ -2323,6 +2337,63 @@ function emitAssignment(node: Node, scope: EmitScope): string {
       );
       return 'undefined';
   }
+}
+
+/**
+ * A write whose target is an index — `list[i] = v`, `map[k] += 1`, `map[k]++` — lowered by the receiver's type to the
+ * runtime's `listSetAt` / `mapSet` (ADR-0051).
+ *
+ * A compound form reads the element and writes it back, so the receiver and index are emitted twice; that is only the
+ * same as once when they are pure (a reference, a literal, or a chain of them), so anything else is refused rather
+ * than evaluated twice.
+ */
+function emitIndexAssignment(node: Node, target: Node, operator: string, scope: EmitScope): string {
+  const valueNode = node['value'] as Node | undefined;
+  const binary = COMPOUND_OPERATORS[operator];
+  const stepped = operator === 'increment' || operator === 'decrement';
+  const compound = operator !== 'assign';
+
+  if (compound && !isPureChain(target)) {
+    scope.report(
+      GeneratorDiagnosticCode.UnsupportedExpression,
+      'error',
+      'a compound assignment to an index (`m[k] += v`, `l[i]++`) reads and writes the element, so its receiver and ' +
+        'index are evaluated twice; that is only the same as once for a plain reference or literal, and this one is not. ' +
+        'Assign to a local first.',
+      idOf(node),
+    );
+    return REFUSED;
+  }
+
+  const value = valueNode === undefined ? '' : emitExpression(valueNode, scope);
+  if (valueNode !== undefined && value === REFUSED) return REFUSED;
+
+  const one: Node = { kind: 'logic.Lit', value: 1, type: { library: 'dart:core', name: 'int' } };
+  const compute = (current: string): string => {
+    if (operator === 'assign') return value;
+    if (stepped) {
+      const step = operator === 'increment' ? '+' : '-';
+      return lowerNumericOperation(step, target, one, current, '1', scope, node) ?? `${current} ${step} 1`;
+    }
+    if (binary !== undefined) {
+      return lowerNumericOperation(binary, target, valueNode, current, value, scope, node) ?? `${current} ${binary} ${value}`;
+    }
+    if (operator === 'divideAssign') return `${current} / ${value}`;
+    if (operator === 'ifNullAssign') return `${current} ?? ${value}`;
+    return REFUSED;
+  };
+
+  const lowered = lowerIndexWrite(target, compute, collectionDeps(scope));
+  if (lowered !== undefined) return lowered;
+
+  scope.report(
+    GeneratorDiagnosticCode.UnsupportedExpression,
+    'error',
+    `an index write (\`[]=\`) on ${sdkTypeOf((target['receiver'] as Node | undefined)?.['type'] as Node | undefined) ?? 'this receiver'} has ` +
+      'no lowering: only a `List` and a `Map` have one (ADR-0051).',
+    idOf(node),
+  );
+  return REFUSED;
 }
 
 /** The signal a `logic.Ref` target names, if it is one. */
