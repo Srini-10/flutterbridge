@@ -49,6 +49,7 @@ import 'package:bridge_analyzer/src/session/extract/route_extractor.dart';
 import 'package:bridge_analyzer/src/session/extract/scope.dart';
 import 'package:bridge_analyzer/src/session/extract/signal_extractor.dart';
 import 'package:bridge_analyzer/src/session/extract/statement_extractor.dart';
+import 'package:bridge_analyzer/src/session/extract/symbol_table.dart';
 import 'package:bridge_analyzer/src/session/extract/token_extractor.dart';
 import 'package:bridge_analyzer/src/session/extract/transition_extractor.dart';
 import 'package:bridge_analyzer/src/session/extract/widget_extractor.dart';
@@ -74,8 +75,24 @@ final class Extractor {
       unit: unit,
     );
 
+    // A declaration's symbol is keyed by the **library** it belongs to, not by the physical file it was written in. A
+    // reference names its target through `element.library.identifier` — the library's root URI — so a class declared in a
+    // `part` file (`model.freezed.dart`, `model.g.dart`, any hand-written `part of`) must be minted under that same
+    // path or every reference to it dangles (BRG1201: 296 of them in a real 240-file application). `span` and anchors keep
+    // the physical file, which is where the source really is.
+    final String? libraryUri = unit.declaredFragment?.element.identifier;
+    final String? libraryPath = libraryUri == null
+        ? null
+        : Symbols.pathOf(
+            libraryUri,
+            packageName: packageName,
+            localPackages: localPackageNames,
+            extractedDependencyFiles: extractedDependencyFiles,
+          );
+
     final RawNodeEmitter out = RawNodeEmitter(
       path: path,
+      symbolPath: libraryPath,
       packageName: packageName,
       lineInfo: unit.lineInfo,
       diagnostics: diagnostics,

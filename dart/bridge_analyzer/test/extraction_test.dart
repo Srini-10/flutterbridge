@@ -9886,4 +9886,48 @@ class _WState extends State<W> {
       expect(cases[0]['body'] as List<dynamic>, isEmpty, reason: 'an empty case falls through to the next');
     });
   });
+
+  group('declarations in part files (M12)', () {
+    test('a class declared in a `part of` file is a declaration of its LIBRARY, so a reference to it resolves (was BRG1201 x296)', () async {
+      final Extracted app = await extract(
+        r'''
+import 'package:flutter/material.dart';
+part 'model.g.dart';
+
+class W extends StatelessWidget {
+  const W({super.key, required this.model});
+  final _Model model;
+  @override
+  Widget build(BuildContext context) => Text('${model.n}');
+}
+''',
+        extra: <String, String>{
+          'model.g.dart': '''
+part of 'main.dart';
+
+class _Model {
+  const _Model(this.n);
+  final int n;
+}
+''',
+        },
+      );
+      expect(app.errors, isEmpty, reason: "no BRG1201: the reference resolves to the part file's own declaration");
+      final Map<String, dynamic> decl =
+          app.ofKind('logic.ClassDecl').singleWhere((Map<String, dynamic> c) => c['name'] == '_Model');
+      expect((decl['span'] as Map<String, dynamic>)['file'], 'lib/model.g.dart', reason: 'the span keeps the physical file');
+      final List<Map<String, dynamic>> refs = <Map<String, dynamic>>[];
+      void walk(Object? v) {
+        if (v is Map<String, dynamic>) {
+          if (v['name'] == '_Model' && v.containsKey('target')) refs.add(v);
+          v.values.forEach(walk);
+        } else if (v is List<dynamic>) {
+          v.forEach(walk);
+        }
+      }
+      app.nodes.forEach(walk);
+      expect(refs, isNotEmpty);
+      expect(refs.every((Map<String, dynamic> r) => r['target'] == decl['id']), isTrue);
+    });
+  });
 }

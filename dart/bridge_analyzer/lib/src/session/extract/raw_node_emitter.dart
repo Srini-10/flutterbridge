@@ -41,7 +41,8 @@ final class RawNodeEmitter {
     required this.registry,
     this.localPackageNames = const <String>{},
     this.extractedDependencyFiles = const <String>{},
-  }) : symbols = Symbols(path);
+    String? symbolPath,
+  }) : symbols = Symbols(symbolPath ?? path);
 
   /// The file, project-relative — or, for a file belonging to a local dependency (M8-F), its full
   /// `package:<name>/…` URI.
