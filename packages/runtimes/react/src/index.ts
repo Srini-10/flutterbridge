@@ -493,6 +493,12 @@ export {
 // carry that shape; `delay` is the one function needed to await.
 export { delay } from './internal/async/delay.js';
 
+// ── M11-I: `double.toString()` ────────────────────────────────────────────────────────────────────
+//
+// Dart prints `1.0` where JavaScript prints `1`. The generator calls this on a string-interpolated value whose
+// static Dart type is `double`; see the file for why the runtime cannot decide that on its own.
+export { doubleToString } from './internal/format/dart_string.js';
+
 // ── M4-G: the application shell ───────────────────────────────────────────────────────────────────
 //
 // There is deliberately no `MaterialApp`. Everything it carries has already been consumed by the time a
