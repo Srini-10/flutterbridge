@@ -36,7 +36,7 @@ import {
 } from './project.js';
 
 /** One stage's outcome, for the summary and for `--json`. */
-interface Stage {
+export interface Stage {
   readonly name: string;
   readonly ok: boolean;
   readonly ms: number;
@@ -165,7 +165,7 @@ export async function build(from: string, args: Args): Promise<{ output: string;
   return finish(project.root, stages, args, 0);
 }
 
-function finish(
+export function finish(
   root: string,
   stages: readonly Stage[],
   args: Args,
@@ -184,8 +184,8 @@ function finish(
       lines.push(...stage.detail.split('\n').map((line) => `       ${line}`));
     } else if (skipped) {
       lines.push(`       ${yellow(stage.detail.replace(/^skipped — /, ''))}`);
-    } else if (stage.ok && stage.detail !== '' && stage.name !== 'analyze') {
-      lines.push(`       ${dim(stage.detail.split('\n').slice(-1)[0] ?? '')}`);
+    } else if (stage.ok && stage.detail !== '') {
+      lines.push(...okDetailLines(stage));
     }
   }
 
@@ -193,6 +193,29 @@ function finish(
   lines.push(exitCode === 0 ? green('build succeeded.') : red('build failed.'));
   void root;
   return { output: lines.join('\n'), exitCode };
+}
+
+/**
+ * What a *successful* stage still has to say.
+ *
+ * A stage that succeeds can still have warned, and the warnings are the part a person needs: an unmapped prop
+ * that was dropped, syntax with no UIR representation. `finish` used to print only the **last line** of an ok
+ * stage's detail — `wrote 10 file(s)` — and nothing at all for `analyze`, so `bridge build` reported
+ * `build succeeded.` over a program the generator had said it dropped parts of. (`bridge generate` printed
+ * them; `bridge build` swallowed them.)
+ *
+ * `analyze` prints a code frame per diagnostic, which is too much for a summary, so only its count line is
+ * shown, with where to find the rest. Every other stage's lines are shown as they are.
+ */
+function okDetailLines(stage: Stage): string[] {
+  if (stage.name === 'analyze') {
+    const counted = /^\d+ (?:warning|info)s? found\.?$/m.exec(stage.detail);
+    return counted === null ? [] : [`       ${yellow(`${counted[0].replace(/\.$/, '')} — run \`bridge analyze\` for the details.`)}`];
+  }
+  return stage.detail
+    .split('\n')
+    .filter((line) => line.trim() !== '')
+    .map((line) => `       ${line}`);
 }
 
 /**
