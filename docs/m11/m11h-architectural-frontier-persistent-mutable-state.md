@@ -287,7 +287,8 @@ Categories are grouped; each was probed, is impossible by construction, or is re
   generator refuses the opaque declaration. Layered protection, not a hole.
 - **Rebuild-schedule divergence (Hypothesis A)** — derived from two observed facts, later **[runtime-executed]** in jsdom by the M11-H follow-up (ADR-0048). This is the reason for A3, not a defect in shipped code (no such binding is emitted).
 - **Incidental, unrelated [observed]:** `ListView.builder(itemBuilder: (c, i) { return Text('$i'); })` with a
-  block-bodied builder emits `<ListView />` with **no diagnostic** at all, even with no captured local
+  block-bodied builder emits `<ListView />` (**correction, M11-I:** block-bodied was the wrong attribution — the
+  discriminator is whether the index walks one collection; see `m11i-completion-audit.md` §D1) with **no diagnostic** at all, even with no captured local
   (control probe `q_builder_ctl`). The `itemBuilder` prop is present in the UIR and not emitted. This is
   independent of mutable capture, was **not** investigated, and is not fixed here. It is a candidate for a
   future frontier because it is a silent drop.

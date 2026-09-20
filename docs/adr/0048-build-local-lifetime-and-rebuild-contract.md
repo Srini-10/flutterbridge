@@ -134,11 +134,14 @@ against the Dart source would notice.
   citing D6 and the spec-level decision D6.1.
 - **Known deviation surface (D3)** is now enumerated. It is the checklist for any later claim of "behavioural
   equivalence" for a supported construct.
-- Not started, recorded as candidates only: (a) a clearer refusal for a build-level write (today R1 —
-  `var count = 0; count++; return Text('$count');` — is refused by the *generator* as `BRG3004 <unknown>`,
-  not by the analyzer); (b) extending `BRG1311`'s explanation with the lifetime rationale and the State-field
-  guidance; (c) the separate, capture-independent silent drop of a block-bodied `ListView.builder`
-  `itemBuilder` observed in M11-H.
+- Follow-ups recorded when this ADR was written, and what became of them (M11-I, plan Phases C–D):
+  (a) *a clearer refusal for a build-level write* — the `<unknown>` was a generator defect (`BRG3004` read a
+  field, `source`, that no producer writes; the schema's is `dartSource`), fixed, so the refusal now names the
+  body and the frontend's reason. No analyzer error was added: a straight-line write inside one `build()`
+  (`var total = 0; for (…) total += x;`) never crosses the boundary D4 describes, so `BRG1311` would misstate
+  the contract; it is an unsupported statement shape and stays `ui.Opaque`. (b) *`BRG1311`'s explanation* —
+  now states this contract, and the report carries a hint. (c) *the block-bodied `ListView.builder` drop* —
+  the attribution was wrong (see `docs/m11/m11i-completion-audit.md` §D1); fixed as three separate defects.
 - Limits of the evidence: the models are hand-written, not generated; jsdom, not a browser; a handful of
   scenarios, not a proof of equivalence. They are sufficient to *reject* A and B (a single counter-example
   each), not to accept anything.
