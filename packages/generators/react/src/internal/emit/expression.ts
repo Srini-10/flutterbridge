@@ -625,9 +625,50 @@ export function localBindingsIn(body: unknown): Map<NodeId, string> {
  * operator writes the wrong value to state."* That is an argument for not *validating* it in the schema; it is
  * not licence to pass it through unread. Anything not on this list is reported, not emitted.
  */
-const SAFE_BINARY = new Set([
-  '+', '-', '*', '<', '>', '<=', '>=', '&&', '||', '&', '|', '^', '<<', '>>',
-]);
+const SAFE_BINARY = new Set(['+', '-', '*', '<', '>', '<=', '>=', '&&', '||']);
+
+/**
+ * `& | ^ << >>` — the operators that look identical and are not (M11-I, each observed against real Dart).
+ *
+ *   - On a Dart `int` (64-bit two's complement) JavaScript's are **32-bit**: `1 << 40` is `256` (Dart
+ *     `1099511627776`), `1 << 31` is negative, `0xFFFFFFFF & 0xFFFF0000` is `-65536` (Dart `4294901760`),
+ *     `4294967296 | 1` is `1`. They were on this list as "the same in both languages"; they are the same only
+ *     when every operand and result fits 32 bits, which the generator cannot know.
+ *   - On a Dart `bool`, `&`, `|` and `^` are non-short-circuit logic returning a `bool`; JavaScript's return a
+ *     `number` (`true & false` is `0`). Lowered as `Boolean(Number(a) & Number(b))`, which evaluates both operands as Dart does and is valid strict TypeScript.
+ *
+ * A 64-bit lowering (`BigInt.asIntN(64, …)`) would be exact only while results stay within 2^53, and would need a
+ * decision about what to do beyond it — the same undecided question as ADR-5 D2 — so `int` is refused, by name.
+ */
+const BIT_OPERATORS: ReadonlySet<string> = new Set(['&', '|', '^', '<<', '>>']);
+
+/**
+ * `a OP b` for two integer literals, computed with Dart's 64-bit two's-complement semantics.
+ *
+ * @param operator - one of {@link BIT_OPERATORS}.
+ * @param left - the left operand node.
+ * @param right - the right operand node.
+ * @returns the literal text, or `undefined` when either operand is not an integer literal, the shift count is
+ * outside `0..63`, or the exact result is not a JavaScript safe integer.
+ */
+function foldIntegerBitOperation(operator: string, left: Node, right: Node): string | undefined {
+  const literal = (node: Node): bigint | undefined => {
+    if (node['kind'] !== 'logic.Lit' || typeof node['value'] !== 'number' || !Number.isSafeInteger(node['value'])) {
+      return undefined;
+    }
+    return sdkBaseTypeOf(node['type'] as Node | undefined) === 'int' ? BigInt(node['value']) : undefined;
+  };
+  const a = literal(left);
+  const b = literal(right);
+  if (a === undefined || b === undefined) return undefined;
+  if ((operator === '<<' || operator === '>>') && (b < 0n || b > 63n)) return undefined;
+  const raw =
+    operator === '&' ? a & b : operator === '|' ? a | b : operator === '^' ? a ^ b : operator === '<<' ? a << b : a >> b;
+  const result = BigInt.asIntN(64, raw);
+  const asNumber = Number(result);
+  if (!Number.isSafeInteger(asNumber) || BigInt(asNumber) !== result) return undefined;
+  return result < 0n ? `(${result})` : String(result);
+}
 
 /** Dart's `==` is value equality for primitives and identity for objects — `===` is the honest lowering. */
 const EQUALITY: Readonly<Record<string, string>> = { '==': '===', '!=': '!==' };
@@ -955,6 +996,33 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
       if (operator in EQUALITY) return paren(`${left} ${EQUALITY[operator]} ${right}`);
       if (SAFE_BINARY.has(operator)) return paren(`${left} ${operator} ${right}`);
 
+      if (BIT_OPERATORS.has(operator)) {
+        // Two integer literals: Dart's 64-bit result is computable here, exactly, so emit the number. (`1 << 20`
+        // flags are the common case.) Only when the result is representable — a safe integer — because a
+        // constant that cannot be written exactly is the same silent loss this branch exists to prevent.
+        const folded = foldIntegerBitOperation(operator, node['left'] as Node, node['right'] as Node);
+        if (folded !== undefined) return folded;
+
+        const operandType = sdkBaseTypeOf((node['left'] as Node | undefined)?.['type'] as Node | undefined);
+        if (operandType === 'bool' && (operator === '&' || operator === '|' || operator === '^')) {
+          // `Number(…)` because strict TypeScript rejects `boolean & boolean` (TS2447); left-to-right, both operands
+          // evaluated, exactly as Dart's non-short-circuit `&`/`|`/`^`.
+          return `Boolean(Number(${left}) ${operator} Number(${right}))`;
+        }
+        if (left !== REFUSED && right !== REFUSED) {
+          scope.report(
+            GeneratorDiagnosticCode.UnsupportedExpression,
+            'error',
+            `\`${operator}\` on ${operandType === undefined ? 'this operand type' : `a \`${operandType}\``} has no ` +
+              `lowering. A Dart \`int\` is 64-bit and JavaScript's bitwise and shift operators are 32-bit, so ` +
+              `\`1 << 40\` would be \`256\` instead of \`1099511627776\` — right only while every operand and ` +
+              `result fits 32 bits, which cannot be known here. (\`bool\` \`&\`, \`|\` and \`^\` do lower.)`,
+            idOf(node),
+          );
+        }
+        return REFUSED;
+      }
+
       // The two that do not survive translation. Both are silent: they compute a number, and the number is
       // wrong only for some inputs.
       if (operator === '%') {
@@ -985,7 +1053,19 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
     case 'logic.Unary': {
       const operator = String(node['operator'] ?? '');
       const operand = emitExpression(node['operand'] as Node, scope);
-      if (operator === '!' || operator === '-' || operator === '~') return paren(`${operator}${operand}`);
+      if (operator === '!' || operator === '-') return paren(`${operator}${operand}`);
+      if (operator === '~') {
+        if (operand !== REFUSED) {
+          scope.report(
+            GeneratorDiagnosticCode.UnsupportedExpression,
+            'error',
+            '`~` on an `int` has no lowering: a Dart `int` is 64-bit and JavaScript\'s `~` is 32-bit, so ' +
+              '`~4294967296` would be `-1` instead of `-4294967297`.',
+            idOf(node),
+          );
+        }
+        return REFUSED;
+      }
       scope.report(
         GeneratorDiagnosticCode.UnsupportedExpression,
         'error',

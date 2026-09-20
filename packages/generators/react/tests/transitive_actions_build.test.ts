@@ -76,7 +76,9 @@ describe('M8-O build-proof: transitive action reference discovery, real analyzer
 
     // b7's own body: a guarded early return, no `count.set(...)` — write-nothing status unchanged by
     // becoming reachable.
-    expect(source).toMatch(/const handle_\w+ = \(\) => \{\s*\n\s*if \(\(count\.get\(\) > \(1 << 30\)\)\) \{\s*\n\s*return;\s*\n\s*\}\s*\n\s*\};/);
+    // `1 << 30` in the Dart source is folded to its exact value (M11-I): a constant shift of two integer
+    // literals is computed with Dart's 64-bit semantics at compile time, so no 32-bit JavaScript shift is emitted.
+    expect(source).toMatch(/const handle_\w+ = \(\) => \{\s*\n\s*if \(\(count\.get\(\) > 1073741824\)\) \{\s*\n\s*return;\s*\n\s*\}\s*\n\s*\};/);
   });
 
   it('a parameterized transitively-referenced action keeps its parameter', () => {

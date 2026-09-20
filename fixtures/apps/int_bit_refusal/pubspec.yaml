@@ -1,0 +1,15 @@
+name: int_bit_refusal
+description: >-
+  M11-I (plan Phase E) negative proof: a bit or shift operation on a non-constant Dart int has no faithful lowering (JavaScript is 32-bit) and is refused by name.
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

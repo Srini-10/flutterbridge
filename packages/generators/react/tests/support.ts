@@ -568,3 +568,15 @@ export function subclassConstructionRefusalRaw(): string {
   const path = fileURLToPath(new URL('../../../../fixtures/uir/subclass_construction_refusal.ndjson', import.meta.url));
   return readFileSync(path, 'utf8');
 }
+
+/** The real `fixtures/apps/int_bit_operators` document, raw analyzer output (M11-I) — not yet normalized. */
+export function intBitOperatorsRaw(): string {
+  const path = fileURLToPath(new URL('../../../../fixtures/uir/int_bit_operators.ndjson', import.meta.url));
+  return readFileSync(path, 'utf8');
+}
+
+/** The real `fixtures/apps/int_bit_refusal` document, raw analyzer output (M11-I) — not yet normalized. */
+export function intBitRefusalRaw(): string {
+  const path = fileURLToPath(new URL('../../../../fixtures/uir/int_bit_refusal.ndjson', import.meta.url));
+  return readFileSync(path, 'utf8');
+}

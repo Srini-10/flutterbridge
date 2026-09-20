@@ -1,0 +1,15 @@
+name: int_bit_operators
+description: >-
+  M11-I (plan Phase E) positive proof: integer-literal bit and shift operations fold to Dart 64-bit values at compile time, and bool & | ^ return a bool. Executed in the runtime harness against real Dart.
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true
