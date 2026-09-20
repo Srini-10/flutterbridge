@@ -197,24 +197,25 @@ final class WidgetExtractor {
       }
     }
 
-    // A lazy builder — `ListView.builder(itemCount:, itemBuilder:)` — is a `ui.List`, when it can be
-    // *proved* to be one. See [_lazyList].
+    // A lazy builder — `ListView.builder(itemCount:, itemBuilder:)` — has a `ui.List` for its items, when
+    // that can be *proved*. See [_lazyList].
+    //
+    // The `ui.List` is the widget's **child**, not a replacement for the widget: the `ListView` itself — its
+    // `scrollDirection`, `padding`, `shrinkWrap`, `reverse`, its scroll container — is still there, and is
+    // extracted below like any other element. Until M11-I it returned the bare `ui.List` in the widget's
+    // place, so every one of those was discarded, with no diagnostic anywhere, and a horizontal list
+    // rendered as a stack of items that did not scroll. Once the builder is expanded the widget is an
+    // ordinary `ListView(children: [...])`, which is why it carries no constructor name below.
     final (String, String)? lazy = registry.lazyBuilderOf(name, constructorName);
-    if (lazy != null) {
-      final RawNode? expanded = _lazyList(
-        node,
-        name: name,
-        arguments: arguments,
-        scope: scope,
-        builderProp: lazy.$1,
-        countProp: lazy.$2,
-        index: index,
-        slot: slot,
-      );
-      if (expanded != null) {
-        return expanded;
-      }
-    }
+    final RawNode? lazyItems = lazy == null
+        ? null
+        : _lazyList(
+            node,
+            arguments: arguments,
+            scope: scope,
+            builderProp: lazy.$1,
+            countProp: lazy.$2,
+          );
 
     final WidgetRecognition recognition = registry.recogniseWidget(context, node.staticType);
     if (recognition.isTextWidget) {
@@ -272,6 +273,12 @@ final class WidgetExtractor {
       final String label = argument.name.lexeme;
       final Expression value = argument.argumentExpression;
 
+      // The builder and its count are what `lazyItems` was built from; extracting them again as props
+      // would put a closure back on an element whose items are already a `ui.List`.
+      if (lazyItems != null && (label == lazy!.$1 || label == lazy.$2)) {
+        continue;
+      }
+
       switch (label) {
         case _ when label == childrenProp:
           children.addAll(_childList(value, scope));
@@ -295,6 +302,10 @@ final class WidgetExtractor {
       }
     }
 
+    if (lazyItems != null) {
+      children.add(RawChild(lazyItems));
+    }
+
     // Accessibility the author stated explicitly. Losing it generates HTML that fails an audit the
     // Flutter app passed — a regression nobody asked for and nobody can see.
     final RawValue? semantics = annotations.semanticsOf(name, arguments);
@@ -309,7 +320,8 @@ final class WidgetExtractor {
       fields: <String, RawValue>{
         'component': out.widgetRef(
           name,
-          constructorName: constructorName,
+          // An expanded builder is an ordinary `ListView(children: [...])`; `.builder` no longer describes it.
+          constructorName: lazyItems != null ? null : constructorName,
           type: node.staticType,
         ),
         if (semantics case final RawValue value) 'semantics': value,
@@ -425,6 +437,8 @@ final class WidgetExtractor {
   ///
   /// When they do not, this returns `null` and the widget extracts as an ordinary element — whose
   /// `itemBuilder` prop is then a closure the generator refuses by name, which is the honest outcome.
+  /// (It only did from M11-I on: the generator's constructor-qualified refusal was never consulted for a
+  /// widget that has a mapping, so until then the closure was dropped as an unmapped prop, with a warning.)
   ///
   /// ## Why this is here and not in N3
   ///
@@ -440,13 +454,10 @@ final class WidgetExtractor {
   /// discarding it.
   RawNode? _lazyList(
     Expression node, {
-    required String name,
     required ArgumentList arguments,
     required Scope scope,
     required String builderProp,
     required String countProp,
-    int? index,
-    String? slot,
   }) {
     Expression? builderArg;
     Expression? countArg;
@@ -504,7 +515,9 @@ final class WidgetExtractor {
     return RawNode(
       kind: 'ui.List',
       span: out.span(node),
-      anchorSegment: _segment(name, index, slot),
+      // A child of the widget it belongs to, so its anchor is the widget's plus `builder` — not the widget's
+      // own segment, which it used to borrow when it *was* the widget.
+      anchorSegment: 'builder',
       fields: <String, RawValue>{
         'source': RawChild(bindings.extract(source, scope)),
         'itemParam': const RawLiteral(itemParam),

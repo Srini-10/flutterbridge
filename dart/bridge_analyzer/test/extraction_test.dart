@@ -4522,6 +4522,113 @@ class _HomeState extends State<Home> {
     });
   });
 
+  group('a lazy builder keeps its container (M11-I)', () {
+    const String widgetWrapper = '''
+import 'package:flutter/material.dart';
+class Home extends StatelessWidget {
+  const Home({super.key});
+  @override
+  Widget build(BuildContext context) {
+    {{BODY}}
+  }
+}
+''';
+
+    // `ListView.builder(itemCount: C.length, itemBuilder: (c, i) => W(C[i]))` is *proved* to be a for-each
+    // over `C` and its items become a `ui.List` (M4-H). Until M11-I the `ui.List` was returned in the
+    // widget's place, so the `ListView` itself — `scrollDirection`, `padding`, `shrinkWrap`, `reverse`, the
+    // scroll container — was discarded, with no diagnostic anywhere. The proved case is now an ordinary
+    // `ListView(children: [ui.List])`.
+    Map<String, dynamic> listView(Extracted app) => app
+        .ofKind('ui.Element')
+        .singleWhere((Map<String, dynamic> e) => (e['component'] as Map<String, dynamic>)['name'] == 'ListView');
+
+    Map<String, dynamic> componentOf(Map<String, dynamic> element) => element['component'] as Map<String, dynamic>;
+
+    test('a proved builder is a ListView whose child is the ui.List — the container is not discarded', () async {
+      final Extracted app = await extract(
+        widgetWrapper.replaceFirst('{{BODY}}', '''
+    final items = ['A', 'B'];
+    return ListView.builder(
+      scrollDirection: Axis.horizontal,
+      shrinkWrap: true,
+      itemCount: items.length,
+      itemBuilder: (BuildContext context, int index) => Text(items[index]),
+    );
+'''),
+      );
+      expect(app.errors, isEmpty);
+      final Map<String, dynamic> element = listView(app);
+      final List<dynamic> children = element['children'] as List<dynamic>;
+      expect(children, hasLength(1));
+      expect((children.single as Map<String, dynamic>)['kind'], 'ui.List');
+      final Map<String, dynamic> props = element['props'] as Map<String, dynamic>;
+      expect(props.keys, containsAll(<String>['scrollDirection', 'shrinkWrap']));
+    });
+
+    test('the expanded widget is a default-constructor ListView, and the builder props are gone', () async {
+      final Extracted app = await extract(
+        widgetWrapper.replaceFirst('{{BODY}}', '''
+    final items = ['A', 'B'];
+    return ListView.builder(
+      itemCount: items.length,
+      itemBuilder: (BuildContext context, int index) => Text(items[index]),
+    );
+'''),
+      );
+      final Map<String, dynamic> element = listView(app);
+      expect(componentOf(element).containsKey('constructorName'), isFalse);
+      final Map<String, dynamic> props = (element['props'] as Map<String, dynamic>?) ?? <String, dynamic>{};
+      expect(props.containsKey('itemBuilder'), isFalse, reason: 'the closure is already the ui.List');
+      expect(props.containsKey('itemCount'), isFalse);
+    });
+
+    test('the ui.List has its own anchor, distinct from the widget it belongs to', () async {
+      final Extracted app = await extract(
+        widgetWrapper.replaceFirst('{{BODY}}', '''
+    final items = ['A', 'B'];
+    return ListView.builder(
+      itemCount: items.length,
+      itemBuilder: (BuildContext context, int index) => Text(items[index]),
+    );
+'''),
+      );
+      final String elementAnchor = listView(app)['anchor'] as String;
+      final String listAnchor = app.only('ui.List')['anchor'] as String;
+      expect(listAnchor, isNot(elementAnchor));
+      expect(listAnchor, startsWith('$elementAnchor/'));
+    });
+
+    test('an unproved builder stays an ordinary element carrying its closure, for the generator to refuse', () async {
+      final Extracted app = await extract(
+        widgetWrapper.replaceFirst('{{BODY}}', '''
+    return ListView.builder(
+      itemCount: 3,
+      itemBuilder: (BuildContext context, int index) => Text('row'),
+    );
+'''),
+      );
+      expect(app.errors, isEmpty);
+      expect(app.ofKind('ui.List'), isEmpty);
+      final Map<String, dynamic> element = listView(app);
+      expect(componentOf(element)['constructorName'], 'builder');
+      final Map<String, dynamic> props = element['props'] as Map<String, dynamic>;
+      expect(props.keys, containsAll(<String>['itemBuilder', 'itemCount']));
+    });
+
+    test('the same source extracts to the same bytes on a second, independent run (determinism)', () async {
+      final String source = widgetWrapper.replaceFirst('{{BODY}}', '''
+    final items = ['A', 'B'];
+    return ListView.builder(
+      shrinkWrap: true,
+      itemCount: items.length,
+      itemBuilder: (BuildContext context, int index) => Text(items[index]),
+    );
+''');
+      expect((await extract(source)).bytes, (await extract(source)).bytes);
+    });
+  });
+
   group('render-tree-embedded callback local declaration identity (ADR-28, M11-D)', () {
     // An ordinary local declared inside an INLINE render-tree callback (`onPressed: () { ... }`) —
     // architecturally the same kind of binding a statement-level local already gets declaration-tier
