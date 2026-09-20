@@ -33,20 +33,28 @@ That is why `bridge build` writes *nothing* when generation reports an error.
 
 ## Status
 
-Honest numbers, measured rather than estimated:
+Honest numbers, measured rather than estimated (M11 close, `docs/m11/flutterbridge-final-production-compatibility-audit.md`):
 
 | | |
 | --- | --- |
-| Widget coverage | **56.8%** of every widget instantiation in two real, unmodified Flutter apps |
-| Largest validated application | 113 files, 47 796 lines — analyzes cleanly |
-| What still blocks a real app from emitting | imperative navigation, the gesture model, and a handful of high-frequency language constructs |
+| Widget coverage | **56.8%** of every widget instantiation in two real, unmodified Flutter apps (M5) |
+| Semantic claims checked against real Dart / Flutter | integers (3 477 cases), collections (361), strings (1 824), and 29 scenarios in which a real Flutter widget and the generated React component are driven through the same script and compared after every step |
+| Browser proof | 6 generated applications built with `next build` and run in Chromium — production and development — 66 tests |
+| Full gate | `just ci`: 1 462 TypeScript tests, 644 Dart tests, lint, codegen drift, dependency rules |
+| A real application that compiles end to end | `examples/counter` and the fixture apps. **No large production application does.** `hello_bridge` is blocked (`_repository` reads a project class held as a field, a `FutureBuilder`, a route boundary, `themeMode`), and two real apps analysed read-only (a 240-file consumer app and a 21-package monorepo) are blocked by freezed/part-file classes, widget-returning helpers, spread/`for` in children, project-class members and go_router shapes — see the audit |
+
+**The language subset that *does* compile is exact, or it is refused by name.** [`docs/guide/language-support.md`](docs/guide/language-support.md)
+lists it: `int` arithmetic within the safe-integer domain (loud beyond it), `List`/`Set`/`Map` mutated in place through
+aliases, props and nesting, `initState`/`dispose`/`didUpdateWidget`, constructor defaults, `String` and number members,
+`switch`, increments as values. Where the compiled program differs from Flutter it says so — see the *Differences* in each ADR.
 
 `examples/counter` compiles end to end with **no diagnostics at all**. A large production app does not yet:
-see [`docs/m5/m5a-large-application-validation.md`](docs/m5/m5a-large-application-validation.md) for exactly
+see [`docs/m5/m5a-large-application-validation.md`](docs/m5/m5a-large-application-validation.md) and the M11 audit for exactly
 what stops it, measured on real code.
 
 **`0.1.0` is the first installable release.** `0.x` is not a formality — the API can change in a minor
-release, and it stays `0.x` until a real Flutter application compiles end to end.
+release, and it stays `0.x` until a real Flutter application compiles end to end. FlutterBridge is **not** a universal Flutter
+compiler and does not claim to be: it is a compiler for a stated subset that refuses the rest.
 
 **Validated end to end on macOS.** Linux and Windows run the same pipeline in
 [CI](docs/guide/ci.md), including a proof that all three produce byte-identical output — but nobody has
@@ -67,6 +75,7 @@ You need a Flutter SDK; it bundles the Dart the analyzer runs on. Nothing else.
 - [`examples/counter`](examples/counter) — a build that succeeds
 - [CLI reference](docs/guide/cli.md) · [Configuration](docs/guide/configuration.md)
 - [Supported widgets](docs/guide/supported-widgets.md) — the generated list, and what each refusal means
+- [Language support](docs/guide/language-support.md) — the Dart subset that compiles exactly, and what is refused
 - [CI and release qualification](docs/guide/ci.md) — the cross-platform matrix
 - [Version compatibility](docs/guide/compatibility.md) · [Plugins and generators](docs/guide/plugins.md)
 - [Troubleshooting](docs/troubleshooting.md) — ordered by how often real apps hit each thing

@@ -53,7 +53,11 @@ export function load(document: string, manifest?: Manifest): Program {
     nodes = parseNdjson(document);
   } catch (error) {
     // A malformed document is an input the compiler refuses (exit 3), not a crash with a stack trace.
-    throw new LoadError(`the document is malformed: ${(error as Error).message}`);
+    throw new LoadError(
+      error instanceof RangeError
+        ? 'the document nests expressions too deeply to read (the parser\'s call stack was exhausted)'
+        : `the document is malformed: ${(error as Error).message}`,
+    );
   }
 
   if (manifest !== undefined && nodes.length !== manifest.recordCount) {

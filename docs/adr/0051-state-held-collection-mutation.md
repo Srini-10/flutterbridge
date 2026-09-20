@@ -88,7 +88,7 @@ a mutating call named it). Typed initialisers: `signal<number[]>([])`, `signal<n
   a collection shared with a child by prop and mutated by the child, a captured callback, several mutations in one
   `setState`, no-op mutations, a mutation without `setState`, a parent rebuild over a child's state, and a list rendered
   as widgets.
-- A per-helper table (`mutate.test.ts`, 31 cases): each mutator notifies exactly when it changed something.
+- A per-helper table (`mutate.test.ts`, 32 cases): each mutator notifies exactly when it changed something.
 - Mutations, all killed: `notifyMutation` a no-op (14 of 16 fail); `inheritOwners` a no-op; `adopt` not recursive;
   `useSignal` ignoring the version (13 fail); and dropping the announcement from `listSetAt`, `mapPutIfAbsent`,
   `listSort`, `setAdd`.

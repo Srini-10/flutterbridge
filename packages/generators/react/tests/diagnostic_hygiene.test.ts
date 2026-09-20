@@ -37,6 +37,7 @@ const ALLOWED = [
 describe('every generator diagnostic over the real documents reads as a sentence', () => {
   it(`(${documents.length} documents)`, () => {
     const offenders: string[] = [];
+    const unreadable: string[] = [];
     let messages = 0;
     for (const name of documents) {
       let reported;
@@ -45,8 +46,10 @@ describe('every generator diagnostic over the real documents reads as a sentence
         const run = harness(nodes);
         reactGenerator.generate(run.context);
         reported = run.reported;
-      } catch {
-        // A document the compiler refuses to load is not this test's subject (`identity_and_malformed.test.ts`).
+      } catch (error) {
+        // Every committed document must load: this is also the identity check over the whole corpus — an
+        // `IdentityCollisionError` in any of them lands here.
+        unreadable.push(`${name}: ${String((error as Error).message).slice(0, 160)}`);
         continue;
       }
       for (const d of reported) {
@@ -58,6 +61,7 @@ describe('every generator diagnostic over the real documents reads as a sentence
         }
       }
     }
+    expect(unreadable, 'every committed document loads and normalizes').toEqual([]);
     expect(messages, 'the corpus must actually produce diagnostics').toBeGreaterThan(50);
     expect(offenders.slice(0, 8)).toEqual([]);
   }, 600_000);

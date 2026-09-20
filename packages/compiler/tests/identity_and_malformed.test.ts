@@ -47,6 +47,14 @@ describe('load() on a document the compiler cannot read', () => {
     expect(() => load(bad)).toThrow(/unknown UIR node kind "ui\.Bogus"/);
   });
 
+  it('a document nested past the parser’s stack is a LoadError that says so', () => {
+    let deep: unknown = { kind: 'logic.Lit', id: 'd0', span: span(1), value: 1, type: { name: 'int' } };
+    for (let i = 0; i < 40_000; i++) deep = { kind: 'logic.Unary', id: `d${i}`, span: span(1), operator: '-', operand: deep, type: { name: 'int' } };
+    const document = JSON.stringify({ kind: 'sig.Signal', id: 's', span: span(1), scope: 'component', initial: deep, type: { name: 'int' } });
+    expect(() => load(document)).toThrow(LoadError);
+    expect(() => load(document)).toThrow(/nests expressions too deeply/);
+  });
+
   it('an empty document loads as an empty program', () => {
     expect(load('').nodes).toHaveLength(0);
   });

@@ -1,5 +1,10 @@
 # M11-I — Completion audit (plan `flutterbridge_plan.md`)
 
+> **Follow-up:** the three decisions this audit left open — State-held collection mutation, `State` lifecycle lowering, and
+> exact `int` semantics — are resolved in ADR-0050/0051/0052, and a further whole-pipeline audit is in
+> [`flutterbridge-final-production-compatibility-audit.md`](flutterbridge-final-production-compatibility-audit.md). Statements below
+> that a construct is "refused" for those three reasons describe the state at the time.
+
 **M11-I is reclassified.** No document in this repository describes M11-I; the only description of it was in
 conversation, as an implementation of persistent build-local state. ADR-0048 closed that question: a
 build-local has no lifetime under the compiler's contract, so `BRG1311` is the boundary and nothing persistent
