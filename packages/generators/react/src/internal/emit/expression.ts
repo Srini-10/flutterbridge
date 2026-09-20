@@ -310,6 +310,13 @@ export interface EmitScope {
    */
   readonly projectClassGetterIds: ReadonlySet<NodeId>;
   /**
+   * The ids of every `static` field declared on a project class (M12). Like a class's methods, a static field is embedded
+   * on its `ClassDecl` and is not an addressable document record, so `scope.node(target)` cannot find it; this set is how a
+   * `logic.Ref` to one is told apart from an unresolved name. A reachable `const`/`final` one is emitted as a module-level
+   * `const` and appears in {@link functionModules}.
+   */
+  readonly projectStaticFieldIds: ReadonlySet<NodeId>;
+  /**
    * Set only while emitting a project-class member helper's own body (ADR-0038, M9-Q) — the receiver
    * every implicit/`this.`-qualified instance-field read inside that body must rewrite to, and the class
    * that receiver's own fields belong to (so a field embedded on a *different* class's own `ClassDecl`,
@@ -983,6 +990,25 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
           return helper.path === scope.module.path ? helper.name : scope.module.use(helper.module, helper.name);
         }
 
+        // A `static` field of a project class (`AppSpacing.xl`, M12): a module-level `const` this generator committed to
+        // resolves like a top-level function does. One it could not emit (a mutable static, an initializer that itself
+        // reaches something unsupported) is named, not `BRG3006`.
+        if (scope.projectStaticFieldIds.has(target as NodeId)) {
+          const emitted = scope.functionModules.get(target as NodeId);
+          if (emitted !== undefined) {
+            return emitted.path === scope.module.path ? emitted.name : scope.module.use(emitted.module, emitted.name);
+          }
+          scope.report(
+            GeneratorDiagnosticCode.UnsupportedCapability,
+            'error',
+            `\`${String(node['name'] ?? 'this static field')}\` is a static field this generator could not lower: only a ` +
+              'final or const one with an initializer becomes a module-level constant (a mutable static would be state ' +
+              'shared by every request in a server process, INV-19), and its initializer must itself be lowerable.',
+            idOf(node),
+          );
+          return REFUSED;
+        }
+
         // An application enum constant (M8-D) — `Stage.ready`, `target` resolved by the analyzer's own
         // element model to the declaring `logic.EnumDecl` (never by matching this string against
         // anything). No runtime kit or generated declaration models a Dart enum's *type* today — no
@@ -1051,13 +1077,18 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
         // structural check on the resolved target's own kind, never on `name` — the honest diagnostic is
         // a missing capability, not an unresolved reference.
         if (declaration !== undefined && declaration['kind'] === 'logic.FieldDecl') {
+          const emittedField = scope.functionModules.get(target as NodeId);
+          if (emittedField !== undefined) {
+            return emittedField.path === scope.module.path ? emittedField.name : scope.module.use(emittedField.module, emittedField.name);
+          }
           const fieldName = typeof declaration['name'] === 'string' ? declaration['name'] : String(node['name'] ?? '');
           scope.report(
             GeneratorDiagnosticCode.UnsupportedCapability,
             'error',
-            `\`${fieldName}\` is a project-defined top-level variable, and this generator does not yet ` +
-              `lower a \`logic.FieldDecl\` to a module-level TypeScript declaration. That work belongs to ` +
-              `${OWNER_LABEL['generator']}.`,
+            `\`${fieldName}\` is a project-defined top-level variable this generator could not lower: only a ` +
+              '`final` or `const` one with a lowerable initializer becomes a module-level constant. A mutable ' +
+              'top-level variable would be state shared by every request in a server process (INV-19), so it is refused ' +
+              `rather than emitted. Owner: ${OWNER_LABEL['generator']}.`,
             idOf(node),
           );
           return REFUSED;

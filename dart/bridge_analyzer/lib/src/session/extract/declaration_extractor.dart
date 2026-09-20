@@ -114,6 +114,9 @@ final class DeclarationExtractor {
 
     if (isComponent) {
       components.extract(node, state: state, enclosing: scope);
+      if (state != null) {
+        _stateStatics(state, scope);
+      }
     } else if (isStore) {
       _store(node, scope);
     }
@@ -150,6 +153,31 @@ final class DeclarationExtractor {
           if (methods.isNotEmpty) 'methods': RawList(methods),
           if (constructibleConstructors != null) 'constructibleConstructors': RawList(constructibleConstructors),
         },
+      ),
+    );
+  }
+
+  /// The `static` fields of a widget's `State` class (`static const _repository = Repository();`).
+  ///
+  /// A `State` class is not itself a declaration — its instance fields are signals, its methods actions — so nothing declared
+  /// its statics, and a read of one dangled (BRG1201 since M12 gave a static field a reference target). They are emitted as
+  /// the only members of a `logic.ClassDecl` for the State class: an addressable home for a declaration that has no other.
+  void _stateStatics(ClassDeclaration state, Scope scope) {
+    final String className = state.namePart.typeName.lexeme;
+    final bool hasStatics = state.body.members.any((ClassMember m) => m is FieldDeclaration && m.isStatic);
+    if (!hasStatics) {
+      return;
+    }
+    final List<RawValue> statics = <RawValue>[
+      for (final RawValue field in _fields(state, scope, owner: className))
+        if (field is RawChild && field.node.fields['isStatic'] != null) field,
+    ];
+    out.emit(
+      RawNode(
+        kind: 'logic.ClassDecl',
+        span: out.span(state),
+        symbol: out.symbols.type(className),
+        fields: <String, RawValue>{'name': RawLiteral(className), 'fields': RawList(statics)},
       ),
     );
   }

@@ -2033,13 +2033,12 @@ class W extends StatelessWidget {
 ''');
       expect(app.errors, isEmpty);
       final Map<String, dynamic> ref = app.ofKind('logic.Ref').singleWhere((Map<String, dynamic> r) => r['name'] == 'Limits.count');
-      expect(
-        ref.containsKey('target'),
-        isFalse,
-        reason: 'a plain static const is not an enum constant (`isEnumConstant` is false) — this '
-            'milestone only proved the enum case; classifying static const the same way would be an '
-            'unproven claim, not a proven identity',
-      );
+      // M12: a plain static const still is not an enum constant — it is not a `logic.EnumDecl` target; it is targeted as the
+      // class's own static `logic.FieldDecl`, which is what lets it lower to a module-level constant.
+      expect(ref.containsKey('target'), isTrue);
+      final Map<String, dynamic> owner = app.ofKind('logic.ClassDecl').singleWhere((Map<String, dynamic> c) => c['name'] == 'Limits');
+      final Map<String, dynamic> field = (owner['fields'] as List<dynamic>).cast<Map<String, dynamic>>().single;
+      expect(ref['target'], field['id'], reason: 'the FieldDecl, not an EnumDecl');
     });
 
     test('an unresolved reference is still unresolved, not accidentally claimed', () async {
@@ -3034,7 +3033,7 @@ class W extends StatelessWidget {
       expect(targetOf(app, 'pi'), isNull);
     });
 
-    test('a static class const is not claimed by the top-level mechanism (a separate, undecided gap)', () async {
+    test('a static class const is targeted as the class\u2019s own static field (M12; formerly an undecided gap)', () async {
       final Extracted app = await extract('''
 import 'package:flutter/material.dart';
 class Constants {
@@ -3047,13 +3046,8 @@ class W extends StatelessWidget {
 }
 ''');
       expect(app.errors, isEmpty);
-      expect(
-        targetOf(app, 'Constants.value'),
-        isNull,
-        reason:
-            'a class field never gets a symbol the way a top-level variable does (declaration_extractor.dart’s '
-            '_fields), so this milestone’s reference-side fix correctly leaves it refused rather than half-fixing it',
-      );
+      // M12 closed this gap: a static field's declaration (`_fields`) always had a symbol — the reference side now names it.
+      expect(targetOf(app, 'Constants.value'), isNotNull);
     });
   });
 
@@ -6154,7 +6148,9 @@ class W extends StatelessWidget {
       expect(app.ofKind('logic.PropertyAccess').where((n) => n['property'] == 'count'), isEmpty);
       final Map<String, dynamic> ref =
           app.ofKind('logic.Ref').singleWhere((n) => n['name'] == 'Model.count');
-      expect(ref.containsKey('target'), isFalse);
+      // M12: it is not the external-field-read capability's (a static qualifier never reaches it) — but the reference now
+      // carries its declaring `logic.FieldDecl` as a static member target, so a project constant can be lowered.
+      expect(ref.containsKey('target'), isTrue);
     });
 
     test('a private field is never targeted by external field-read resolution (its own public getter is targeted the M9-Q way instead)', () async {
@@ -8640,7 +8636,9 @@ class W extends StatelessWidget {
 
       final Map<String, dynamic>? ref = refOf(render);
       expect(ref, isNotNull);
-      expect(ref!.containsKey('target'), isFalse);
+      // M12: not resolved *through the static-method capability* (that is `_staticMemberTarget`), but a static field now
+      // has its own target — its declaring `logic.FieldDecl`.
+      expect(ref!.containsKey('target'), isTrue);
     });
 
     // A real, live-probed gap found while mutation-testing this milestone's own first implementation

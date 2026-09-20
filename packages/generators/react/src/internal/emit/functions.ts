@@ -49,21 +49,36 @@ export function modulePathFor(spanFile: string): { readonly path: string; readon
  * never itself reference a `sig.Action` — the walk only ever needs to look for more functions once it is
  * inside a function's own body, never actions.
  */
-function directFunctionRefs(value: unknown, scope: EmitScope, found: Set<NodeId>): void {
+function directFunctionRefs(value: unknown, lookup: (id: NodeId) => Node | undefined, found: Set<NodeId>): void {
   if (Array.isArray(value)) {
-    for (const item of value) directFunctionRefs(item, scope, found);
+    for (const item of value) directFunctionRefs(item, lookup, found);
     return;
   }
   if (value === null || typeof value !== 'object') return;
   const node = value as Node;
   if (kindOf(node) === 'logic.Ref' && typeof node['target'] === 'string') {
     const target = node['target'] as NodeId;
-    const declaration = scope.node(target) as unknown as Node | undefined;
-    if (declaration !== undefined && kindOf(declaration) === 'logic.FunctionDecl') {
+    const declaration = lookup(target);
+    // A top-level or `static` `const`/`final` variable is reached exactly as a function is (M12): both become module-level
+    // declarations.
+    if (declaration !== undefined && (kindOf(declaration) === 'logic.FunctionDecl' || kindOf(declaration) === 'logic.FieldDecl')) {
       found.add(target);
     }
   }
-  for (const child of Object.values(node)) directFunctionRefs(child, scope, found);
+  for (const child of Object.values(node)) directFunctionRefs(child, lookup, found);
+}
+
+/** Every `static` field embedded on a project `ClassDecl`, by id, with its owner's name (M12). */
+export function staticFieldsOf(nodes: readonly AnyUirNode[]): Map<NodeId, { readonly field: Node; readonly owner: string }> {
+  const fields = new Map<NodeId, { readonly field: Node; readonly owner: string }>();
+  for (const node of nodes as unknown as Node[]) {
+    if (kindOf(node) !== 'logic.ClassDecl' || typeof node['name'] !== 'string') continue;
+    const declared = Array.isArray(node['fields']) ? (node['fields'] as Node[]) : [];
+    for (const field of declared) {
+      if (field['isStatic'] === true && typeof field['id'] === 'string') fields.set(field['id'] as NodeId, { field, owner: node['name'] });
+    }
+  }
+  return fields;
 }
 
 /**
@@ -79,12 +94,14 @@ function directFunctionRefs(value: unknown, scope: EmitScope, found: Set<NodeId>
  * walks into a *function's* own body for further functions, which `referencedActions` has no reason to do.
  */
 export function reachableFunctions(nodes: readonly AnyUirNode[], scope: EmitScope): NodeId[] {
+  const statics = staticFieldsOf(nodes);
+  const lookup = (id: NodeId): Node | undefined => (scope.node(id) as unknown as Node | undefined) ?? statics.get(id)?.field;
   const found = new Set<NodeId>();
   for (const node of nodes as unknown as Node[]) {
     if (kindOf(node) === 'ui.Component') {
-      directFunctionRefs(node['render'], scope, found);
+      directFunctionRefs(node['render'], lookup, found);
     } else if (kindOf(node) === 'sig.Action') {
-      directFunctionRefs(node['body'], scope, found);
+      directFunctionRefs(node['body'], lookup, found);
     }
   }
 
@@ -92,10 +109,11 @@ export function reachableFunctions(nodes: readonly AnyUirNode[], scope: EmitScop
   while (queue.length > 0) {
     const next: NodeId[] = [];
     for (const id of queue) {
-      const fn = scope.node(id) as unknown as Node | undefined;
+      const fn = lookup(id);
       if (fn === undefined) continue;
       const discovered = new Set<NodeId>();
-      directFunctionRefs(fn['body'], scope, discovered);
+      // A function's body, or a constant's initializer, may reach further declarations.
+      directFunctionRefs(kindOf(fn) === 'logic.FieldDecl' ? fn['initializer'] : fn['body'], lookup, discovered);
       for (const candidate of discovered) {
         if (!found.has(candidate)) {
           found.add(candidate);
@@ -393,8 +411,13 @@ export function emitFunctionModules(
   readonly methodHelpers: ReadonlyMap<NodeId, MethodHelperInfo>;
   readonly projectClassMethodIds: ReadonlySet<NodeId>;
   readonly projectClassGetterIds: ReadonlySet<NodeId>;
+  readonly projectStaticFieldIds: ReadonlySet<NodeId>;
 } {
   const reachable = reachableFunctions(nodes, scope);
+  const staticFields = staticFieldsOf(nodes);
+  // Computed here, like `projectClassGetterIdsLocal`: the root scope's copy is filled only after this function returns, and
+  // a function or constant emitted from WITHIN it must already tell a static field from an unresolved name.
+  const staticFieldIdsLocal: ReadonlySet<NodeId> = new Set(staticFields.keys());
   const modules = new Map<string, PendingModule>();
   const functionModules = new Map<NodeId, FunctionModuleInfo>();
   const classModules = new Map<NodeId, ClassModuleInfo>();
@@ -697,6 +720,7 @@ export function emitFunctionModules(
       const locals = localBindingsIn(body);
       const helperScope: EmitScope = {
         ...scope,
+        projectStaticFieldIds: staticFieldIdsLocal,
         module: scratch,
         classModules,
         getterHelpers,
@@ -781,14 +805,67 @@ export function emitFunctionModules(
   }
 
   let remaining = new Set(reachable);
+  // The last error a constant's initializer produced, so a constant that never lowers can say why (a function's own
+  // failure is swallowed the same way and reported nowhere; a constant is short enough to be worth explaining).
+  const fieldFailures = new Map<NodeId, string>();
 
   let progressed = true;
   while (progressed) {
     progressed = false;
     for (const id of [...remaining]) {
-      const fn = scope.node(id) as unknown as Node | undefined;
+      const staticEntry = staticFields.get(id);
+      const fn = (scope.node(id) as unknown as Node | undefined) ?? staticEntry?.field;
       if (fn === undefined) {
         remaining.delete(id);
+        continue;
+      }
+
+      // A top-level or `static` `const`/`final` variable (M12) → a module-level `const`. Only an immutable one: a mutable
+      // module-level binding would be state shared by every request a server process handles (INV-19), so it is left
+      // unemitted and its references are refused by name. Its initializer is lowered by the ordinary expression emitter, and
+      // like a function it is retried until what it reaches has itself been emitted.
+      if (kindOf(fn) === 'logic.FieldDecl') {
+        const fieldSpan = fn['span'] as Node | undefined;
+        const fieldFile = typeof fieldSpan?.['file'] === 'string' ? fieldSpan['file'] : undefined;
+        if (fn['isFinal'] !== true || fn['initializer'] === undefined || fieldFile === undefined) {
+          remaining.delete(id);
+          continue;
+        }
+        const { path: fieldPath, specifier: fieldSpecifier } = modulePathFor(fieldFile);
+        const fieldPending = pendingModuleFor(fieldPath, fieldSpecifier);
+        let fieldFailed = false;
+        const fieldScratch = new ModuleBuilder(fieldPending.builder.path);
+        const fieldScope: EmitScope = {
+          ...scope,
+        projectStaticFieldIds: staticFieldIdsLocal,
+          module: fieldScratch,
+          functionModules,
+          report: (code, severity, message, nodeId) => {
+            if (severity === 'error') {
+              fieldFailed = true;
+              fieldFailures.set(id, `${code}: ${message}`);
+            } else scope.report(code, severity, message, nodeId);
+          },
+        };
+        const fieldClassOf = (target: NodeId): string | undefined => {
+          const info = classModules.get(target);
+          if (info === undefined) return undefined;
+          return info.path === fieldScratch.path ? info.name : fieldScratch.use(info.module, info.name, { typeOnly: true });
+        };
+        const initializer = emitExpression(fn['initializer'] as Node, fieldScope);
+        if (fieldFailed) continue;
+        const fieldType = typeTextOf(fn['type'] as Node | undefined, (name) => useRuntime(fieldScratch, name), fieldClassOf);
+        for (const request of fieldScratch.usedImports()) fieldPending.builder.use(request.from, request.name, { typeOnly: request.typeOnly });
+        const baseName = typeof fn['name'] === 'string' ? fn['name'] : String(id);
+        const localFieldName = fieldPending.builder.declare(staticEntry === undefined ? baseName : `${staticEntry.owner}_${baseName}`, id);
+        fieldPending.lines.push(
+          `/** \`${staticEntry === undefined ? baseName : `${staticEntry.owner}.${baseName}`}\`, from ${fieldFile}. An immutable Dart constant, emitted once at module level. */`,
+          `export const ${localFieldName}${fieldType === 'unknown' ? '' : `: ${fieldType}`} = ${initializer};`,
+          '',
+        );
+        functionModules.set(id, { path: fieldPending.builder.path, module: fieldSpecifier, name: localFieldName });
+        remaining.delete(id);
+        progressed = true;
         continue;
       }
 
@@ -834,6 +911,7 @@ export function emitFunctionModules(
       const locals = localBindingsIn(body);
       const fnScope: EmitScope = {
         ...scope,
+        projectStaticFieldIds: staticFieldIdsLocal,
         module: scratch,
         functionModules,
         paramInScope: (name) => paramNames.get(name) ?? scope.paramInScope(name),
@@ -890,6 +968,18 @@ export function emitFunctionModules(
     }
   }
 
+  for (const id of remaining) {
+    const why = fieldFailures.get(id);
+    if (why !== undefined) {
+      scope.report(
+        GeneratorDiagnosticCode.UnsupportedCapability,
+        'error',
+        `the initializer of \`${String((staticFields.get(id)?.field ?? (scope.node(id) as unknown as Node | undefined))?.['name'] ?? id)}\` could not be lowered: ${why}`,
+        id,
+      );
+    }
+  }
+
   // Whatever is left after the fixed point stabilizes is genuinely unsupported (or depends, transitively,
   // on something that is) — each already reported its own diagnostic during its last, failed attempt.
   for (const [path, pending] of modules) {
@@ -910,5 +1000,6 @@ export function emitFunctionModules(
     methodHelpers,
     projectClassMethodIds: projectClassMethodIdsLocal,
     projectClassGetterIds: projectClassGetterIdsLocal,
+    projectStaticFieldIds: new Set(staticFields.keys()),
   };
 }

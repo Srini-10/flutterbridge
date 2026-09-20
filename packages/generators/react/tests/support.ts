@@ -605,3 +605,8 @@ export function sdkSemanticsRaw(): string {
   const path = join(here, '..', '..', '..', '..', 'fixtures', 'uir', 'sdk_semantics.ndjson');
   return readFileSync(path, 'utf8');
 }
+
+/** The real `fixtures/apps/project_statics_refusal` document, raw analyzer output (M12) — not yet normalized. */
+export function projectStaticsRefusalRaw(): string {
+  return readFileSync(join(here, '..', '..', '..', '..', 'fixtures', 'uir', 'project_statics_refusal.ndjson'), 'utf8');
+}

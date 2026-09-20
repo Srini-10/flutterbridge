@@ -1501,6 +1501,27 @@ final class ExpressionExtractor {
     // *synthetic getter* Dart creates for it, never the `TopLevelVariableElement` directly.
     final Element? unwrapped =
         element is GetterElement && element.isOriginVariable ? element.variable : element;
+    // A `static` field of a project class (`AppSpacing.xl`): declared on the class, so its symbol carries the owner —
+    // `_fields` mints it as `Symbols.variable(name, owner: className)`. Before M12 it had no target, so every read of a
+    // project constant was `BRG3006` ("not declared"). An enum constant is `_enumConstantTarget`'s, and is checked first.
+    if (unwrapped is FieldElement &&
+        unwrapped.isStatic &&
+        !unwrapped.isEnumConstant &&
+        unwrapped.enclosingElement is ClassElement) {
+      final String? name = unwrapped.name;
+      final String? owner = unwrapped.enclosingElement.name;
+      if (name == null || owner == null) {
+        return null;
+      }
+      return Symbols.variableIn(
+        unwrapped.library.identifier,
+        name,
+        owner: owner,
+        packageName: out.packageName,
+        localPackages: out.localPackageNames,
+        extractedDependencyFiles: out.extractedDependencyFiles,
+      );
+    }
     if (unwrapped is TopLevelVariableElement) {
       final String? name = unwrapped.name;
       if (name == null) {
