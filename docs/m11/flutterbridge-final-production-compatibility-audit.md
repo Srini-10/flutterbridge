@@ -5,8 +5,9 @@ build-local contract is preserved: read-only capture is inlined, mutation of a b
 nothing persistent was implemented. `fixtures/apps/hello_bridge/analysis_options.yaml` (an uncommitted change that predates this
 work) was never staged or reverted. `rsc-split` was not touched.
 
-**Starting point** `8cbc50e` (HEAD == origin/main). **Ending point** `git log` — six commits, `627f4f7` … the last one is named at the
-foot of this file; none has been pushed.
+**Starting point** `8cbc50e` (HEAD == origin/main). **Ending point** the commit that adds this file: six commits after the
+start — `627f4f7` (integers), `f393bf0` (collections), `52cad5a` (lifecycle), `f9fb458` (constructor parameters), `80ef68e`
+(silent-loss audit fixes, browser proof, integrity guards) and this one. **None has been pushed.**
 
 **Evidence labels** used below: *[Flutter]* the generated component and a real Flutter widget were driven through the same script
 and compared after every step; *[Dart]* thousands of results computed by `dart run`; *[browser]* Chromium against a `next build`;
