@@ -9653,7 +9653,8 @@ enum Feature {
   const Feature(this.id);
   final String id;
 }
-String f() => Feature.values.map((x) => x.id).join();
+// (Reading `x.id` here would be BRG1312 since M11: this test is about `.values`, so it reads the value's `name`.)
+String f() => Feature.values.map((x) => x.name).join();
 class W extends StatelessWidget {
   const W({super.key});
   @override
@@ -9721,6 +9722,168 @@ class W extends StatelessWidget {
 ''');
       final Map<String, dynamic> ref = app.ofKind('logic.Ref').singleWhere((Map<String, dynamic> r) => r['name'] == 'Brightness.values');
       expect(ref['target'], isNull, reason: 'an SDK enum is outside this project — the same exclusion _enumConstantTarget already has');
+    });
+  });
+
+  // ── M11 (ADR-0053/0054): what used to be silently dropped is refused, or now read ──────────────────────
+
+  group('widget constructors and enums that compute (M11)', () {
+    Iterable<String> codesOf(Extracted app) => app.result.diagnostics.map((Diagnostic d) => d.code.id);
+
+    Future<Extracted> widgetWith(String constructors, {String extraDecls = ''}) => extract('''
+import 'package:flutter/material.dart';
+class W extends StatelessWidget {
+  $constructors
+  final int x;
+  @override
+  Widget build(BuildContext context) => Text('\$x');
+}
+$extraDecls
+''');
+
+    test('an initializer list that computes a field is refused (BRG1309)', () async {
+      final Extracted app = await widgetWith('const W({super.key, int x = 1}) : x = x * 2;');
+      expect(codesOf(app), contains('BRG1309'));
+    });
+
+    test('a named constructor is refused (BRG1309)', () async {
+      final Extracted app = await widgetWith('const W({super.key, this.x = 1});\n  const W.small({super.key}) : x = 2;');
+      expect(codesOf(app), contains('BRG1309'));
+    });
+
+    test('a factory constructor is refused (BRG1309)', () async {
+      final Extracted app = await widgetWith('const W._({super.key, this.x = 1});\n  factory W.make() => const W._(x: 4);');
+      expect(codesOf(app), contains('BRG1309'));
+    });
+
+    test('a plain constructor, `super(key: key)` and an `assert` initializer are not', () async {
+      final Extracted plain = await widgetWith('const W({super.key, this.x = 1});');
+      expect(codesOf(plain), isNot(contains('BRG1309')));
+      final Extracted oldStyle = await widgetWith('const W({Key? key, this.x = 1}) : assert(x > 0), super(key: key);');
+      expect(codesOf(oldStyle), isNot(contains('BRG1309')));
+    });
+
+    test('a constructor default and an optional parameter are read: not required, with the default as `defaultValue`', () async {
+      final Extracted app = await extract(r'''
+import 'package:flutter/material.dart';
+class W extends StatelessWidget {
+  const W(this.id, {super.key, this.count = 3, this.note});
+  final int id;
+  final int count;
+  final String? note;
+  @override
+  Widget build(BuildContext context) => Text('$id $count $note');
+}
+''');
+      final List<dynamic> params = app.only('ui.Component')['params'] as List<dynamic>;
+      Map<String, dynamic> param(String name) =>
+          params.cast<Map<String, dynamic>>().singleWhere((Map<String, dynamic> p) => p['name'] == name);
+      expect(param('id')['required'], isTrue);
+      expect(param('count')['required'], isNull);
+      expect((param('count')['defaultValue'] as Map<String, dynamic>)['value'], 3);
+      expect(param('note')['required'], isNull);
+      expect(param('note')['defaultValue'], isNull);
+    });
+
+    test('a positional argument to a project widget is named by its constructor parameter, not `_positional0`', () async {
+      final Extracted app = await extract(r'''
+import 'package:flutter/material.dart';
+class Tag extends StatelessWidget {
+  const Tag(this.id, {super.key});
+  final int id;
+  @override
+  Widget build(BuildContext context) => Text('$id');
+}
+class Home extends StatelessWidget {
+  const Home({super.key});
+  @override
+  Widget build(BuildContext context) => const Tag(7);
+}
+''');
+      final Map<String, dynamic> tag = app
+          .ofKind('ui.Element')
+          .firstWhere((Map<String, dynamic> e) => (e['component'] as Map<String, dynamic>)['name'] == 'Tag');
+      expect((tag['props'] as Map<String, dynamic>).keys, contains('id'));
+      expect((tag['props'] as Map<String, dynamic>).keys, isNot(contains('_positional0')));
+    });
+
+    test('reading a field an enum declares is refused (BRG1312); merely declaring one is not; `.index` is opaque', () async {
+      final Extracted used = await extract(r'''
+import 'package:flutter/material.dart';
+enum Level { low(1), high(9); const Level(this.w); final int w; int twice() => w * 2; }
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => Text('${Level.low.w} ${Level.high.twice()}');
+}
+''');
+      expect(codesOf(used), contains('BRG1312'));
+
+      final Extracted declared = await extract(r'''
+import 'package:flutter/material.dart';
+enum Level { low(1), high(9); const Level(this.w); final int w; }
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => Text('${Level.values.length}');
+}
+''');
+      expect(codesOf(declared), isNot(contains('BRG1312')), reason: 'an enhanced enum used only by value is fine (M8-Z)');
+
+      final Extracted plain = await extract(r'''
+import 'package:flutter/material.dart';
+enum Mode { light, dark }
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) {
+    const Mode m = Mode.dark;
+    return Text('${m.name} ${m.index} $m');
+  }
+}
+''');
+      expect(codesOf(plain), isNot(contains('BRG1312')));
+      expect(plain.bytes, contains('OpaqueExpr'), reason: '.index has no lowering: opaque, not silently `undefined`');
+    });
+  });
+
+  group('switch statements keep their cases (M11)', () {
+    test('every constant case has a `test`, and only `default` has none', () async {
+      final Extracted app = await extract('''
+import 'package:flutter/material.dart';
+class W extends StatefulWidget {
+  const W({super.key});
+  @override
+  State<W> createState() => _WState();
+}
+class _WState extends State<W> {
+  int _k = 0;
+  String _out = '';
+  @override
+  Widget build(BuildContext context) => ElevatedButton(
+        onPressed: () {
+          setState(() {
+            switch (_k) {
+              case 0:
+              case 1:
+                _out = 'a';
+                break;
+              case 2:
+                _out = 'b';
+                break;
+              default:
+                _out = 'c';
+            }
+          });
+        },
+        child: Text(_out),
+      );
+}
+''');
+      final List<Map<String, dynamic>> cases =
+          (app.ofKind('logic.Switch').single['cases'] as List<dynamic>).cast<Map<String, dynamic>>();
+      expect(cases.map((Map<String, dynamic> c) => c.containsKey('test')), <bool>[true, true, true, false]);
+      expect(cases[0]['body'] as List<dynamic>, isEmpty, reason: 'an empty case falls through to the next');
     });
   });
 }

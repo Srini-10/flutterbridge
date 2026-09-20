@@ -17,6 +17,7 @@ library;
 import 'package:analyzer/dart/ast/ast.dart';
 import 'package:analyzer/dart/ast/visitor.dart';
 import 'package:analyzer/dart/element/element.dart';
+import 'package:bridge_analyzer/src/diagnostics/codes.dart';
 import 'package:bridge_analyzer/src/model/raw_node.dart';
 import 'package:bridge_analyzer/src/session/adapters/adapter_context.dart';
 import 'package:bridge_analyzer/src/session/adapters/adapter_registry.dart';
@@ -94,7 +95,11 @@ final class ComponentExtractor {
     // constructor parameter — one of the commonest idioms in Flutter — lost its default and became a mandatory prop.
     final Map<String, FormalParameter> constructorParams = <String, FormalParameter>{};
     for (final ClassMember member in node.body.members) {
-      if (member is ConstructorDeclaration && member.name == null) {
+      if (member is! ConstructorDeclaration) {
+        continue;
+      }
+      _refuseUnmodelledConstructor(member);
+      if (member.name == null) {
         for (final FormalParameter parameter in member.parameters.parameters) {
           if (parameter is FieldFormalParameter) {
             constructorParams[parameter.name.lexeme] = parameter;
@@ -120,7 +125,11 @@ final class ComponentExtractor {
             'type': out.typeRef(variable.declaredFragment?.element.type, at: variable),
             if (required) 'required': const RawLiteral(true),
             if (formal?.defaultClause case final FormalParameterDefaultClause clause)
-              'defaultValue': RawChild(signals.expressions.extract(clause.value, enclosing)),
+              'defaultValue': RawChild(signals.expressions.extract(clause.value, enclosing))
+            // `final int base = 10;` — a field the constructor does not take: no caller can supply it, so its
+            // initializer is its value. Before this it resolved to `null` (`intAdd(x, null)`).
+            else if (formal == null && variable.initializer != null)
+              'defaultValue': RawChild(signals.expressions.extract(variable.initializer!, enclosing)),
           }),
         );
         paramBindings.add(Binding(name: field, binds: Binds.parameter));
@@ -207,6 +216,31 @@ final class ComponentExtractor {
 
     transitions.enclosingComponent = null;
     return symbol;
+  }
+
+  /// Reports a constructor of a widget class whose effect is not "arguments become fields" (BRG1304, ADR-0053).
+  ///
+  /// A component receives its props by name, so an initializer list that computes a field, a `factory`, a redirecting
+  /// constructor and a named constructor would all vanish from the generated component without a trace. `super(...)` and
+  /// `assert(...)` initializers are not behaviour the output needs, and are not reported.
+  void _refuseUnmodelledConstructor(ConstructorDeclaration constructor) {
+    final bool computes = constructor.initializers.any(
+      (ConstructorInitializer initializer) =>
+          initializer is ConstructorFieldInitializer || initializer is RedirectingConstructorInvocation,
+    );
+    if (constructor.factoryKeyword == null &&
+        constructor.redirectedConstructor == null &&
+        constructor.name == null &&
+        !computes) {
+      return;
+    }
+    out.report(
+      Codes.unmodelledConstructor,
+      'The widget constructor `${constructor.toSource().split('{').first.trim()}` does something other than turn its '
+      'arguments into fields (an initializer list, a factory, a redirecting or a named constructor), and a component '
+      'receives its props by name, so it would be silently absent from the generated component.',
+      constructor,
+    );
   }
 
   /// The `build` method, if the class has one.

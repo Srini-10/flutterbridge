@@ -389,10 +389,13 @@ class _InitOnlyState extends State<InitOnly> {
   int _n = 0;
   String _label = '';
   List<int> _items = <int>[];
+  int _count = 1;
 
   @override
   void initState() {
     super.initState();
+    // Reads what it writes: run twice, it would be 83. StrictMode's double invocation must not do that.
+    _count = _count + 41;
     _n = 5;
     _label = 'n=$_n';
     _items = <int>[_n, _n + 1];
@@ -400,5 +403,5 @@ class _InitOnlyState extends State<InitOnly> {
 
   @override
   Widget build(BuildContext context) =>
-      Text('> init-only $_n $_label ${_items.join(',')}');
+      Text('> init-only $_n $_label ${_items.join(',')} count=$_count');
 }

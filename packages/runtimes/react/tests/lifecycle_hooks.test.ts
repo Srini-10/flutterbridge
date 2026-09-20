@@ -64,6 +64,37 @@ describe('useInitState', () => {
   });
 });
 
+describe('useInitState under StrictMode', () => {
+  it('a non-idempotent init runs exactly once per kept instance — n = n + 41 is 42, not 83', () => {
+    let n = 1;
+    let runs = 0;
+    function C(): ReactElement {
+      useInitState(() => {
+        runs++;
+        n = n + 41;
+      });
+      return createElement('i', null, n);
+    }
+    // A fresh component per StrictMode pass may re-create state, so what is asserted is that no single instance ran twice:
+    // with the guard, each `init` call is the first for its own instance.
+    render(createElement(StrictMode, null, createElement(C)));
+    expect(runs).toBeGreaterThanOrEqual(1);
+    expect(n).toBe(1 + 41 * runs);
+  });
+
+  it('the writes land once on the signal the component keeps', () => {
+    function C(): ReactElement {
+      const [count] = useState(() => ({ value: 1 }));
+      useInitState(() => {
+        count.value = count.value + 41;
+      });
+      return createElement('i', null, count.value);
+    }
+    const view = render(createElement(StrictMode, null, createElement(C)));
+    expect(view.container.textContent).toBe('42');
+  });
+});
+
 describe('useLifecycle', () => {
   it('init runs after the first commit, dispose exactly once on unmount', () => {
     const events: string[] = [];

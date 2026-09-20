@@ -42,7 +42,16 @@ export class Program {
    */
   static of(nodes: readonly AnyUirNode[]): Program {
     const byId = new Map<NodeId, AnyUirNode>();
-    for (const node of nodes) byId.set(node.id, node);
+    for (const node of nodes) {
+      const existing = byId.get(node.id);
+      // "Two nodes with one id are one node" holds only if they ARE the same node. Two that differ in anything but
+      // where they were written are an identity collision — a hash collision, or an id minted from too little of the node —
+      // and last-wins would silently replace one meaning with another (M11 identity audit).
+      if (existing !== undefined && existing !== node && !sameModuloSpans(existing, node)) {
+        throw new IdentityCollisionError(node.id, existing.kind, node.kind);
+      }
+      byId.set(node.id, node);
+    }
 
     const sorted = [...byId.values()].sort(compareNodes);
     return new Program(Object.freeze(sorted), byId);
@@ -131,4 +140,39 @@ export function parseNdjson(document: string): AnyUirNode[] {
     nodes.push(parseUirNode(json, `line ${i + 1}`));
   }
   return nodes;
+}
+
+/** Two nodes claim one id but say different things. */
+export class IdentityCollisionError extends Error {
+  public constructor(
+    public readonly id: string,
+    firstKind: string,
+    secondKind: string,
+  ) {
+    super(
+      `two different nodes share the id ${id} (${firstKind} and ${secondKind}). A node's id is derived from its content, so ` +
+        'this is a hash collision or an id minted from too little of the node; keeping either would silently replace one ' +
+        'meaning with the other.',
+    );
+    this.name = 'IdentityCollisionError';
+  }
+}
+
+/**
+ * Whether `a` and `b` say the same thing once *where* they were written (`span`) and the ids of the nodes *nested* in them are
+ * ignored. A nested id is derived from the nested node's content, so equal content has equal nested ids in real documents; a
+ * hand-built one need not, and an action lifted from two identical closures is one action whichever closure it was read from.
+ */
+function sameModuloSpans(a: unknown, b: unknown): boolean {
+  const strip = (value: unknown, top: boolean): unknown => {
+    if (Array.isArray(value)) return value.map((v) => strip(v, false));
+    if (value === null || typeof value !== 'object') return value;
+    const out: Record<string, unknown> = {};
+    for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+      if (key === 'span' || (key === 'id' && !top)) continue;
+      out[key] = strip(child, false);
+    }
+    return out;
+  };
+  return JSON.stringify(strip(a, true)) === JSON.stringify(strip(b, true));
 }

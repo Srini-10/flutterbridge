@@ -115,10 +115,10 @@ describe('development StrictMode mounts, unmounts and mounts again — init and 
     }
   });
 
-  it('a pure initState still shows its value on the first frame', () => {
+  it('a pure initState still shows its value on the first frame — and a non-idempotent one runs once, not twice (42, not 83)', () => {
     const mounted = runner.mount('init-only', 'InitOnly', { strict: true });
     try {
-      expect(mounted.texts()).toEqual(['> init-only 5 n=5 5,6']);
+      expect(mounted.texts()).toEqual(['> init-only 5 n=5 5,6 count=42']);
     } finally {
       mounted.unmount();
     }
@@ -129,7 +129,7 @@ describe('the first frame: what runs before the first render, and what only afte
   // No effect runs in a first render (`renderToString`; the same is true of the first client render before commit), so
   // this shows exactly what `initState` contributed *before the first build*, as Flutter's first frame does.
   it('a pure initState is on the first frame', () => {
-    expect(runner.firstRender('InitOnly')).toContain('init-only 5 n=5 5,6');
+    expect(runner.firstRender('InitOnly')).toContain('init-only 5 n=5 5,6 count=42');
   });
 
   it('the pure prefix of a mixed initState is on the first frame; what follows an effect is not', () => {

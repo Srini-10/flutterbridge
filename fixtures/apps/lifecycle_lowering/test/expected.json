@@ -151,7 +151,7 @@
   ],
   "InitOnly": [
     [
-      "> init-only 5 n=5 5,6"
+      "> init-only 5 n=5 5,6 count=42"
     ]
   ]
 }

@@ -167,6 +167,38 @@ abstract final class Codes {
         'or a later milestone to model it.',
   );
 
+  /// A widget constructor does something extraction does not model (ADR-0053).
+  static const DiagnosticCode unmodelledConstructor = DiagnosticCode(
+    id: 'BRG1309',
+    category: DiagnosticCategory.extraction,
+    defaultSeverity: Severity.error,
+    docsSlug: 'unmodelled-constructor',
+    title: 'Widget constructor is not modelled',
+    explanation:
+        'A widget class declares a constructor whose effect is not just "these arguments become these fields": an '
+        'initializer list that computes a field (`: x = x * 2`), a `factory`, a redirecting constructor '
+        '(`: this(x: 1)`), or a named constructor (`Tag.compact()`).\n'
+        '\n'
+        'A component receives its props by name, so what the constructor computes would be silently absent from the '
+        'generated component — `R(x: 3)` would render 3 where Dart renders 6. The program is refused instead. Move the '
+        'computation into `build`, or make the parameter the field.',
+  );
+
+  /// A read of a field or method an enum declares (ADR-0054).
+  static const DiagnosticCode unmodelledEnum = DiagnosticCode(
+    id: 'BRG1312',
+    category: DiagnosticCategory.extraction,
+    defaultSeverity: Severity.error,
+    docsSlug: 'unmodelled-enum',
+    title: 'Enum members are not modelled',
+    explanation:
+        'A program reads a field or calls a method that an enum declares (`enum Kind { a(1); final int v; }` then `k.v`).\n'
+        '\n'
+        'The UIR carries an enum as the list of its value names, and the generated code represents each value as its name. '
+        'What the enum computes would be `undefined` or a `TypeError`, silently, so the read is refused. Using the enum '
+        'only by value (`switch`, `==`, `Kind.values`, `k.name`) is fine.',
+  );
+
   /// The analyzer produced something extraction cannot trust.
   static const DiagnosticCode analyzerInconsistency = DiagnosticCode(
     id: 'BRG1303',
@@ -500,6 +532,8 @@ abstract final class Codes {
     unresolvedImport,
     unknownWidget,
     unsupportedSyntax,
+    unmodelledConstructor,
+    unmodelledEnum,
     analyzerInconsistency,
     unsupportedWrapper,
     adapterRejected,

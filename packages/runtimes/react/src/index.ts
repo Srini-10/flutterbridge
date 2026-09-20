@@ -647,3 +647,13 @@ export {
 
 // ── Diagnostics (ADR-20) ──────────────────────────────────────────────────────────────────────────
 export { RuntimeDiagnosticCode, RuntimeError } from './internal/diagnostics/codes.js';
+
+export {
+  strCodeUnitAt,
+  strPadLeft,
+  strPadRight,
+  strRepeat,
+  strReplaceAll,
+  strReplaceFirst,
+  strSubstring,
+} from './internal/core/dart_string.js';

@@ -27,7 +27,10 @@ recorded: an effect names no component, so no generator *can* lower one. Effect 
 `_label = 'x $_n'` — literals, references, operators, conditionals, interpolations, list literals and property reads; never a
 call):
 - the pure prefix runs **before the first render**, in `useInitState` (React's `useState` initialiser), so the first frame
-  already has it — Flutter's timing. It is idempotent by construction, which is why it may run twice under StrictMode;
+  already has it — Flutter's timing. It runs **exactly once per kept instance**: a `useState` initialiser is invoked twice in
+  development StrictMode, and the first version of `useInitState` (an initialiser that ran the body) turned `_n = _n + 41`
+  into 83. It was caught by the browser proof, not by the jsdom suite, whose fixtures only had idempotent assignments; a
+  guard held in the hook's own state now makes it once, and `InitOnly` reads what it writes;
 - the rest runs once **after the first commit**, in `useLifecycle({ init })`. It keeps its order; nothing moves across it.
 
 **D3 — `dispose`.** The cleanup of *the same effect* as `initState` (`useLifecycle({ init, dispose })`), so an init and its

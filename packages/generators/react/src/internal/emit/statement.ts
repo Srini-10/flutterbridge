@@ -10,7 +10,7 @@
 import type { Stmt } from '@bridge/uir';
 
 import { GeneratorDiagnosticCode } from '../diagnostics/codes.js';
-import { emitExpression, setStatementLowering, type EmitScope } from './expression.js';
+import { emitExpression, markValueUnused, setStatementLowering, type EmitScope } from './expression.js';
 import { identifierOf } from './module.js';
 import { routeNameOf, screenKeyFor } from './routes.js';
 import { opaqueDetailOf, opaqueReasonSuffix } from './unsupported.js';
@@ -180,6 +180,7 @@ export function emitStatement(statement: Stmt | Node | undefined, scope: EmitSco
 
   switch (kindOf(node)) {
     case 'logic.ExprStmt':
+      markValueUnused(node['expr']);
       return [`${emitExpression(node['expr'] as Node, scope)};`];
 
     case 'logic.VarDecl': {
@@ -241,7 +242,12 @@ export function emitStatement(statement: Stmt | Node | undefined, scope: EmitSco
       // it as a malformed node with no `kind`, unconditionally hitting the `<unknown>` default case
       // (`BRG3002`) whenever a C-style loop had any update clause at all — a pre-existing defect M9-A
       // exposed while proving a classic-for build-proof end to end.
-      const update = asArray(node['update']).map((u) => emitExpression(u, scope)).join(', ');
+      const update = asArray(node['update'])
+        .map((u) => {
+          markValueUnused(u);
+          return emitExpression(u, scope);
+        })
+        .join(', ');
       const lines = [`for (${init}; ${condition}; ${update}) {`];
       lines.push(...indent(emitStatement(node['body'] as Node, scope)));
       lines.push('}');
@@ -314,6 +320,24 @@ export function emitStatement(statement: Stmt | Node | undefined, scope: EmitSco
       for (const entry of asArray(node['cases'])) {
         const item = entry as Node;
         const test = item['test'];
+        // A case with no test is Dart's `default` (`SwitchCase.test`: "absent for the default case"). It was emitted as
+        // `case undefined:` — a case that matches nothing — so a `default` branch, and (before the analyzer read Dart 3's
+        // pattern cases) every case, silently never ran.
+        if (test === undefined && (item['test'] === undefined)) {
+          const dflt = emitStatements(item['body'], scope);
+          lines.push('  default: {');
+          lines.push(...indent(indent(dflt)));
+          if (!leaves(dflt)) lines.push('    break;');
+          lines.push('  }');
+          continue;
+        }
+        const rawBody = asArray(item['body']);
+        if (rawBody.length === 0) {
+          // An empty case falls through to the next (`case 1: case 2: body` — Dart's grouping). A `break` here would
+          // make the first label do nothing.
+          lines.push(`  case ${emitExpression(test as Node, scope)}:`);
+          continue;
+        }
         lines.push(`  case ${emitExpression(test as Node, scope)}: {`);
         const body = emitStatements(item['body'], scope);
         lines.push(...indent(indent(body)));

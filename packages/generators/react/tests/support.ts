@@ -599,3 +599,9 @@ export function widgetParamDefaultsRaw(): string {
   const path = join(here, '..', '..', '..', '..', 'fixtures', 'uir', 'widget_param_defaults.ndjson');
   return readFileSync(path, 'utf8');
 }
+
+/** The real `fixtures/apps/sdk_semantics` document, raw analyzer output (M11, ADR-0054) — not yet normalized. */
+export function sdkSemanticsRaw(): string {
+  const path = join(here, '..', '..', '..', '..', 'fixtures', 'uir', 'sdk_semantics.ndjson');
+  return readFileSync(path, 'utf8');
+}

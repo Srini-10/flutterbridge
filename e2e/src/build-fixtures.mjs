@@ -23,7 +23,7 @@
 // one a user gets — and D4 in M5-C was precisely a workspace-only protocol that nobody noticed.
 
 import { execFileSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -64,6 +64,9 @@ export const APPS = [
   { name: 'inline-push-props', source: 'fixtures/apps/inline_push_props' },
   { name: 'async-push-guard', source: 'fixtures/apps/async_push_guard' },
   { name: 'local-store', source: 'fixtures/apps/local_store' },
+  // M11 (ADR-0050–0053): collections mutated in place and shared by prop, initState/dispose, constructor defaults and
+  // checked integers, on one page, in a real browser — production and development (StrictMode's replay).
+  { name: 'state-semantics', source: 'fixtures/apps/state_semantics_e2e' },
 ];
 
 const run = (program, args, cwd, env = {}) =>
@@ -74,11 +77,19 @@ const run = (program, args, cwd, env = {}) =>
     env: { ...process.env, ...env },
   });
 
-/** The runtime kit tarball, built if it is not there. */
+/**
+ * The runtime kit tarball, built if it is not there **or older than the kit it packs**.
+ *
+ * "If it is not there" alone let a tarball from weeks earlier stand in for the current kit: the suite then built the
+ * emitted app against a runtime that lacked what the generator now emits (`intAdd`), and failed for a reason that had
+ * nothing to do with the code under test — or, worse, would have passed against code that no longer exists.
+ */
 function kitTarball() {
   const tarball = join(repo, 'release/bridge-runtime-react-0.1.0.tgz');
-  if (!existsSync(tarball)) {
-    console.log('  packing release artifacts (tools/pack-release.mjs)…');
+  const built = join(repo, 'packages/runtimes/react/dist/index.js');
+  const stale = existsSync(tarball) && existsSync(built) && statSync(built).mtimeMs > statSync(tarball).mtimeMs;
+  if (!existsSync(tarball) || stale) {
+    console.log(`  packing release artifacts (tools/pack-release.mjs)${stale ? ' — the kit is newer than its tarball' : ''}…`);
     run('node', ['tools/pack-release.mjs'], repo);
   }
   return tarball;

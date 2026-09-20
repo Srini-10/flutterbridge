@@ -217,6 +217,19 @@ describe('exit codes mean something', () => {
     expect((await bridge('inspect', doc(), '--plugin', '@bridge/does-not-exist')).code).toBe(3);
   });
 
+  it('a document that is not valid NDJSON, or names an unknown node kind, is refused with 3 and a message — not a stack trace', async () => {
+    writeFileSync(join(dir, 'truncated.ndjson'), document().slice(0, 60));
+    const truncated = await bridge('inspect', join(dir, 'truncated.ndjson'));
+    expect(truncated.code).toBe(3);
+    expect(truncated.stderr).toMatch(/malformed.*not valid JSON/);
+    expect(truncated.stderr).not.toContain('    at ');
+
+    writeFileSync(join(dir, 'bogus.ndjson'), `${JSON.stringify({ id: 'z', kind: 'ui.Bogus', span })}\n`);
+    const unknown = await bridge('inspect', join(dir, 'bogus.ndjson'));
+    expect(unknown.code).toBe(3);
+    expect(unknown.stderr).toContain('unknown UIR node kind "ui.Bogus"');
+  });
+
   it('no command at all prints usage and fails', async () => {
     const { code, stdout } = await bridge();
 

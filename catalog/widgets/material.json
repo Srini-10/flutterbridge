@@ -39,7 +39,9 @@
     "initState": "mount",
     "didUpdateWidget": "update",
     "didChangeDependencies": "update",
-    "dispose": "unmount"
+    "dispose": "unmount",
+    "deactivate": "unmount",
+    "activate": "mount"
   },
   "stateBatchCalls": [
     "setState"

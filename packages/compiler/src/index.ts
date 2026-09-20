@@ -25,7 +25,7 @@
 // claims to be normalized and is not is more dangerous than one that is honestly unfinished.
 
 export { load, LoadError, type Manifest } from './internal/loader.js';
-export { Program, parseNdjson, referencesOf } from './internal/program.js';
+export { IdentityCollisionError, Program, parseNdjson, referencesOf } from './internal/program.js';
 export {
   PassManager,
   PipelineError,

@@ -170,17 +170,23 @@ export function useMounted(): RefObject<boolean> {
  * pure state assignments in `initState` (ADR-0052).
  *
  * Flutter's `initState` runs before the first `build`, so `initState() { _n = 5; }` shows 5 on the first frame; an
- * effect runs after the first commit and would show the field's declared value first. This is `useState`'s initialiser,
- * which React runs once per mount (twice in development StrictMode — so `init` must be idempotent, and the generator
- * only puts pure assignments here).
+ * effect runs after the first commit and would show the field's declared value first.
  *
- * @param init - the state initialisation.
+ * ## Exactly once, even under StrictMode
+ *
+ * The first version was `useState(() => { init(); return null; })` and called "idempotent". It is not: in development,
+ * React invokes a `useState` initialiser **twice** and keeps the first result, so `init` ran twice against the *same*
+ * signals, and `_n = _n + 41` gave 83 instead of 42 (found by the browser proof, `state-semantics.dev-only.spec.ts`). A
+ * guard held in the hook's own state runs it once per kept instance: the discarded extra call creates a discarded guard.
+ *
+ * @param init - the state initialisation. It writes only to the component's own signals.
  */
 export function useInitState(init: () => void): void {
-  useState(() => {
+  const [guard] = useState(() => ({ done: false }));
+  if (!guard.done) {
+    guard.done = true;
     init();
-    return null;
-  });
+  }
 }
 
 /**

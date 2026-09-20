@@ -33,6 +33,14 @@ import {
   unsupportedCollectionMethod,
   type CollectionDeps,
 } from './collections.js';
+import {
+  lowerNumericProperty,
+  lowerStringMethod,
+  lowerStringProperty,
+  unsupportedNumericProperty,
+  unsupportedStringMember,
+  type SdkDeps,
+} from './sdk_members.js';
 import { typeTextOf } from './types.js';
 import { OWNER_LABEL, missingCapabilityOf, opaqueDetailOf, opaqueReasonSuffix } from './unsupported.js';
 
@@ -385,6 +393,26 @@ function sdkTypeOf(type: Node | undefined): string | undefined {
   const rawName = type?.['name'];
   if (typeof library !== 'string' || library !== 'dart:core' || typeof rawName !== 'string') return undefined;
   return rawName.endsWith('?') ? rawName.slice(0, -1) : rawName;
+}
+
+/** What `sdk_members.ts` needs from this emitter (ADR-0054). */
+function sdkDeps(scope: EmitScope): SdkDeps {
+  return {
+    use: (name) => scope.module.use(RUNTIME, name),
+    typeOf: (node) => sdkTypeOf(node?.['type'] as Node | undefined),
+  };
+}
+
+/** Whether `type` is a function type — `void Function()`, `ValueChanged<int>` displays as `void Function(int)`. */
+function isFunctionType(type: Node | undefined): boolean {
+  const name = type?.['name'];
+  return typeof name === 'string' && name.includes(' Function(');
+}
+
+/** Whether `type` is a `dart:async` `Future` (a JavaScript `Promise` here). */
+function isFutureType(type: Node | undefined): boolean {
+  const name = type?.['name'];
+  return type?.['library'] === 'dart:async' && typeof name === 'string' && name.replace(/\?$/, '').startsWith('Future');
 }
 
 /** What `collections.ts` needs from this emitter (ADR-0051). */
@@ -1118,6 +1146,11 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
 
       if (operator in EQUALITY) return paren(`${left} ${EQUALITY[operator]} ${right}`);
 
+      // `String * int` repeats the string (ADR-0054); JavaScript's `*` is `NaN`.
+      if (operator === '*' && sdkTypeOf((node['left'] as Node | undefined)?.['type'] as Node | undefined) === 'String') {
+        return `${scope.module.use(RUNTIME, 'strRepeat')}(${left}, ${right})`;
+      }
+
       // Numeric operators whose JavaScript spelling differs (ADR-0050): folded when both operands are integer
       // literals, otherwise the checked helper for the operand types, otherwise the plain operator below.
       const folded = foldIntegerOperation(operator, node, scope);
@@ -1300,6 +1333,31 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
         return REFUSED;
       }
 
+      // A `String` or numeric getter (ADR-0054): lowered by the receiver's resolved type, else refused by name. It used to
+      // be emitted as the same-named JavaScript property, which does not exist: `s.isEmpty` was `undefined`.
+      if (node['target'] === undefined) {
+        const sdkReceiverType = sdkTypeOf(receiverNode?.['type'] as Node | undefined);
+        const propertyName = String(node['property'] ?? '');
+        if (sdkReceiverType === 'String' || sdkReceiverType === 'int' || sdkReceiverType === 'double' || sdkReceiverType === 'num') {
+          const receiverText = emitExpression(receiverNode, scope);
+          if (receiverText === REFUSED) return REFUSED;
+          const lowered =
+            sdkReceiverType === 'String'
+              ? lowerStringProperty(propertyName, receiverText)
+              : lowerNumericProperty(sdkReceiverType, propertyName, receiverText);
+          if (lowered !== undefined) return lowered;
+          scope.report(
+            GeneratorDiagnosticCode.UnsupportedExpression,
+            'error',
+            sdkReceiverType === 'String'
+              ? unsupportedStringMember(propertyName)
+              : unsupportedNumericProperty(sdkReceiverType, propertyName),
+            idOf(node),
+          );
+          return REFUSED;
+        }
+      }
+
       // `oldWidget.tag` in `didUpdateWidget(oldWidget)` (ADR-0052): the previous props object.
       if (receiverNode?.['kind'] === 'logic.Ref' && scope.previousWidgets?.has(String(receiverNode['name'])) === true) {
         return `${identifierOf(String(receiverNode['name']))}.${identifierOf(String(node['property'] ?? ''))}`;
@@ -1404,6 +1462,28 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
         const args = asArray(node['args']);
         if (args.length === 1) {
           return `${receiver}[${emitExpression(args[0] as Node, scope)}]`;
+        }
+      }
+
+      // A `String` method (ADR-0054), by the receiver's resolved type; `f.call(x)` on a function value; and a `Future`'s
+      // `catchError`/`whenComplete`, which a `Promise` spells `catch`/`finally`.
+      if (node['target'] === undefined && receiver !== REFUSED) {
+        const receiverNodeForSdk = node['receiver'] as Node | undefined;
+        const receiverTypeForSdk = receiverNodeForSdk?.['type'] as Node | undefined;
+        const argNodes = asArray(node['args']) as Node[];
+        if (sdkTypeOf(receiverTypeForSdk) === 'String') {
+          const argTexts = argNodes.map((a) => emitExpression(a, scope));
+          if (argTexts.includes(REFUSED)) return REFUSED;
+          const lowered = lowerStringMethod(method, receiver, argNodes, argTexts, sdkDeps(scope));
+          if (lowered !== undefined) return lowered;
+          scope.report(GeneratorDiagnosticCode.UnsupportedExpression, 'error', unsupportedStringMember(method), idOf(node));
+          return REFUSED;
+        }
+        if (method === 'call' && isFunctionType(receiverTypeForSdk)) {
+          return `${receiver}(${emitArguments(node['args'], scope)})`;
+        }
+        if (isFutureType(receiverTypeForSdk) && (method === 'catchError' || method === 'whenComplete')) {
+          return `${receiver}.${method === 'catchError' ? 'catch' : 'finally'}(${emitArguments(node['args'], scope)})`;
         }
       }
 
@@ -1888,7 +1968,17 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
         ...scope,
         report: scope.report.bind(scope),
         node: scope.node.bind(scope),
-        signalRead: scope.signalRead.bind(scope),
+        // A callback runs *later* — on a click, after an `await` — and must read a signal as it is **then**. The render
+        // scope's read is the subscribed snapshot (`_n$`), fixed at the render that created the closure: in
+        // `_n = _n + 1; _n = _n + 1;` the second statement read the first's stale value, so a handler that stayed inline
+        // (it captures a prop, or is not lifted for another reason) added 1 where Dart adds 2, and `_b = _a * 2` after
+        // `_a = _a + 1` used the old `_a`. A lifted action already reads `.get()` (`actionScope`); an inline callback now
+        // does too. At render time `.get()` is the same value as the snapshot, so a callback the render itself calls
+        // (`children.map((x) => …)`) is unchanged.
+        signalRead: (id) => {
+          const local = scope.signalLocal(id);
+          return local === undefined || local === '' ? scope.signalRead(id) : `${local}.get()`;
+        },
         signalLocal: scope.signalLocal.bind(scope),
         localName: (id) => locals.get(id) ?? scope.localName(id),
         declaredName: scope.declaredName.bind(scope),
@@ -2297,7 +2387,50 @@ function lowerShowSnackBar(node: Node, scope: EmitScope, snackbarHost: string): 
  * missing one is reported rather than passed through, because — in the schema's own words — *"a wrong
  * assignment operator writes the wrong value to state."*
  */
+/**
+ * Expressions whose **value is discarded** — an expression statement, a `for` update clause. Registered by
+ * `statement.ts`; an assignment anywhere else has its value used, and is lowered so that it has one (below).
+ */
+const VALUE_UNUSED = new WeakSet<object>();
+
+/** Records that `node`'s value is discarded, so an assignment there may be lowered to its bare effect. */
+export function markValueUnused(node: unknown): void {
+  if (node !== null && typeof node === 'object') VALUE_UNUSED.add(node);
+}
+
+/**
+ * An assignment, an increment or a compound assignment, lowered so that it means what it means in Dart wherever it is.
+ *
+ * As a statement it is its effect. Used as a **value** — `if (++w > 4)`, `a++ + ++b`, `x = y = 3` — it also has one, and
+ * the effect alone is wrong in two ways that both compiled and ran: a signal write (`_n.set(…)`) is `undefined`, and a
+ * nested `w = w + 1 > 4` assigns the comparison to `w` (JavaScript's assignment binds loosest). Dart's `x++` is the OLD
+ * value, `++x` and every other assignment the new one:
+ *
+ *     a++   →   ((_t) => (a = intAdd(a, 1), _t))(a)
+ *     ++a   →   (a = intAdd(a, 1), a)
+ */
 function emitAssignment(node: Node, scope: EmitScope): string {
+  const effect = emitAssignmentEffect(node, scope);
+  if (effect === REFUSED || VALUE_UNUSED.has(node)) return effect;
+
+  const target = node['target'] as Node;
+  if (kindOf(target) === 'logic.MethodCall' && target['method'] === '[]') {
+    scope.report(
+      GeneratorDiagnosticCode.UnsupportedExpression,
+      'error',
+      'the value of an index assignment (`x = a[i] = v`, `f(a[i]++)`) is used, and has no lowering: the write is ' +
+        '`listSetAt`/`mapSet`, which returns nothing. Write it as its own statement.',
+      idOf(node),
+    );
+    return REFUSED;
+  }
+  const targetText = emitTarget(target, scope);
+  const read = readTarget(target, targetText, scope);
+  if (node['isPostfix'] === true) return `((_t) => (${effect}, _t))(${read})`;
+  return `(${effect}, ${read})`;
+}
+
+function emitAssignmentEffect(node: Node, scope: EmitScope): string {
   const operator = String(node['operator'] ?? '');
   const target = node['target'] as Node;
 

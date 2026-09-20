@@ -49,6 +49,9 @@ import {
 
 type Node = Record<string, unknown>;
 
+/** Widgets the runtime renders as a different component, so their look differs (see `widgets.ts`). */
+const APPROXIMATED_WIDGETS: ReadonlySet<string> = new Set(['FilledButton', 'TextButton', 'OutlinedButton']);
+
 const kindOf = (node: Node): string => (typeof node['kind'] === 'string' ? node['kind'] : '<unknown>');
 const idOf = (node: Node): string | undefined => (typeof node['id'] === 'string' ? node['id'] : undefined);
 
@@ -1168,6 +1171,19 @@ function jsxChild(emitted: string): string {
 export function emitUiNode(node: Node, module: ModuleBuilder, scope: EmitScope, depth: number): string {
   switch (kindOf(node)) {
     case 'ui.Text': {
+      // The runtime `Text` renders the string and nothing else (its header: unstyled by design), and `ui.Text.style` carries
+      // `style`, `textAlign`, `maxLines`, `overflow`, `softWrap`. Each was dropped with no diagnostic; it is the same
+      // `BRG3001` every other widget's unmapped parameter already gets.
+      const style = (node['style'] ?? {}) as Record<string, unknown>;
+      for (const key of Object.keys(style).sort()) {
+        scope.report(
+          GeneratorDiagnosticCode.UnmappedWidget,
+          'warning',
+          `\`Text.${key}\` has no equivalent on the runtime's \`Text\`, which renders the string and nothing else, and ` +
+            'is dropped. The output does not apply it — it is not silently forwarded to a component that would ignore it.',
+          idOf(node),
+        );
+      }
       const value = emitBinding(node['value'] as Node, scope);
       const Text = useRuntime(module, 'Text');
       return `<${Text}>{${value}}</${Text}>`;
@@ -1391,6 +1407,18 @@ function emitElement(node: Node, module: ModuleBuilder, scope: EmitScope, depth:
   }
 
   checkCapabilities(widgetName, mapping, node, scope);
+
+  // A widget rendered as a *different* component (`TextButton` → `ElevatedButton`): the behaviour is the same, the look
+  // is not, and until M11 nothing said so.
+  if (mapping.component !== widgetName && APPROXIMATED_WIDGETS.has(widgetName)) {
+    scope.report(
+      GeneratorDiagnosticCode.UnmappedWidget,
+      'warning',
+      `\`${widgetName}\` is rendered as \`${mapping.component}\`: it behaves the same (its \`onPressed\`, its child), but ` +
+        'the runtime has one button style, so its emphasis — text-only, outlined or tonal — is not reproduced.',
+      idOf(node),
+    );
+  }
 
   const tag = useRuntime(module, mapping.component);
   const props: string[] = [];

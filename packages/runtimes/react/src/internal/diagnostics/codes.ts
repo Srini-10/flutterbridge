@@ -68,6 +68,8 @@ export const RuntimeDiagnosticCode = {
   InvalidIntegerOperand: 'BRG4013',
   /** A collection operation Dart would reject with a `RangeError`, an `ArgumentError` or a `StateError` (ADR-0051). */
   CollectionOperation: 'BRG4014',
+  /** A `String` operation Dart would reject with a `RangeError` (`substring`, `codeUnitAt`) (ADR-0054). */
+  StringOperation: 'BRG4015',
 } as const;
 
 /** A diagnostic code owned by the runtime kit (ADR-20). */

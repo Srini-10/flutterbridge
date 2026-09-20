@@ -7,7 +7,9 @@ class RootApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => MaterialApp(
-        theme: ThemeData(colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF6750A4))),
+        theme: ThemeData(
+            colorScheme:
+                ColorScheme.fromSeed(seedColor: const Color(0xFF6750A4))),
         home: const HomeScreen(),
       );
 }
@@ -19,6 +21,7 @@ class HomeScreen extends StatelessWidget {
   Widget build(BuildContext context) => Scaffold(
         body: Column(children: const [
           DependencyChange(),
+          Leaving(),
           StoreUser(),
         ]),
       );
@@ -68,4 +71,25 @@ class _StoreUserState extends State<StoreUser> {
 
   @override
   Widget build(BuildContext context) => Text('${_store.count}');
+}
+
+/// `deactivate` runs when the element leaves the tree, which React has no event for (it is not `dispose`).
+class Leaving extends StatefulWidget {
+  const Leaving({super.key});
+
+  @override
+  State<Leaving> createState() => _LeavingState();
+}
+
+class _LeavingState extends State<Leaving> {
+  int _n = 0;
+
+  @override
+  void deactivate() {
+    _n = 1;
+    super.deactivate();
+  }
+
+  @override
+  Widget build(BuildContext context) => Text('$_n');
 }

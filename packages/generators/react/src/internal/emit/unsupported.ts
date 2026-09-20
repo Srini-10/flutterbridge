@@ -147,6 +147,13 @@ export const MISSING_CAPABILITIES: Readonly<Record<string, MissingCapability>> =
       'a builder over `items.length` whose template indexes `items` expands into a `ui.List`; otherwise ' +
       'build the children from the collection directly (`GridView(children: [for (final x in items) ...])`)',
   },
+  // `SizedBox.expand()` takes no argument, so nothing was ever dropped and nothing was ever reported: it rendered as a
+  // `SizedBox` that sizes to its child, where Flutter's fills the space its parent gives it (ADR-0054).
+  'SizedBox.expand': {
+    capability: 'a `SizedBox` that fills the space its parent allows — the runtime `SizedBox` takes a width and a height, not "all of it"',
+    owner: 'runtime',
+    workaround: '`Expanded(child: …)` inside a `Row`/`Column`, or `SizedBox(width: double.infinity, height: double.infinity)`',
+  },
   'ListView.separated': {
     capability:
       'a separator between items — `ui.List` renders one template per item and has nowhere to put a second ' +

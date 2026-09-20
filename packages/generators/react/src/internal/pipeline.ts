@@ -50,6 +50,9 @@ import {
 } from './emit/routes.js';
 import { emitStore } from './emit/store.js';
 import { behaviourOf, methodOf } from './emit/lifecycle.js';
+
+/** The lifecycle methods the component emitter lowers (ADR-0052); any other, with behaviour, is refused. */
+const LOWERED_LIFECYCLE: ReadonlySet<string> = new Set(['initState', 'dispose', 'didUpdateWidget']);
 import { OWNER_LABEL } from './emit/unsupported.js';
 import { emitTheme } from './emit/theme.js';
 
@@ -116,17 +119,22 @@ export function generateProject(context: GeneratorContext): GeneratorOutput {
     if (behaviour.length === 0) continue;
     const method = methodOf(effect);
     const isOwned = owned.has(String(effect['id']));
-    if (isOwned && method !== 'didChangeDependencies') continue;
+    if (isOwned && LOWERED_LIFECYCLE.has(method)) continue;
     report(
       GeneratorDiagnosticCode.UnsupportedCapability,
       'error',
       isOwned
         ? `\`${method}\` (${spanOf(effect)}) has no lowering, so its body would be missing from the generated component — ` +
-            `every statement in it, silently. It runs when an inherited dependency (\`Theme.of\`, \`MediaQuery.of\`, an ` +
-            `\`InheritedWidget\`) changes, and once after \`initState\`; a function component has no per-instance hook for ` +
-            `either (ADR-0052). Missing capability: dependency-change notification. That work belongs to ` +
-            `${OWNER_LABEL['generator']}. For now: read the dependency in \`build\`, or compare \`oldWidget\` in ` +
-            `\`didUpdateWidget\`.`
+            `every statement in it, silently. ` +
+            (method === 'didChangeDependencies'
+              ? 'It runs when an inherited dependency (`Theme.of`, `MediaQuery.of`, an `InheritedWidget`) changes, and once ' +
+                'after `initState`; a function component has no per-instance hook for either (ADR-0052). Missing capability: ' +
+                `dependency-change notification. For now: read the dependency in \`build\`, or compare \`oldWidget\` in ` +
+                '`didUpdateWidget`. '
+              : 'It runs when the element leaves or re-enters the tree — which is not the same as unmounting, because a ' +
+                'subtree can be deactivated and reinserted (a `GlobalKey` move) — and React has no such event (ADR-0052). ' +
+                'Missing capability: element deactivation. Put the work in `dispose`, which is lowered. ') +
+            `That work belongs to ${OWNER_LABEL['generator']}.`
         : `\`${method}\` (${spanOf(effect)}) belongs to no component — a store's lifecycle method, say — and has no ` +
             `lowering, so its body would be missing from the generated project, silently. Missing capability: a ` +
             `lifecycle for a store. That work belongs to ${OWNER_LABEL['generator']}.`,

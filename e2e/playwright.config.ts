@@ -25,6 +25,8 @@
 //
 // `local-store.spec.ts` gets its own pair (3319/3320): `local_store` (M7-N, ADR-27) is a fifth, distinct
 // generated application.
+//
+// `state-semantics.spec.ts` gets its own pair (3321/3322): `state_semantics_e2e` (M11) is a sixth.
 
 import { defineConfig, devices } from '@playwright/test';
 
@@ -99,6 +101,16 @@ export default defineConfig({
       name: 'local-store-development',
       use: { ...devices['Desktop Chrome'], baseURL: 'http://127.0.0.1:3320' },
       testMatch: /local-store\.dev-only\.spec/,
+    },
+    {
+      name: 'state-semantics-production',
+      use: { ...devices['Desktop Chrome'], baseURL: 'http://127.0.0.1:3321' },
+      testMatch: /state-semantics\.spec/,
+    },
+    {
+      name: 'state-semantics-development',
+      use: { ...devices['Desktop Chrome'], baseURL: 'http://127.0.0.1:3322' },
+      testMatch: /state-semantics\.dev-only\.spec/,
     },
   ],
 
@@ -190,6 +202,24 @@ export default defineConfig({
       command: 'npx next dev --port 3320',
       cwd: './.fixtures/local-store-dev',
       port: 3320,
+      reuseExistingServer: false,
+      timeout: 120_000,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    },
+    {
+      command: 'npx next start --port 3321',
+      cwd: './.fixtures/state-semantics/build/bridge',
+      port: 3321,
+      reuseExistingServer: false,
+      timeout: 120_000,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    },
+    {
+      command: 'npx next dev --port 3322',
+      cwd: './.fixtures/state-semantics-dev',
+      port: 3322,
       reuseExistingServer: false,
       timeout: 120_000,
       stdout: 'pipe',

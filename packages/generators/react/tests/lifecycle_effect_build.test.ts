@@ -17,6 +17,7 @@ import {
 //
 //   `didChangeDependencies`  fires when an *inherited* dependency changes, and once after `initState`; a function
 //                            component has no per-instance hook for either.
+//   `deactivate`             runs when the element leaves the tree, which is not `dispose` and has no React event.
 //   a store's `dispose`      belongs to no component (`ui.Component.effects` names none).
 //
 // What is *not* refused is a body that says nothing this output needs — a `super.` call, a framework controller
@@ -32,15 +33,16 @@ const refuse = () => {
 };
 
 describe('a lifecycle body with no lowering is refused, not silently dropped', () => {
-  it('refuses didChangeDependencies and a store’s dispose, and emits nothing', () => {
+  it('refuses didChangeDependencies, deactivate and a store’s dispose, and emits nothing', () => {
     const { files, errors } = refuse();
-    expect(errors).toHaveLength(2);
+    expect(errors).toHaveLength(3);
     expect(files).toEqual([]);
   });
 
   it('names the Dart method and where it is', () => {
     const messages = refuse().errors.map((d) => d.message);
     expect(messages.filter((m) => m.startsWith('`didChangeDependencies`'))).toHaveLength(1);
+    expect(messages.filter((m) => m.startsWith('`deactivate`'))).toHaveLength(1);
     expect(messages.filter((m) => m.startsWith('`dispose`') && m.includes('belongs to no component'))).toHaveLength(1);
     expect(messages.every((m) => m.includes('lib/main.dart'))).toBe(true);
   });

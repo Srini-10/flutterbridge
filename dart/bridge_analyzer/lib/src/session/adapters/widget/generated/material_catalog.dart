@@ -254,6 +254,8 @@ abstract final class MaterialCatalog {
   'didUpdateWidget': 'update',
   'didChangeDependencies': 'update',
   'dispose': 'unmount',
+  'deactivate': 'unmount',
+  'activate': 'mount',
   };
 
   /// Calls that batch state mutations and mean nothing else — `setState` (INV-22).

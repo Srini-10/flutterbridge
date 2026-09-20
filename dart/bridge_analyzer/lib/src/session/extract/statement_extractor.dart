@@ -257,8 +257,13 @@ final class StatementExtractor implements StatementExtractorRef {
               for (final SwitchMember member in node.members)
                 RawMap(<String, RawValue>{
                   // A `default` has no test. Absent, not null: the two say different things.
-                  if (member is SwitchCase)
-                    'test': RawChild(expressions.extract(member.expression, scope)),
+                  //
+                  // Since Dart 3 every `case X:` is a `SwitchPatternCase`, not a `SwitchCase` — so the test that
+                  // was read only from a `SwitchCase` was never read at all, every case in every switch looked like a
+                  // `default`, and the generated `switch` matched nothing (`case undefined:`) with no diagnostic
+                  // anywhere. A constant pattern (a literal, an enum constant, a `const`) is the test; any other
+                  // pattern, or a `when` guard, is preserved as an opaque expression and refused downstream.
+                  if (_switchTest(member, scope) case final RawValue test) 'test': test,
                   'body': RawList(<RawValue>[
                     for (final Statement statement in member.statements)
                       RawChild(extract(statement, scope)),
@@ -701,4 +706,39 @@ final class StatementExtractor implements StatementExtractorRef {
     PatternVariableDeclarationStatement() => 'pattern declaration',
     _ => node.runtimeType.toString(),
   };
+
+  /// The `test` of one switch member, or `null` for a `default`.
+  RawValue? _switchTest(SwitchMember member, Scope scope) {
+    if (member is SwitchDefault) {
+      return null;
+    }
+    if (member is SwitchCase) {
+      return RawChild(expressions.extract(member.expression, scope));
+    }
+    if (member is SwitchPatternCase) {
+      final GuardedPattern guarded = member.guardedPattern;
+      final DartPattern pattern = guarded.pattern;
+      if (guarded.whenClause == null && pattern is ConstantPattern) {
+        return RawChild(expressions.extract(pattern.expression, scope));
+      }
+      const String reason = 'a `switch` case that is not a plain constant (a pattern, or a `when` guard)';
+      out.report(
+        Codes.unsupportedSyntax,
+        'A `case` with $reason has no UIR representation. It is preserved as an opaque expression.',
+        member,
+      );
+      return RawChild(
+        RawNode(
+          kind: 'logic.OpaqueExpr',
+          span: out.span(member),
+          fields: <String, RawValue>{
+            'dartSource': RawLiteral(member.toSource()),
+            'reason': const RawLiteral(reason),
+            'type': const RawMap(<String, RawValue>{'name': RawLiteral('dynamic')}),
+          },
+        ),
+      );
+    }
+    return null;
+  }
 }

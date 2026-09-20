@@ -1,0 +1,10 @@
+{
+  "StringOps": ["empty", "ab", "xay", "dollar", "empty", "ab"],
+  "NumOps": ["inc", "inc", "negate", "negzero", "negate"],
+  "SwitchOps": ["next", "next", "next", "next", "next", "next", "next"],
+  "IncrementOps": ["expr", "loop", "expr", "chain"],
+  "CallHost": ["pick", "pick"],
+  "FutureOps": ["run", "@wait"],
+  "NullChain": [],
+  "StaleHost": ["twice", "twice"]
+}

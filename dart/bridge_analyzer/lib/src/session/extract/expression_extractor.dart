@@ -122,12 +122,17 @@ final class ExpressionExtractor {
             // Every interpolation is a reactive read: `Text('Hello $name')` must re-render when
             // `name` changes, and it can only do so if the parts survive as expressions.
             'parts': RawList(<RawValue>[
-              for (final InterpolationElement part in node.elements)
+              for (final InterpolationElement part in node.elements) ...<RawValue>[
+                // `'$k'` for an enum value prints `Kind.a`; the target's value is the bare name `a`, so the enum's own name is
+                // written in front (ADR-0054).
+                if (part is InterpolationExpression && part.expression.staticType?.element is EnumElement)
+                  RawChild(_literal(node, '${part.expression.staticType!.element!.name}.')),
                 RawChild(
                   part is InterpolationExpression
                       ? extract(part.expression, scope)
                       : _literal(node, (part as InterpolationString).value),
                 ),
+              ],
             ]),
             'type': out.typeRef(node.staticType, at: node),
           },
@@ -174,6 +179,9 @@ final class ExpressionExtractor {
               _topLevelTarget(node.identifier.element),
         );
 
+      case PrefixedIdentifier() when _enumMember(node.prefix, node.identifier.name) != null:
+        return _enumMemberRead(node, node.prefix, node.identifier.name, scope);
+
       case PrefixedIdentifier():
         // `context.mounted` — Flutter's `BuildContext.mounted` (ADR-0026). Checked ahead of
         // `_componentProp`: the two recognize different, mutually exclusive framework getters, and
@@ -205,6 +213,9 @@ final class ExpressionExtractor {
             'type': out.typeRef(node.staticType, at: node),
           },
         );
+
+      case PropertyAccess() when _enumMember(node.target, node.propertyName.name) != null && !node.isNullAware:
+        return _enumMemberRead(node, node.target!, node.propertyName.name, scope);
 
       case PropertyAccess() when node.target != null:
         final Expression target = node.target!;
@@ -1139,11 +1150,63 @@ final class ExpressionExtractor {
   /// onward) for no real capability gain (ADR-0044 §5/§19). A method call or a constructed value is
   /// excluded outright — duplicating either would call it, or construct it, twice.
   bool _isSafeToDuplicateNullAwareReceiver(Expression target) {
+    // `a?.b`: a bare reference. `a.b?.c`, `this.a?.b`, `a.b.c?.d` (M11, ADR-0054): a chain of *field* reads over a bare
+    // reference — evaluating it twice is the same as once, exactly the argument above, applied at each link. Without it
+    // the guard was dropped for every receiver that was not a bare name, and (for an SDK member) that was silent.
+    if (target is PrefixedIdentifier) {
+      return _isSafeToDuplicateNullAwareReceiver(target.prefix) && _isFieldRead(target.identifier.element);
+    }
+    if (target is PropertyAccess && !target.isNullAware) {
+      final Expression? base = target.target;
+      return base != null &&
+          (base is ThisExpression || _isSafeToDuplicateNullAwareReceiver(base)) &&
+          _isFieldRead(target.propertyName.element);
+    }
     if (target is! SimpleIdentifier) return false;
     final Element? element = target.element;
     if (element is FormalParameterElement || element is LocalVariableElement) return true;
+    // `State.widget` is a getter over a private field — the one computed getter that is free to evaluate twice, and
+    // `widget.items?.length` is how a State reads an optional prop.
+    if (element is GetterElement && element.name == 'widget' && element.library.uri.scheme == 'package') return true;
     return element is GetterElement && element.isOriginVariable;
   }
+
+  /// `'name'`/`'index'` when [target] is an enum value and [property] is that member, `'member'` when it is a field or method
+  /// the enum itself *declares*, else `null`.
+  static String? _enumMember(Expression? target, String property) {
+    final Element? element = target?.staticType?.element;
+    if (element is! EnumElement) {
+      return null;
+    }
+    if (property == 'name' || property == 'index') {
+      return property;
+    }
+    return element.getField(property) != null || element.getMethod(property) != null || element.getGetter(property) != null
+        ? 'member'
+        : null;
+  }
+
+  /// `k.name` is `k` (a value is its name). `k.index`, and a field or method the enum declares (`k.weight`), have no
+  /// lowering: the target represents a value as its bare name, so `k.weight` would be silently `undefined`. The second is
+  /// BRG1312; both are preserved as opaque expressions.
+  RawNode _enumMemberRead(Expression node, Expression target, String property, Scope scope) {
+    final String? kind = _enumMember(target, property);
+    if (kind == 'name') {
+      return extract(target, scope);
+    }
+    if (kind == 'member') {
+      out.report(
+        Codes.unmodelledEnum,
+        'The enum member `$property` is declared by the enum, and only its value names are modelled: the read would be '
+        'silently `undefined`. It is preserved as an opaque expression.',
+        node,
+      );
+    }
+    return _unsupported(node, scope);
+  }
+
+  /// Whether [element] is a field read (a variable-backed getter), not a computed getter.
+  static bool _isFieldRead(Element? element) => element is GetterElement && element.isOriginVariable;
 
   /// A synthetic `null` literal (M10-F, ADR-0044) — no real AST node exists to ask `node.staticType` of,
   /// so the `TypeRef` is hand-built, mirroring the identical established pattern this file already uses
@@ -1177,6 +1240,10 @@ final class ExpressionExtractor {
   /// default (`false`), so a bare, un-awaited call to an `async` method continues to refuse exactly as it
   /// did before this milestone.
   RawNode _invocation(MethodInvocation node, Scope scope, {bool awaited = false}) {
+    // `k.next()` where `next` is a method the *enum* declares: a value is its bare name, so the call would be `undefined`.
+    if (node.realTarget != null && _enumMember(node.realTarget, node.methodName.name) == 'member') {
+      return _enumMemberRead(node, node.realTarget!, node.methodName.name, scope);
+    }
     // A navigation is a method invocation, and this is the one place every invocation is reached with
     // the scope its arguments must bind against. The transition it emits is a *separate* top-level
     // record — the imperative call still becomes the `logic.MethodCall` below, because the code does

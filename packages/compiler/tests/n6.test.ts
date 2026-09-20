@@ -111,6 +111,23 @@ describe('N6 refuses to fold what it is not certain of', () => {
     expect(binding(fold(program).program)['kind']).toBe('bind.Expr');
   });
 
+  it('a result canonical JSON cannot write is not folded: -0.0 stays an expression (ADR-0054)', () => {
+    // `-0.0` is `Unary('-', 0.0)`. Folded, it is JavaScript's -0, which serialises as `0`: a `double` Dart says
+    // `isNegative` came out of the compiler positive. The same for a product that overflows to Infinity.
+    const negativeZero = { id: 'u', kind: 'logic.Unary', span, operator: '-', operand: lit('z', 0, 'double'), type: { name: 'double' } };
+    expect(binding(fold(Program.of([widget(negativeZero)])).program)['kind']).toBe('bind.Expr');
+
+    const timesNegative = binary('e', '*', lit('l', 0, 'double'), lit('r', -1, 'double'), 'double');
+    expect(binding(fold(Program.of([widget(timesNegative)])).program)['kind']).toBe('bind.Expr');
+
+    const overflow = binary('e', '*', lit('l', 1e308, 'double'), lit('r', 10, 'double'), 'double');
+    expect(binding(fold(Program.of([widget(overflow)])).program)['kind']).toBe('bind.Expr');
+
+    // Control: an ordinary negation still folds.
+    const five = { id: 'u', kind: 'logic.Unary', span, operator: '-', operand: lit('z', 5, 'double'), type: { name: 'double' } };
+    expect(binding(fold(Program.of([widget(five)])).program)['value']).toBe(-5);
+  });
+
   it('an int product JavaScript cannot represent exactly is not folded (ADR-0050)', () => {
     // 3037000499 * 3037000499 is 9223372030926249001 in Dart's 64-bit int and 9223372030926249000 as a JavaScript
     // double. Folding it baked the rounded value into the IR, upstream of any generator that could refuse it.

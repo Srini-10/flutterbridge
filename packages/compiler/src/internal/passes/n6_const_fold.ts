@@ -117,8 +117,18 @@ function foldBinary(
   // upstream of any generator that could refuse it. Declining leaves the expression for the build-time diagnostic that
   // reports a constant leaving the safe-integer domain.
   if (typeof value === 'number' && isDartInt(node['type']) && !Number.isSafeInteger(value)) return undefined;
+  if (!isRepresentable(value)) return undefined;
 
   return literal(value, node);
+}
+
+/**
+ * Whether a folded number can be written in canonical form. JSON has no `-0` (`JSON.stringify(-0)` is `"0"`) and no
+ * `NaN`/`Infinity` (§A15): folding `-0.0` — `Unary('-', 0.0)` — wrote `0`, so a `double` that Dart says `isNegative` came out
+ * of the compiler positive, silently. Declining leaves the expression for the target to evaluate.
+ */
+function isRepresentable(value: string | number | boolean): boolean {
+  return typeof value !== 'number' || (Number.isFinite(value) && !Object.is(value, -0));
 }
 
 /** Whether a `TypeRef` is Dart's `int` — the type whose JavaScript representation is exact only up to 2^53 − 1. */
@@ -135,7 +145,7 @@ function foldUnary(node: Record<string, unknown>): Record<string, unknown> | und
   if (operand === undefined) return undefined;
 
   const operator = node['operator'];
-  if (operator === '-' && typeof operand === 'number') return literal(-operand, node);
+  if (operator === '-' && typeof operand === 'number') return isRepresentable(-operand) ? literal(-operand, node) : undefined;
   if (operator === '!' && typeof operand === 'boolean') return literal(!operand, node);
   return undefined;
 }

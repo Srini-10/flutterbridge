@@ -1,0 +1,16 @@
+name: state_semantics_e2e
+description: >-
+  M11 browser proof (ADR-0051/0052/0053/0050): one page combining in-place collection mutation shared with a child by prop, a
+  State with initState/dispose logging its lifecycle, widget constructor defaults, and checked integer arithmetic.
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

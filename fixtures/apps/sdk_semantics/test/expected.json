@@ -1,0 +1,173 @@
+{
+  "StringOps": [
+    [
+      "> true false 0",
+      "> false ***** ----      abababababab",
+      ">  false false -1 -1",
+      ">    []",
+      "> required",
+      "> 1 [] short -1"
+    ],
+    [
+      "> true false 0",
+      "> false ***** ----      abababababab",
+      ">  false false -1 -1",
+      ">    []",
+      "> required",
+      "> 1 [] short -1"
+    ],
+    [
+      "> false true 2",
+      "> true ***ab ab--   ab ababababab",
+      "> AB true true 0 0",
+      "> $&$&b Zb abab []",
+      "> ok",
+      "> 2 [ab] b 97"
+    ],
+    [
+      "> false true 3",
+      "> true **xay xay-  xay abababxay",
+      "> XAY false false 1 1",
+      "> x$&$&y xZy xayxay []",
+      "> ok",
+      "> 2 [xay] ay 120"
+    ],
+    [
+      "> false true 3",
+      "> true **a$b a$b-  a$b abababa$b",
+      "> A$B true true 0 0",
+      "> $&$&$b Z$b a$ba$b []",
+      "> ok",
+      "> 2 [a$b] $b 97"
+    ],
+    [
+      "> true false 0",
+      "> false ***** ----      abababababab",
+      ">  false false -1 -1",
+      ">    []",
+      "> required",
+      "> 1 [] short -1"
+    ],
+    [
+      "> false true 2",
+      "> true ***ab ab--   ab ababababab",
+      "> AB true true 0 0",
+      "> $&$&b Zb abab []",
+      "> ok",
+      "> 2 [ab] b 97"
+    ]
+  ],
+  "NumOps": [
+    [
+      "> false true false false true false"
+    ],
+    [
+      "> true false false false true false"
+    ],
+    [
+      "> false true false false true false"
+    ],
+    [
+      "> false true true true true false"
+    ],
+    [
+      "> false true true true true false"
+    ],
+    [
+      "> false true false false true false"
+    ]
+  ],
+  "SwitchOps": [
+    [
+      "> switch 0 ",
+      "> enum light Shade.light"
+    ],
+    [
+      "> switch 1 small/B/M",
+      "> enum mid Shade.mid"
+    ],
+    [
+      "> switch 2 small/other/D",
+      "> enum dark Shade.dark"
+    ],
+    [
+      "> switch 3 three/A/L",
+      "> enum light Shade.light"
+    ],
+    [
+      "> switch 4 many/B/M",
+      "> enum mid Shade.mid"
+    ],
+    [
+      "> switch 5 many/other/D",
+      "> enum dark Shade.dark"
+    ],
+    [
+      "> switch 6 many/A/L",
+      "> enum light Shade.light"
+    ],
+    [
+      "> switch 7 many/B/M",
+      "> enum mid Shade.mid"
+    ]
+  ],
+  "IncrementOps": [
+    [
+      "> inc a=1 b=2 r=0 w=0"
+    ],
+    [
+      "> inc a=2 b=3 r=4 w=0"
+    ],
+    [
+      "> inc a=2 b=3 r=4 w=5"
+    ],
+    [
+      "> inc a=3 b=4 r=6 w=5"
+    ],
+    [
+      "> inc a=7 b=7 r=6 w=5"
+    ]
+  ],
+  "CallHost": [
+    [
+      "> picked 0",
+      "> fmt 8 10"
+    ],
+    [
+      "> picked 3",
+      "> fmt 8 10"
+    ],
+    [
+      "> picked 6",
+      "> fmt 8 10"
+    ]
+  ],
+  "FutureOps": [
+    [
+      "> future idle"
+    ],
+    [
+      "> future running"
+    ],
+    [
+      "> future completed"
+    ]
+  ],
+  "NullChain": [
+    [
+      "> chain null null",
+      "> chain 2 x+y"
+    ]
+  ],
+  "StaleHost": [
+    [
+      "> stale a=0 b=0"
+    ],
+    [
+      "> stale a=10 b=20"
+    ],
+    [
+      "> stale a=20 b=40"
+    ]
+  ]
+}

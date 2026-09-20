@@ -48,7 +48,13 @@ export function load(document: string, manifest?: Manifest): Program {
     }
   }
 
-  const nodes = parseNdjson(document);
+  let nodes;
+  try {
+    nodes = parseNdjson(document);
+  } catch (error) {
+    // A malformed document is an input the compiler refuses (exit 3), not a crash with a stack trace.
+    throw new LoadError(`the document is malformed: ${(error as Error).message}`);
+  }
 
   if (manifest !== undefined && nodes.length !== manifest.recordCount) {
     // A truncated document. The analyzer writes atomically (INV-2), so this means something between
