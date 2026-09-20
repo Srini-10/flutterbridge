@@ -1,0 +1,17 @@
+name: jsx_child_positions
+description: >-
+  M11-I (plan Phase D1/G) proof: an emitted UI node is an expression, and only a JSX child position wraps it
+  in braces. A collection-if between a Column's children used to be emitted as bare text between the tags
+  (`flag ? <Text/> : null`), which parses as JSX text and rendered literally.
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

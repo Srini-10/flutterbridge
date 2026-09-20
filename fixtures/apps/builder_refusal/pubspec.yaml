@@ -1,0 +1,15 @@
+name: builder_refusal
+description: >-
+  M11-I (plan Phase D1) proof: a builder the frontend cannot expand into ui.List must be refused, never rendered as an empty list. Each component is one shape the M4-H expansion proof rejects.
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

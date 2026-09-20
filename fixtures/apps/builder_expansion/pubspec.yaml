@@ -1,0 +1,15 @@
+name: builder_expansion
+description: >-
+  M11-I (plan Phase D1) positive control: builders that index one collection expand to ui.List, expression- or block-bodied, so the refusal in builder_refusal is not over-broad.
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

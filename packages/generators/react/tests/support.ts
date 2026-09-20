@@ -514,3 +514,21 @@ export function opaqueRefusalRaw(): string {
   const path = fileURLToPath(new URL('../../../../fixtures/uir/opaque_refusal.ndjson', import.meta.url));
   return readFileSync(path, 'utf8');
 }
+
+/** The real `fixtures/apps/builder_refusal` document, raw analyzer output (M11-I) — not yet normalized. */
+export function builderRefusalRaw(): string {
+  const path = fileURLToPath(new URL('../../../../fixtures/uir/builder_refusal.ndjson', import.meta.url));
+  return readFileSync(path, 'utf8');
+}
+
+/** The real `fixtures/apps/builder_expansion` document, raw analyzer output (M11-I) — not yet normalized. */
+export function builderExpansionRaw(): string {
+  const path = fileURLToPath(new URL('../../../../fixtures/uir/builder_expansion.ndjson', import.meta.url));
+  return readFileSync(path, 'utf8');
+}
+
+/** The real `fixtures/apps/jsx_child_positions` document, raw analyzer output (M11-I) — not yet normalized. */
+export function jsxChildPositionsRaw(): string {
+  const path = fileURLToPath(new URL('../../../../fixtures/uir/jsx_child_positions.ndjson', import.meta.url));
+  return readFileSync(path, 'utf8');
+}

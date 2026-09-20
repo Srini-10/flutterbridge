@@ -31,7 +31,14 @@ import { emitStatements } from './statement.js';
 import { identifierOf, type ModuleBuilder } from './module.js';
 import { typeTextOf } from './types.js';
 import { useRuntime, useRuntimeType } from './runtime.js';
-import { missingCapabilityOf, opaqueDetailOf, opaqueReasonSuffix, OWNER_LABEL } from './unsupported.js';
+import {
+  missingCapabilityOf,
+  opaqueDetailOf,
+  opaqueReasonSuffix,
+  OWNER_LABEL,
+  qualifiedMissingCapabilityOf,
+  type MissingCapability,
+} from './unsupported.js';
 import {
   UNSUPPORTED_PARAMETERS,
   mappingOf,
@@ -145,7 +152,7 @@ export function emitComponent(component: Node, module: ModuleBuilder, scope: Emi
       // (`emitUiNode`'s own `ui.List` case) — never inside it, so a dialog exists whether or not it is
       // currently shown.
       const fragment = module.use('react', 'Fragment');
-      module.line(`return <${fragment}>${body}${dialogHosts.join('')}</${fragment}>;`);
+      module.line(`return <${fragment}>${jsxChild(body)}${dialogHosts.join('')}</${fragment}>;`);
     }
   });
   module.line('}');
@@ -406,7 +413,7 @@ function declareDialogHosts(
     const local = id === undefined ? undefined : refs.get(id as NodeId);
     if (local === undefined) continue;
     const content = emitUiNode(transition['inline'] as Node, module, withRefs, 1);
-    hosts.push(`<${dialogHost} ref={${local}}>${content}</${dialogHost}>`);
+    hosts.push(`<${dialogHost} ref={${local}}>${jsxChild(content)}</${dialogHost}>`);
   }
   return { refs, hosts };
 }
@@ -1094,6 +1101,21 @@ function spanOf(node: Node): string {
 }
 
 /**
+ * An emitted UI node as a JSX *child*.
+ *
+ * {@link emitUiNode} returns an **expression**: `<Text>…</Text>`, `cond ? a : b`, `items.map(…)` or `null`.
+ * An element is already valid where JSX children go; any other expression needs braces there. Everything the
+ * emitters produce for an element starts with `<` and nothing else they produce does (a condition is never an
+ * element), so that is the whole test.
+ *
+ * @param emitted - the text {@link emitUiNode} returned.
+ * @returns the text to place between an element's tags.
+ */
+function jsxChild(emitted: string): string {
+  return emitted.startsWith('<') ? emitted : `{${emitted}}`;
+}
+
+/**
  * Emits a `ui.*` node as a TSX expression.
  *
  * @param node - the UI node.
@@ -1206,7 +1228,11 @@ export function emitUiNode(node: Node, module: ModuleBuilder, scope: EmitScope, 
       // would have failed `tsc` rather than rendering wrongly. Declared through the module builder like every
       // other name, so the import block carries it.
       const fragment = module.use('react', 'Fragment');
-      return `{${source}.map((${itemName}, ${indexName}) => <${fragment} key={${key}}>${inner}</${fragment}>)}`;
+      // Expression form, like every other case here. It used to return `{…}` — a *child*-position spelling —
+      // which was right inside a `<Column>` and wrong everywhere else: as a slot (`child={{…}}`), a
+      // conditional branch or a root it is not valid TSX. Callers that put an emitted node in JSX child
+      // position wrap it with `jsxChild`, which is the one place that knows the difference.
+      return `${source}.map((${itemName}, ${indexName}) => <${fragment} key={${key}}>${jsxChild(inner)}</${fragment}>)`;
     }
 
     case 'ui.Async': {
@@ -1290,25 +1316,24 @@ function emitElement(node: Node, module: ModuleBuilder, scope: EmitScope, depth:
   }
 
   const mapping = mappingOf(widgetName);
+  const constructorName =
+    typeof componentRef?.['constructorName'] === 'string' ? componentRef['constructorName'] : undefined;
+  const spelling = constructorName === undefined ? widgetName : `${widgetName}.${constructorName}`;
+
+  // A constructor the generator knows it cannot render, *even when the widget itself is mapped*. `ListView`
+  // renders and `ListView.builder` (unexpanded) does not: mapping the class and dropping the builder's
+  // closure as an "unmapped prop" left an empty list in a build that succeeded (M11-I).
+  const constructorMissing = qualifiedMissingCapabilityOf(widgetName, constructorName);
+  if (constructorMissing !== undefined) {
+    reportMissingCapability(spelling, constructorMissing, node, scope);
+    return 'null';
+  }
 
   if (mapping === undefined) {
-    const constructorName =
-      typeof componentRef?.['constructorName'] === 'string' ? componentRef['constructorName'] : undefined;
     const missing = missingCapabilityOf(widgetName, constructorName);
-    const spelling = constructorName === undefined ? widgetName : `${widgetName}.${constructorName}`;
 
     if (missing !== undefined) {
-      // A widget the system knows about. Naming the capability and its owner is the difference between a
-      // diagnostic an author can act on and one that only says something is missing.
-      scope.report(
-        GeneratorDiagnosticCode.UnsupportedCapability,
-        'error',
-        `\`${spelling}\` needs ${missing.capability}, which is not built yet. That work belongs to ` +
-          `${OWNER_LABEL[missing.owner]}.` +
-          (missing.workaround === undefined ? '' : ` For now: ${missing.workaround}.`) +
-          ` It is not rendered — a placeholder would be an application that looks nearly right and is wrong.`,
-        idOf(node),
-      );
+      reportMissingCapability(spelling, missing, node, scope);
       return 'null';
     }
 
@@ -1371,13 +1396,36 @@ function emitElement(node: Node, module: ModuleBuilder, scope: EmitScope, depth:
     props.push(`${mapped}={${rendered}}`);
   }
 
-  const children = asArray(node['children']).map((child) => emitUiNode(child, module, scope, depth + 1));
+  const children = asArray(node['children']).map((child) => jsxChild(emitUiNode(child, module, scope, depth + 1)));
   const attributes = props.length === 0 ? '' : ` ${props.join(' ')}`;
 
   if (children.length === 0) return `<${tag}${attributes} />`;
   const pad = '  '.repeat(depth + 1);
   const inner = children.map((child) => `${pad}  ${child}`).join('\n');
   return `<${tag}${attributes}>\n${inner}\n${pad}</${tag}>`;
+}
+
+/**
+ * Refuses a widget the system knows about and cannot render.
+ *
+ * Naming the capability and its owner is the difference between a diagnostic an author can act on and one that
+ * only says something is missing.
+ */
+function reportMissingCapability(
+  spelling: string,
+  missing: MissingCapability,
+  node: Node,
+  scope: EmitScope,
+): void {
+  scope.report(
+    GeneratorDiagnosticCode.UnsupportedCapability,
+    'error',
+    `\`${spelling}\` needs ${missing.capability}, which is not built yet. That work belongs to ` +
+      `${OWNER_LABEL[missing.owner]}.` +
+      (missing.workaround === undefined ? '' : ` For now: ${missing.workaround}.`) +
+      ` It is not rendered — a placeholder would be an application that looks nearly right and is wrong.`,
+    idOf(node),
+  );
 }
 
 /**

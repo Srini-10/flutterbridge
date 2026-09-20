@@ -101,6 +101,17 @@ export interface MissingCapability {
 }
 
 /**
+ * A builder whose item template cannot be expanded into a `ui.List`.
+ *
+ * `ui.List` requires a `source` to iterate. A builder whose index does not index one collection has none, and
+ * inventing a range would be inventing the collection.
+ */
+const INDEX_RANGE_BUILDER =
+  'a builder over an index range that is not a collection. `ui.List` requires a `source` to iterate; a ' +
+  'builder whose index does not index anything has none, and inventing a range would be inventing the ' +
+  'collection';
+
+/**
  * Widgets this generator knows about and cannot render, with the reason.
  *
  * Keyed by widget name, or by `Widget.constructor` where the constructor is what makes the difference —
@@ -110,15 +121,32 @@ export interface MissingCapability {
 export const MISSING_CAPABILITIES: Readonly<Record<string, MissingCapability>> = {
   // ── Builders ──
   //
-  // `ListView.builder` and `GridView.builder` are **gone from this table**: M4-H expands them into `ui.List`
-  // in the frontend, where the resolved scope is. The note that used to sit here said the analyzer "cannot
-  // see an iterable to map over", and it was right about the owner for the wrong reason — the iterable was
-  // there all along, as the receiver of `items[index]`, and extraction was discarding it because
-  // `IndexExpression` had no lowering.
+  // `ListView.builder` and `GridView.builder`: M4-H expands a builder into `ui.List` in the frontend, where
+  // the resolved scope is — but only when the expansion is a *proof*, not a pattern match: it holds when the
+  // builder's index is used for nothing but indexing one collection, and the count is that collection's
+  // length. A builder that fails it stays an ordinary element, carrying its closure as a prop.
   //
-  // The expansion is a *proof*, not a pattern match: it holds only when the builder's index is used for
-  // nothing but indexing one collection, and the count is that collection's length. A builder that fails it
-  // stays an ordinary element and its closure is refused here.
+  // These two entries were removed when M4-H landed, on the premise that every builder expands. It does not
+  // (M11-I probes: a conditional return, a count with no collection, a nested builder, an item the generator
+  // cannot render), and the entries were not merely missing — the lookup that consults a
+  // constructor-qualified key ran only for a widget with *no* mapping, and `ListView`/`GridView`/`PageView`
+  // all have one. So the closure was dropped as an unmapped prop with a warning, and a `ListView.builder`
+  // rendered as an empty `<ListView />` in a build that succeeded. `qualifiedMissingCapabilityOf` is now
+  // consulted first, and these entries are back.
+  'ListView.builder': {
+    capability: INDEX_RANGE_BUILDER,
+    owner: 'schema',
+    workaround:
+      'a builder over `items.length` whose template indexes `items` expands into a `ui.List`; otherwise ' +
+      'build the children from the collection directly (`ListView(children: [for (final x in items) ...])`)',
+  },
+  'GridView.builder': {
+    capability: INDEX_RANGE_BUILDER,
+    owner: 'schema',
+    workaround:
+      'a builder over `items.length` whose template indexes `items` expands into a `ui.List`; otherwise ' +
+      'build the children from the collection directly (`GridView(children: [for (final x in items) ...])`)',
+  },
   'ListView.separated': {
     capability:
       'a separator between items — `ui.List` renders one template per item and has nowhere to put a second ' +
@@ -499,6 +527,26 @@ export function missingCapabilityOf(
     if (qualified !== undefined) return qualified;
   }
   return MISSING_CAPABILITIES[widget];
+}
+
+/**
+ * Why `Widget.constructor` cannot be rendered — the constructor-qualified entry *only*, never the bare name.
+ *
+ * {@link missingCapabilityOf} falls back to the bare widget name, which is right for a widget with no
+ * mapping. It is the wrong question for one that has a mapping: `ListView` renders, `ListView.builder` does
+ * not, and the qualified entry is the only thing that says so. The generator asks this *before* it consults
+ * the mapping.
+ *
+ * @param widget - the Flutter class name.
+ * @param constructorName - the named constructor, if there is one.
+ * @returns the missing capability, or `undefined` when the constructor has no qualified entry.
+ */
+export function qualifiedMissingCapabilityOf(
+  widget: string,
+  constructorName: string | undefined,
+): MissingCapability | undefined {
+  if (constructorName === undefined || constructorName === '') return undefined;
+  return MISSING_CAPABILITIES[`${widget}.${constructorName}`];
 }
 
 /** How an owner is described in a diagnostic — the layer, in the words the report uses. */
