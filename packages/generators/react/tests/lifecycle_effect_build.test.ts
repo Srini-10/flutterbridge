@@ -10,18 +10,18 @@ import {
   typecheckEmitted,
 } from './support.js';
 
-// Plan Phase E — a lifecycle method with behaviour in it is refused by name, not silently dropped.
+// ADR-0052 — what is still refused, and the control that erasable bodies are not.
 //
-// The analyzer turns `initState`/`didUpdateWidget`/`dispose` into a `sig.Effect`. Nothing in the generator reads
-// one (M8-Q §7: "real, separate, silent"), so `initState() { _n = 5; }` produced a component that started at 0
-// with no diagnostic — observed against real Flutter, whose first frame shows 5. `hello_bridge`'s own
-// `_itemsFuture = …` initialisation was being dropped the same way.
+// `initState`, `didUpdateWidget` and `dispose` are lowered (`lifecycle_execution.test.ts` runs them against real Flutter).
+// Two things are not, and each is refused **by name**, never silently absent from the output:
 //
-// Refusing is the bounded fix: lowering an effect needs decisions nobody has made (it runs *before* the first
-// build in Flutter and after the first render in React; development StrictMode runs it twice; the schema does
-// not say which component owns it). What is *not* refused is a body that says nothing this output needs — a
-// `super.` call, a framework controller disposing itself — so this is not the blanket that would reject every app
-// with a `TextEditingController`. Real analyzer output in, real generator, real tsc.
+//   `didChangeDependencies`  fires when an *inherited* dependency changes, and once after `initState`; a function
+//                            component has no per-instance hook for either.
+//   a store's `dispose`      belongs to no component (`ui.Component.effects` names none).
+//
+// What is *not* refused is a body that says nothing this output needs — a `super.` call, a framework controller
+// disposing itself — so this is not the blanket that would reject every app with a `TextEditingController`. Real
+// analyzer output in, real generator, real tsc.
 
 afterAll(cleanupBuildProofTemporaries);
 
@@ -31,26 +31,25 @@ const refuse = () => {
   return { files, errors: reported.filter((d) => d.code === 'BRG3013' && d.severity === 'error') };
 };
 
-describe('a lifecycle body with behaviour is refused, not silently dropped', () => {
-  it('refuses initState, didUpdateWidget and dispose, and emits nothing', () => {
+describe('a lifecycle body with no lowering is refused, not silently dropped', () => {
+  it('refuses didChangeDependencies and a store’s dispose, and emits nothing', () => {
     const { files, errors } = refuse();
-    expect(errors).toHaveLength(3);
+    expect(errors).toHaveLength(2);
     expect(files).toEqual([]);
   });
 
-  it('names the Dart method for each timing', () => {
+  it('names the Dart method and where it is', () => {
     const messages = refuse().errors.map((d) => d.message);
-    expect(messages.filter((m) => m.startsWith('`initState`'))).toHaveLength(1);
-    expect(messages.filter((m) => m.startsWith('`didUpdateWidget`/`didChangeDependencies`'))).toHaveLength(1);
-    expect(messages.filter((m) => m.startsWith('`dispose`'))).toHaveLength(1);
+    expect(messages.filter((m) => m.startsWith('`didChangeDependencies`'))).toHaveLength(1);
+    expect(messages.filter((m) => m.startsWith('`dispose`') && m.includes('belongs to no component'))).toHaveLength(1);
+    expect(messages.every((m) => m.includes('lib/main.dart'))).toBe(true);
   });
 
   it('says what is missing and what to do instead', () => {
-    const message = refuse().errors.find((d) => d.message.startsWith('`initState`'))?.message ?? '';
+    const message = refuse().errors.find((d) => d.message.startsWith('`didChangeDependencies`'))?.message ?? '';
     expect(message).toContain('silently');
-    expect(message).toContain('StrictMode');
-    expect(message).toContain('lib/main.dart');
-    expect(message).toContain("the field's declaration");
+    expect(message).toContain('ADR-0052');
+    expect(message).toContain('oldWidget');
   });
 });
 

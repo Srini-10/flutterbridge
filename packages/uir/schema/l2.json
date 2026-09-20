@@ -623,6 +623,14 @@
               },
               "description": "Component-scoped state — the State fields (Spec §2.3): plain reactive values (sig.Signal) and locally-owned store instances (app.StoreInstance, ADR-27)."
             },
+            "effects": {
+              "type": "array",
+              "items": {
+                "$ref": "shared.json#/$defs/NodeId",
+                "description": "A sig.Effect."
+              },
+              "description": "The lifecycle effects (`sig.Effect`) this component owns — `initState`, `didUpdateWidget`, `didChangeDependencies`, `dispose` — in declaration order (ADR-0052).\n\nA `sig.Effect` names no component of its own, so before this field a generator could not tell which component an effect belonged to and its body was silently absent from the output. Absent means the component has no lifecycle method with anything in it."
+            },
             "render": {
               "$ref": "l2.json#/$defs/UiNode",
               "description": "The render tree."

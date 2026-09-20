@@ -84,7 +84,7 @@ const GENERATED_NAMES: ReadonlySet<string> = new Set([
   'useThemeSurface', 'useUnmountEffect', 'useUpdateEffect', 'withOpacity', 'wrapAlignItems',
   'intAdd', 'intAnd', 'intMod', 'intMul', 'intNot', 'intOr', 'intShl', 'intShr', 'intSub', 'intTruncDiv', 'intUshr',
   'intXor', 'numMod', 'numTruncDiv',
-  'versionOf', 'inheritOwners', 'notifyMutation', 'defaultCompare', 'listAdd', 'listAddAll', 'listAny', 'listClear', 'listContains',
+  'useDidUpdateWidget', 'useInitState', 'useLifecycle', 'versionOf', 'inheritOwners', 'notifyMutation', 'defaultCompare', 'listAdd', 'listAddAll', 'listAny', 'listClear', 'listContains',
   'listFirst', 'listInsert', 'listInsertAll', 'listLast', 'listMap', 'listRemove', 'listRemoveAt', 'listRemoveLast',
   'listRemoveWhere', 'listRetainWhere', 'listReversed', 'listSetAt', 'listShuffle', 'listSkip', 'listSort',
   'listSublist', 'listTake', 'listToList', 'listWhere', 'mapAddAll', 'mapClear', 'mapContainsKey',
@@ -203,6 +203,9 @@ export class ModuleBuilder {
    */
   public use(from: string, name: string, options: { readonly typeOnly?: boolean } = {}): string {
     const typeOnly = options.typeOnly ?? false;
+    // A module never imports itself: a recursive component (`TreeNode` renders `TreeNode`) is already declared here, and
+    // an `import { TreeNode } from './tree-node'` inside `tree-node.tsx` is a `TS2440` conflict with it.
+    if (from === `@/${this.path.replace(/^src\//, '').replace(/\.tsx?$/, '')}` && this.declared.has(name)) return name;
     const existing = this.imports.find((i) => i.from === from && i.name === name);
     if (existing !== undefined) {
       if (existing.typeOnly && !typeOnly) {

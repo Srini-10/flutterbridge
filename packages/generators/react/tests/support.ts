@@ -587,3 +587,9 @@ export function collectionMutationRaw(): string {
   const path = join(here, '..', '..', '..', '..', 'fixtures', 'uir', 'collection_mutation.ndjson');
   return readFileSync(path, 'utf8');
 }
+
+/** The real `fixtures/apps/lifecycle_lowering` document, raw analyzer output (M11, ADR-0052) — not yet normalized. */
+export function lifecycleLoweringRaw(): string {
+  const path = join(here, '..', '..', '..', '..', 'fixtures', 'uir', 'lifecycle_lowering.ndjson');
+  return readFileSync(path, 'utf8');
+}

@@ -21,12 +21,16 @@ interface Mounted {
   texts(prefix?: string): string[];
   /** The mounted tree's HTML. */
   html(): string;
+  /** Lets `ms` of real time pass inside `act`, so timers and awaited promises settle. */
+  wait(ms: number): Promise<void>;
   /** Unmounts. */
   unmount(): void;
 }
 
 export interface Harness {
-  mount(componentFile: string, exportName: string): Mounted;
+  /** The HTML of a component's **first render** with no effects run — what a server, or the first frame, shows. */
+  firstRender(exportName: string, props?: object): string;
+  mount(componentFile: string, exportName: string, options?: { strict?: boolean }): Mounted;
 }
 
 /**
@@ -42,10 +46,11 @@ export async function loadGenerated(
   const root = materialise(files);
   const entry = [
     `import { createRoot } from 'react-dom/client';`,
-    `import { act, createElement } from 'react';`,
+    `import { act, createElement, StrictMode } from 'react';`,
+    `import { renderToString } from 'react-dom/server';`,
     ...components.map(([file, name]) => `import { ${name} } from '@/components/${file}';`),
     `export const registry = { ${components.map(([, name]) => name).join(', ')} };`,
-    `export { act, createRoot, createElement };`,
+    `export { act, createRoot, createElement, StrictMode, renderToString };`,
   ].join('\n');
   mkdirSync(join(root, '.exec'), { recursive: true });
   const outfile = join(root, '.exec', 'bundle.js');
@@ -61,24 +66,34 @@ export async function loadGenerated(
   // refuses a file outside the package.
   const bundle = new Function(`${readFileSync(outfile, 'utf8')}\nreturn __bundle;`)() as {
     registry: Record<string, (props: object) => unknown>;
-    act: (fn: () => void) => void;
+    act: (fn: () => void | Promise<void>) => void | Promise<void>;
+    StrictMode: unknown;
+    renderToString: (node: unknown) => string;
     createRoot: (container: Element) => { render(node: unknown): void; unmount(): void };
-    createElement: (type: unknown, props?: object) => unknown;
+    createElement: (type: unknown, props?: object | null, ...children: unknown[]) => unknown;
   };
 
   return {
-    mount(_file, exportName) {
+    firstRender(exportName, props = {}) {
+      const type = bundle.registry[exportName];
+      if (type === undefined) throw new Error(`no bundled component named ${exportName}`);
+      return bundle.renderToString(bundle.createElement(type, props));
+    },
+    mount(_file, exportName, options = {}) {
       const type = bundle.registry[exportName];
       if (type === undefined) throw new Error(`no bundled component named ${exportName}`);
       const container = document.createElement('div');
       document.body.appendChild(container);
       const reactRoot = bundle.createRoot(container);
-      bundle.act(() => reactRoot.render(bundle.createElement(type)));
+      const element = bundle.createElement(type);
+      void bundle.act(() =>
+        reactRoot.render(options.strict === true ? bundle.createElement(bundle.StrictMode, null, element) : element),
+      );
       return {
         click(label) {
           const button = [...container.querySelectorAll('button')].find((b) => b.textContent === label);
           if (button === undefined) throw new Error(`no <button> labelled ${label}`);
-          bundle.act(() => button.click());
+          void bundle.act(() => button.click());
         },
         texts(prefix = '> ') {
           return [...container.querySelectorAll('*')]
@@ -86,8 +101,13 @@ export async function loadGenerated(
             .map((e) => e.textContent ?? '');
         },
         html: () => container.innerHTML,
+        async wait(ms) {
+          await bundle.act(async () => {
+            await new Promise<void>((resolve) => setTimeout(resolve, ms));
+          });
+        },
         unmount() {
-          bundle.act(() => reactRoot.unmount());
+          void bundle.act(() => reactRoot.unmount());
           container.remove();
         },
       };

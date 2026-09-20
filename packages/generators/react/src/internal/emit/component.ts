@@ -27,6 +27,7 @@ import type { NodeId } from '@bridge/uir';
 
 import { GeneratorDiagnosticCode } from '../diagnostics/codes.js';
 import { emitExpression, isScaffoldMessengerCall, localBindingsIn, stringLiteral, type EmitScope } from './expression.js';
+import { behaviourOf, methodOf, splitInitState } from './lifecycle.js';
 import { emitStatements } from './statement.js';
 import { identifierOf, type ModuleBuilder } from './module.js';
 import { signalTypeArgumentOf, typeTextOf } from './types.js';
@@ -73,7 +74,12 @@ export function emitComponent(component: Node, module: ModuleBuilder, scope: Emi
   const name = module.declare(String(component['name'] ?? 'Component'), idOf(component) ?? '');
   const params = asArray(component['params']);
 
-  const propsType = params.length === 0 ? '' : `props: ${name}Props`;
+  // The lifecycle effects this component owns (ADR-0052). A `didUpdateWidget` needs the props object even when the
+  // component declares no parameter: `props` identity is how a parent's rebuild is told from the component's own.
+  const effects = effectsOf(component, scope);
+  const updatesWithProps = effects.some((e) => methodOf(e) === 'didUpdateWidget' && behaviourOf(e).length > 0);
+  const propsType =
+    params.length > 0 ? `props: ${name}Props` : updatesWithProps ? 'props: Record<string, never>' : '';
   if (params.length > 0) {
     module.line(`/** Props for {@link ${name}}. */`);
     module.line(`export interface ${name}Props {`);
@@ -133,10 +139,13 @@ export function emitComponent(component: Node, module: ModuleBuilder, scope: Emi
     // is exactly the same kind of hoisted hook `declareLocalSignals` emits next, and both must run before
     // the tree that needs them is ever walked (M7-F).
     const { outer, subscriptions } = declareStoreConsumption(component, module, withInstances);
-    const signals = declareLocalSignals(component, module, outer);
+    const signals = declareLocalSignals(component, module, outer, (declared) =>
+      declareInitState(effects, module, outer, declared, params),
+    );
     const storeInstanceReads = declareStoreInstanceReads(component, module, outer, storeInstances);
     // Actions the tree calls, declared before the tree that calls them. See `declareLocalActions`.
-    const actions = declareLocalActions(component, module, outer, signals, params);
+    const actions = declareLocalActions(component, module, outer, signals, params, effects);
+    declareLifecycle(effects, module, outer, signals, actions, params, `${name}Props`);
     const inner = childScope(outer, signals, params, actions, subscriptions, storeInstanceReads);
     const tree = component['render'];
     if (tree === undefined) {
@@ -296,7 +305,9 @@ function needsRouter(node: Node, scope: EmitScope): boolean {
  */
 function componentReaches(component: Node, scope: EmitScope, matches: (node: Node) => boolean): boolean {
   if (containsNode(component, matches)) return true;
-  for (const id of referencedActions(component['render'], scope)) {
+  const effects = effectsOf(component, scope);
+  if (effects.some((effect) => containsNode(effect, matches))) return true;
+  for (const id of referencedActions([component['render'], ...effects], scope)) {
     const action = scope.node(id) as unknown as Node | undefined;
     if (action !== undefined && containsNode(action, matches)) return true;
   }
@@ -341,7 +352,9 @@ function inlineTransitionsOf(component: Node, scope: EmitScope): Node[] {
 function collectNodes(component: Node, scope: EmitScope, matches: (node: Node) => boolean): Node[] {
   const found: Node[] = [];
   collectInto(component, matches, found);
-  for (const id of referencedActions(component['render'], scope)) {
+  const effects = effectsOf(component, scope);
+  for (const effect of effects) collectInto(effect, matches, found);
+  for (const id of referencedActions([component['render'], ...effects], scope)) {
     const action = scope.node(id) as unknown as Node | undefined;
     if (action !== undefined) collectInto(action, matches, found);
   }
@@ -594,6 +607,7 @@ function declareLocalSignals(
   component: Node,
   module: ModuleBuilder,
   scope: EmitScope,
+  afterDeclarations?: (signals: ReadonlyMap<NodeId, string>) => void,
 ): Map<NodeId, string> {
   const signals = new Map<NodeId, string>();
   // `localSignals` carries both plain reactive fields (`sig.Signal`) and locally-owned store instances
@@ -625,6 +639,11 @@ function declareLocalSignals(
     const typeArgument = signalTypeArgumentOf(node['type'] as Node | undefined, (name) => useRuntimeType(module, name));
     module.line(`const [${local}] = ${useState}(() => ${signalFn}${typeArgument === undefined ? '' : `<${typeArgument}>`}(${initial}));`);
   }
+
+  // `initState`'s pure state assignments (ADR-0052), after the declarations they write to and *before* the
+  // subscriptions: `useSignal` returns the value as of that call, so an init after it would render the declared value
+  // on the first pass and be corrected by a second — Flutter's first frame already has the initialised value.
+  afterDeclarations?.(signals);
 
   // The subscriptions, after every declaration — so the emitted block reads as "here is the state, here is
   // what re-renders on it" rather than interleaving the two.
@@ -787,9 +806,11 @@ function declareLocalActions(
   scope: EmitScope,
   signals: ReadonlyMap<NodeId, string>,
   componentParams: readonly Node[],
+  effects: readonly Node[] = [],
 ): Map<NodeId, string> {
   const names = new Map<NodeId, string>();
-  const referenced = referencedActions(component['render'], scope).filter((id) => !scope.isStoreOwned(id));
+  // An action a lifecycle body calls (`initState() { _load(); }`) is reached exactly as one the tree calls is.
+  const referenced = referencedActions([component['render'], ...effects], scope).filter((id) => !scope.isStoreOwned(id));
   if (referenced.length === 0) return names;
 
   // Named from the id, and sorted by it, so two runs emit the same names in the same order. A lifted action
@@ -1709,4 +1730,98 @@ export function emitBinding(
 /** Emits a `sig.Action` body as a lambda, for an event prop. */
 export function emitActionBody(action: Node, scope: EmitScope, reservedNames?: ReadonlySet<string>): string[] {
   return emitStatements(action['body'], scope, reservedNames);
+}
+
+/** The `sig.Effect` nodes `component` owns (ADR-0052), in declaration order. */
+function effectsOf(component: Node, scope: EmitScope): Node[] {
+  const ids = Array.isArray(component['effects']) ? (component['effects'] as string[]) : [];
+  return ids
+    .map((id) => scope.node(id) as unknown as Node | undefined)
+    .filter((node): node is Node => node !== undefined);
+}
+
+/**
+ * `initState`'s leading pure state assignments, run before the first render (ADR-0052). Emitted between the signals'
+ * declarations and their subscriptions, by {@link declareLocalSignals}.
+ */
+function declareInitState(
+  effects: readonly Node[],
+  module: ModuleBuilder,
+  scope: EmitScope,
+  signals: ReadonlyMap<NodeId, string>,
+  componentParams: readonly Node[],
+): void {
+  const init = effects.find((effect) => methodOf(effect) === 'initState');
+  if (init === undefined) return;
+  const ownIds = new Set(signals.keys());
+  const { before } = splitInitState(init, (id) => ownIds.has(id));
+  if (before.length === 0) return;
+  const useInitState = useRuntime(module, 'useInitState');
+  module.line(`${useInitState}(() => {`);
+  module.block(() => {
+    module.lineAll(
+      emitStatements(before, actionScope(scope, signals, [], new Map(), componentParams, localBindingsIn(before))),
+    );
+  });
+  module.line('});');
+}
+
+/**
+ * The effectful part of `initState`, `dispose` and `didUpdateWidget` (ADR-0052): one `useLifecycle` for the first two —
+ * so an init and its dispose are the two halves of a single effect — and one `useDidUpdateWidget`.
+ *
+ * Emitted after the actions, so a lifecycle body may call one, and before the tree; hooks are unconditional.
+ */
+function declareLifecycle(
+  effects: readonly Node[],
+  module: ModuleBuilder,
+  scope: EmitScope,
+  signals: ReadonlyMap<NodeId, string>,
+  actions: ReadonlyMap<NodeId, string>,
+  componentParams: readonly Node[],
+  propsTypeName: string,
+): void {
+  const ownIds = new Set(signals.keys());
+  const init = effects.find((effect) => methodOf(effect) === 'initState');
+  const dispose = effects.find((effect) => methodOf(effect) === 'dispose');
+  const update = effects.find((effect) => methodOf(effect) === 'didUpdateWidget');
+
+  const bodyOf = (statements: readonly Node[], declared: readonly Node[] = []): string[] => {
+    const reserved = new Set(declared.map((param) => identifierOf(String(param['name'] ?? '_'))));
+    const inner = actionScope(scope, signals, declared, actions, componentParams, localBindingsIn(statements));
+    const previous = new Set(declared.map((param) => String(param['name'] ?? '')));
+    return emitStatements(statements, previous.size === 0 ? inner : { ...inner, previousWidgets: previous }, reserved);
+  };
+
+  const after = init === undefined ? [] : splitInitState(init, (id) => ownIds.has(id)).after;
+  const cleanup = dispose === undefined ? [] : behaviourOf(dispose);
+  if (after.length > 0 || cleanup.length > 0) {
+    const useLifecycle = useRuntime(module, 'useLifecycle');
+    module.line(`${useLifecycle}({`);
+    module.block(() => {
+      if (after.length > 0) {
+        module.line('init: () => {');
+        module.block(() => module.lineAll(bodyOf(after)));
+        module.line('},');
+      }
+      if (cleanup.length > 0) {
+        module.line('dispose: () => {');
+        module.block(() => module.lineAll(bodyOf(cleanup)));
+        module.line('},');
+      }
+    });
+    module.line('});');
+    module.line();
+  }
+
+  if (update !== undefined && behaviourOf(update).length > 0) {
+    const useDidUpdateWidget = useRuntime(module, 'useDidUpdateWidget');
+    const declared = asArray(update['params']);
+    const oldName = declared.length > 0 ? identifierOf(String(declared[0]?.['name'] ?? 'oldWidget')) : 'oldWidget';
+    const propsType = componentParams.length > 0 ? propsTypeName : 'Record<string, never>';
+    module.line(`${useDidUpdateWidget}(props, (${oldName}: ${propsType}) => {`);
+    module.block(() => module.lineAll(bodyOf(behaviourOf(update), declared)));
+    module.line('});');
+    module.line();
+  }
 }

@@ -35,7 +35,7 @@
 // *component lifecycle*, which React owns; the graph knows only 'an effect that reruns when its
 // dependencies change'."
 
-import { useEffect, useRef, type RefObject } from 'react';
+import { useEffect, useRef, useState, type RefObject } from 'react';
 
 /**
  * Runs `body` once, after the component first mounts — the runtime form of a `sig.Effect` with
@@ -163,4 +163,69 @@ export function useMounted(): RefObject<boolean> {
     };
   }, []);
   return mounted;
+}
+
+/**
+ * Runs `init` once, **during the first render** and before anything is drawn — the runtime form of the leading run of
+ * pure state assignments in `initState` (ADR-0052).
+ *
+ * Flutter's `initState` runs before the first `build`, so `initState() { _n = 5; }` shows 5 on the first frame; an
+ * effect runs after the first commit and would show the field's declared value first. This is `useState`'s initialiser,
+ * which React runs once per mount (twice in development StrictMode — so `init` must be idempotent, and the generator
+ * only puts pure assignments here).
+ *
+ * @param init - the state initialisation.
+ */
+export function useInitState(init: () => void): void {
+  useState(() => {
+    init();
+    return null;
+  });
+}
+
+/**
+ * The runtime form of `initState` (its effectful remainder) and `dispose` together — one effect, so that an `init` and
+ * its `dispose` always pair (ADR-0052).
+ *
+ * `init` runs once after the first commit; `dispose` runs exactly once when the component unmounts. In development
+ * StrictMode React mounts, unmounts and mounts again, so the sequence is `init, dispose, init` — a symmetric
+ * `dispose` (`removeListener`, `cancel`) leaves the component correct, which is the same contract Flutter's
+ * `initState`/`dispose` pair already asks of a `State`. Both callbacks are read from the **latest** render, so
+ * a `dispose` that reads `widget.x` sees the current widget, as it does in Flutter.
+ *
+ * @param hooks - `init` and/or `dispose`.
+ */
+export function useLifecycle(hooks: { readonly init?: () => void; readonly dispose?: () => void }): void {
+  const latest = useRef(hooks);
+  latest.current = hooks;
+  useEffect(() => {
+    latest.current.init?.();
+    return () => {
+      latest.current.dispose?.();
+    };
+  }, []);
+}
+
+/**
+ * The runtime form of `didUpdateWidget(oldWidget)`: runs after a render in which the parent supplied **new props**, with
+ * the previous props, and never on the first render (ADR-0052).
+ *
+ * Flutter calls `didUpdateWidget` whenever the parent rebuilds and hands the `State` a new widget instance — even if
+ * every field is equal — and not when the `State` rebuilds itself (`setState`). React has the same distinction:
+ * a component re-rendered for its own state keeps the *same* `props` object, one re-rendered by its parent gets a new
+ * one. So identity of `props` is the trigger, not a shallow comparison.
+ *
+ * @param props - the component's props object.
+ * @param update - the body, given the previous props.
+ */
+export function useDidUpdateWidget<P>(props: P, update: (oldWidget: P) => void): void {
+  const previous = useRef(props);
+  const latest = useRef(update);
+  latest.current = update;
+  useEffect(() => {
+    if (previous.current === props) return;
+    const old = previous.current;
+    previous.current = props;
+    latest.current(old);
+  });
 }

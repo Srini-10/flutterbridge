@@ -1,0 +1,157 @@
+{
+  "LifecycleHost": [
+    [
+      "> log: ",
+      "> p1 a=100 b=6 tag a tag=a"
+    ],
+    [
+      "> log: init p1",
+      "> p1 a=100 b=6 tag a tag=a"
+    ],
+    [
+      "> log: init p1",
+      "> p1 a=100 b=16 tag a tag=a"
+    ],
+    [
+      "> log: init p1",
+      "> p1 a=100 b=16 tag a tag=a"
+    ],
+    [
+      "> log: init p1"
+    ],
+    [
+      "> log: init p1 | dispose p1"
+    ],
+    [
+      "> log: init p1 | dispose p1",
+      "> p1 a=100 b=6 tag a tag=a"
+    ],
+    [
+      "> log: init p1 | dispose p1 | init p1",
+      "> p1 a=100 b=6 tag a tag=a"
+    ],
+    [
+      "> log: init p1 | dispose p1 | init p1"
+    ],
+    [
+      "> log: init p1 | dispose p1 | init p1",
+      "> p1 a=100 b=6 tag a tag=a"
+    ],
+    [
+      "> log: init p1 | dispose p1 | init p1 | dispose p1 | init p1",
+      "> p1 a=100 b=6 tag a tag=a"
+    ]
+  ],
+  "UpdateHost": [
+    [
+      "> tick 0",
+      "> upd n=0 last=none tag=a own=0"
+    ],
+    [
+      "> tick 0",
+      "> upd n=0 last=none tag=a own=1"
+    ],
+    [
+      "> tick 1",
+      "> upd n=1 last=a>a tag=a own=1"
+    ],
+    [
+      "> tick 1",
+      "> upd n=2 last=a>b tag=b own=1"
+    ],
+    [
+      "> tick 1",
+      "> upd n=3 last=b>a tag=a own=1"
+    ],
+    [
+      "> tick 1",
+      "> upd n=3 last=b>a tag=a own=2"
+    ],
+    [
+      "> tick 2",
+      "> upd n=4 last=a>a tag=a own=2"
+    ],
+    [
+      "> tick 2"
+    ],
+    [
+      "> tick 2",
+      "> upd n=0 last=none tag=a own=0"
+    ],
+    [
+      "> tick 2",
+      "> upd n=1 last=a>b tag=b own=0"
+    ]
+  ],
+  "OrderHost": [
+    [
+      "> order: ",
+      "> node a",
+      "> node b",
+      "> node c"
+    ],
+    [
+      "> order: init a | init b | init c",
+      "> node a",
+      "> node b",
+      "> node c"
+    ],
+    [
+      "> order: init a | init b | init c"
+    ],
+    [
+      "> order: init a | init b | init c | dispose c | dispose b | dispose a"
+    ],
+    [
+      "> order: init a | init b | init c | dispose c | dispose b | dispose a",
+      "> node a",
+      "> node b",
+      "> node c"
+    ],
+    [
+      "> order: init a | init b | init c | dispose c | dispose b | dispose a | init a | init b | init c",
+      "> node a",
+      "> node b",
+      "> node c"
+    ]
+  ],
+  "AsyncHost": [
+    [
+      "> async host shown",
+      "> async waiting"
+    ],
+    [
+      "> async host shown",
+      "> async done"
+    ],
+    [
+      "> async host hidden"
+    ],
+    [
+      "> async host shown",
+      "> async waiting"
+    ],
+    [
+      "> async host shown",
+      "> async done"
+    ],
+    [
+      "> async host hidden"
+    ],
+    [
+      "> async host shown",
+      "> async waiting"
+    ],
+    [
+      "> async host hidden"
+    ],
+    [
+      "> async host hidden"
+    ]
+  ],
+  "InitOnly": [
+    [
+      "> init-only 5 n=5 5,6"
+    ]
+  ]
+}

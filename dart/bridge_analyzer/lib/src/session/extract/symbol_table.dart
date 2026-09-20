@@ -60,8 +60,10 @@ final class Symbols {
   /// An action — a method that writes state.
   String action(String name, {required String owner}) => 'act:$path#$owner.$name';
 
-  /// A lifecycle effect. Keyed by timing, since a class has at most one of each.
-  String effect(String timing, {required String owner}) => 'eff:$path#$owner.$timing';
+  /// A lifecycle effect. Keyed by the lifecycle **method**, since a class has at most one of each method — and *not* by
+  /// timing: `didUpdateWidget` and `didChangeDependencies` are both `update`, so a timing key gave them one symbol and
+  /// the second was dropped as a duplicate, with its body (ADR-0052).
+  String effect(String method, {required String owner}) => 'eff:$path#$owner.$method';
 
   /// A store — a `ChangeNotifier` and its kin.
   String store(String name) => 'store:$path#$name';

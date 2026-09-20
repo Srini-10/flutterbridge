@@ -294,7 +294,15 @@ export {
   type ThemeProviderProps,
 } from './internal/react/context.js';
 
-export { useMountEffect, useMounted, useUnmountEffect, useUpdateEffect } from './internal/react/lifecycle.js';
+export {
+  useDidUpdateWidget,
+  useInitState,
+  useLifecycle,
+  useMountEffect,
+  useMounted,
+  useUnmountEffect,
+  useUpdateEffect,
+} from './internal/react/lifecycle.js';
 
 // ── Widgets (ADR-6) ───────────────────────────────────────────────────────────────────────────────
 //

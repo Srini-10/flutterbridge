@@ -258,9 +258,16 @@ final class SignalExtractor {
       // A lifecycle method is an effect, not an action. `initState` is not something the user calls.
       final String? timing = registry.lifecycleMethods[name];
       if (timing != null) {
-        final String symbol = out.symbols.effect(timing, owner: owner);
+        final String symbol = out.symbols.effect(name, owner: owner);
         if (!effects.contains(symbol)) {
           effects.add(symbol);
+          // The method's own scope, as an action's is: `didUpdateWidget(oldWidget)` names a parameter, and without
+          // it in scope the body's `oldWidget.label` resolved to nothing (ADR-0052).
+          final Scope inner = _scopeOf(
+            member.parameters,
+            Scope.forBody(scope, owner: symbol, body: member.body),
+          );
+          final List<RawValue> params = _params(member.parameters, scope);
           out.emit(
             RawNode(
               kind: 'sig.Effect',
@@ -268,7 +275,9 @@ final class SignalExtractor {
               symbol: symbol,
               fields: <String, RawValue>{
                 'timing': RawLiteral(timing),
-                'body': RawList(expressions.bodyOf(member.body, scope)),
+                'method': RawLiteral(name),
+                if (params.isNotEmpty) 'params': RawList(params),
+                'body': RawList(expressions.bodyOf(member.body, inner)),
               },
             ),
           );

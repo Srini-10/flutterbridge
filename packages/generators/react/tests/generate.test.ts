@@ -579,6 +579,10 @@ describe('the real hello_bridge document', () => {
       // `BRG3002` contributed again at M11-I (`FavoritesStore` calls `Set.contains`/`add`/`remove`, which were emitted
       // verbatim and refused by name). M11 lowers them (ADR-0051), so it is gone once more.
       'BRG3013',
+      // ADR-0052: `initState` is lowered now, so its body is *reached* — and `_itemsFuture = _repository.fetchItems()`
+      // reads `_repository`, a `final` project-class instance held as a field, which has no signal and no declaration
+      // in the output. Before, the whole `initState` was refused unread, which hid this; it is refused by name here.
+      'BRG3006',
       // `MaterialApp.themeMode` — switching brightness after mount
       'BRG3016',
       // the roll-up: nothing is emitted from a program carrying an error

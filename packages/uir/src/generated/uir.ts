@@ -14,7 +14,7 @@ import { createHash } from 'node:crypto';
 export const UIR_VERSION = '1.15.0' as const;
 
 /** A hash of the schema sources this module was generated from. */
-export const UIR_SCHEMA_HASH = 'a235008f16feb545' as const;
+export const UIR_SCHEMA_HASH = 'f62dca49b77bb249' as const;
 
 /** Node kind -> the fields of that node which hold `NodeId` references. */
 export const UIR_REFERENCE_FIELDS: Readonly<Record<string, readonly string[]>> = {
@@ -27,7 +27,7 @@ export const UIR_REFERENCE_FIELDS: Readonly<Record<string, readonly string[]>> =
   'logic.Call': ['id'],
   'logic.Cast': ['id'],
   'logic.ClassDecl': ['id'],
-  'ui.Component': ['id', 'localSignals'],
+  'ui.Component': ['effects', 'id', 'localSignals'],
   'logic.Conditional': ['id'],
   'bind.Const': ['id'],
   'logic.Continue': ['id'],
@@ -1076,6 +1076,10 @@ export interface ClassDecl {
 export interface Component {
   /// The override key, when the node is addressable by a human.
   readonly anchor?: Anchor;
+  /// The lifecycle effects (`sig.Effect`) this component owns — `initState`, `didUpdateWidget`, `didChangeDependencies`, `dispose` — in declaration order (ADR-0052).
+  ///
+  /// A `sig.Effect` names no component of its own, so before this field a generator could not tell which component an effect belonged to and its body was silently absent from the output. Absent means the component has no lifecycle method with anything in it.
+  readonly effects?: readonly NodeId[];
   /// Plugin extension data, namespaced `x-<plugin>`. Core passes round-trip it untouched (Spec §2.6).
   readonly ext?: Readonly<Record<string, unknown>>;
   /// The node's stable, content-addressed identity.
@@ -1184,6 +1188,14 @@ export interface Effect {
   readonly id: NodeId;
   /// Discriminant.
   readonly kind: 'sig.Effect';
+  /// The Flutter `State` method this effect is — `initState`, `didUpdateWidget`, `didChangeDependencies` or `dispose` (ADR-0052).
+  ///
+  /// `timing` alone cannot say: `didUpdateWidget` (a new widget configuration) and `didChangeDependencies` (an inherited dependency changed) are both `update`, and a target lowers them differently — or, for the second, refuses. Absent means the timing is all there is to say.
+  readonly method?: string;
+  /// The effect's parameters, in order — `didUpdateWidget(oldWidget)` takes one (ADR-0052).
+  ///
+  /// As on `sig.Action.params`, a `ParamDecl` has no `id`, so a `logic.Ref` in the body resolves to a parameter **by name**. Absent means none, which is every lifecycle method but `didUpdateWidget`.
+  readonly params?: readonly ParamDecl[];
   /// Where the node came from.
   readonly span: SourceSpan;
   /// When it runs.
@@ -2909,6 +2921,7 @@ export function parseComponent(value: unknown, path = 'Component'): Component {
 
   return {
     ...(own(o, 'anchor') === undefined || own(o, 'anchor') === null ? {} : { anchor: parseAnchor(own(o, 'anchor'), `${path}.anchor`) }),
+    ...(own(o, 'effects') === undefined || own(o, 'effects') === null ? {} : { effects: asList(own(o, 'effects'), `${path}.effects`, (v, p) => parseNodeId(v, p)) }),
     ...(own(o, 'ext') === undefined || own(o, 'ext') === null ? {} : { ext: asMap(own(o, 'ext'), `${path}.ext`, (v) => v) }),
     id: parseNodeId(req(o, 'id', path), `${path}.id`),
     kind: 'ui.Component',
@@ -3078,6 +3091,8 @@ export function parseEffect(value: unknown, path = 'Effect'): Effect {
     ...(own(o, 'ext') === undefined || own(o, 'ext') === null ? {} : { ext: asMap(own(o, 'ext'), `${path}.ext`, (v) => v) }),
     id: parseNodeId(req(o, 'id', path), `${path}.id`),
     kind: 'sig.Effect',
+    ...(own(o, 'method') === undefined || own(o, 'method') === null ? {} : { method: asString(own(o, 'method'), `${path}.method`) }),
+    ...(own(o, 'params') === undefined || own(o, 'params') === null ? {} : { params: asList(own(o, 'params'), `${path}.params`, (v, p) => parseParamDecl(v, p)) }),
     span: parseSourceSpan(req(o, 'span', path), `${path}.span`),
     timing: parseEffectTiming(req(o, 'timing', path), `${path}.timing`),
   };

@@ -1,0 +1,7 @@
+{
+  "LifecycleHost": ["refresh", "bump p1", "refresh", "hide", "refresh", "show", "refresh", "hide", "show", "refresh"],
+  "UpdateHost": ["ownSetState", "rebuildU", "retagU", "retagU", "ownSetState", "rebuildU", "toggleU", "toggleU", "retagU"],
+  "OrderHost": ["refreshOrder", "hideOrder", "refreshOrder", "showOrder", "refreshOrder"],
+  "AsyncHost": ["@wait", "toggleAsync", "toggleAsync", "@wait", "toggleAsync", "toggleAsync", "toggleAsync", "@wait"],
+  "InitOnly": []
+}

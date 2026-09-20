@@ -49,6 +49,7 @@ import {
   type RouteTable,
 } from './emit/routes.js';
 import { emitStore } from './emit/store.js';
+import { behaviourOf, methodOf } from './emit/lifecycle.js';
 import { OWNER_LABEL } from './emit/unsupported.js';
 import { emitTheme } from './emit/theme.js';
 
@@ -61,41 +62,6 @@ function spanOf(node: Node): string {
   const span = node['span'] as Node | undefined;
   if (span === undefined) return 'an unknown location';
   return `${String(span['file'])}:${String(span['line'])}`;
-}
-
-/** The `State` lifecycle methods a `super.` call to which is a framework no-op. */
-const LIFECYCLE_METHODS: ReadonlySet<string> = new Set([
-  'initState',
-  'dispose',
-  'didUpdateWidget',
-  'didChangeDependencies',
-  'deactivate',
-  'activate',
-  'reassemble',
-]);
-
-/**
- * Whether one statement of a lifecycle body needs nothing from the generated output.
- *
- * Two shapes, both structural: a `super.<lifecycle>()` call (the analyzer spells the receiver `super`, the Dart
- * keyword), and `dispose()` with no argument on a receiver whose resolved type is a Flutter framework type — a
- * `TextEditingController`, whose lifetime the runtime kit owns. A `dispose()` on a project class is behaviour
- * (it may release something the program cares about) and is not erased.
- */
-function isErasableLifecycleStatement(statement: Node): boolean {
-  if (statement['kind'] !== 'logic.ExprStmt') return false;
-  const call = statement['expr'] as Node | undefined;
-  if (call === undefined || call['kind'] !== 'logic.MethodCall') return false;
-  const receiver = call['receiver'] as Node | undefined;
-  const method = String(call['method'] ?? '');
-  if (receiver?.['kind'] === 'logic.Ref' && receiver['name'] === 'super') return LIFECYCLE_METHODS.has(method);
-  const library = (receiver?.['type'] as Node | undefined)?.['library'];
-  return (
-    method === 'dispose' &&
-    asArray(call['args']).length === 0 &&
-    typeof library === 'string' &&
-    library.startsWith('package:flutter/')
-  );
 }
 
 /** Runs the generator. */
@@ -126,37 +92,44 @@ export function generateProject(context: GeneratorContext): GeneratorOutput {
     return { files: [] };
   }
 
-  // A lifecycle method — `initState`, `dispose`, `didUpdateWidget` — reaches UIR as a `sig.Effect`, and this
-  // generator has no lowering for one. Nothing in it reads a `sig.Effect`, and the schema does not even say which
-  // component an effect belongs to, so its body was **silently absent from the output**: `initState() { _n = 5; }`
-  // produced a component that started at 0, with no diagnostic anywhere (M8-Q §7 recorded the gap; M8-T's census
-  // confirmed it unchanged; M11-I's probe reproduced it against real Flutter, and found `hello_bridge`'s own
-  // `_itemsFuture = …` initialisation being dropped the same way). A build that succeeds while dropping a method
-  // body is the failure this generator exists to refuse, so a body with anything in it is refused by name.
+  // A lifecycle method — `initState`, `dispose`, `didUpdateWidget`, `didChangeDependencies` — reaches UIR as a
+  // `sig.Effect`, and `ui.Component.effects` says which component owns it (ADR-0052). Until M11 nothing read either, so
+  // `initState() { _n = 5; }` produced a component that started at 0 with no diagnostic anywhere (M8-Q §7 recorded the
+  // gap; M11-I's probe reproduced it against real Flutter and found `hello_bridge`'s own `_itemsFuture = …` initialisation
+  // dropped the same way). The component emitter lowers `initState`, `dispose` and `didUpdateWidget`. What it does not
+  // lower is refused here, by name, before anything is emitted — a build that succeeds while dropping a method body is
+  // the failure this generator exists to refuse:
   //
-  // Lowering it is a real design, not a lookup: `initState` runs *before* the first build (a `useEffect` runs
-  // after the first render, so the first frame would differ), React's development StrictMode invokes an effect
-  // twice, and the effect has to be tied to its component. None of that is decided.
+  //   - `didChangeDependencies`, when it does anything: it fires when an *inherited* dependency (`Theme.of`,
+  //     `MediaQuery.of`, an `InheritedWidget`) changes, and once right after `initState`. A function component has no
+  //     per-instance hook for either.
+  //   - an effect no component owns — a store's `dispose`, say — with a body that does anything.
   //
-  // What is *not* refused is a body that says nothing this output needs: a `super.<lifecycle>()` call (a framework
-  // no-op), and `dispose()` on a framework object (`_email.dispose()` — the kit owns a controller's lifetime, so
-  // there is nothing to release). Every other statement is behaviour, and dropping it is the defect.
-  const lifecycleOf: Readonly<Record<string, string>> = {
-    mount: '`initState`',
-    unmount: '`dispose`',
-    update: '`didUpdateWidget`/`didChangeDependencies`',
-  };
+  // What is not refused is a body that says nothing this output needs: a `super.<lifecycle>()` call (a framework no-op),
+  // and `dispose()` on a framework object (`_email.dispose()` — the kit owns a controller's lifetime).
+  const owned = new Set<string>();
+  for (const component of context.program.ofKind('ui.Component') as unknown as Node[]) {
+    for (const id of asArray(component['effects'])) owned.add(String(id));
+  }
   for (const effect of context.program.ofKind('sig.Effect') as unknown as Node[]) {
-    if (asArray(effect['body']).every((statement) => isErasableLifecycleStatement(statement as Node))) continue;
-    const method = lifecycleOf[String(effect['timing'])] ?? 'a lifecycle method';
+    const behaviour = behaviourOf(effect);
+    if (behaviour.length === 0) continue;
+    const method = methodOf(effect);
+    const isOwned = owned.has(String(effect['id']));
+    if (isOwned && method !== 'didChangeDependencies') continue;
     report(
       GeneratorDiagnosticCode.UnsupportedCapability,
       'error',
-      `${method} (${spanOf(effect)}) has no lowering, so its body would be missing from the generated component — ` +
-        `every statement in it, silently. Missing capability: lowering a lifecycle effect (\`sig.Effect\`) — ` +
-        `where it runs relative to the first render, how development StrictMode's double invocation is handled, and ` +
-        `which component owns it are all undecided. That work belongs to ${OWNER_LABEL['generator']}. For now: an ` +
-        `initial value belongs in the field's declaration (\`int _n = 5;\`), not in \`initState\`.`,
+      isOwned
+        ? `\`${method}\` (${spanOf(effect)}) has no lowering, so its body would be missing from the generated component — ` +
+            `every statement in it, silently. It runs when an inherited dependency (\`Theme.of\`, \`MediaQuery.of\`, an ` +
+            `\`InheritedWidget\`) changes, and once after \`initState\`; a function component has no per-instance hook for ` +
+            `either (ADR-0052). Missing capability: dependency-change notification. That work belongs to ` +
+            `${OWNER_LABEL['generator']}. For now: read the dependency in \`build\`, or compare \`oldWidget\` in ` +
+            `\`didUpdateWidget\`.`
+        : `\`${method}\` (${spanOf(effect)}) belongs to no component — a store's lifecycle method, say — and has no ` +
+            `lowering, so its body would be missing from the generated project, silently. Missing capability: a ` +
+            `lifecycle for a store. That work belongs to ${OWNER_LABEL['generator']}.`,
       idOf(effect),
     );
   }

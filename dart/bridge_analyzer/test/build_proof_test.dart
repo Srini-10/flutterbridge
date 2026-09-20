@@ -974,6 +974,12 @@ void main() {
       reason: 'fixtures/uir/layout_proof.ndjson is missing — regenerate it from this fixture',
     );
 
+    // `WRITE_GOLDEN=1 dart test test/build_proof_test.dart` rewrites the golden; review the diff and re-run
+    // `build.test.ts` before committing it.
+    if (Platform.environment['WRITE_GOLDEN'] == '1') {
+      resolved.writeAsStringSync(produced);
+    }
+
     expect(
       produced,
       resolved.readAsStringSync(),

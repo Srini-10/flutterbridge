@@ -1,0 +1,21 @@
+name: lifecycle_lowering
+description: >-
+  M11 (ADR-0052): State lifecycle — initState, didUpdateWidget, dispose, and mounted-guarded async work started in
+  initState. Every scenario is executed twice: by Flutter itself (test/), and by the generated React component in
+  jsdom, and the two are compared step by step.
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

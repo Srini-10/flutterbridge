@@ -181,6 +181,7 @@ final class ComponentExtractor {
           if (params.isNotEmpty) 'params': RawList(params),
           if (classState.signals.isNotEmpty)
             'localSignals': RawList(classState.signals.map(RawRef.new).toList()),
+          if (classState.effects.isNotEmpty) 'effects': RawList(classState.effects.map(RawRef.new).toList()),
           'render': RawChild(render),
         },
       ),

@@ -31,7 +31,7 @@ const String uirVersion = '1.15.0';
 /// A hash of the schema sources this library was generated from.
 ///
 /// Stamped into every emitted manifest: a UIR document always says which schema produced it.
-const String uirSchemaHash = 'a235008f16feb545';
+const String uirSchemaHash = 'f62dca49b77bb249';
 
 /// Node kind -> the fields of that node which hold `NodeId` references.
 ///
@@ -47,7 +47,7 @@ const Map<String, List<String>> uirReferenceFields = <String, List<String>>{
   'logic.Call': <String>['id'],
   'logic.Cast': <String>['id'],
   'logic.ClassDecl': <String>['id'],
-  'ui.Component': <String>['id', 'localSignals'],
+  'ui.Component': <String>['effects', 'id', 'localSignals'],
   'logic.Conditional': <String>['id'],
   'bind.Const': <String>['id'],
   'logic.Continue': <String>['id'],
@@ -2999,6 +2999,7 @@ final class Component extends UirNode {
     required this.render,
     required this.span,
     this.anchor,
+    this.effects,
     this.ext,
     this.localSignals,
     this.params,
@@ -3014,6 +3015,7 @@ final class Component extends UirNode {
     }
     return Component(
       anchor: json['anchor'] == null ? null : _asString(json['anchor'], '$path.anchor'),
+      effects: json['effects'] == null ? null : _asList<NodeId>(json['effects'], '$path.effects', _asString),
       ext: json['ext'] == null ? null : _asMap<Object?>(json['ext'], '$path.ext', (Object? v, String p) => v),
       id: _asString(_req(json, 'id', path), '$path.id'),
       localSignals: json['localSignals'] == null ? null : _asList<NodeId>(json['localSignals'], '$path.localSignals', _asString),
@@ -3027,6 +3029,11 @@ final class Component extends UirNode {
 
   /// The override key, when the node is addressable by a human.
   final Anchor? anchor;
+
+  /// The lifecycle effects (`sig.Effect`) this component owns — `initState`, `didUpdateWidget`, `didChangeDependencies`, `dispose` — in declaration order (ADR-0052).
+  ///
+  /// A `sig.Effect` names no component of its own, so before this field a generator could not tell which component an effect belonged to and its body was silently absent from the output. Absent means the component has no lifecycle method with anything in it.
+  final List<NodeId>? effects;
 
   /// Plugin extension data, namespaced `x-<plugin>`. Core passes round-trip it untouched (Spec §2.6).
   final Map<String, Object?>? ext;
@@ -3060,6 +3067,7 @@ final class Component extends UirNode {
   @override
   Map<String, Object?> toJson() => canonicalJson(<String, Object?>{
     'anchor': anchor,
+    'effects': effects,
     'ext': ext,
     'id': id,
     'kind': 'ui.Component',
@@ -3077,6 +3085,7 @@ final class Component extends UirNode {
   /// null. Construct a new node when that is what you mean.
   Component copyWith({
     Anchor? anchor,
+    List<NodeId>? effects,
     Map<String, Object?>? ext,
     NodeId? id,
     List<NodeId>? localSignals,
@@ -3088,6 +3097,7 @@ final class Component extends UirNode {
   }) {
     return Component(
       anchor: anchor ?? this.anchor,
+      effects: effects ?? this.effects,
       ext: ext ?? this.ext,
       id: id ?? this.id,
       localSignals: localSignals ?? this.localSignals,
@@ -3104,6 +3114,7 @@ final class Component extends UirNode {
     if (identical(this, other)) return true;
     return other is Component &&
         _equality.equals(other.anchor, anchor) &&
+        _equality.equals(other.effects, effects) &&
         _equality.equals(other.ext, ext) &&
         _equality.equals(other.id, id) &&
         _equality.equals(other.localSignals, localSignals) &&
@@ -3118,6 +3129,7 @@ final class Component extends UirNode {
   int get hashCode => Object.hashAll(<Object?>[
     'Component',
     _equality.hash(anchor),
+    _equality.hash(effects),
     _equality.hash(ext),
     _equality.hash(id),
     _equality.hash(localSignals),
@@ -3600,6 +3612,8 @@ final class Effect extends UirNode {
     this.body,
     this.deps,
     this.ext,
+    this.method,
+    this.params,
   });
 
   /// Parses a [Effect] from JSON, validating as it goes.
@@ -3615,6 +3629,8 @@ final class Effect extends UirNode {
       deps: json['deps'] == null ? null : _asList<NodeId>(json['deps'], '$path.deps', _asString),
       ext: json['ext'] == null ? null : _asMap<Object?>(json['ext'], '$path.ext', (Object? v, String p) => v),
       id: _asString(_req(json, 'id', path), '$path.id'),
+      method: json['method'] == null ? null : _asString(json['method'], '$path.method'),
+      params: json['params'] == null ? null : _asList<ParamDecl>(json['params'], '$path.params', ParamDecl.fromJson),
       span: SourceSpan.fromJson(_req(json, 'span', path), '$path.span'),
       timing: EffectTiming.fromJson(_req(json, 'timing', path), '$path.timing'),
     );
@@ -3635,6 +3651,16 @@ final class Effect extends UirNode {
   /// The node's stable, content-addressed identity.
   final NodeId id;
 
+  /// The Flutter `State` method this effect is — `initState`, `didUpdateWidget`, `didChangeDependencies` or `dispose` (ADR-0052).
+  ///
+  /// `timing` alone cannot say: `didUpdateWidget` (a new widget configuration) and `didChangeDependencies` (an inherited dependency changed) are both `update`, and a target lowers them differently — or, for the second, refuses. Absent means the timing is all there is to say.
+  final String? method;
+
+  /// The effect's parameters, in order — `didUpdateWidget(oldWidget)` takes one (ADR-0052).
+  ///
+  /// As on `sig.Action.params`, a `ParamDecl` has no `id`, so a `logic.Ref` in the body resolves to a parameter **by name**. Absent means none, which is every lifecycle method but `didUpdateWidget`.
+  final List<ParamDecl>? params;
+
   /// Where the node came from.
   final SourceSpan span;
 
@@ -3654,6 +3680,8 @@ final class Effect extends UirNode {
     'ext': ext,
     'id': id,
     'kind': 'sig.Effect',
+    'method': method,
+    'params': params?.map((ParamDecl v) => v.toJson()).toList(),
     'span': span.toJson(),
     'timing': timing.toJson(),
   })! as Map<String, Object?>;
@@ -3668,6 +3696,8 @@ final class Effect extends UirNode {
     List<NodeId>? deps,
     Map<String, Object?>? ext,
     NodeId? id,
+    String? method,
+    List<ParamDecl>? params,
     SourceSpan? span,
     EffectTiming? timing,
   }) {
@@ -3677,6 +3707,8 @@ final class Effect extends UirNode {
       deps: deps ?? this.deps,
       ext: ext ?? this.ext,
       id: id ?? this.id,
+      method: method ?? this.method,
+      params: params ?? this.params,
       span: span ?? this.span,
       timing: timing ?? this.timing,
     );
@@ -3691,6 +3723,8 @@ final class Effect extends UirNode {
         _equality.equals(other.deps, deps) &&
         _equality.equals(other.ext, ext) &&
         _equality.equals(other.id, id) &&
+        _equality.equals(other.method, method) &&
+        _equality.equals(other.params, params) &&
         _equality.equals(other.span, span) &&
         _equality.equals(other.timing, timing);
   }
@@ -3703,6 +3737,8 @@ final class Effect extends UirNode {
     _equality.hash(deps),
     _equality.hash(ext),
     _equality.hash(id),
+    _equality.hash(method),
+    _equality.hash(params),
     _equality.hash(span),
     _equality.hash(timing),
   ]);

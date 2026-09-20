@@ -156,6 +156,12 @@ export interface EmitScope {
    */
   paramInScope(name: string): string | undefined;
   /**
+   * The names bound to the component's **previous props** — `didUpdateWidget(oldWidget)`'s parameter (ADR-0052). A read
+   * of a field off one (`oldWidget.tag`) is a read of a prop, which the emitted props object has, not of a class this
+   * generator has no member model for.
+   */
+  readonly previousWidgets?: ReadonlySet<string>;
+  /**
    * The name the *program* gives a declaration, recovered from the references to it.
    *
    * `sig.Signal` and `sig.Action` carry no `name`: they are symbol-addressed declarations (ADR-17) and the
@@ -1292,6 +1298,11 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
           idOf(node),
         );
         return REFUSED;
+      }
+
+      // `oldWidget.tag` in `didUpdateWidget(oldWidget)` (ADR-0052): the previous props object.
+      if (receiverNode?.['kind'] === 'logic.Ref' && scope.previousWidgets?.has(String(receiverNode['name'])) === true) {
+        return `${identifierOf(String(receiverNode['name']))}.${identifierOf(String(node['property'] ?? ''))}`;
       }
 
       // M9-J: a property read with no resolved `target` (so not a recognized store member, per the check

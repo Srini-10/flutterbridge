@@ -18,50 +18,26 @@ class HomeScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Scaffold(
         body: Column(children: const [
-          InitStateAssign(),
-          DidUpdateAssign(),
-          DisposeAssign(),
+          DependencyChange(),
+          StoreUser(),
         ]),
       );
 }
 
-/// `initState` sets a field: the generated component used to start at 0 with no diagnostic.
-class InitStateAssign extends StatefulWidget {
-  const InitStateAssign({super.key});
+/// `didChangeDependencies` fires when an inherited dependency changes — a function component has no hook for that.
+class DependencyChange extends StatefulWidget {
+  const DependencyChange({super.key});
 
   @override
-  State<InitStateAssign> createState() => _InitStateAssignState();
+  State<DependencyChange> createState() => _DependencyChangeState();
 }
 
-class _InitStateAssignState extends State<InitStateAssign> {
+class _DependencyChangeState extends State<DependencyChange> {
   int _n = 0;
 
   @override
-  void initState() {
-    super.initState();
-    _n = 5;
-  }
-
-  @override
-  Widget build(BuildContext context) => Text('$_n');
-}
-
-/// `didUpdateWidget` reacts to a changed widget: the `update` timing.
-class DidUpdateAssign extends StatefulWidget {
-  const DidUpdateAssign({super.key, this.label = 'a'});
-
-  final String label;
-
-  @override
-  State<DidUpdateAssign> createState() => _DidUpdateAssignState();
-}
-
-class _DidUpdateAssignState extends State<DidUpdateAssign> {
-  int _n = 0;
-
-  @override
-  void didUpdateWidget(covariant DidUpdateAssign oldWidget) {
-    super.didUpdateWidget(oldWidget);
+  void didChangeDependencies() {
+    super.didChangeDependencies();
     _n = 1;
   }
 
@@ -69,23 +45,27 @@ class _DidUpdateAssignState extends State<DidUpdateAssign> {
   Widget build(BuildContext context) => Text('$_n');
 }
 
-/// `dispose` does work of its own besides the framework's.
-class DisposeAssign extends StatefulWidget {
-  const DisposeAssign({super.key});
-
-  @override
-  State<DisposeAssign> createState() => _DisposeAssignState();
-}
-
-class _DisposeAssignState extends State<DisposeAssign> {
-  int _n = 0;
+/// A store's own `dispose`, which belongs to no component.
+class CounterStore extends ChangeNotifier {
+  int count = 0;
 
   @override
   void dispose() {
-    _n = 0;
+    count = 0;
     super.dispose();
   }
+}
+
+class StoreUser extends StatefulWidget {
+  const StoreUser({super.key});
 
   @override
-  Widget build(BuildContext context) => Text('$_n');
+  State<StoreUser> createState() => _StoreUserState();
+}
+
+class _StoreUserState extends State<StoreUser> {
+  final CounterStore _store = CounterStore();
+
+  @override
+  Widget build(BuildContext context) => Text('${_store.count}');
 }

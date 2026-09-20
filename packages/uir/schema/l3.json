@@ -353,6 +353,18 @@
               "$ref": "#/$defs/EffectTiming",
               "description": "When it runs."
             },
+            "method": {
+              "type": "string",
+              "description": "The Flutter `State` method this effect is — `initState`, `didUpdateWidget`, `didChangeDependencies` or `dispose` (ADR-0052).\n\n`timing` alone cannot say: `didUpdateWidget` (a new widget configuration) and `didChangeDependencies` (an inherited dependency changed) are both `update`, and a target lowers them differently — or, for the second, refuses. Absent means the timing is all there is to say."
+            },
+            "params": {
+              "type": "array",
+              "items": {
+                "$ref": "l1.json#/$defs/ParamDecl",
+                "description": "A parameter."
+              },
+              "description": "The effect's parameters, in order — `didUpdateWidget(oldWidget)` takes one (ADR-0052).\n\nAs on `sig.Action.params`, a `ParamDecl` has no `id`, so a `logic.Ref` in the body resolves to a parameter **by name**. Absent means none, which is every lifecycle method but `didUpdateWidget`."
+            },
             "body": {
               "type": "array",
               "items": {
