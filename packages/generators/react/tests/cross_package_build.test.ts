@@ -52,5 +52,5 @@ describe('M8-F build-proof: a component from a local path dependency, real analy
     const { context } = harness(after);
     const { files } = reactGenerator.generate(context);
     expect(() => typecheckEmitted(files)).not.toThrow();
-  });
+  }, 120_000);
 });

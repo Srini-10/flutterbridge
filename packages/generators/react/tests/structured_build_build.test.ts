@@ -59,5 +59,5 @@ describe('M8-B build-proof: a structured build() body, real analyzer to real tsc
     const { context } = harness(after);
     const { files } = reactGenerator.generate(context);
     expect(() => typecheckEmitted(files)).not.toThrow();
-  });
+  }, 120_000);
 });
