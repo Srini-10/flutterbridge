@@ -544,3 +544,15 @@ export function sdkCollectionRefusalRaw(): string {
   const path = fileURLToPath(new URL('../../../../fixtures/uir/sdk_collection_refusal.ndjson', import.meta.url));
   return readFileSync(path, 'utf8');
 }
+
+/** The real `fixtures/apps/lifecycle_refusal` document, raw analyzer output (M11-I) — not yet normalized. */
+export function lifecycleRefusalRaw(): string {
+  const path = fileURLToPath(new URL('../../../../fixtures/uir/lifecycle_refusal.ndjson', import.meta.url));
+  return readFileSync(path, 'utf8');
+}
+
+/** The real `fixtures/apps/lifecycle_erasable` document, raw analyzer output (M11-I) — not yet normalized. */
+export function lifecycleErasableRaw(): string {
+  const path = fileURLToPath(new URL('../../../../fixtures/uir/lifecycle_erasable.ndjson', import.meta.url));
+  return readFileSync(path, 'utf8');
+}

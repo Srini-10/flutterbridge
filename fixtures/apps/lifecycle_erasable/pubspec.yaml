@@ -1,0 +1,15 @@
+name: lifecycle_erasable
+description: >-
+  M11-I (plan Phase E) positive control: a lifecycle body that says nothing the output needs (a super call, a framework controller disposing itself) is not refused, so the refusal in lifecycle_refusal is not over-broad.
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

@@ -49,16 +49,53 @@ import {
   type RouteTable,
 } from './emit/routes.js';
 import { emitStore } from './emit/store.js';
+import { OWNER_LABEL } from './emit/unsupported.js';
 import { emitTheme } from './emit/theme.js';
 
 type Node = Record<string, unknown>;
 
 const idOf = (node: Node): string | undefined => (typeof node['id'] === 'string' ? node['id'] : undefined);
+const asArray = (value: unknown): readonly unknown[] => (Array.isArray(value) ? value : []);
 
 function spanOf(node: Node): string {
   const span = node['span'] as Node | undefined;
   if (span === undefined) return 'an unknown location';
   return `${String(span['file'])}:${String(span['line'])}`;
+}
+
+/** The `State` lifecycle methods a `super.` call to which is a framework no-op. */
+const LIFECYCLE_METHODS: ReadonlySet<string> = new Set([
+  'initState',
+  'dispose',
+  'didUpdateWidget',
+  'didChangeDependencies',
+  'deactivate',
+  'activate',
+  'reassemble',
+]);
+
+/**
+ * Whether one statement of a lifecycle body needs nothing from the generated output.
+ *
+ * Two shapes, both structural: a `super.<lifecycle>()` call (the analyzer spells the receiver `super`, the Dart
+ * keyword), and `dispose()` with no argument on a receiver whose resolved type is a Flutter framework type — a
+ * `TextEditingController`, whose lifetime the runtime kit owns. A `dispose()` on a project class is behaviour
+ * (it may release something the program cares about) and is not erased.
+ */
+function isErasableLifecycleStatement(statement: Node): boolean {
+  if (statement['kind'] !== 'logic.ExprStmt') return false;
+  const call = statement['expr'] as Node | undefined;
+  if (call === undefined || call['kind'] !== 'logic.MethodCall') return false;
+  const receiver = call['receiver'] as Node | undefined;
+  const method = String(call['method'] ?? '');
+  if (receiver?.['kind'] === 'logic.Ref' && receiver['name'] === 'super') return LIFECYCLE_METHODS.has(method);
+  const library = (receiver?.['type'] as Node | undefined)?.['library'];
+  return (
+    method === 'dispose' &&
+    asArray(call['args']).length === 0 &&
+    typeof library === 'string' &&
+    library.startsWith('package:flutter/')
+  );
 }
 
 /** Runs the generator. */
@@ -87,6 +124,41 @@ export function generateProject(context: GeneratorContext): GeneratorOutput {
         `so nothing is emitted.`,
     );
     return { files: [] };
+  }
+
+  // A lifecycle method — `initState`, `dispose`, `didUpdateWidget` — reaches UIR as a `sig.Effect`, and this
+  // generator has no lowering for one. Nothing in it reads a `sig.Effect`, and the schema does not even say which
+  // component an effect belongs to, so its body was **silently absent from the output**: `initState() { _n = 5; }`
+  // produced a component that started at 0, with no diagnostic anywhere (M8-Q §7 recorded the gap; M8-T's census
+  // confirmed it unchanged; M11-I's probe reproduced it against real Flutter, and found `hello_bridge`'s own
+  // `_itemsFuture = …` initialisation being dropped the same way). A build that succeeds while dropping a method
+  // body is the failure this generator exists to refuse, so a body with anything in it is refused by name.
+  //
+  // Lowering it is a real design, not a lookup: `initState` runs *before* the first build (a `useEffect` runs
+  // after the first render, so the first frame would differ), React's development StrictMode invokes an effect
+  // twice, and the effect has to be tied to its component. None of that is decided.
+  //
+  // What is *not* refused is a body that says nothing this output needs: a `super.<lifecycle>()` call (a framework
+  // no-op), and `dispose()` on a framework object (`_email.dispose()` — the kit owns a controller's lifetime, so
+  // there is nothing to release). Every other statement is behaviour, and dropping it is the defect.
+  const lifecycleOf: Readonly<Record<string, string>> = {
+    mount: '`initState`',
+    unmount: '`dispose`',
+    update: '`didUpdateWidget`/`didChangeDependencies`',
+  };
+  for (const effect of context.program.ofKind('sig.Effect') as unknown as Node[]) {
+    if (asArray(effect['body']).every((statement) => isErasableLifecycleStatement(statement as Node))) continue;
+    const method = lifecycleOf[String(effect['timing'])] ?? 'a lifecycle method';
+    report(
+      GeneratorDiagnosticCode.UnsupportedCapability,
+      'error',
+      `${method} (${spanOf(effect)}) has no lowering, so its body would be missing from the generated component — ` +
+        `every statement in it, silently. Missing capability: lowering a lifecycle effect (\`sig.Effect\`) — ` +
+        `where it runs relative to the first render, how development StrictMode's double invocation is handled, and ` +
+        `which component owns it are all undecided. That work belongs to ${OWNER_LABEL['generator']}. For now: an ` +
+        `initial value belongs in the field's declaration (\`int _n = 5;\`), not in \`initState\`.`,
+      idOf(effect),
+    );
   }
 
   const files: EmittedFile[] = [];

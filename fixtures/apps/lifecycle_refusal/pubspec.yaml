@@ -1,0 +1,15 @@
+name: lifecycle_refusal
+description: >-
+  M11-I (plan Phase E) proof: a lifecycle method with behaviour in it (initState, didUpdateWidget, dispose) has no lowering and must be refused by name. It was silently dropped from the generated component (M8-Q section 7).
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true
