@@ -13,6 +13,7 @@ import { GeneratorDiagnosticCode } from '../diagnostics/codes.js';
 import { emitExpression, setStatementLowering, type EmitScope } from './expression.js';
 import { identifierOf } from './module.js';
 import { routeNameOf, screenKeyFor } from './routes.js';
+import { opaqueDetailOf, opaqueReasonSuffix } from './unsupported.js';
 
 type Node = Record<string, unknown>;
 
@@ -342,12 +343,12 @@ export function emitStatement(statement: Stmt | Node | undefined, scope: EmitSco
     }
 
     case 'logic.OpaqueStmt': {
-      const source = typeof node['source'] === 'string' ? node['source'] : '<unknown>';
+      const { source, reason } = opaqueDetailOf(node);
       scope.report(
         GeneratorDiagnosticCode.OpaqueConstruct,
         'error',
         `\`${source}\` has no UIR representation and reached the generator as opaque source (INV-4). ` +
-          `Lowering it would mean guessing what it does; it needs an override.`,
+          `Lowering it would mean guessing what it does; it needs an override.${opaqueReasonSuffix(reason)}`,
         idOf(node),
       );
       return [];

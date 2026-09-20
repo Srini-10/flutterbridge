@@ -508,3 +508,9 @@ export function mutableCaptureRaw(): string {
   const path = fileURLToPath(new URL('../../../../fixtures/uir/mutable_capture.ndjson', import.meta.url));
   return readFileSync(path, 'utf8');
 }
+
+/** The real `fixtures/apps/opaque_refusal` document, raw analyzer output (M11-I, plan Phase C) — not yet normalized. */
+export function opaqueRefusalRaw(): string {
+  const path = fileURLToPath(new URL('../../../../fixtures/uir/opaque_refusal.ndjson', import.meta.url));
+  return readFileSync(path, 'utf8');
+}

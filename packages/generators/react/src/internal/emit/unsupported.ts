@@ -510,3 +510,30 @@ export const OWNER_LABEL: Readonly<Record<CapabilityOwner, string>> = {
   schema: 'the UIR schema',
   adr: 'an architectural decision that has not been made yet (it needs an ADR)',
 };
+
+/**
+ * What the frontend recorded about an opaque node — its Dart source and *why* it could not be modelled.
+ *
+ * `ui.Opaque`, `logic.OpaqueExpr` and `logic.OpaqueStmt` carry `dartSource` and `reason` (`l1.json`,
+ * `l2.json`). The three `BRG3004` sites used to read a field called `source`, which no producer writes, so
+ * every opaque refusal said "`<unknown>`" and the author never learned which construct it was or what the
+ * analyzer objected to. Reading the schema's own fields is the whole fix; nothing here interprets the source.
+ *
+ * @param node - the opaque node.
+ * @returns the first line of the source (bounded) and the recorded reason, each `undefined` if absent.
+ */
+export function opaqueDetailOf(node: Readonly<Record<string, unknown>>): {
+  readonly source: string;
+  readonly reason: string | undefined;
+} {
+  const raw = typeof node['dartSource'] === 'string' ? node['dartSource'] : '';
+  const firstLine = raw.split('\n')[0] ?? '';
+  const source = firstLine.length > 120 ? `${firstLine.slice(0, 117)}...` : firstLine;
+  const reason = typeof node['reason'] === 'string' && node['reason'] !== '' ? node['reason'] : undefined;
+  return { source: source === '' ? '<no source recorded>' : source, reason };
+}
+
+/** ` The frontend's reason: "…".` — or nothing, when it recorded none. */
+export function opaqueReasonSuffix(reason: string | undefined): string {
+  return reason === undefined ? '' : ` The frontend's reason: ${reason}.`;
+}

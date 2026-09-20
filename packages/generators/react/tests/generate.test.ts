@@ -413,12 +413,18 @@ describe('it refuses rather than invents', () => {
         id: 'o1',
         kind: 'ui.Opaque',
         span,
-        source: 'SomeWidget(foo: bar)',
+        // The schema's own field names (`l2.json` `UiOpaque`). This node once said `source`, which no
+        // producer writes — the test agreed with a generator that read the same wrong field.
+        dartSource: 'SomeWidget(foo: bar)',
+        reason: 'unmodelled widget',
       }),
     ];
     const { context, reported } = harness(nodes);
     reactGenerator.generate(context);
-    expect(reported.find((d) => d.code === 'BRG3004')?.severity).toBe('error');
+    const refusal = reported.find((d) => d.code === 'BRG3004');
+    expect(refusal?.severity).toBe('error');
+    expect(refusal?.message).toContain('SomeWidget(foo: bar)');
+    expect(refusal?.message).toContain('unmodelled widget');
   });
 
   it('refuses a program carrying an upstream error, and emits no files at all', () => {

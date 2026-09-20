@@ -31,7 +31,7 @@ import { emitStatements } from './statement.js';
 import { identifierOf, type ModuleBuilder } from './module.js';
 import { typeTextOf } from './types.js';
 import { useRuntime, useRuntimeType } from './runtime.js';
-import { missingCapabilityOf, OWNER_LABEL } from './unsupported.js';
+import { missingCapabilityOf, opaqueDetailOf, opaqueReasonSuffix, OWNER_LABEL } from './unsupported.js';
 import {
   UNSUPPORTED_PARAMETERS,
   mappingOf,
@@ -1226,12 +1226,12 @@ export function emitUiNode(node: Node, module: ModuleBuilder, scope: EmitScope, 
     }
 
     case 'ui.Opaque': {
-      const source = typeof node['source'] === 'string' ? node['source'] : '<unknown>';
+      const { source, reason } = opaqueDetailOf(node);
       scope.report(
         GeneratorDiagnosticCode.OpaqueConstruct,
         'error',
-        `\`${source.split('\n')[0]}\` has no UIR representation and reached the generator as opaque source ` +
-          `(INV-4). It needs an override.`,
+        `\`${source}\` has no UIR representation and reached the generator as opaque source ` +
+          `(INV-4). It needs an override.${opaqueReasonSuffix(reason)}`,
         idOf(node),
       );
       return 'null';

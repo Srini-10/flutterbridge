@@ -26,7 +26,7 @@ import { GeneratorDiagnosticCode } from '../diagnostics/codes.js';
 import { identifierOf, type ModuleBuilder } from './module.js';
 import { RUNTIME_MODULE as RUNTIME, isKitProvided } from './runtime.js';
 import { typeTextOf } from './types.js';
-import { OWNER_LABEL, missingCapabilityOf } from './unsupported.js';
+import { OWNER_LABEL, missingCapabilityOf, opaqueDetailOf, opaqueReasonSuffix } from './unsupported.js';
 
 
 /** What an expression needs in order to be lowered. */
@@ -1668,12 +1668,12 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
       return emitAssignment(node, scope);
 
     case 'logic.OpaqueExpr': {
-      const source = typeof node['source'] === 'string' ? node['source'] : '<unknown>';
+      const { source, reason } = opaqueDetailOf(node);
       scope.report(
         GeneratorDiagnosticCode.OpaqueConstruct,
         'error',
         `\`${source}\` has no UIR representation, so it reached the generator as opaque source (INV-4). ` +
-          `It cannot be lowered without guessing what it means; it needs an override.`,
+          `It cannot be lowered without guessing what it means; it needs an override.${opaqueReasonSuffix(reason)}`,
         idOf(node),
       );
       return 'undefined';

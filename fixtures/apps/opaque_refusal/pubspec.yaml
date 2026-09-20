@@ -1,0 +1,17 @@
+name: opaque_refusal
+description: >-
+  M11-I (plan Phase C) proof: every opaque node the analyzer hands the generator must be refused with a
+  BRG3004 that names the construct and the reason the frontend recorded, never `<unknown>`. Three
+  components, one per opaque kind (ui.Opaque, logic.OpaqueStmt, logic.OpaqueExpr).
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true
