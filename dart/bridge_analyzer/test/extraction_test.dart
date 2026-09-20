@@ -2612,6 +2612,202 @@ class _HomeState extends State<Home> {
     });
   });
 
+  group('mutable local capture across a callback boundary (M11-G)', () {
+    // A mutable (`var`) local declared and mutated entirely WITHIN one callback's own body — including
+    // through a nested, spliced-open `setState` call (INV-22) — already resolves correctly, by the
+    // identical declaration-tier identity mechanism an immutable local already uses (ADR-28, M9-A,
+    // M11-D). No new mechanism was needed for that shape. A mutable local declared at `build()`'s own
+    // top level (carried by `Binding.inlineValue`, M8-B — its own initializer re-extracted at every
+    // reference instead of named, because the render tree has no statement sequence to declare a real
+    // local in) may be READ from any nested callback: re-extracting a never-mutated initializer is
+    // sound, since Flutter's own contract already requires `build()` to have no externally observable
+    // side effects. WRITING to one is a different claim entirely — `_target` (the write-target
+    // extractor) used to delegate blindly to the same reference-resolution `_reference` uses for reads,
+    // so a write silently targeted the local's own inlined INITIALIZER expression instead of any real
+    // place (`count++` extracting with a `logic.Lit` target) — a real, live-probed, previously-silent
+    // defect this milestone found and closed with a refusal (`BRG1311`), not by inventing a mutable,
+    // persistently-owned binding mechanism this render-tree position has never had (M11-G).
+
+    const String statefulWrapper = '''
+import 'package:flutter/material.dart';
+class Home extends StatefulWidget {
+  const Home({super.key});
+  @override
+  State<Home> createState() => _HomeState();
+}
+class _HomeState extends State<Home> {
+  int _result = 0;
+  @override
+  Widget build(BuildContext context) {
+    {{BODY}}
+  }
+}
+''';
+
+    List<Map<String, dynamic>> refsNamed(Extracted app, String name) =>
+        app.ofKind('logic.Ref').where((Map<String, dynamic> r) => r['name'] == name).toList();
+
+    // ── the already-safe shapes ───────────────────────────────────────────────────────────────────
+
+    test('R1 — a mutable local declared, mutated, and read entirely within one callback resolves by real declaration identity', () async {
+      final Extracted app = await extract(
+        statefulWrapper.replaceFirst('{{BODY}}', r'''
+    return ElevatedButton(
+      onPressed: () {
+        var count = 0;
+        count++;
+        setState(() {
+          _result = count;
+        });
+      },
+      child: Text('$_result'),
+    );
+'''),
+      );
+      expect(app.errors, isEmpty);
+      final Map<String, dynamic> decl =
+          app.ofKind('logic.VarDecl').singleWhere((Map<String, dynamic> d) => d['name'] == 'count');
+      final List<Map<String, dynamic>> refs = refsNamed(app, 'count');
+      expect(refs, isNotEmpty);
+      expect(refs.every((Map<String, dynamic> r) => r['target'] == decl['id']), isTrue);
+    });
+
+    test('a mutable build()-level local, captured and read-only, has no target — sound, since it is never mutated', () async {
+      final Extracted app = await extract(
+        statefulWrapper.replaceFirst('{{BODY}}', r'''
+    var base = 7;
+    return ElevatedButton(
+      onPressed: () {
+        setState(() {
+          _result = base;
+        });
+      },
+      child: Text('$_result'),
+    );
+'''),
+      );
+      expect(app.errors, isEmpty);
+      expect(app.ofKind('logic.VarDecl'), isEmpty, reason: 'a build()-level local is inlineValue, never a real logic.VarDecl');
+      expect(refsNamed(app, 'base'), isEmpty, reason: 'inlined at its own reference site (M8-B), not a logic.Ref');
+    });
+
+    test('an inner, mutated local shadowing a read-only build()-level local of the same name is safe and distinct', () async {
+      final Extracted app = await extract(
+        statefulWrapper.replaceFirst('{{BODY}}', r'''
+    var value = 100;
+    return ElevatedButton(
+      onPressed: () {
+        var value = 1;
+        setState(() {
+          value++;
+          _result = value;
+        });
+      },
+      child: Text('$_result $value'),
+    );
+'''),
+      );
+      expect(app.errors, isEmpty);
+      final Map<String, dynamic> inner =
+          app.ofKind('logic.VarDecl').singleWhere((Map<String, dynamic> d) => d['name'] == 'value');
+      expect(inner['initializer'], isNotNull);
+      final Map<String, dynamic>? initializer = inner['initializer'] as Map<String, dynamic>?;
+      expect(initializer!['value'], 1, reason: 'the INNER declaration (initial value 1), never the outer (100)');
+      final List<Map<String, dynamic>> refs = refsNamed(app, 'value');
+      expect(refs.any((Map<String, dynamic> r) => r['target'] == inner['id']), isTrue);
+    });
+
+    // ── the refused shape ─────────────────────────────────────────────────────────────────────────
+
+    test('R3 — a write (increment) to a build()-level local refuses as BRG1311, never a silent, wrong target', () async {
+      final Extracted app = await extract(
+        statefulWrapper.replaceFirst('{{BODY}}', r'''
+    var count = 0;
+    return ElevatedButton(
+      onPressed: () {
+        count++;
+      },
+      child: Text('$_result'),
+    );
+'''),
+      );
+      expect(app.errors, hasLength(1));
+      expect(app.errors.single.code.id, 'BRG1311');
+      expect(app.errors.single.message, contains('count'));
+      expect(app.ofKind('ui.Component'), isEmpty);
+    });
+
+    test('a plain-assignment write to a build()-level local refuses as BRG1311', () async {
+      final Extracted app = await extract(
+        statefulWrapper.replaceFirst('{{BODY}}', r'''
+    var count = 0;
+    return ElevatedButton(
+      onPressed: () {
+        count = count + 5;
+      },
+      child: Text('$_result'),
+    );
+'''),
+      );
+      expect(app.errors, hasLength(1));
+      expect(app.errors.single.code.id, 'BRG1311');
+    });
+
+    test('a write reached only through a nested setState closure still refuses as BRG1311', () async {
+      final Extracted app = await extract(
+        statefulWrapper.replaceFirst('{{BODY}}', r'''
+    var count = 0;
+    return ElevatedButton(
+      onPressed: () {
+        setState(() {
+          count++;
+        });
+      },
+      child: Text('$_result'),
+    );
+'''),
+      );
+      expect(app.errors, hasLength(1));
+      expect(app.errors.single.code.id, 'BRG1311');
+    });
+
+    test('multiple build()-level locals, both written, each refuse independently as BRG1311', () async {
+      final Extracted app = await extract(
+        statefulWrapper.replaceFirst('{{BODY}}', r'''
+    var a = 0;
+    var b = 0;
+    return ElevatedButton(
+      onPressed: () {
+        a++;
+        b++;
+      },
+      child: Text('$_result'),
+    );
+'''),
+      );
+      expect(app.errors, hasLength(2));
+      expect(app.errors.every((Diagnostic d) => d.code.id == 'BRG1311'), isTrue);
+    });
+
+    test('the same source extracts to the same bytes on a second, independent run (determinism)', () async {
+      final String source = statefulWrapper.replaceFirst('{{BODY}}', r'''
+    return ElevatedButton(
+      onPressed: () {
+        var count = 0;
+        count++;
+        setState(() {
+          _result = count;
+        });
+      },
+      child: Text('$_result'),
+    );
+''');
+      final Extracted first = await extract(source);
+      final Extracted second = await extract(source);
+      expect(first.bytes, second.bytes);
+    });
+  });
+
   group('top-level declaration identity (M8-J)', () {
     // A bare or import-prefixed reference to a top-level const/final/function/getter resolved by
     // `package:analyzer`'s own element model, never by matching a name against another file's.

@@ -309,6 +309,37 @@ abstract final class Codes {
         'problem.',
   );
 
+  /// A write (assignment, compound assignment, increment/decrement) targets a `build()`-method-level
+  /// local — one `_structuredBody` (M8-B) carries by re-extracting its own initializer at each
+  /// reference (`Binding.inlineValue`) rather than by declaration-tier identity (ADR-28, M11-G).
+  static const DiagnosticCode writeToInlinedLocal = DiagnosticCode(
+    id: 'BRG1311',
+    category: DiagnosticCategory.extraction,
+    defaultSeverity: Severity.error,
+    docsSlug: 'write-to-inlined-local',
+    title: 'A build-method local was written to, not just read',
+    explanation:
+        'A local declared at the top of a `build()` method — `final label = ...;` or `var count = ...;` '
+        'used before the returned widget tree — carries no declaration-tier identity in the render tree '
+        '`ui.Component.render` is (M8-B): there is no statement sequence there to declare a local in, so '
+        'its own initializer is re-extracted at every reference instead. That is sound for a *read*, '
+        "because Flutter's own contract already requires `build()` to be free of externally observable "
+        'side effects, so re-evaluating a never-mutated expression more than once changes nothing about '
+        'what the program renders.\n'
+        '\n'
+        'It is not sound for a *write*. `build()`-level locals were never given the same declaration-tier '
+        'identity an ordinary statement-level local gets (ADR-28) — mutating one from anywhere, '
+        'including from an inline callback the render tree embeds (`onPressed: () { count++; }`), would '
+        'have to invent a real, mutable, persistently-owned binding this compiler does not build for '
+        'this position, and doing so silently would risk emitting a write to the inlined *initializer* '
+        'expression instead of to any real place (M11-G).\n'
+        '\n'
+        'A local mutated anywhere is not eligible for this position. Declare it inside the callback that '
+        'mutates it instead (a local declaration-tier identity, ADR-28, already fully supports this — '
+        'M11-D), or, if the mutation must be observed across rebuilds, as a field on the `State` class '
+        'and mutate it through `setState` (already supported, M9-L/M11-D).',
+  );
+
   // ── BRG12xx — the canonical builder and the emitter ───────────────────────────────────────────
 
   /// A reference names a declaration that does not exist.
@@ -476,6 +507,7 @@ abstract final class Codes {
     orphanReference,
     nonCanonicalOrder,
     serializationFailed,
+    writeToInlinedLocal,
   ]);
 
   /// Looks up a code by id, or `null` if it is not registered.

@@ -502,3 +502,9 @@ export function callbackParameterCollisionRaw(): string {
   );
   return readFileSync(path, 'utf8');
 }
+
+/** The real `fixtures/apps/mutable_capture` document, raw analyzer output (M11-G) — not yet normalized. */
+export function mutableCaptureRaw(): string {
+  const path = fileURLToPath(new URL('../../../../fixtures/uir/mutable_capture.ndjson', import.meta.url));
+  return readFileSync(path, 'utf8');
+}

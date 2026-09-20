@@ -1,0 +1,22 @@
+name: mutable_capture
+description: >-
+  M11-G positive proof: a mutable (`var`) local declared and mutated ENTIRELY within one callback's own
+  body (including via a nested, spliced-open `setState` call) already resolves correctly by declaration
+  identity (ADR-28, M9-A, M11-D) — the same mechanism an immutable local already uses. A mutable local
+  declared at `build()`'s own top level (carried by `Binding.inlineValue`, M8-B) may be READ from any
+  nested callback — re-extracting a never-mutated initializer is sound — but writing to one from
+  anywhere is a SEPARATE, deliberately refused shape (`BRG1311`) — see the Dart-side
+  `mutable local write refusal (BRG1311, M11-G)` extraction test group; no UIR document is ever
+  produced for it, so there is no fixture-level negative case to capture here.
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

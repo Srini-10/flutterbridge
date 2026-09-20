@@ -690,6 +690,19 @@ final class ExpressionExtractor {
   RawNode _target(Expression node, DartType? writeType, Scope scope) {
     switch (node) {
       case SimpleIdentifier():
+        // A `build()`-method local carried by `inlineValue` (M8-B) — re-extracting its own initializer
+        // at a *read* site is sound (Flutter's own contract already requires `build()` to have no
+        // externally observable side effects), but this is a *write* site: `_reference` does not
+        // distinguish the two, and blindly delegating to it would silently substitute the local's own
+        // initializer expression as the write's target — `count++` extracting as a write to the literal
+        // `0` it was initialized with, not to any real place (M11-G, live-probed: the raw UIR already
+        // produced exactly that `logic.Lit` target, and the generator, with nothing to refuse it,
+        // emitted `0++`/`0 = ...` — invalid TypeScript, silently). Refused here, before `_reference` is
+        // ever reached, rather than downstream once the damage is already a malformed node.
+        if (scope.lookup(node.name)?.inlineValue != null) {
+          out.report(Codes.writeToInlinedLocal, 'Cannot write to `${node.name}`, a build-method local.', node);
+          return out.opaqueExpr(node, 'write to a build-method local', type: writeType);
+        }
         return _reference(node, node.name, scope, type: writeType);
       // A write to a static: `GoRouter.optionURLReflectsImperativeAPIs = true`. The left-hand side is
       // a type name, which is not a value and has no type — the same category error as reading one.
