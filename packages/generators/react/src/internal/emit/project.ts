@@ -103,6 +103,13 @@ export interface ScaffoldInput {
   readonly themeModule: string;
   /** The exported theme descriptor's name. */
   readonly themeName: string;
+  /**
+   * Whether the program declares any route. With none there is no route table to project and no `initial` to
+   * start on — `createRouter` throws `BRG4004` for an `initial` that is not in `routes`, and `{ routes: [] }` does
+   * not typecheck against `RouterDescriptor` — so no router is emitted at all. `page.tsx` already renders `null`
+   * in that case; the providers now agree with it (M11-I).
+   */
+  readonly hasRoutes: boolean;
   /** The module path of the route table. */
   readonly routesModule: string;
   /** The exported route table's name. */
@@ -304,14 +311,15 @@ function providers(input: ScaffoldInput): string {
   const lines: string[] = ["'use client';", '', banner('the program'), ''];
   // Same order the module builder produces: packages first, then the project's own modules, each
   // lexicographic. `sortSpecifiers` is the rule; this file is checked against it like any other.
-  const runtimeImports = ['AssetProvider', 'RouterProvider', 'StoreProvider', 'ThemeProvider'];
+  const runtimeImports = ['AssetProvider', 'StoreProvider', 'ThemeProvider'];
+  if (input.hasRoutes) runtimeImports.push('RouterProvider');
   if (input.needsSnackbarHost) runtimeImports.push('SnackbarHostProvider');
   runtimeImports.sort();
   lines.push(`import { ${runtimeImports.join(', ')} } from '@bridge/runtime-react';`);
   lines.push("import type { ReactNode } from 'react';");
   const local = [
     { specifier: input.assetsModule, name: input.assetsName },
-    { specifier: input.routesModule, name: input.routesName },
+    ...(input.hasRoutes ? [{ specifier: input.routesModule, name: input.routesName }] : []),
     ...input.stores.map((store) => ({ specifier: store.module, name: store.name })),
     { specifier: input.themeModule, name: input.themeName },
   ].sort((a, b) => (a.specifier < b.specifier ? -1 : a.specifier > b.specifier ? 1 : 0));
@@ -333,8 +341,12 @@ function providers(input: ScaffoldInput): string {
     open.push('<SnackbarHostProvider>');
     close.unshift('</SnackbarHostProvider>');
   }
-  open.push(`<AssetProvider manifest={${input.assetsName}}>`, `<RouterProvider descriptor={${input.routesName}}>`);
-  close.unshift('</RouterProvider>', '</AssetProvider>');
+  open.push(`<AssetProvider manifest={${input.assetsName}}>`);
+  close.unshift('</AssetProvider>');
+  if (input.hasRoutes) {
+    open.push(`<RouterProvider descriptor={${input.routesName}}>`);
+    close.unshift('</RouterProvider>');
+  }
   for (const store of input.stores) {
     open.push(`<StoreProvider definition={${store.name}}>`);
     close.unshift('</StoreProvider>');

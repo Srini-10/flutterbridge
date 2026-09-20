@@ -255,7 +255,11 @@ export function generateProject(context: GeneratorContext): GeneratorOutput {
     { ...scope, module: routesModule },
     performedTransitions(context.program.nodes as unknown as Node[]),
   );
-  files.push({ path: routesModule.path, contents: routesModule.toSource() });
+  // With no `app.Route` there is nothing to route to, and a route table with no entries is not a valid one: it
+  // has no `initial`, so the emitted file failed strict `tsc` and `createRouter` threw at startup. The warning
+  // `emitRoutes` reported stands; the file and the provider that consumed it are simply not emitted (M11-I).
+  const hasRoutes = (context.program.ofKind('app.Route') as unknown as Node[]).length > 0;
+  if (hasRoutes) files.push({ path: routesModule.path, contents: routesModule.toSource() });
 
   // Checked here rather than inside `emitRoutes`, because it needs the `ui.Component` nodes to resolve a
   // construction's component to its parameters, and the route emitter's input is deliberately the route
@@ -369,6 +373,7 @@ export function generateProject(context: GeneratorContext): GeneratorOutput {
       name: 'bridge-app',
       themeModule: '@/theme/tokens',
       themeName,
+      hasRoutes,
       routesModule: '@/routes/routes',
       routesName: table.descriptor,
       assetsModule: '@/assets/manifest',
