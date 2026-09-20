@@ -642,32 +642,138 @@ const SAFE_BINARY = new Set(['+', '-', '*', '<', '>', '<=', '>=', '&&', '||']);
  */
 const BIT_OPERATORS: ReadonlySet<string> = new Set(['&', '|', '^', '<<', '>>']);
 
+/** The runtime helper (ADR-0050) for a Dart `int` `operator int`. */
+const INT_HELPERS: Readonly<Record<string, string>> = {
+  '+': 'intAdd', '-': 'intSub', '*': 'intMul', '~/': 'intTruncDiv', '%': 'intMod',
+  '&': 'intAnd', '|': 'intOr', '^': 'intXor', '<<': 'intShl', '>>': 'intShr', '>>>': 'intUshr',
+};
+
+/** Each compound-assignment operator and the binary operator it applies. */
+const COMPOUND_OPERATORS: Readonly<Record<string, string>> = {
+  addAssign: '+', subtractAssign: '-', multiplyAssign: '*', truncatingDivideAssign: '~/', moduloAssign: '%',
+  bitAndAssign: '&', bitOrAssign: '|', bitXorAssign: '^', shiftLeftAssign: '<<', shiftRightAssign: '>>',
+  unsignedShiftRightAssign: '>>>',
+};
+
+/** The integer a node is, when it is an `int` literal or a negated one. */
+function integerLiteralOf(node: Node | undefined): bigint | undefined {
+  if (node === undefined) return undefined;
+  if (kindOf(node) === 'logic.Unary' && node['operator'] === '-') {
+    const inner = integerLiteralOf(node['operand'] as Node | undefined);
+    return inner === undefined ? undefined : -inner;
+  }
+  if (node['kind'] !== 'logic.Lit' || typeof node['value'] !== 'number' || !Number.isSafeInteger(node['value'])) {
+    return undefined;
+  }
+  return sdkBaseTypeOf(node['type'] as Node | undefined) === 'int' ? BigInt(node['value']) : undefined;
+}
+
 /**
- * `a OP b` for two integer literals, computed with Dart's 64-bit two's-complement semantics.
+ * `a OP b` for two integer literals, computed with Dart's 64-bit two's-complement semantics (ADR-0050).
  *
- * @param operator - one of {@link BIT_OPERATORS}.
- * @param left - the left operand node.
- * @param right - the right operand node.
- * @returns the literal text, or `undefined` when either operand is not an integer literal, the shift count is
- * outside `0..63`, or the exact result is not a JavaScript safe integer.
+ * @returns the literal text; {@link REFUSED} after reporting a *compile-time* diagnostic when the constant is a
+ * division by zero, a negative shift, or leaves the safe-integer domain; `undefined` when either operand is not an
+ * integer literal (so the runtime helper is used instead).
  */
-function foldIntegerBitOperation(operator: string, left: Node, right: Node): string | undefined {
-  const literal = (node: Node): bigint | undefined => {
-    if (node['kind'] !== 'logic.Lit' || typeof node['value'] !== 'number' || !Number.isSafeInteger(node['value'])) {
-      return undefined;
-    }
-    return sdkBaseTypeOf(node['type'] as Node | undefined) === 'int' ? BigInt(node['value']) : undefined;
-  };
-  const a = literal(left);
-  const b = literal(right);
+function foldIntegerOperation(operator: string, node: Node, scope: EmitScope): string | undefined {
+  const a = integerLiteralOf(node['left'] as Node | undefined);
+  const b = integerLiteralOf(node['right'] as Node | undefined);
   if (a === undefined || b === undefined) return undefined;
-  if ((operator === '<<' || operator === '>>') && (b < 0n || b > 63n)) return undefined;
-  const raw =
-    operator === '&' ? a & b : operator === '|' ? a | b : operator === '^' ? a ^ b : operator === '<<' ? a << b : a >> b;
+  const refuse = (why: string): string => {
+    scope.report(
+      GeneratorDiagnosticCode.UnsupportedExpression,
+      'error',
+      `the constant \`${a} ${operator} ${b}\` ${why}. A Dart \`int\` is 64-bit and this generator's integer domain is ` +
+        `the JavaScript safe range ±${Number.MAX_SAFE_INTEGER} (ADR-0050); a constant it cannot write exactly is refused ` +
+        `at build time rather than becoming a rounded number.`,
+      idOf(node),
+    );
+    return REFUSED;
+  };
+  let raw: bigint;
+  switch (operator) {
+    case '+': raw = a + b; break;
+    case '-': raw = a - b; break;
+    case '*': raw = a * b; break;
+    case '~/':
+      if (b === 0n) return refuse('divides by zero');
+      raw = a / b;
+      break;
+    case '%': {
+      if (b === 0n) return refuse('takes a remainder by zero');
+      const r = a % b;
+      raw = r < 0n ? r + (b < 0n ? -b : b) : r;
+      break;
+    }
+    case '&': raw = a & b; break;
+    case '|': raw = a | b; break;
+    case '^': raw = a ^ b; break;
+    case '<<':
+      if (b < 0n) return refuse('shifts by a negative count');
+      raw = b >= 64n ? 0n : a << b;
+      break;
+    case '>>':
+      if (b < 0n) return refuse('shifts by a negative count');
+      raw = b >= 64n ? (a < 0n ? -1n : 0n) : a >> b;
+      break;
+    case '>>>':
+      if (b < 0n) return refuse('shifts by a negative count');
+      raw = b >= 64n ? 0n : BigInt.asUintN(64, a) >> b;
+      break;
+    default:
+      return undefined;
+  }
   const result = BigInt.asIntN(64, raw);
   const asNumber = Number(result);
-  if (!Number.isSafeInteger(asNumber) || BigInt(asNumber) !== result) return undefined;
+  if (!Number.isSafeInteger(asNumber) || BigInt(asNumber) !== result) return refuse('leaves the safe-integer domain');
   return result < 0n ? `(${result})` : String(result);
+}
+
+/**
+ * A numeric binary operation whose JavaScript spelling is not Dart's, lowered — or `undefined` when the plain
+ * operator is already right (comparison, logic, `double` arithmetic, string `+`).
+ *
+ * By the operands' *resolved* types (never the operator alone): two `int`s use the checked helpers of ADR-0050,
+ * `%` and `~/` on any other numeric pair use `numMod`/`numTruncDiv` (the old `((a % b) + b) % b` was wrong for a
+ * negative divisor), and `bool` `& | ^` is `Boolean(Number(a) op Number(b))`. An operand type that is not known
+ * cannot be judged and is refused for the operators that differ, rather than emitted as a JavaScript one.
+ */
+function lowerNumericOperation(
+  operator: string,
+  leftNode: Node | undefined,
+  rightNode: Node | undefined,
+  left: string,
+  right: string,
+  scope: EmitScope,
+  at: Node,
+): string | undefined {
+  const leftKind = sdkBaseTypeOf(leftNode?.['type'] as Node | undefined);
+  const rightKind = sdkBaseTypeOf(rightNode?.['type'] as Node | undefined);
+  const use = (name: string): string => scope.module.use(RUNTIME, name);
+
+  if (leftKind === 'bool' && (operator === '&' || operator === '|' || operator === '^')) {
+    // `Number(…)` because strict TypeScript rejects `boolean & boolean` (TS2447); left to right, both operands
+    // evaluated, exactly as Dart's non-short-circuit `&`/`|`/`^`.
+    return `Boolean(Number(${left}) ${operator} Number(${right}))`;
+  }
+  if (leftKind === 'int' && rightKind === 'int' && INT_HELPERS[operator] !== undefined) {
+    return `${use(INT_HELPERS[operator]!)}(${left}, ${right})`;
+  }
+  if (operator === '%') return `${use('numMod')}(${left}, ${right})`;
+  if (operator === '~/') return `${use('numTruncDiv')}(${left}, ${right})`;
+  if (BIT_OPERATORS.has(operator) || operator === '>>>') {
+    if (left !== REFUSED && right !== REFUSED) {
+      scope.report(
+        GeneratorDiagnosticCode.UnsupportedExpression,
+        'error',
+        `\`${operator}\` on ${leftKind === undefined ? 'an operand of unknown type' : `a \`${leftKind}\``} has no ` +
+          `lowering: it is defined on \`int\` (exact, 64-bit — ADR-0050) and, for \`& | ^\`, \`bool\`.`,
+        idOf(at),
+      );
+    }
+    return REFUSED;
+  }
+  return undefined;
 }
 
 /** Dart's `==` is value equality for primitives and identity for objects — `===` is the honest lowering. */
@@ -994,46 +1100,23 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
       const right = emitExpression(node['right'] as Node, scope);
 
       if (operator in EQUALITY) return paren(`${left} ${EQUALITY[operator]} ${right}`);
+
+      // Numeric operators whose JavaScript spelling differs (ADR-0050): folded when both operands are integer
+      // literals, otherwise the checked helper for the operand types, otherwise the plain operator below.
+      const folded = foldIntegerOperation(operator, node, scope);
+      if (folded !== undefined) return folded;
+      const lowered = lowerNumericOperation(
+        operator,
+        node['left'] as Node | undefined,
+        node['right'] as Node | undefined,
+        left,
+        right,
+        scope,
+        node,
+      );
+      if (lowered !== undefined) return lowered;
+
       if (SAFE_BINARY.has(operator)) return paren(`${left} ${operator} ${right}`);
-
-      if (BIT_OPERATORS.has(operator)) {
-        // Two integer literals: Dart's 64-bit result is computable here, exactly, so emit the number. (`1 << 20`
-        // flags are the common case.) Only when the result is representable — a safe integer — because a
-        // constant that cannot be written exactly is the same silent loss this branch exists to prevent.
-        const folded = foldIntegerBitOperation(operator, node['left'] as Node, node['right'] as Node);
-        if (folded !== undefined) return folded;
-
-        const operandType = sdkBaseTypeOf((node['left'] as Node | undefined)?.['type'] as Node | undefined);
-        if (operandType === 'bool' && (operator === '&' || operator === '|' || operator === '^')) {
-          // `Number(…)` because strict TypeScript rejects `boolean & boolean` (TS2447); left-to-right, both operands
-          // evaluated, exactly as Dart's non-short-circuit `&`/`|`/`^`.
-          return `Boolean(Number(${left}) ${operator} Number(${right}))`;
-        }
-        if (left !== REFUSED && right !== REFUSED) {
-          scope.report(
-            GeneratorDiagnosticCode.UnsupportedExpression,
-            'error',
-            `\`${operator}\` on ${operandType === undefined ? 'this operand type' : `a \`${operandType}\``} has no ` +
-              `lowering. A Dart \`int\` is 64-bit and JavaScript's bitwise and shift operators are 32-bit, so ` +
-              `\`1 << 40\` would be \`256\` instead of \`1099511627776\` — right only while every operand and ` +
-              `result fits 32 bits, which cannot be known here. (\`bool\` \`&\`, \`|\` and \`^\` do lower.)`,
-            idOf(node),
-          );
-        }
-        return REFUSED;
-      }
-
-      // The two that do not survive translation. Both are silent: they compute a number, and the number is
-      // wrong only for some inputs.
-      if (operator === '%') {
-        // Dart: `-7 % 3 == 2`. JavaScript: `-7 % 3 === -1`. Dart's result carries the divisor's sign.
-        return paren(`(((${left}) % (${right})) + (${right})) % (${right})`);
-      }
-      if (operator === '~/') {
-        // Dart's truncating division. `7 ~/ 2 == 3`, and `-7 ~/ 2 == -3` — toward zero, not toward -Infinity,
-        // so `Math.floor` is wrong for negatives.
-        return `Math.trunc(${left} / ${right})`;
-      }
       if (operator === '/') {
         // Dart's `/` on two ints is double division — `7 / 2 == 3.5` — which is what JavaScript does anyway.
         return paren(`${left} / ${right}`);
@@ -1055,12 +1138,21 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
       const operand = emitExpression(node['operand'] as Node, scope);
       if (operator === '!' || operator === '-') return paren(`${operator}${operand}`);
       if (operator === '~') {
+        const constant = integerLiteralOf(node['operand'] as Node | undefined);
+        if (constant !== undefined) {
+          const result = -constant - 1n;
+          if (result >= -BigInt(Number.MAX_SAFE_INTEGER) && result <= BigInt(Number.MAX_SAFE_INTEGER)) {
+            return result < 0n ? `(${result})` : String(result);
+          }
+        }
+        if (sdkBaseTypeOf((node['operand'] as Node | undefined)?.['type'] as Node | undefined) === 'int') {
+          return `${scope.module.use(RUNTIME, 'intNot')}(${operand})`;
+        }
         if (operand !== REFUSED) {
           scope.report(
             GeneratorDiagnosticCode.UnsupportedExpression,
             'error',
-            '`~` on an `int` has no lowering: a Dart `int` is 64-bit and JavaScript\'s `~` is 32-bit, so ' +
-              '`~4294967296` would be `-1` instead of `-4294967297`.',
+            '`~` is defined on `int` (exact, 64-bit — ADR-0050); this operand is not known to be one.',
             idOf(node),
           );
         }
@@ -2194,44 +2286,33 @@ function emitAssignment(node: Node, scope: EmitScope): string {
   if (operator === 'increment' || operator === 'decrement') {
     // `isPostfix` is only observable when the expression's *value* is used (`x++` vs `++x`). As a statement
     // they are identical, and that is how actions use them.
-    const step = operator === 'increment' ? '+ 1' : '- 1';
-    return assignTo(target, targetText, `${readTarget(target, targetText, scope)} ${step}`, scope);
+    const step = operator === 'increment' ? '+' : '-';
+    const current = readTarget(target, targetText, scope);
+    // An `int` counter is checked like any other `int` operation (ADR-0050); a `double` or `num` is plain.
+    const one: Node = { kind: 'logic.Lit', value: 1, type: { library: 'dart:core', name: 'int' } };
+    const stepped = lowerNumericOperation(step, target, one, current, '1', scope, node);
+    return assignTo(target, targetText, stepped ?? `${current} ${step} 1`, scope);
   }
 
   const value = emitExpression(valueNode, scope);
   const read = (): string => readTarget(target, targetText, scope);
 
+  // Every compound operator is its binary operator applied to the target and the value, so it takes the *same*
+  // lowering — folded, checked helper, or plain — rather than a second, hand-copied spelling (ADR-0050). The old
+  // copies emitted `&=`, `|=`, `^=`, `<<=`, `>>=` as raw 32-bit JavaScript and `%=` with the wrong-for-negatives formula.
+  const binary = COMPOUND_OPERATORS[operator];
+  if (binary !== undefined) {
+    const lowered = lowerNumericOperation(binary, target, valueNode, read(), value, scope, node);
+    return assignTo(target, targetText, lowered ?? `${read()} ${binary} ${value}`, scope);
+  }
+
   switch (operator) {
     case 'assign':
       return assignTo(target, targetText, value, scope);
-    case 'addAssign':
-      return assignTo(target, targetText, `${read()} + ${value}`, scope);
-    case 'subtractAssign':
-      return assignTo(target, targetText, `${read()} - ${value}`, scope);
-    case 'multiplyAssign':
-      return assignTo(target, targetText, `${read()} * ${value}`, scope);
     case 'divideAssign':
       return assignTo(target, targetText, `${read()} / ${value}`, scope);
-    case 'truncatingDivideAssign':
-      // `~/=`. Toward zero — `Math.floor` is wrong for negatives, which is why the schema calls this out.
-      return assignTo(target, targetText, `Math.trunc(${read()} / ${value})`, scope);
-    case 'moduloAssign':
-      // `%=`. Dart's modulo is non-negative for a positive divisor; JavaScript's is not.
-      return assignTo(target, targetText, `(((${read()}) % (${value})) + (${value})) % (${value})`, scope);
     case 'ifNullAssign':
       return assignTo(target, targetText, `${read()} ?? ${value}`, scope);
-    case 'bitAndAssign':
-      return assignTo(target, targetText, `${read()} & ${value}`, scope);
-    case 'bitOrAssign':
-      return assignTo(target, targetText, `${read()} | ${value}`, scope);
-    case 'bitXorAssign':
-      return assignTo(target, targetText, `${read()} ^ ${value}`, scope);
-    case 'shiftLeftAssign':
-      return assignTo(target, targetText, `${read()} << ${value}`, scope);
-    case 'shiftRightAssign':
-      return assignTo(target, targetText, `${read()} >> ${value}`, scope);
-    case 'unsignedShiftRightAssign':
-      return assignTo(target, targetText, `${read()} >>> ${value}`, scope);
     default:
       scope.report(
         GeneratorDiagnosticCode.UnsupportedExpression,

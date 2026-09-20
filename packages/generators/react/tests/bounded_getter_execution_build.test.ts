@@ -48,7 +48,7 @@ describe('ADR-0038 build-proof: bounded structural instance getter execution, re
     expect(model).toContain('export interface Model {');
     expect(model).toContain('readonly count: number;');
     expect(model).toMatch(/export function Model_doubled\(self: Model\): number \{/);
-    expect(model).toContain('self.count * 2');
+    expect(model).toContain('intMul(self.count, 2)');
     expect(model).not.toContain('class Model');
     expect(model).not.toMatch(/\.prototype\b/);
     expect(model).not.toMatch(/\bany\b/);

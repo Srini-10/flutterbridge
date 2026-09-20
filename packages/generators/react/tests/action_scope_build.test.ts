@@ -42,7 +42,7 @@ describe('M11-C: a local declared inside a store action body resolves correctly 
     const { files } = reactGenerator.generate(context);
     const store = fileAt(files, 'src/stores/action-scope-store.ts') ?? '';
     expect(store).toContain(
-      "const runLocal = action(() => {\n    const value = 1;\n    const computed = (value + 1);\n    result.set(computed);\n  }, 'runLocal');",
+      "const runLocal = action(() => {\n    const value = 1;\n    const computed = intAdd(value, 1);\n    result.set(computed);\n  }, 'runLocal');",
     );
   });
 
@@ -53,7 +53,7 @@ describe('M11-C: a local declared inside a store action body resolves correctly 
     const { files } = reactGenerator.generate(context);
     const store = fileAt(files, 'src/stores/action-scope-store.ts') ?? '';
     expect(store).toContain(
-      "const runNestedBlock = action(() => {\n    const outer = 1;\n    const inner = 2;\n    result.set((outer + inner));\n  }, 'runNestedBlock');",
+      "const runNestedBlock = action(() => {\n    const outer = 1;\n    const inner = 2;\n    result.set(intAdd(outer, inner));\n  }, 'runNestedBlock');",
     );
   });
 
@@ -89,7 +89,7 @@ describe('M11-C: a local declared inside a store action body resolves correctly 
     const { files } = reactGenerator.generate(context);
     const store = fileAt(files, 'src/stores/action-scope-store.ts') ?? '';
     expect(store).toContain(
-      "const runMutable = action(() => {\n    let count = 0;\n    count = (count + 1);\n    result.set(count);\n  }, 'runMutable');",
+      "const runMutable = action(() => {\n    let count = 0;\n    count = intAdd(count, 1);\n    result.set(count);\n  }, 'runMutable');",
     );
   });
 });

@@ -111,7 +111,22 @@ function foldBinary(
   const value = evaluate(operator, left, right, node, context);
   if (value === undefined) return undefined;
 
+  // An `int` result that JavaScript cannot represent exactly is **not** folded (ADR-0050). Every number here is a
+  // JavaScript double, so `3037000499 * 3037000499` evaluates to `9223372030926249000` — the *rounded* value, where
+  // Dart's 64-bit int is `9223372030926249001` — and folding it would bake the wrong constant into a target-neutral IR,
+  // upstream of any generator that could refuse it. Declining leaves the expression for the build-time diagnostic that
+  // reports a constant leaving the safe-integer domain.
+  if (typeof value === 'number' && isDartInt(node['type']) && !Number.isSafeInteger(value)) return undefined;
+
   return literal(value, node);
+}
+
+/** Whether a `TypeRef` is Dart's `int` — the type whose JavaScript representation is exact only up to 2^53 − 1. */
+function isDartInt(type: unknown): boolean {
+  if (type === null || typeof type !== 'object') return false;
+  const ref = type as Record<string, unknown>;
+  // `int` cannot be a project class's name, so a missing `library` (a hand-built node) is still Dart's `int`.
+  return (ref['library'] === undefined || ref['library'] === 'dart:core') && (ref['name'] === 'int' || ref['name'] === 'int?');
 }
 
 /** `-x`, `!x` over a literal. */

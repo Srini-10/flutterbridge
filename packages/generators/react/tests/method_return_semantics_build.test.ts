@@ -49,10 +49,10 @@ describe('M10-D: bounded instance-method return values may be chained, real anal
     expect(primitive!.contents).toContain('Model_multiply({ count: 7 }, 3)');
     const inExpr = files.find((f) => f.path.endsWith('primitive-result-in-expression-demo.tsx'));
     expect(inExpr).toBeDefined();
-    expect(inExpr!.contents).toContain('(Model_multiply({ count: 7 }, 3) + 2)');
+    expect(inExpr!.contents).toContain('intAdd(Model_multiply({ count: 7 }, 3), 2)');
     const multiple = files.find((f) => f.path.endsWith('multiple-results-demo.tsx'));
     expect(multiple).toBeDefined();
-    expect(multiple!.contents).toContain('(Model_multiply({ count: 7 }, 2) + Model_multiply({ count: 7 }, 3))');
+    expect(multiple!.contents).toContain('intAdd(Model_multiply({ count: 7 }, 2), Model_multiply({ count: 7 }, 3))');
   });
 
   // R4 — a getter call on a method's own result composes to a real helper call, never `.doubled` property

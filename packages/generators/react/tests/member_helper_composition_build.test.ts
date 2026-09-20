@@ -32,9 +32,9 @@ describe('M10-B: one member helper calling another on the same receiver, real an
     const model = files.find((f) => f.path.endsWith('lib/model.ts'));
     expect(model).toBeDefined();
     expect(model!.contents).toContain('export function Model_doubled(self: Model): number {');
-    expect(model!.contents).toContain('export function Model_quadrupled(self: Model): number {\n  return (Model_doubled(self) * 2);\n}');
+    expect(model!.contents).toContain('export function Model_quadrupled(self: Model): number {\n  return intMul(Model_doubled(self), 2);\n}');
     expect(model!.contents).toContain(
-      'export function Model_quadrupledExplicit(self: Model): number {\n  return (Model_doubled(self) * 2);\n}',
+      'export function Model_quadrupledExplicit(self: Model): number {\n  return intMul(Model_doubled(self), 2);\n}',
     );
   });
 
@@ -58,7 +58,7 @@ describe('M10-B: one member helper calling another on the same receiver, real an
     const model = files.find((f) => f.path.endsWith('lib/model.ts'));
     expect(model).toBeDefined();
     expect(model!.contents).toContain(
-      'export function Model_combined(self: Model, factor: number): number {\n  return (Model_doubled(self) + Model_multiply(self, factor));\n}',
+      'export function Model_combined(self: Model, factor: number): number {\n  return intAdd(Model_doubled(self), Model_multiply(self, factor));\n}',
     );
   });
 
@@ -135,8 +135,8 @@ describe('M10-B: one member helper calling another on the same receiver, real an
     const { files } = reactGenerator.generate(context);
     const model = files.find((f) => f.path.endsWith('lib/model.ts'));
     expect(model).toBeDefined();
-    expect(model!.contents).toContain('export function Model_lateHelper(self: Model): number {\n  return (self.count + 1);\n}');
-    expect(model!.contents).toContain('export function Model_earlyCaller(self: Model): number {\n  return (Model_lateHelper(self) * 3);\n}');
+    expect(model!.contents).toContain('export function Model_lateHelper(self: Model): number {\n  return intAdd(self.count, 1);\n}');
+    expect(model!.contents).toContain('export function Model_earlyCaller(self: Model): number {\n  return intMul(Model_lateHelper(self), 3);\n}');
   });
 
   it('real `tsc --strict` accepts the generated output', () => {

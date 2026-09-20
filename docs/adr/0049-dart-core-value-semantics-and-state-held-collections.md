@@ -56,7 +56,9 @@ is refused by name (`BRG3002`) with the reason. "A different one needs its own e
 `List`, `Set`, `Map`, `Iterable` or `num` (an int or a double at runtime — JavaScript cannot say which). A
 project class's own `add`/`join` is a different receiver type and is unaffected.
 
-**D3a — Bit and shift operators (added M11-I, after the audit's numeric probe).** `SAFE_BINARY` had listed
+**D3a — Bit and shift operators (added M11-I, after the audit's numeric probe). Superseded by [ADR-0050](0050-dart-integer-semantics.md):** a runtime `int` operand is no longer refused but lowered to exact, checked helpers, and the `+ - *` precision limitation noted below is closed. What follows is the record of the position at the time.
+
+ `SAFE_BINARY` had listed
 `& | ^ << >>` as "the same in both languages". Twelve cases run against real Dart showed five wrong: JavaScript's
 are 32-bit and Dart's `int` is 64-bit (`1 << 40` → `256` for `1099511627776`; `0xFFFFFFFF & 0xFFFF0000` →
 `-65536` for `4294901760`; `1 << 31` negative; `4294967296 | 1` → `1`), and on a `bool`, `&`/`|`/`^` return a

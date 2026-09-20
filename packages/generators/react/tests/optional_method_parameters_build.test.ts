@@ -86,7 +86,7 @@ describe('M10-E: bounded instance methods may carry an optional positional param
     expect(model).toBeDefined();
     expect(model!.contents).toContain(
       'export function Model_scaledAndDoubled(self: Model, factor: number, bonus: number = 1): number {\n' +
-        '  return (Model_multiply(self, factor, bonus) + Model_doubled(self));\n' +
+        '  return intAdd(Model_multiply(self, factor, bonus), Model_doubled(self));\n' +
         '}',
     );
   });

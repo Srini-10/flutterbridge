@@ -111,6 +111,27 @@ describe('N6 refuses to fold what it is not certain of', () => {
     expect(binding(fold(program).program)['kind']).toBe('bind.Expr');
   });
 
+  it('an int product JavaScript cannot represent exactly is not folded (ADR-0050)', () => {
+    // 3037000499 * 3037000499 is 9223372030926249001 in Dart's 64-bit int and 9223372030926249000 as a JavaScript
+    // double. Folding it baked the rounded value into the IR, upstream of any generator that could refuse it.
+    const program = Program.of([widget(binary('e', '*', lit('l', 3037000499), lit('r', 3037000499)))]);
+
+    expect(binding(fold(program).program)['kind']).toBe('bind.Expr');
+  });
+
+  it('an int sum past 2^53 is not folded, but one at the boundary still is', () => {
+    const over = Program.of([widget(binary('e', '+', lit('l', 9007199254740991), lit('r', 1)))]);
+    expect(binding(fold(over).program)['kind']).toBe('bind.Expr');
+
+    const at = Program.of([widget(binary('e', '+', lit('l', 9007199254740990), lit('r', 1)))]);
+    expect(binding(fold(at).program)['value']).toBe(9007199254740991);
+  });
+
+  it('a double product is folded however large — IEEE-754 is the same in both languages', () => {
+    const program = Program.of([widget(binary('e', '*', lit('l', 3037000499.5, 'double'), lit('r', 3037000499.5, 'double'), 'double'))]);
+    expect(binding(fold(program).program)['kind']).toBe('bind.Const');
+  });
+
   it('division by zero is not folded, and says why', () => {
     // Dart's `1 ~/ 0` throws; JavaScript's `1 / 0` is Infinity; and §A15 prohibits Infinity from
     // canonical form outright. A compiler that picks one of those has changed the program.

@@ -23,7 +23,7 @@ describe('M10-A: a method parameter or local shadowing a field of the identical 
     // `this.value` (the field) — never confused with the bare `value` parameter reference just below it.
     expect(model!.contents).toContain('const viaField = self.value;');
     expect(model!.contents).toContain('const viaParam = value;');
-    expect(model!.contents).toContain('return (viaField + viaParam);');
+    expect(model!.contents).toContain('return intAdd(viaField, viaParam);');
   });
 
   // M10-A §13/§58's own literal form: `this.value` and the shadowing parameter `value` combined in ONE
@@ -36,7 +36,7 @@ describe('M10-A: a method parameter or local shadowing a field of the identical 
     const model = files.find((f) => f.path.endsWith('lib/model.ts'));
     expect(model).toBeDefined();
     expect(model!.contents).toContain('export function Box_exactCombine(self: Box, value: number): number {');
-    expect(model!.contents).toContain('return (self.value + value);');
+    expect(model!.contents).toContain('return intAdd(self.value, value);');
   });
 
   it('a local variable named like a field, with no parameter of the same name, still resolves `this.field` to the field', () => {
@@ -49,7 +49,7 @@ describe('M10-A: a method parameter or local shadowing a field of the identical 
     expect(model!.contents).toContain('export function Box_doubledViaLocal(self: Box): number {');
     // The local's own initializer reads the FIELD (`self.value`) — the local itself does not yet exist
     // at that point in its own initializer, exactly as Dart's own scoping already requires.
-    expect(model!.contents).toContain('const value = (self.value * 2);');
+    expect(model!.contents).toContain('const value = intMul(self.value, 2);');
     expect(model!.contents).toContain('return value;');
   });
 

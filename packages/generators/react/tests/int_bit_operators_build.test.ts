@@ -20,9 +20,10 @@ import {
 //   1 << 31                  Dart 2147483648      JavaScript -2147483648
 //   true & false             Dart false           JavaScript 0            (bool & is logic, not arithmetic)
 //
-// A 64-bit lowering would be exact only while results stay within 2^53, so a runtime `int` is refused by name.
-// What *can* be proved is lowered: two integer literals fold to Dart's exact 64-bit result at compile time (flag
-// constants like `1 << 20`), and `bool & | ^` becomes `Boolean(Number(a) & Number(b))` — valid strict TypeScript, both operands still evaluated.
+// ADR-0050 replaces the earlier refusal of a runtime `int` with an exact lowering: the checked helpers of the runtime
+// kit (`intShl`, `intAnd`, … — BigInt-exact within the safe-integer domain, `BRG4011` beyond it). Two integer
+// literals fold to Dart's exact 64-bit result at compile time (`1 << 20` flags), a constant that leaves the domain is
+// refused at build time, and `bool & | ^` becomes `Boolean(Number(a) op Number(b))`.
 
 afterAll(cleanupBuildProofTemporaries);
 
@@ -64,23 +65,70 @@ describe('what is provable is lowered', () => {
   });
 });
 
-describe('what is not provable is refused by name', () => {
+describe('a runtime int goes through the checked, exact helpers (ADR-0050)', () => {
+  it('a runtime shift is intShl, not a 32-bit JavaScript shift', () => {
+    const source = component('runtime-shift');
+    expect(source).toMatch(/intShl\(_n\.get\(\), 40\)/);
+    expect(source).not.toContain('<<');
+  });
+
+  it('a compound mask is intAnd', () => {
+    expect(component('runtime-mask')).toMatch(/_n\.set\(intAnd\(_n\.(get|peek)\(\), 4278190080\)\)/);
+  });
+
+  it('~ is intNot', () => {
+    expect(component('runtime-not')).toContain('intNot(_n.get())');
+  });
+
+  it('a product, a compound add and an increment are each checked', () => {
+    const source = component('runtime-arithmetic');
+    expect(source).toContain('intMul(');
+    expect(source).toMatch(/intAdd\(/);
+    expect(source).not.toMatch(/\* 7|\+ 1\b/);
+  });
+
+  it('% and ~/ use the Dart-correct helpers, not the old formula', () => {
+    const source = component('runtime-modulo');
+    expect(source).toContain('intMod(');
+    expect(source).toContain('intTruncDiv(');
+    expect(source).not.toContain('Math.trunc');
+  });
+
+  it('an overflowing product is intMul — which throws BRG4011 at runtime instead of rounding', () => {
+    expect(component('runtime-overflow')).toMatch(/intMul\(_n\.(get|peek)\(\), _n\.(get|peek)\(\)\)/);
+  });
+
+  it('% and ~/ on a double use numMod and numTruncDiv — the old formula was wrong for a negative divisor', () => {
+    const source = component('double-modulo');
+    expect(source).toContain('numMod(');
+    expect(source).toContain('numTruncDiv(');
+    expect(source).not.toContain('Math.trunc');
+  });
+
+  it('the helpers are imported from the runtime kit', () => {
+    expect(component('runtime-shift')).toMatch(/import \{[^}]*intShl[^}]*\} from '@bridge\/runtime-react'/);
+  });
+});
+
+describe('a constant the domain cannot hold is refused at build time, before any code is emitted', () => {
   const refuse = () => {
     const { context, reported } = harness(compiledFrom(intBitRefusalRaw()));
     const { files } = reactGenerator.generate(context);
     return { files, errors: reported.filter((d) => d.code === 'BRG3002' && d.severity === 'error') };
   };
 
-  it('refuses a runtime shift, a runtime mask, a runtime ~, and a constant that is not a safe integer', () => {
+  it('refuses 1 << 62, an overflowing product, a division by zero and a negative shift, and emits nothing', () => {
     const { files, errors } = refuse();
     expect(errors).toHaveLength(4);
     expect(files).toEqual([]);
   });
 
-  it('explains the 32-bit / 64-bit difference with a concrete example', () => {
+  it('each message names the constant and the reason', () => {
     const messages = refuse().errors.map((d) => d.message);
-    expect(messages.some((m) => m.startsWith('`<<`') && m.includes('1099511627776'))).toBe(true);
-    expect(messages.some((m) => m.startsWith('`&`'))).toBe(true);
-    expect(messages.some((m) => m.startsWith('`~` on an `int`'))).toBe(true);
+    expect(messages.some((m) => m.includes('1 << 62') && m.includes('safe-integer domain'))).toBe(true);
+    expect(messages.some((m) => m.includes('3037000499 * 3037000499') && m.includes('safe-integer domain'))).toBe(true);
+    expect(messages.some((m) => m.includes('5 ~/ 0') && m.includes('divides by zero'))).toBe(true);
+    expect(messages.some((m) => m.includes('1 << -1') && m.includes('negative count'))).toBe(true);
+    expect(messages.every((m) => m.includes('ADR-0050'))).toBe(true);
   });
 });

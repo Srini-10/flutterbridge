@@ -1,6 +1,6 @@
 name: int_bit_refusal
 description: >-
-  M11-I (plan Phase E) negative proof: a bit or shift operation on a non-constant Dart int has no faithful lowering (JavaScript is 32-bit) and is refused by name.
+  M11-I (plan Phase E) negative proof: an int constant expression that divides by zero, shifts by a negative count, or leaves the safe-integer domain is refused at build time (ADR-0050), never emitted as a rounded number.
 publish_to: 'none'
 version: 1.0.0
 

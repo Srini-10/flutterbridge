@@ -39,7 +39,7 @@ describe('M11-B: an explicitly awaited call to a project-defined async method lo
     const { files } = reactGenerator.generate(context);
     const model = fileAt(files, 'src/generated/dart/app/lib/model.ts') ?? '';
     expect(model).toContain(
-      'export async function Model_load(self: Model): Promise<number> {\n  return (self.count * 2);\n}',
+      'export async function Model_load(self: Model): Promise<number> {\n  return intMul(self.count, 2);\n}',
     );
     const store = fileAt(files, 'src/stores/demo-store.ts') ?? '';
     expect(store).toContain('loadResult.set((await Model_load({ count: 7 })));');
@@ -53,7 +53,7 @@ describe('M11-B: an explicitly awaited call to a project-defined async method lo
     const model = fileAt(files, 'src/generated/dart/app/lib/model.ts') ?? '';
     expect(model).toContain(
       'export async function Model_scale(self: Model, factor: number, bonus: number = 0): Promise<number> {\n' +
-        '  return ((self.count * factor) + bonus);\n}',
+        '  return intAdd(intMul(self.count, factor), bonus);\n}',
     );
     const store = fileAt(files, 'src/stores/demo-store.ts') ?? '';
     expect(store).toContain('scaleResult.set((await Model_scale({ count: 7 }, 3, 1)));');
@@ -67,7 +67,7 @@ describe('M11-B: an explicitly awaited call to a project-defined async method lo
     const { files } = reactGenerator.generate(context);
     const model = fileAt(files, 'src/generated/dart/app/lib/model.ts') ?? '';
     expect(model).toContain(
-      'export async function Model_loadStatic(x: number): Promise<number> {\n  return (x * 3);\n}',
+      'export async function Model_loadStatic(x: number): Promise<number> {\n  return intMul(x, 3);\n}',
     );
     const store = fileAt(files, 'src/stores/demo-store.ts') ?? '';
     expect(store).toContain('staticResult.set((await Model_loadStatic(5)));');
@@ -113,7 +113,7 @@ describe('M11-B: an explicitly awaited call to a project-defined async method lo
     const model = fileAt(files, 'src/generated/dart/app/lib/model.ts') ?? '';
     expect(model).toContain(
       'export async function Model_useSelf(self: Model): Promise<number> {\n' +
-        '  return ((await Model_load(self)) + 1);\n}',
+        '  return intAdd((await Model_load(self)), 1);\n}',
     );
   });
 });

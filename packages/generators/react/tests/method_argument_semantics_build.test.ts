@@ -48,7 +48,7 @@ describe('M10-C: bounded instance-method calls with multiple arguments and varie
     expect(model!.contents).toContain(
       'export function Model_weighted(self: Model, a: number, b: number, c: number): number {',
     );
-    expect(model!.contents).toContain('return ((((self.count * 100) + (a * 10)) - (b * 3)) + c);');
+    expect(model!.contents).toContain('return intAdd(intSub(intAdd(intMul(self.count, 100), intMul(a, 10)), intMul(b, 3)), c);');
     const component = files.find((f) => f.path.endsWith('method-argument-order-demo.tsx'));
     expect(component).toBeDefined();
     expect(component!.contents).toContain('Model_weighted({ count: 7 }, 1, 2, 3)');
@@ -63,7 +63,7 @@ describe('M10-C: bounded instance-method calls with multiple arguments and varie
     const model = files.find((f) => f.path.endsWith('lib/model.ts'));
     expect(model).toBeDefined();
     expect(model!.contents).toContain(
-      'export function Model_shadowedArg(self: Model, count: number): number {\n  return (count * 2);\n}',
+      'export function Model_shadowedArg(self: Model, count: number): number {\n  return intMul(count, 2);\n}',
     );
     const component = files.find((f) => f.path.endsWith('method-argument-order-demo.tsx'));
     expect(component).toBeDefined();

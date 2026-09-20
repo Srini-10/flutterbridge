@@ -44,7 +44,9 @@ describe('ADR-29 build-proof: top-level function module emission, real analyzer 
     const source = fileAt(files, 'src/generated/dart/module-emission-utils/format-utils.ts') ?? '';
     expect(source).toContain('export function describeBoth(a: number, b: number) {');
     expect(source).toContain('${classify(a)} and ${classify(b)}');
-    expect(source).not.toContain('import');
+    // Nothing is imported *for the callee*: a same-file call is a plain call. (The module does import the runtime
+    // kit's checked `int` helpers now — ADR-0050 — which is a different import for a different reason.)
+    expect(source).not.toMatch(/import [^;]* from '(?!@bridge\/runtime-react)/);
   });
 
   it('a cross-file, same-package call imports the callee by its own module', () => {

@@ -31,7 +31,7 @@ describe('M9-B build-proof: C-style multi-declaration loop variable identity, re
     const { files } = reactGenerator.generate(context);
     const source = fileAt(files, 'src/components/home-screen.tsx') ?? '';
     expect(source).toContain(
-      'for (let i = 0, j = 10; (i < j); i = i + 1, j = j - 1) {\n      out = out + `${i},${j};`;\n    }',
+      'for (let i = 0, j = 10; (i < j); i = intAdd(i, 1), j = intSub(j, 1)) {\n      out = out + `${i},${j};`;\n    }',
     );
   });
 
@@ -39,14 +39,14 @@ describe('M9-B build-proof: C-style multi-declaration loop variable identity, re
     const { context } = harness(after);
     const { files } = reactGenerator.generate(context);
     const source = fileAt(files, 'src/components/home-screen.tsx') ?? '';
-    expect(source).toContain('for (let i = 0, j = 1, k = 2; (i < 3); i = i + 1, j = j + 1, k = k + 1) {');
+    expect(source).toContain('for (let i = 0, j = 1, k = 2; (i < 3); i = intAdd(i, 1), j = intAdd(j, 1), k = intAdd(k, 1)) {');
   });
 
   it('byte-identical initializer content never collapses to one declaration', () => {
     const { context } = harness(after);
     const { files } = reactGenerator.generate(context);
     const source = fileAt(files, 'src/components/home-screen.tsx') ?? '';
-    expect(source).toContain('for (let i = 0, j = 0; ((i < j) || (i < 2)); i = i + 1, j = j + 1) {');
+    expect(source).toContain('for (let i = 0, j = 0; ((i < j) || (i < 2)); i = intAdd(i, 1), j = intAdd(j, 1)) {');
   });
 
   it('nested multi-declaration loops sharing both variable names never conflate the inner and outer declarations', () => {
@@ -58,7 +58,7 @@ describe('M9-B build-proof: C-style multi-declaration loop variable identity, re
     // of scope. The proof that they are four distinct *declarations* lives at the extraction level
     // (`extraction_test.dart`), the same division every other identity build-proof in this suite uses.
     expect(source).toContain(
-      'for (let i = 0, j = 2; (i < j); i = i + 1, j = j - 1) {\n      for (let i = 0, j = 1; (i < j); i = i + 1, j = j - 1) {\n        out = out + `inner:${i},${j};`;\n      }\n      out = out + `outer:${i},${j};`;\n    }',
+      'for (let i = 0, j = 2; (i < j); i = intAdd(i, 1), j = intSub(j, 1)) {\n      for (let i = 0, j = 1; (i < j); i = intAdd(i, 1), j = intSub(j, 1)) {\n        out = out + `inner:${i},${j};`;\n      }\n      out = out + `outer:${i},${j};`;\n    }',
     );
   });
 
@@ -75,7 +75,7 @@ describe('M9-B build-proof: C-style multi-declaration loop variable identity, re
     const { files } = reactGenerator.generate(context);
     const source = fileAt(files, 'src/components/home-screen.tsx') ?? '';
     expect(source).toContain(
-      'for (let i = 0, j = 5; (i < j); i = i + 1, j = j - 1) {\n      out = out + `${i},${j};`;\n    }\n    const i = 99;\n    out = out + `after:${i}`;',
+      'for (let i = 0, j = 5; (i < j); i = intAdd(i, 1), j = intSub(j, 1)) {\n      out = out + `${i},${j};`;\n    }\n    const i = 99;\n    out = out + `after:${i}`;',
     );
   });
 

@@ -114,7 +114,7 @@ describe('M11-D: an ordinary local declared inside an inline render-tree callbac
     const { context } = harness(normalized);
     const { files } = reactGenerator.generate(context);
     const file = fileAt(files, 'src/components/mutable-capture-widget.tsx') ?? '';
-    expect(file).toMatch(/let count = 0;\s*\n\s*count = \(count \+ 1\);\s*\n\s*_result\.set\(count\);/);
+    expect(file).toMatch(/let count = 0;\s*\n\s*count = intAdd\(count, 1\);\s*\n\s*_result\.set\(count\);/);
   });
 
   // R9 — multiple reads of the same captured declaration.
@@ -123,7 +123,7 @@ describe('M11-D: an ordinary local declared inside an inline render-tree callbac
     const { context } = harness(normalized);
     const { files } = reactGenerator.generate(context);
     const file = fileAt(files, 'src/components/multiple-reads-widget.tsx') ?? '';
-    expect(file).toMatch(/const value = 3;\s*\n\s*_result\.set\(\(value \+ value\)\);/);
+    expect(file).toMatch(/const value = 3;\s*\n\s*_result\.set\(intAdd\(value, value\)\);/);
   });
 
   // R10 — multiple captured locals from the same enclosing callback.
@@ -132,7 +132,7 @@ describe('M11-D: an ordinary local declared inside an inline render-tree callbac
     const { context } = harness(normalized);
     const { files } = reactGenerator.generate(context);
     const file = fileAt(files, 'src/components/multiple-captures-widget.tsx') ?? '';
-    expect(file).toMatch(/const a = 1;\s*\n\s*const b = 2;\s*\n\s*_result\.set\(\(a \+ b\)\);/);
+    expect(file).toMatch(/const a = 1;\s*\n\s*const b = 2;\s*\n\s*_result\.set\(intAdd\(a, b\)\);/);
   });
 
   // R11 — an ordinary captured local sharing a name with a collection-for loop item (M9-F) elsewhere in

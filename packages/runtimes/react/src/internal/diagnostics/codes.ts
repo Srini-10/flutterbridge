@@ -54,6 +54,18 @@ export const RuntimeDiagnosticCode = {
    * refuses the same program at build time (`BRG3012`) when it can see the key.
    */
   UnknownAsset: 'BRG4010',
+  /**
+   * A Dart `int` operation produced a value outside the JavaScript safe-integer domain (±(2^53 − 1)).
+   *
+   * A Dart `int` is 64-bit and a JavaScript number is a double, so past 2^53 the result would be *rounded*: `3037000499
+   * * 3037000499` is `9223372030926249001` in Dart and `…000` in JavaScript. Every `int` operation the generator emits is
+   * checked, so an out-of-domain result is this error rather than a wrong number that looks right (ADR-0050).
+   */
+  IntegerOutOfDomain: 'BRG4011',
+  /** An `int` `~/` or `%` by zero — Dart throws; JavaScript yields `Infinity` or `NaN` and carries on. */
+  IntegerDivisionByZero: 'BRG4012',
+  /** A shift by a negative count, or a non-integer where an `int` is required. */
+  InvalidIntegerOperand: 'BRG4013',
 } as const;
 
 /** A diagnostic code owned by the runtime kit (ADR-20). */

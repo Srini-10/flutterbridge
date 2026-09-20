@@ -116,7 +116,7 @@ describe('bounded structural instance getter execution (ADR-0038, M9-Q)', () => 
     expect(source).not.toContain('.doubled');
     const model = modelFile(nodes);
     expect(model).toMatch(/export function Model_doubled\(self: Model\): number \{/);
-    expect(model).toContain('self.count * 2');
+    expect(model).toContain('intMul(self.count, 2)');
     expect(model).not.toContain('class Model');
   });
 
@@ -229,8 +229,8 @@ describe('bounded structural instance getter execution (ADR-0038, M9-Q)', () => 
     const { files } = reactGenerator.generate(context);
     expect(reported.filter((d) => d.severity === 'error')).toEqual([]);
     const model = fileAt(files, 'src/generated/dart/app/lib/main.ts') ?? '';
-    expect(model).toContain('self.count * 2');
-    expect(model).toContain('self.count * 3');
+    expect(model).toContain('intMul(self.count, 2)');
+    expect(model).toContain('intMul(self.count, 3)');
     // Two distinct exported function names — never one shadowing/overwriting the other.
     const exported = [...model.matchAll(/export function (\w+)\(/g)].map((m) => m[1]);
     expect(new Set(exported).size).toBe(exported.length);
@@ -274,8 +274,8 @@ describe('bounded structural instance getter execution (ADR-0038, M9-Q)', () => 
     const { files } = reactGenerator.generate(context);
     expect(reported.filter((d) => d.severity === 'error')).toEqual([]);
     const model = fileAt(files, 'src/generated/dart/app/lib/main.ts') ?? '';
-    expect(model).toContain('self.count * 2');
-    expect(model).toContain('self.count * 3');
+    expect(model).toContain('intMul(self.count, 2)');
+    expect(model).toContain('intMul(self.count, 3)');
     const exported = [...model.matchAll(/export function (\w+)\(/g)].map((m) => m[1]);
     expect(new Set(exported).size).toBe(exported.length);
     expect(exported).toContain('Foo_bar_baz');

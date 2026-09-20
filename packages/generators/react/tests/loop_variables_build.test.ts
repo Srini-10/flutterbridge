@@ -37,7 +37,7 @@ describe('M9-A build-proof: a for-loop’s own declared variable(s), real analyz
     const { context } = harness(after);
     const { files } = reactGenerator.generate(context);
     const source = fileAt(files, 'src/components/home-screen.tsx') ?? '';
-    expect(source).toContain('for (let i = 0; (i < 3); i = i + 1) {');
+    expect(source).toContain('for (let i = 0; (i < 3); i = intAdd(i, 1)) {');
   });
 
   it('nested loops with distinct names never conflate the inner and outer declarations', () => {

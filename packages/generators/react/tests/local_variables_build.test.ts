@@ -40,7 +40,7 @@ describe('M8-N build-proof: ordinary local variables, real analyzer to real tsc'
     const source = fileAt(files, 'src/components/home-screen.tsx') ?? '';
 
     expect(source).toContain('const value = 21;');
-    expect(source).toContain('_log.set((value + value));');
+    expect(source).toContain('_log.set(intAdd(value, value));');
     // Never inlined as two separate literals — that would silently duplicate a non-trivial initializer.
     expect(source).not.toMatch(/_log\.set\(\(21 \+ 21\)\)/);
   });
@@ -52,7 +52,7 @@ describe('M8-N build-proof: ordinary local variables, real analyzer to real tsc'
 
     expect(source).toContain('let count = 0;');
     expect(source).not.toContain('const count = 0;');
-    expect(source).toMatch(/count = \(count \+ 1\);\s*\n\s*count = count \+ 1;/);
+    expect(source).toMatch(/count = intAdd\(count, 1\);\s*\n\s*count = intAdd\(count, 1\);/);
   });
 
   it('a shadowed local resolves each read to its own declaration, not by name', () => {

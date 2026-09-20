@@ -45,7 +45,7 @@ describe('M8-F build-proof: a component from a local path dependency, real analy
     // proving the dependency component is a genuine, independently-functioning component, not a stub
     // that merely accepts a prop.
     expect(card).toMatch(/const \[_count\] = useState\(\(\) => signal\(0\)\);/);
-    expect(card).toContain('_count.set((_count.get() + 1));');
+    expect(card).toContain('_count.set(intAdd(_count.get(), 1));');
   });
 
   it('typechecks against the real runtime kit', () => {

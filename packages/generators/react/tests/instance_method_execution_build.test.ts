@@ -40,7 +40,7 @@ describe('M10-A: an eligible instance method call on a locally-constructed recei
     expect(interfaceMatch![1]).not.toContain('multiply');
     // A real, standalone helper function — `self` first, then the method's own parameters, in order.
     expect(model!.contents).toContain('export function Model_multiply(self: Model, factor: number): number {');
-    expect(model!.contents).toContain('return (self.count * factor);');
+    expect(model!.contents).toContain('return intMul(self.count, factor);');
   });
 
   it('the call site passes the receiver and the argument, in order, to the helper — never a method property', () => {
@@ -70,7 +70,7 @@ describe('M10-A: an eligible instance method call on a locally-constructed recei
     const model = files.find((f) => f.path.endsWith('lib/model.ts'));
     expect(model).toBeDefined();
     expect(model!.contents).toContain('export function Model_subtract(self: Model, a: number, b: number): number {');
-    expect(model!.contents).toContain('return ((self.count - a) - b);');
+    expect(model!.contents).toContain('return intSub(intSub(self.count, a), b);');
     const component = files.find((f) => f.path.endsWith('method-call-on-local.tsx'));
     expect(component).toBeDefined();
     expect(component!.contents).toContain('Model_subtract({ count: 7 }, 5, 2)');

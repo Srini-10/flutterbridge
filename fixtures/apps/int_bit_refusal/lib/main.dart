@@ -18,104 +18,23 @@ class HomeScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Scaffold(
         body: Column(children: const [
-          RuntimeShift(),
-          RuntimeMask(),
-          RuntimeNot(),
-          UnsafeFold(),
+          ConstantShift(),
+          ConstantProduct(),
+          ConstantZeroDivision(),
+          ConstantNegativeShift(),
         ]),
       );
 }
 
-/// Shift of a runtime int.
-class RuntimeShift extends StatefulWidget {
-  const RuntimeShift({super.key});
+/// 1 << 62 is exactly representable as a double but is not a safe integer: refused at build time.
+class ConstantShift extends StatefulWidget {
+  const ConstantShift({super.key});
 
   @override
-  State<RuntimeShift> createState() => _RuntimeShiftState();
+  State<ConstantShift> createState() => _ConstantShiftState();
 }
 
-class _RuntimeShiftState extends State<RuntimeShift> {
-  int _n = 1;
-
-  @override
-  Widget build(BuildContext context) => Column(
-        children: [
-          ElevatedButton(
-            onPressed: () {
-              setState(() {
-                _n = _n << 40;
-              });
-            },
-            child: const Text('go'),
-          ),
-          Text('$_n'),
-        ],
-      );
-}
-
-/// Mask of a runtime int.
-class RuntimeMask extends StatefulWidget {
-  const RuntimeMask({super.key});
-
-  @override
-  State<RuntimeMask> createState() => _RuntimeMaskState();
-}
-
-class _RuntimeMaskState extends State<RuntimeMask> {
-  int _n = 4294967295;
-
-  @override
-  Widget build(BuildContext context) => Column(
-        children: [
-          ElevatedButton(
-            onPressed: () {
-              setState(() {
-                _n = _n & 4278190080;
-              });
-            },
-            child: const Text('go'),
-          ),
-          Text('$_n'),
-        ],
-      );
-}
-
-/// Unary ~ of a runtime int.
-class RuntimeNot extends StatefulWidget {
-  const RuntimeNot({super.key});
-
-  @override
-  State<RuntimeNot> createState() => _RuntimeNotState();
-}
-
-class _RuntimeNotState extends State<RuntimeNot> {
-  int _n = 5;
-
-  @override
-  Widget build(BuildContext context) => Column(
-        children: [
-          ElevatedButton(
-            onPressed: () {
-              setState(() {
-                _n = ~_n;
-              });
-            },
-            child: const Text('go'),
-          ),
-          Text('$_n'),
-        ],
-      );
-}
-
-/// A constant whose exact 64-bit result is not a safe integer is not folded.
-class UnsafeFold extends StatefulWidget {
-  const UnsafeFold({super.key});
-
-  @override
-  State<UnsafeFold> createState() => _UnsafeFoldState();
-}
-
-class _UnsafeFoldState extends State<UnsafeFold> {
+class _ConstantShiftState extends State<ConstantShift> {
   int _n = 0;
 
   @override
@@ -125,6 +44,87 @@ class _UnsafeFoldState extends State<UnsafeFold> {
             onPressed: () {
               setState(() {
                 _n = 1 << 62;
+              });
+            },
+            child: const Text('go'),
+          ),
+          Text('$_n'),
+        ],
+      );
+}
+
+/// A product that leaves the int domain: 3037000499 * 3037000499 (JavaScript would print …000).
+class ConstantProduct extends StatefulWidget {
+  const ConstantProduct({super.key});
+
+  @override
+  State<ConstantProduct> createState() => _ConstantProductState();
+}
+
+class _ConstantProductState extends State<ConstantProduct> {
+  int _n = 0;
+
+  @override
+  Widget build(BuildContext context) => Column(
+        children: [
+          ElevatedButton(
+            onPressed: () {
+              setState(() {
+                _n = 3037000499 * 3037000499;
+              });
+            },
+            child: const Text('go'),
+          ),
+          Text('$_n'),
+        ],
+      );
+}
+
+/// A constant division by zero: Dart throws at runtime; JavaScript would produce Infinity.
+class ConstantZeroDivision extends StatefulWidget {
+  const ConstantZeroDivision({super.key});
+
+  @override
+  State<ConstantZeroDivision> createState() => _ConstantZeroDivisionState();
+}
+
+class _ConstantZeroDivisionState extends State<ConstantZeroDivision> {
+  int _n = 0;
+
+  @override
+  Widget build(BuildContext context) => Column(
+        children: [
+          ElevatedButton(
+            onPressed: () {
+              setState(() {
+                _n = 5 ~/ 0;
+              });
+            },
+            child: const Text('go'),
+          ),
+          Text('$_n'),
+        ],
+      );
+}
+
+/// A constant shift by a negative count.
+class ConstantNegativeShift extends StatefulWidget {
+  const ConstantNegativeShift({super.key});
+
+  @override
+  State<ConstantNegativeShift> createState() => _ConstantNegativeShiftState();
+}
+
+class _ConstantNegativeShiftState extends State<ConstantNegativeShift> {
+  int _n = 0;
+
+  @override
+  Widget build(BuildContext context) => Column(
+        children: [
+          ElevatedButton(
+            onPressed: () {
+              setState(() {
+                _n = 1 << -1;
               });
             },
             child: const Text('go'),

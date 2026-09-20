@@ -69,7 +69,7 @@ describe('M9-G build-proof: ScaffoldMessenger/SnackBar presentation (ADR-0030), 
     // The action's own callback body is exactly the `setState` write Flutter's source wrote — nothing
     // here calls anything to dismiss the snack bar; the host does that automatically (ADR-0030 §11).
     expect(source).toContain(
-      "action: { label: 'Undo', onPress: () => {\n  _undoCount.set((_undoCount.get() + 1));\n} }",
+      "action: { label: 'Undo', onPress: () => {\n  _undoCount.set(intAdd(_undoCount.get(), 1));\n} }",
     );
   });
 

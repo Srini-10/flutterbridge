@@ -35,7 +35,7 @@ describe('M9-R final closure build-proof: the complete bounded project-class sub
     // governing brief — "type-shape honesty": the runtime object does not physically contain `doubled`).
     expect(model).not.toMatch(/readonly doubled/);
     expect(model).toMatch(/export function Model_doubled\(self: Model\): number \{/);
-    expect(model).toContain('self.count * 2');
+    expect(model).toContain('intMul(self.count, 2)');
     expect(model).not.toContain('class Model');
     expect(model).not.toMatch(/\.prototype\b/);
     expect(model).not.toMatch(/\bany\b/);

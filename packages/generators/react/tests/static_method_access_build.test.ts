@@ -40,7 +40,7 @@ describe('M11-A: a call to a project-defined class\'s own static method lowers t
     const { files } = reactGenerator.generate(context);
     const model = files.find((f) => f.path.endsWith('lib/model.ts'));
     expect(model).toBeDefined();
-    expect(model!.contents).toContain('export function Model_compute(x: number): number {\n  return (x * 2);\n}');
+    expect(model!.contents).toContain('export function Model_compute(x: number): number {\n  return intMul(x, 2);\n}');
     const component = files.find((f) => f.path.endsWith('smallest-positive-demo.tsx'));
     expect(component).toBeDefined();
     expect(component!.contents).toContain('Model_compute(3)');
@@ -55,7 +55,7 @@ describe('M11-A: a call to a project-defined class\'s own static method lowers t
     const model = files.find((f) => f.path.endsWith('lib/model.ts'));
     expect(model).toBeDefined();
     expect(model!.contents).toContain(
-      'export function Model_scale(x: number, bonus: number = 0): number {\n  return ((x * 3) + bonus);\n}',
+      'export function Model_scale(x: number, bonus: number = 0): number {\n  return intAdd(intMul(x, 3), bonus);\n}',
     );
     const component = files.find((f) => f.path.endsWith('multiple-calls-demo.tsx'));
     expect(component).toBeDefined();
@@ -86,7 +86,7 @@ describe('M11-A: a call to a project-defined class\'s own static method lowers t
     expect(model).toBeDefined();
     expect(model!.contents).toContain(
       'export function Model_composeWithInstance(m: Model): number {\n' +
-        '  return (Model_doubled(m) + Model_compute(m.count));\n' +
+        '  return intAdd(Model_doubled(m), Model_compute(m.count));\n' +
         '}',
     );
   });
@@ -101,7 +101,7 @@ describe('M11-A: a call to a project-defined class\'s own static method lowers t
     expect(reported.filter((d) => d.severity === 'error')).toEqual([]);
     const other = files.find((f) => f.path.endsWith('lib/other-model.ts'));
     expect(other).toBeDefined();
-    expect(other!.contents).toContain('export function OtherModel_compute(x: number): number {\n  return (x * 5);\n}');
+    expect(other!.contents).toContain('export function OtherModel_compute(x: number): number {\n  return intMul(x, 5);\n}');
     const component = files.find((f) => f.path.endsWith('cross-file-demo.tsx'));
     expect(component).toBeDefined();
     expect(component!.contents).toContain('Model_compute(3)');

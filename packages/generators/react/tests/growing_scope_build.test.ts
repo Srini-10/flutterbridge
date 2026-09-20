@@ -31,21 +31,21 @@ describe('M9-C build-proof: sequential declaration-list scope, real analyzer to 
     const { context } = harness(after);
     const { files } = reactGenerator.generate(context);
     const source = fileAt(files, 'src/components/home-screen.tsx') ?? '';
-    expect(source).toContain('let a = 1;\n    let b = (a + 1);\n    _log.set(`${a},${b}`);');
+    expect(source).toContain('let a = 1;\n    let b = intAdd(a, 1);\n    _log.set(`${a},${b}`);');
   });
 
   it('a three-step chain resolves each declaration against the one immediately before it, in order', () => {
     const { context } = harness(after);
     const { files } = reactGenerator.generate(context);
     const source = fileAt(files, 'src/components/home-screen.tsx') ?? '';
-    expect(source).toContain('let a = 1;\n    let b = (a + 1);\n    let c = (b + 1);');
+    expect(source).toContain('let a = 1;\n    let b = intAdd(a, 1);\n    let c = intAdd(b, 1);');
   });
 
   it('a later declaration can resolve more than one earlier declaration, not only its immediate predecessor', () => {
     const { context } = harness(after);
     const { files } = reactGenerator.generate(context);
     const source = fileAt(files, 'src/components/home-screen.tsx') ?? '';
-    expect(source).toContain('let a = 1;\n    let b = 2;\n    let c = (a + b);');
+    expect(source).toContain('let a = 1;\n    let b = 2;\n    let c = intAdd(a, b);');
   });
 
   it('an outer local stays visible throughout, and a nested declaration list resolves sequentially, source order preserved', () => {
@@ -53,7 +53,7 @@ describe('M9-C build-proof: sequential declaration-list scope, real analyzer to 
     const { files } = reactGenerator.generate(context);
     const source = fileAt(files, 'src/components/home-screen.tsx') ?? '';
     expect(source).toContain(
-      "let x = 10;\n    let out = '';\n    let a = x;\n    let b = (a + x);\n    out = `${a},${b}`;",
+      "let x = 10;\n    let out = '';\n    let a = x;\n    let b = intAdd(a, x);\n    out = `${a},${b}`;",
     );
   });
 
@@ -62,7 +62,7 @@ describe('M9-C build-proof: sequential declaration-list scope, real analyzer to 
     const { files } = reactGenerator.generate(context);
     const source = fileAt(files, 'src/components/home-screen.tsx') ?? '';
     expect(source).toContain(
-      'let a = 1;\n    let b = (a + 1);\n    let out = `${a},${b}`;\n    const a2 = 99;',
+      'let a = 1;\n    let b = intAdd(a, 1);\n    let out = `${a},${b}`;\n    const a2 = 99;',
     );
   });
 
@@ -78,14 +78,14 @@ describe('M9-C build-proof: sequential declaration-list scope, real analyzer to 
     const { context } = harness(after);
     const { files } = reactGenerator.generate(context);
     const source = fileAt(files, 'src/components/home-screen.tsx') ?? '';
-    expect(source).toContain('for (let i = 0, j = (i + 1); (j < 5); i = i + 1, j = j + 1) {');
+    expect(source).toContain('for (let i = 0, j = intAdd(i, 1); (j < 5); i = intAdd(i, 1), j = intAdd(j, 1)) {');
   });
 
   it('a C-style loop’s own third declaration resolves both earlier declarations', () => {
     const { context } = harness(after);
     const { files } = reactGenerator.generate(context);
     const source = fileAt(files, 'src/components/home-screen.tsx') ?? '';
-    expect(source).toContain('for (let i = 0, j = 1, k = (i + j); (k < 8); i = i + 1, j = j + 1, k = k + 1) {');
+    expect(source).toContain('for (let i = 0, j = 1, k = intAdd(i, j); (k < 8); i = intAdd(i, 1), j = intAdd(j, 1), k = intAdd(k, 1)) {');
   });
 
   it('Flutter → analyzer → compiler (N1–N11, N5 unmodified) → generator → tsc', () => {

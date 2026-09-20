@@ -499,6 +499,26 @@ export { delay } from './internal/async/delay.js';
 // static Dart type is `double`; see the file for why the runtime cannot decide that on its own.
 export { doubleToString } from './internal/format/dart_string.js';
 
+// ── M11 (ADR-0050): Dart `int` semantics ──────────────────────────────────────────────────────────
+//
+// Checked, exact-or-loud `int` operations; see the file for the supported domain.
+export {
+  intAdd,
+  intAnd,
+  intMod,
+  intMul,
+  intNot,
+  intOr,
+  intShl,
+  intShr,
+  intSub,
+  intTruncDiv,
+  intUshr,
+  intXor,
+  numMod,
+  numTruncDiv,
+} from './internal/num/dart_int.js';
+
 // ── M4-G: the application shell ───────────────────────────────────────────────────────────────────
 //
 // There is deliberately no `MaterialApp`. Everything it carries has already been consumed by the time a

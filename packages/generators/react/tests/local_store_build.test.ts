@@ -27,9 +27,9 @@ describe('M7-N build-proof: a locally-owned store instance, real analyzer to rea
     // Every member keyed by the name the author wrote — not `value_<hash>` (declaredName recovery,
     // ADR-27's `nameIndex` extension to `logic.PropertyAccess`/`logic.MethodCall`).
     expect(store).toContain("derived(() => _count.get(), 'count')");
-    expect(store).toContain("derived(() => (_count.get() * 2), 'doubled')");
-    expect(store).toContain("action(() => {\n    _count.set(_count.peek() + 1);\n  }, 'increment')");
-    expect(store).toContain("action((n: number) => {\n    _count.set(_count.peek() + n);\n  }, 'add')");
+    expect(store).toContain("derived(() => intMul(_count.get(), 2), 'doubled')");
+    expect(store).toContain("action(() => {\n    _count.set(intAdd(_count.peek(), 1));\n  }, 'increment')");
+    expect(store).toContain("action((n: number) => {\n    _count.set(intAdd(_count.peek(), n));\n  }, 'add')");
   });
 
   it('two instances of the same store are acquired independently, never sharing a local', () => {
@@ -88,7 +88,7 @@ describe('M7-N build-proof: a locally-owned store instance, real analyzer to rea
     expect(reported.filter((d) => d.severity === 'error')).toEqual([]);
 
     const store = fileAt(files, 'src/stores/counter-store.ts') ?? '';
-    expect(store).toContain("action((n: number = 5) => {\n    _count.set(_count.peek() + n);\n  }, 'bump')");
+    expect(store).toContain("action((n: number = 5) => {\n    _count.set(intAdd(_count.peek(), n));\n  }, 'bump')");
 
     const source = fileAt(files, 'src/components/counters-screen.tsx') ?? '';
     expect(source).toMatch(/onPressed=\{\(\) => \{\s*return _left\.bump\(\);\s*\}\}/);

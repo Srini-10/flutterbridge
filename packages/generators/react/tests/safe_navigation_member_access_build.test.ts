@@ -84,7 +84,7 @@ describe('M10-F: safe-navigation (`?.`) on a bare reference receiver lowers to a
     const model = files.find((f) => f.path.endsWith('lib/model.ts'));
     expect(model).toBeDefined();
     expect(model!.contents).toContain(
-      'export function Model_quadrupled(self: Model): number {\n  return (Model_doubled(self) * 2);\n}',
+      'export function Model_quadrupled(self: Model): number {\n  return intMul(Model_doubled(self), 2);\n}',
     );
   });
 

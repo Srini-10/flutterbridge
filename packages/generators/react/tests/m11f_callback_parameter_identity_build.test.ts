@@ -96,6 +96,6 @@ describe('M11-F: a real parameterized callback reads its own parameter correctly
     const { context } = harness(normalized);
     const { files } = reactGenerator.generate(context);
     const store = fileAt(files, 'src/stores/demo-store.ts') ?? '';
-    expect(store).toMatch(/const runWith = action\(\(value: number\) => \{\s*const doubled = \(value \* 2\);\s*result\.set\(doubled\);/);
+    expect(store).toMatch(/const runWith = action\(\(value: number\) => \{\s*const doubled = intMul\(value, 2\);\s*result\.set\(doubled\);/);
   });
 });

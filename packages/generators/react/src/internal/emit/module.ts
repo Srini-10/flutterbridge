@@ -82,6 +82,8 @@ const GENERATED_NAMES: ReadonlySet<string> = new Set([
   'typographyIfDefined', 'untracked', 'useAssetManifest', 'useDerived', 'useLocalStore', 'useMountEffect',
   'useMounted', 'useRouter', 'useSignal', 'useSignalEffect', 'useSnackbarHost', 'useStore', 'useTheme',
   'useThemeSurface', 'useUnmountEffect', 'useUpdateEffect', 'withOpacity', 'wrapAlignItems',
+  'intAdd', 'intAnd', 'intMod', 'intMul', 'intNot', 'intOr', 'intShl', 'intShr', 'intSub', 'intTruncDiv', 'intUshr',
+  'intXor', 'numMod', 'numTruncDiv',
 ]);
 
 /** Whether `name` is one the generated code binds or calls unqualified. Exported for the drift-guard test. */

@@ -42,7 +42,7 @@ describe('M11-G: a mutable local mutated within its own declaring callback resol
     const { context } = harness(normalized);
     const { files } = reactGenerator.generate(context);
     const file = fileAt(files, 'src/components/same-scope-widget.tsx') ?? '';
-    expect(file).toMatch(/let count = 0;\s*\n\s*count = count \+ 1;\s*\n\s*_result\.set\(count\);/);
+    expect(file).toMatch(/let count = 0;\s*\n\s*count = intAdd\(count, 1\);\s*\n\s*_result\.set\(count\);/);
   });
 
   // R10 — multiple mutable locals, both mutated within the same callback.
@@ -51,7 +51,7 @@ describe('M11-G: a mutable local mutated within its own declaring callback resol
     const { context } = harness(normalized);
     const { files } = reactGenerator.generate(context);
     const file = fileAt(files, 'src/components/multiple-locals-widget.tsx') ?? '';
-    expect(file).toMatch(/let a = 1;\s*\n\s*let b = 2;\s*\n\s*a = a \+ 1;\s*\n\s*b = b \+ 1;\s*\n\s*_result\.set\(\(a \+ b\)\);/);
+    expect(file).toMatch(/let a = 1;\s*\n\s*let b = 2;\s*\n\s*a = intAdd\(a, 1\);\s*\n\s*b = intAdd\(b, 1\);\s*\n\s*_result\.set\(intAdd\(a, b\)\);/);
   });
 
   // R2/Case C — a mutable build()-level local, captured and READ ONLY (never written).
@@ -71,7 +71,7 @@ describe('M11-G: a mutable local mutated within its own declaring callback resol
     const { context } = harness(normalized);
     const { files } = reactGenerator.generate(context);
     const file = fileAt(files, 'src/components/shadowed-mutation-widget.tsx') ?? '';
-    expect(file).toMatch(/let value = 1;\s*\n\s*value = value \+ 1;\s*\n\s*_result\.set\(value\);/);
+    expect(file).toMatch(/let value = 1;\s*\n\s*value = intAdd\(value, 1\);\s*\n\s*_result\.set\(value\);/);
     expect(file).toContain('outer ${100}');
   });
 });
