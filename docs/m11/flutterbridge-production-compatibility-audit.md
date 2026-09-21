@@ -47,10 +47,83 @@ was inherited; a `Timer`/signal receiver was read twice; a named argument called
 
 ## Not done (honestly)
 
-Riverpod and the package boundary above; `InkWell`/gestures, `LayoutBuilder`/constraints (still refused with their existing diagnostics — not
-built in this phase); route names; extension methods (61 in one app); records; a **large production app running in Chromium** — not achieved.
-No claim of universal Flutter support is made.
+Riverpod and the package boundary above; a **large production app running in Chromium** — not achieved.
+No claim of universal Flutter support is made. (Extensions, records, gestures, `LayoutBuilder` and route names, listed here as not done in phase 2, were built in phase 3 below.)
 
 ## Gates on the final tree
 
 `just ci` exit 0; `just release-check` exit 0; `just e2e` 66 tests in Chromium (production and development) pass; `just determinism` byte-identical across every run (an earlier attempt failed only on a `pub.dev` socket error and was re-run). `git diff --check` clean. `fixtures/apps/hello_bridge/analysis_options.yaml` (the user's change) is untouched and unstaged.
+
+---
+
+# Phase 3 — final gap closure (baseline `3490e6b`)
+
+Commits `e5ca29a`, `d9180d9`, `a81da3d`, `31ed986`, `3b1d892`, `4ac2eae` and this report; ADR-0068…0073. Real applications again analysed **read-only, in disposable copies**; no
+fix names an application, a package's private class or a file.
+
+## Final real-application report
+
+| | Application A (240-file consumer app) | Application B (21-package monorepo, 127 routes) |
+| --- | --- | --- |
+| Analyzer errors | 0 (baseline 0) | 0 (baseline 0) |
+| Generator errors, baseline `3490e6b` → now | **599 → 523** | **4 675 → 4 444** |
+| TypeScript typecheck of the output | not reached (generation refuses, so nothing is emitted) | not reached |
+| Next dev / production build | not reached | not reached |
+| Browser (Chromium) | **not run — no production app compiles; not claimed** | **not run — not claimed** |
+
+**Exact blockers, by root cause** (histograms taken from the generator's own diagnostics, `hist.py` over `bridge generate` output):
+
+| Root cause | A | B | Status |
+| --- | --- | --- | --- |
+| Riverpod: `ref` (`BRG3006`), provider top-level `final`s (`BRG3013`), notifier classes, `ConsumerWidget` | ~19 + ~19 (+ `_repository` 16, `state` 22) | 482 + 478 (+ the classes and initializers built on them) | **not implemented yet** — named per use (`BRG3020` summary: 272 typed references in A) |
+| Package calls with named arguments (`dio`, Supabase `.order(ascending:)`, `withValues(alpha:)`) — "needs the callee's signature" | 77 | 457 | package boundary; refused |
+| `dio` (`DioException` members, `Dio` calls) | 30 + 8 | — | **not implemented yet** (→ `fetch`) |
+| Audio playback/recording, file picking | ~40 | — | **not implemented yet** (→ HTMLAudioElement / MediaRecorder / `<input type=file>`) |
+| Design-system theme extension (`context.colors`, `context.palette`; `BRG3010` material roles from a theme built by a helper) | 36 + 31 | 221 + 310 | **not built**; `context` is refused as a `BuildContext` |
+| Top-level `final` whose initializer builds a package object | 19 | 478 | the initializer's diagnostic + package named |
+| Project top-level functions/classes reached through the above | 13 + 29 | 248 + 233 | follows the causes above |
+| Everything else (catch clauses on types not testable at runtime, static fields, `debugPrint` — now lowered) | ≤ 50 | ≤ 900 | individually listed by the diagnostics |
+
+Nothing was silently dropped between runs: every refusal is a diagnostic (`0` errors from the analyzer; each generator error names its construct), the generator still writes **nothing** on error,
+and the count changes only where a construct was lowered (extensions, records, patterns, gestures, `LayoutBuilder`, route names, collection printing, `debugPrint`, numeric methods) or its
+message was made specific. **Level 1** (analysis + honest refusal of the rest) is the state of both applications; Level 2/3 are not claimed.
+
+## What phase 3 built (each with an ADR, a fixture compared with real Flutter/Dart, and mutants)
+
+| ADR | Capability | Evidence |
+| --- | --- | --- |
+| 0068 | Extension members (methods, getters, setters, generic/nullable receivers); **incremental analyzer no longer serves a stale class when another file starts inheriting it** | oracle fixture; incremental regression + mutant |
+| 0069 | Records; list/map/record patterns in declarations, `if`-case, `for`-in, switches | oracle fixture; 9 mutants |
+| 0070 | `GestureDetector`/`InkWell`: tap, double tap, long press, tap down/up/cancel, hover, focus, Enter/Space, disabled — timings measured in `flutter test` | 11 oracle scenarios; Chromium (real mouse/keyboard); 17 mutants (11 in jsdom, 6 in Chromium); refusal fixture (pan/drag/scale/force-press by name) |
+| 0071 | `LayoutBuilder` (constraints measured, structural height, rebuilt on resize/nesting); widget-returning builder closures; `num.round/floor/ceil/truncate/toInt/abs/clamp` | 7 oracle scenarios; Chromium resize of a container **and** the viewport; found two real defects the jsdom suite could not (shrink-wrapped parents, bound inside a scroller); 12 mutants |
+| 0072 | `goNamed`/`pushNamed`/`pushReplacementNamed` by declared name; **a departure to any route is now lowered** (`logic.Navigate.route`) — none was before | analyzer tests + mutants; Chromium suite on a go_router app |
+| 0073 | Package boundaries named (3 states), per-package summary, `BuildContext` refusal, top-level variable causes, collections in interpolation (18 vectors from Dart + oracle), `debugPrint` | unit tests + mutants |
+
+## Silent defects found and fixed in this phase
+
+An incremental run served a stale class after a cross-file inheritance change; hoisted callbacks typed a `TapDownDetails` parameter `unknown`; no navigation to a route was ever lowered
+(only inline destinations); a collection in string interpolation was refused wholesale although Dart's text for `String`/`int`/`bool`/`double` elements is exactly reproducible; an app root's `routerConfig:` pulled a
+`GoRouter` initializer into the module emitter (`BRG3013`); a refusal blamed "mutable state shared across requests" for a `final` whose initializer was a Riverpod provider.
+
+## Performance (analyze + generate, real applications, this machine)
+
+| | baseline `3490e6b` | now |
+| --- | --- | --- |
+| A — analyze (interleaved ×3) | 24.5 / 25.2 / 30.3 s | 25.7 / 32.5 / 27.7 s |
+| A — generate | 0.6–0.7 s | 0.8–1.0 s |
+| B — analyze (×3) | 79.0 / 74.0 / 78.3 s | 87.7 / 83.7 / 87.5 s |
+| B — generate | 2.1–2.6 s | 2.1–2.5 s |
+
+Roughly +5–10 % on analysis, inside this machine's run-to-run spread (±5 s on A); the analyzer now extracts more (extension functions, patterns, widget values), which is real work, not overhead.
+
+## Not done (honestly)
+
+Riverpod, `dio`, audio/recording/file-picker/Supabase adapters, the theme-extension model (`context.colors`), `go`'s replace-the-stack semantics and URL synchronisation, `pathParameters` on
+named navigation, drag/pan/scale gestures, `BoxConstraints` minimum sizes; a large production app compiling and running in Chromium — **not achieved, not claimed**. FlutterBridge remains a
+compiler for a stated subset that refuses the rest; it is not universally Flutter-compatible.
+
+## Gates on the final tree
+
+`just ci` exit 0 (1 663 TypeScript tests, 652 Dart tests, lint, codegen drift, dependency rules); `just release-check` exit 0; `just e2e` **90 tests** in Chromium (66 before this phase + 24 new: interaction
+17, named routes 6 — production and development) all pass; `just determinism` byte-identical across every run. `git diff --check` clean. `fixtures/apps/hello_bridge/analysis_options.yaml` (the user's change)
+is untouched and unstaged.

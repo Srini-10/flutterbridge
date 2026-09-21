@@ -103,6 +103,16 @@ Extension members (instance methods, getters, setters, generic and nullable rece
 against `flutter test`. `LayoutBuilder` with `maxWidth`, `maxHeight`, `hasBoundedWidth`, `hasBoundedHeight`, rebuilt on resize. `num.round/floor/ceil/truncate/toInt/abs/clamp` are
 checked against real Dart.
 
+## Collections in interpolation — ADR-0073
+
+`'$list'`, `'$set'`, `'$map'` print as Dart does (`[1, 2]`, `{x, y}`, `{a: 1}`, `null` elements, doubles as `1.0`, nested collections) when the element types are `String`, `int`, `bool`, `double` or
+such collections. A `num`, enum, class or `dynamic` element is refused. `debugPrint` prints a console line.
+
+## Navigation by name — ADR-0072
+
+go_router `goNamed`/`pushNamed`/`pushReplacementNamed` resolve against the routes' `name:` (nested routes at their joined path); so do `go('/x')`/`Navigator.pushNamed('/x')` — a
+departure to a route is now lowered at all (`logic.Navigate.route`).
+
 ## Compatibility contract
 
 Every construct is in exactly one of three classes. Nothing is in a fourth ("works, mostly").
@@ -123,15 +133,17 @@ Everything listed above. Each has a fixture in `fixtures/apps/` whose scenarios 
 | A mixin's `super` | Reaches the class's superclass (exact when the mixin sits directly above it). |
 | `int.parse` / integers | Beyond 2^53 it is refused or throws, never rounds (ADR-0050). |
 | Gestures ([ADR-0070](../adr/0070-gestures.md)) | Ancestor scrollers do not delay `onTapDown`; no ink ripple; the innermost detector with a callback takes the press (Flutter runs one arena per recogniser kind); hover callbacks are not suppressed after a key press. |
-| `LayoutBuilder` ([ADR-0071](../adr/0071-layout-builder.md)) | Runs after layout (not on the server); wrapper fills its parent; `maxHeight` is `Infinity` when the parent's height depends on its content; minimum sizes are not stated (refused). |
+| `LayoutBuilder` ([ADR-0071](../adr/0071-layout-builder.md)) | Runs after layout (not on the server); `maxWidth` is the width of the nearest ancestor whose width does not depend on its content, `maxHeight` is read structurally (scroll view / column main axis → `Infinity`, explicit height → bounded); minimum sizes are not stated (refused). |
+| `go`/`goNamed` ([ADR-0072](../adr/0072-route-names.md)) | Lowered as a push (go_router's `go` replaces the stack); the URL is not updated; `pathParameters`/`queryParameters`/`extra` are not carried (the edge is refused with a warning). |
 | The incremental analyzer | A class newly extended from another file is not re-extracted until its own file changes; a clean run is exact (ADR-0059). |
 
 ### EXPLICITLY REFUSED (a diagnostic names it)
 
-Riverpod (`ref`, `Provider`, `ConsumerWidget`, `state`), `dio`, audio/recording/file-picker plugins, `supabase`, `Theme.extension`
-design-system context extensions, pan/drag/scale/secondary/long-press-sub-event gestures (`BRG3017`, "not built yet") and force press (`BRG3017`, "no browser equivalent"),
+Packages ([ADR-0073](../adr/0073-package-adapters-and-boundaries.md)) — **not implemented yet** (a browser equivalent exists): Riverpod (`ref`, providers, notifiers, `ConsumerWidget`), `dio`/`http` (→ `fetch`),
+audio playback and recording, file picking, `shared_preferences`, Supabase, `url_launcher`; **no browser equivalent**: `path_provider`, on-device databases, permissions and native services.
+`Theme.extension` design-system context extensions (`context.colors`; `context` as a value is refused as a `BuildContext`), pan/drag/scale/secondary/long-press-sub-event gestures (`BRG3017`, "not built yet") and force press (`BRG3017`, "no browser equivalent"),
 `BoxConstraints` minimum-size and tightness members (`BRG3013`, no browser equivalent), slivers, `CustomPainter`, drag-to-reorder, `GlobalKey`, static/operator extension members,
-local function declarations, `yield`, route *names* (`goNamed`), a route held in a variable, custom `RenderObjectWidget`/`InheritedWidget`
+local function declarations, `yield`, `goNamed` with `pathParameters`/`queryParameters`/`extra`, a route held in a variable, custom `RenderObjectWidget`/`InheritedWidget`
 (declared as opaque components), a named generative constructor of a stateful widget, a redirecting widget constructor, mutable statics and
 top-level variables (state shared across requests, INV-19), `on` clauses naming a type that cannot be tested at runtime.
 

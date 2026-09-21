@@ -38,10 +38,10 @@ Honest numbers, measured rather than estimated (M11 close, `docs/m11/flutterbrid
 | | |
 | --- | --- |
 | Widget coverage | **56.8%** of every widget instantiation in two real, unmodified Flutter apps (M5) |
-| Semantic claims checked against real Dart / Flutter | integers (3 477 cases), collections (361), strings (1 824), and 29 scenarios in which a real Flutter widget and the generated React component are driven through the same script and compared after every step |
-| Browser proof | 6 generated applications built with `next build` and run in Chromium — production and development — 66 tests |
-| Full gate | `just ci`: 1 462 TypeScript tests, 644 Dart tests, lint, codegen drift, dependency rules |
-| A real application that compiles end to end | `examples/counter` and the fixture apps. **No large production application does.** Two real apps analysed read-only (a 240-file consumer app, a 21-package monorepo) now *analyse* with 0 errors (296 → 0 and 45 → 0; the monorepo's routes 0 → 127); generation stops at package APIs with no model (Riverpod, `dio`, audio plugins, `supabase`, theme-extension design systems) — see `docs/m11/flutterbridge-production-compatibility-audit.md` |
+| Semantic claims checked against real Dart / Flutter | integers (3 477 cases), collections (361), strings (1 824), and 70 scenarios in which a real Flutter widget and the generated React component are driven through the same script and compared after every step |
+| Browser proof | 8 generated applications built with `next build` and run in Chromium — production and development — 90 tests (gestures, `LayoutBuilder` resize, go_router names included) |
+| Full gate | `just ci`: 1 663 TypeScript tests, 652 Dart tests, lint, codegen drift, dependency rules |
+| A real application that compiles end to end | `examples/counter` and the fixture apps. **No large production application does.** Two real apps analysed read-only (a 240-file consumer app, a 21-package monorepo) now *analyse* with 0 errors (296 → 0 and 45 → 0; the monorepo's routes 0 → 127); generation stops at package APIs with no adapter, each refused by name (Riverpod, `dio`, audio plugins, `supabase`) and at the theme-extension model — 599 → 523 and 4 675 → 4 444 generator errors in phase 3 — see `docs/m11/flutterbridge-production-compatibility-audit.md` |
 
 **The language subset that *does* compile is exact, or it is refused by name.** [`docs/guide/language-support.md`](docs/guide/language-support.md)
 lists it: `int` arithmetic within the safe-integer domain (loud beyond it), `List`/`Set`/`Map` mutated in place through
