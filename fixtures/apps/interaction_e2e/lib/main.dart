@@ -105,6 +105,18 @@ class _LayoutSectionState extends State<LayoutSection> {
         LayoutBuilder(
           builder: (BuildContext context, BoxConstraints c) => Text('page: ${c.maxWidth.round()} free=${!c.hasBoundedHeight}'),
         ),
+        // A shrink-wrapped, padded parent: the builder is offered the page's width less the padding, not the width of the box.
+        Container(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            children: [
+              const SizedBox(width: 100, child: Text('narrow sibling')),
+              LayoutBuilder(
+                builder: (BuildContext context, BoxConstraints c) => Text('padded: ${c.maxWidth.round()}'),
+              ),
+            ],
+          ),
+        ),
         SizedBox(
           width: 400,
           child: Padding(

@@ -147,6 +147,12 @@
       "> tap,long enabled=false"
     ],
     [
+      "> tap,long enabled=false"
+    ],
+    [
+      "> tap,long enabled=false"
+    ],
+    [
       "> tap,long enabled=true"
     ],
     [

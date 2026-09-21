@@ -3,5 +3,6 @@
   "Responsive": ["wide", "narrow", "wide"],
   "NestedBuilders": ["200", "400"],
   "Ratios": ["w250", "w400"],
-  "Unbounded": []
+  "Unbounded": [],
+  "Inside": []
 }

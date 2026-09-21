@@ -53,7 +53,7 @@ export interface LayoutBuilderProps {
 interface Node_ {
   readonly parentElement: Node_ | null;
   readonly children: ArrayLike<Node_>;
-  readonly style: { display: string; height: string };
+  readonly style: { display: string; height: string; flex: string };
   getBoundingClientRect(): { readonly width: number; readonly height: number };
 }
 interface ComputedLike {
@@ -83,6 +83,9 @@ const horizontalInsets = (c: ComputedLike): number =>
   length(c.paddingLeft) + length(c.paddingRight) + length(c.borderLeftWidth) + length(c.borderRightWidth);
 const verticalInsets = (c: ComputedLike): number =>
   length(c.paddingTop) + length(c.paddingBottom) + length(c.borderTopWidth) + length(c.borderBottomWidth);
+
+/** Whether a flex item takes free space on the main axis — `Expanded` (`flex: 1 1 0%`), `flex-grow > 0`. */
+const grows = (node: Node_): boolean => length(computed(node).flexGrow) > 0 || length(node.style.flex) > 0;
 
 /** Whether `node`'s width is the same with everything inside it hidden — i.e. it does not shrink-wrap its content. */
 function widthIsIndependent(node: Node_): boolean {
@@ -129,7 +132,7 @@ function offeredHeight(wrapper: Node_): number {
     if (style.overflowY === 'auto' || style.overflowY === 'scroll') return Number.POSITIVE_INFINITY;
     const explicit = /^-?[\d.]+px$/.test(node.style.height) ? Number.parseFloat(node.style.height) : undefined;
     if (explicit !== undefined) return Math.max(0, explicit - verticalInsets(style) - inset);
-    if (style.display.includes('flex') && style.flexDirection.startsWith('column') && !(length(computed(child).flexGrow) > 0)) {
+    if (style.display.includes('flex') && style.flexDirection.startsWith('column') && !grows(child)) {
       return Number.POSITIVE_INFINITY;
     }
     inset += verticalInsets(style);

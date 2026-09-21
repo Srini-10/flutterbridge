@@ -138,6 +138,17 @@ describe('M8-V — numeric method recognition', () => {
     }
   });
 
+  it('`clamp` lowers to numClamp (Dart orders by compareTo: NaN and -0.0), `abs` to Math.abs', () => {
+    const clamp = build('n', DART_CORE_DOUBLE, (r) =>
+      methodCall('m1', 'clamp', r, [lit('a1', 0, DART_CORE_INT), lit('a2', 5, DART_CORE_INT)], DART_CORE_DOUBLE),
+    );
+    expect(clamp.reported.filter((d) => d.severity === 'error')).toEqual([]);
+    expect(clamp.source).toContain('numClamp(props.n, 0, 5)');
+    expect(clamp.source).not.toContain('Math.min');
+    const abs = build('n', DART_CORE_DOUBLE, (r) => methodCall('m1', 'abs', r, [], DART_CORE_DOUBLE));
+    expect(abs.source).toContain('Math.abs(props.n)');
+  });
+
   it('a receiver with no resolved type is untouched — falls through to the ordinary, unchanged lowering', () => {
     const receiver = { id: 'r1', kind: 'logic.Ref', span, name: 'x' };
     const nodes: AnyUirNode[] = [

@@ -85,6 +85,10 @@ test.describe('an InkWell (ADR-0070)', () => {
     await expect(page.getByText('ink: in enabled=true', { exact: true })).toBeVisible();
     await ink.click();
     await expect(page.getByText('ink: in,tap enabled=true', { exact: true })).toBeVisible();
+    // The browser focused the element on the click; Flutter did not (so no `focus`), and an Enter now must not activate it.
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(100);
+    await expect(page.getByText('ink: in,tap enabled=true', { exact: true })).toBeVisible();
     await page.getByText('press pad').hover();
     await expect(page.getByText('ink: in,tap,out enabled=true', { exact: true })).toBeVisible();
   });
@@ -137,6 +141,19 @@ test.describe('a LayoutBuilder (ADR-0071)', () => {
     await expect(page.getByText(/^page: \d+ free=true$/)).toHaveText(/^page: (4\d\d|500) free=true$/);
     const after = Number((await page.getByText(/^page: \d+ free=true$/).textContent())?.match(/\d+/)?.[0]);
     expect(after).toBeLessThan(before);
+  });
+
+  test('a shrink-wrapped, padded parent still offers the page width less its padding', async ({ page }) => {
+    await page.setViewportSize({ width: 900, height: 700 });
+    await page.goto('/');
+    const number = async (pattern: RegExp): Promise<number> =>
+      Number((await page.getByText(pattern).textContent())?.match(/\d+/)?.[0]);
+    await expect(page.getByText(/^padded: \d+$/)).toBeVisible();
+    const pageWidth = await number(/^page: \d+ free=true$/);
+    expect(await number(/^padded: \d+$/)).toBe(pageWidth - 40);
+    await page.setViewportSize({ width: 700, height: 700 });
+    await expect.poll(() => number(/^page: \d+ free=true$/)).toBeLessThan(pageWidth);
+    await expect.poll(async () => (await number(/^page: \d+ free=true$/)) - (await number(/^padded: \d+$/))).toBe(40);
   });
 
   test('a nested builder sees the space left after the padding around it', async ({ page }) => {

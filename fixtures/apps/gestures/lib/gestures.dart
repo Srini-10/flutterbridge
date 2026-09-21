@@ -137,6 +137,7 @@ class _InksState extends State<Inks> {
         InkWell(
           onTap: enabled ? () => note('tap') : null,
           onLongPress: enabled ? () => note('long') : null,
+          onHover: (bool h) => note(h ? 'in' : 'out'),
           child: const Padding(padding: EdgeInsets.all(8), child: Text('ink')),
         ),
       ],

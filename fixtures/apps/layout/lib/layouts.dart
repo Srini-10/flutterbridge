@@ -159,3 +159,51 @@ class Unbounded extends StatelessWidget {
     );
   }
 }
+
+class Inside extends StatelessWidget {
+  const Inside({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        // Expanded gives its child the Column's whole (bounded) height...
+        SizedBox(
+          height: 200,
+          child: Column(
+            children: [
+              Expanded(
+                child: LayoutBuilder(
+                  builder: (BuildContext context, BoxConstraints c) => Text('> expanded h=${c.maxHeight} bounded=${c.hasBoundedHeight}'),
+                ),
+              ),
+            ],
+          ),
+        ),
+        // ...a scroll view inside a bounded box gives its child none.
+        SizedBox(
+          height: 120,
+          child: SingleChildScrollView(
+            child: LayoutBuilder(
+              builder: (BuildContext context, BoxConstraints c) => Text('> scrolled h=${c.maxHeight} bounded=${c.hasBoundedHeight}'),
+            ),
+          ),
+        ),
+        // Padding narrows what the builder inside is offered.
+        SizedBox(
+          width: 300,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 30),
+            child: Column(
+              children: [
+                LayoutBuilder(
+                  builder: (BuildContext context, BoxConstraints c) => Text('> padded w=${c.maxWidth}'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}

@@ -18,6 +18,7 @@ final Map<String, Widget Function()> widgets = <String, Widget Function()>{
   'NestedBuilders': () => const NestedBuilders(),
   'Ratios': () => const Ratios(),
   'Unbounded': () => const Unbounded(),
+  'Inside': () => const Inside(),
 };
 
 List<String> outputs(WidgetTester tester) => <String>[

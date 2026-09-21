@@ -61,5 +61,12 @@
       "> free h=Infinity bounded=false",
       "> fixed h=60.0 bounded=true"
     ]
+  ],
+  "Inside": [
+    [
+      "> expanded h=200.0 bounded=true",
+      "> scrolled h=Infinity bounded=false",
+      "> padded w=240.0"
+    ]
   ]
 }

@@ -10588,7 +10588,7 @@ String f(List<int> xs, Map<String, Object?> m, List<(int, int)> ps) {
     }
 
     test('LayoutBuilder(builder:) keeps its control flow and returns widgets as logic.WidgetExpr', () async {
-      final Extracted e = await extract(r'''
+      final Extracted e = await extract('''
 import 'package:flutter/material.dart';
 class Host extends StatelessWidget {
   const Host({super.key});
