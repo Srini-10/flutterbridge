@@ -68,6 +68,10 @@ function directFunctionRefs(
   if (value === null || typeof value !== 'object') return;
   const node = value as Node;
   // A general class (M12) is reached by naming its type anywhere: a `TypeRef` with a `target` (a value object with no `kind`).
+  // …or by referring to one of an enhanced enum's constants (a `logic.Ref` whose target is the enum).
+  if (classes !== undefined && node['kind'] === 'logic.Ref' && typeof node['target'] === 'string' && classes.general.has(node['target'] as NodeId)) {
+    classes.found.add(node['target'] as NodeId);
+  }
   if (classes !== undefined && node['kind'] === undefined && typeof node['target'] === 'string' && typeof node['name'] === 'string') {
     if (classes.general.has(node['target'] as NodeId)) classes.found.add(node['target'] as NodeId);
   }
@@ -163,7 +167,7 @@ export function reachableFunctions(
       if (decl === undefined) continue;
       const before = new Set(classesOut);
       const discovered = new Set<NodeId>();
-      for (const key of ['superclass', 'interfaces', 'mixins', 'fields', 'constructors', 'methods']) {
+      for (const key of ['superclass', 'interfaces', 'mixins', 'fields', 'constructors', 'methods', 'constants']) {
         directFunctionRefs(decl[key], lookup, discovered, classes);
       }
       for (const candidate of discovered) {

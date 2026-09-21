@@ -153,6 +153,16 @@ final class RawNodeEmitter {
   /// M9-L's own component/store exclusions were written to avoid); or an unresolvable library (external
   /// package with no adapter, or a dependency this analysis root did not itself extract).
   String? _classTypeTarget(DartType type, Element? element) {
+    // An enhanced enum is a class in the output (M12, ADR-0056): its type names its declaration like a class's does.
+    if (element is EnumElement && isEnhancedEnum(element)) {
+      return Symbols.typeIn(
+        element.library.identifier,
+        element.name ?? '',
+        packageName: packageName,
+        localPackages: localPackageNames,
+        extractedDependencyFiles: extractedDependencyFiles,
+      );
+    }
     if (element is! ClassElement) {
       return null;
     }
@@ -262,3 +272,11 @@ final class RawNodeEmitter {
     diagnostics.add(Diagnostic(code: code, message: message, span: span(at), hint: hint));
   }
 }
+
+/// Whether [element] is an *enhanced* enum: it declares a field, a method, a getter, or a constructor of its own (M12, ADR-0056).
+/// Such an enum is emitted as a class; a plain one is its value names.
+bool isEnhancedEnum(EnumElement element) =>
+    element.fields.any((FieldElement f) => f.isOriginDeclaration && !f.isEnumConstant && !f.isStatic) ||
+    element.methods.any((MethodElement m) => m.isOriginDeclaration) ||
+    element.getters.any((GetterElement g) => g.isOriginDeclaration) ||
+    element.constructors.any((ConstructorElement c) => c.isOriginDeclaration);

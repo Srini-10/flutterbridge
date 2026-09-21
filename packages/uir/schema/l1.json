@@ -1605,6 +1605,42 @@
                 "description": "A value name."
               },
               "description": "Values, in declaration order."
+            },
+            "library": {
+              "type": "string",
+              "description": "For an *enhanced* enum (one with fields, methods or constants with arguments), the library file it belongs to — present only then. An enhanced enum is emitted as a class with one static instance per constant; a plain enum is its value names (M12, ADR-0056)."
+            },
+            "fields": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/FieldDecl",
+                "description": "A field."
+              },
+              "description": "An enhanced enum's instance fields, in declaration order."
+            },
+            "methods": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/FunctionDecl",
+                "description": "A method."
+              },
+              "description": "An enhanced enum's methods, getters and operators."
+            },
+            "constructors": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ConstructorDecl",
+                "description": "A constructor."
+              },
+              "description": "An enhanced enum's constructors (always `const`)."
+            },
+            "constants": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/EnumConstant",
+                "description": "A constant."
+              },
+              "description": "An enhanced enum's constants, in declaration order, with the arguments each is constructed from."
             }
           }
         }
@@ -2090,6 +2126,39 @@
           }
         }
       ]
+    },
+    "EnumConstant": {
+      "description": "One constant of an enhanced enum: `words(floor: 0.45)`.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "The constant's name."
+        },
+        "constructorName": {
+          "type": "string",
+          "description": "The named constructor it uses (`low.named(1)`). Absent for the unnamed one."
+        },
+        "args": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Expr",
+            "description": "A positional argument."
+          },
+          "description": "Positional arguments, in order."
+        },
+        "namedArgs": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/Expr"
+          },
+          "description": "Named arguments, by name."
+        }
+      }
     }
   }
 }

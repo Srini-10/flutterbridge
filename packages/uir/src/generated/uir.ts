@@ -14,7 +14,7 @@ import { createHash } from 'node:crypto';
 export const UIR_VERSION = '1.15.0' as const;
 
 /** A hash of the schema sources this module was generated from. */
-export const UIR_SCHEMA_HASH = '2154c603f4fa171b' as const;
+export const UIR_SCHEMA_HASH = 'f369c0e7f8ae8880' as const;
 
 /** Node kind -> the fields of that node which hold `NodeId` references. */
 export const UIR_REFERENCE_FIELDS: Readonly<Record<string, readonly string[]>> = {
@@ -809,6 +809,18 @@ export interface ConstructorInit {
   readonly value: Expr;
 }
 
+/// One constant of an enhanced enum: `words(floor: 0.45)`.
+export interface EnumConstant {
+  /// Positional arguments, in order.
+  readonly args?: readonly Expr[];
+  /// The named constructor it uses (`low.named(1)`). Absent for the unnamed one.
+  readonly constructorName?: string;
+  /// The constant's name.
+  readonly name: string;
+  /// Named arguments, by name.
+  readonly namedArgs?: Readonly<Record<string, Expr>>;
+}
+
 /// The layout information a ui-realm generator needs, computed by the `layout-boundedness` analysis.
 ///
 /// Additive: it is an optional field on `UiElement` and changes no existing node semantics.
@@ -1295,12 +1307,22 @@ export interface Endpoint {
 export interface EnumDecl {
   /// The override key, when the node is addressable by a human.
   readonly anchor?: Anchor;
+  /// An enhanced enum's constants, in declaration order, with the arguments each is constructed from.
+  readonly constants?: readonly EnumConstant[];
+  /// An enhanced enum's constructors (always `const`).
+  readonly constructors?: readonly ConstructorDecl[];
   /// Plugin extension data, namespaced `x-<plugin>`. Core passes round-trip it untouched (Spec §2.6).
   readonly ext?: Readonly<Record<string, unknown>>;
+  /// An enhanced enum's instance fields, in declaration order.
+  readonly fields?: readonly FieldDecl[];
   /// The node's stable, content-addressed identity.
   readonly id: NodeId;
   /// Discriminant.
   readonly kind: 'logic.EnumDecl';
+  /// For an *enhanced* enum (one with fields, methods or constants with arguments), the library file it belongs to — present only then. An enhanced enum is emitted as a class with one static instance per constant; a plain enum is its value names (M12, ADR-0056).
+  readonly library?: string;
+  /// An enhanced enum's methods, getters and operators.
+  readonly methods?: readonly FunctionDecl[];
   /// Enum name.
   readonly name: string;
   /// Where the node came from.
@@ -2557,6 +2579,32 @@ export function copyWithConstructorInit(node: ConstructorInit, patch: Partial<Co
   return { ...node, ...patch };
 }
 
+/** Parses a {@link EnumConstant}, validating as it goes. Throws {@link UirParseError} on bad input. */
+export function parseEnumConstant(value: unknown, path = 'EnumConstant'): EnumConstant {
+  const o = asObject(value, path);
+  return {
+    ...(own(o, 'args') === undefined || own(o, 'args') === null ? {} : { args: asList(own(o, 'args'), `${path}.args`, (v, p) => parseExpr(v, p)) }),
+    ...(own(o, 'constructorName') === undefined || own(o, 'constructorName') === null ? {} : { constructorName: asString(own(o, 'constructorName'), `${path}.constructorName`) }),
+    name: asString(req(o, 'name', path), `${path}.name`),
+    ...(own(o, 'namedArgs') === undefined || own(o, 'namedArgs') === null ? {} : { namedArgs: asMap(own(o, 'namedArgs'), `${path}.namedArgs`, (v, p) => parseExpr(v, p)) }),
+  };
+}
+
+/** Serializes a {@link EnumConstant} to canonical JSON. */
+export function serializeEnumConstant(node: EnumConstant): Record<string, unknown> {
+  return canonicalJson(node) as Record<string, unknown>;
+}
+
+/** Structural equality. List order is significant: UIR children are ordered (Spec §2.3). */
+export function equalsEnumConstant(a: EnumConstant, b: EnumConstant): boolean {
+  return deepEquals(canonicalJson(a), canonicalJson(b));
+}
+
+/** Returns a copy of [node] with [patch] applied. The original is never mutated. */
+export function copyWithEnumConstant(node: EnumConstant, patch: Partial<EnumConstant>): EnumConstant {
+  return { ...node, ...patch };
+}
+
 /** Parses a {@link LayoutIntent}, validating as it goes. Throws {@link UirParseError} on bad input. */
 export function parseLayoutIntent(value: unknown, path = 'LayoutIntent'): LayoutIntent {
   const o = asObject(value, path);
@@ -3362,9 +3410,14 @@ export function parseEnumDecl(value: unknown, path = 'EnumDecl'): EnumDecl {
 
   return {
     ...(own(o, 'anchor') === undefined || own(o, 'anchor') === null ? {} : { anchor: parseAnchor(own(o, 'anchor'), `${path}.anchor`) }),
+    ...(own(o, 'constants') === undefined || own(o, 'constants') === null ? {} : { constants: asList(own(o, 'constants'), `${path}.constants`, (v, p) => parseEnumConstant(v, p)) }),
+    ...(own(o, 'constructors') === undefined || own(o, 'constructors') === null ? {} : { constructors: asList(own(o, 'constructors'), `${path}.constructors`, (v, p) => parseConstructorDecl(v, p)) }),
     ...(own(o, 'ext') === undefined || own(o, 'ext') === null ? {} : { ext: asMap(own(o, 'ext'), `${path}.ext`, (v) => v) }),
+    ...(own(o, 'fields') === undefined || own(o, 'fields') === null ? {} : { fields: asList(own(o, 'fields'), `${path}.fields`, (v, p) => parseFieldDecl(v, p)) }),
     id: parseNodeId(req(o, 'id', path), `${path}.id`),
     kind: 'logic.EnumDecl',
+    ...(own(o, 'library') === undefined || own(o, 'library') === null ? {} : { library: asString(own(o, 'library'), `${path}.library`) }),
+    ...(own(o, 'methods') === undefined || own(o, 'methods') === null ? {} : { methods: asList(own(o, 'methods'), `${path}.methods`, (v, p) => parseFunctionDecl(v, p)) }),
     name: asString(req(o, 'name', path), `${path}.name`),
     span: parseSourceSpan(req(o, 'span', path), `${path}.span`),
     ...(own(o, 'values') === undefined || own(o, 'values') === null ? {} : { values: asList(own(o, 'values'), `${path}.values`, (v, p) => asString(v, p)) }),

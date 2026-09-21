@@ -1140,6 +1140,11 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
         // type system already refuses to compare two different enums' constants against each other, so
         // nothing downstream can conflate `Stage.ready` with an unrelated enum's own `ready`.
         const declaration = scope.node(target) as unknown as Node | undefined;
+        // An enhanced enum (M12, ADR-0056) is a class: a constant is its static instance, `values` its static list.
+        if (declaration !== undefined && declaration['kind'] === 'logic.EnumDecl' && scope.generalClasses.has(target as NodeId)) {
+          const member = (typeof node['name'] === 'string' ? node['name'] : '').split('.').at(-1) ?? '';
+          return `${generalClassName(target as NodeId, scope)}.${identifierOf(member)}`;
+        }
         if (declaration !== undefined && declaration['kind'] === 'logic.EnumDecl') {
           const dotted = typeof node['name'] === 'string' ? node['name'] : '';
           const member = dotted.split('.').at(-1) ?? '';

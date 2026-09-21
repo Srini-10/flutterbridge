@@ -67,7 +67,7 @@ export const OPERATOR_NAMES: Readonly<Record<string, string>> = {
 export function generalClassesOf(nodes: readonly unknown[]): Map<NodeId, Node> {
   const general = new Map<NodeId, Node>();
   for (const node of nodes as Node[]) {
-    if (kindOf(node) === 'logic.ClassDecl' && typeof node['library'] === 'string' && typeof node['id'] === 'string') {
+    if ((kindOf(node) === 'logic.ClassDecl' || kindOf(node) === 'logic.EnumDecl') && typeof node['library'] === 'string' && typeof node['id'] === 'string') {
       general.set(node['id'] as NodeId, node);
     }
   }
@@ -214,6 +214,7 @@ const paramNames = (params: readonly Node[], ctx: ClassEmitContext): string[] =>
  * @returns the lines, or `undefined` after reporting why the class has no lowering.
  */
 export function emitClassSource(decl: Node, className: string, ctx: ClassEmitContext): string[] | undefined {
+  if (kindOf(decl) === 'logic.EnumDecl') return emitEnumSource(decl, className, ctx);
   const id = decl['id'] as NodeId;
   const superId = targetOfType(decl['superclass']);
   const superDecl = superId === undefined ? undefined : ctx.general.get(superId);
@@ -403,4 +404,91 @@ function methodGenerics(_method: Node): string {
 
 function superTypeArguments(_superclass: Node, _ctx: ClassEmitContext): string {
   return '';
+}
+
+/** Constant names a class cannot carry as static members. */
+const RESERVED_STATICS: ReadonlySet<string> = new Set(['name', 'length', 'prototype', 'values', 'caller', 'arguments']);
+
+/**
+ * An *enhanced* enum (fields, methods, constants with arguments) as a class with one static instance per constant (ADR-0056). A
+ * plain enum stays its value names. Identity is the instance, so `==`, `switch` and map keys work as they do in Dart, and
+ * `toString()` is `Name.constant`.
+ */
+function emitEnumSource(decl: Node, className: string, ctx: ClassEmitContext): string[] | undefined {
+  const id = decl['id'] as NodeId;
+  const values = (Array.isArray(decl['values']) ? decl['values'] : []) as string[];
+  const clash = values.find((v) => RESERVED_STATICS.has(v));
+  if (clash !== undefined) {
+    ctx.report(`the constant \`${className}.${clash}\` cannot be a static member of the emitted class (\`${clash}\` is reserved on every class).`, id);
+    return undefined;
+  }
+  const lines: string[] = ['name!: string;', 'index!: number;'];
+  for (const field of asArray(decl['fields'])) {
+    lines.push(`${ctx.identifier(String(field['name']))}!: ${ctx.typeText(field['type'] as Node | undefined)};`);
+  }
+  lines.push(`static $isA(type: unknown): boolean {`, `  return type === ${className};`, `}`);
+
+  const declared = asArray(decl['constructors']);
+  const constructors = declared.length > 0 ? declared : [{ params: [] } as Node];
+  for (const ctor of constructors) {
+    const params = asArray(ctor['params']);
+    const init: string[] = [];
+    for (const param of params) {
+      if (typeof param['initializesField'] === 'string') {
+        init.push(`this.${ctx.identifier(param['initializesField'])} = ${ctx.identifier(String(param['name']))};`);
+      }
+    }
+    for (const entry of asArray(ctor['initializers'])) {
+      init.push(`this.${ctx.identifier(String(entry['field']))} = ${ctx.expr(entry['value'] as Node, params)};`);
+    }
+    init.push(...ctx.body(asArray(ctor['body']), params));
+    lines.push(`${initName(className, ctor['name'] as string | undefined)}(${paramList(params, ctx)}): void {`, ...indent(init), '}');
+  }
+
+  let hasToString = false;
+  for (const method of asArray(decl['methods'])) {
+    const raw = String(method['name']);
+    if (raw === 'toString') hasToString = true;
+    const params = asArray(method['params']);
+    const returnType = ctx.typeText(method['returnType'] as Node | undefined);
+    const isAsync = method['isAsync'] === true;
+    const returns = isAsync ? `Promise<${returnType}>` : returnType;
+    const body = ctx.body(asArray(method['body']), params);
+    if (method['isGetter'] === true) lines.push(`get ${ctx.identifier(raw)}(): ${returns} {`, ...indent(body), '}');
+    else if (method['isOperator'] === true) {
+      const mapped = OPERATOR_NAMES[raw];
+      if (mapped === undefined) {
+        ctx.report(`the operator \`${raw}\` of the enum \`${className}\` has no lowering.`, id);
+        return undefined;
+      }
+      lines.push(`${mapped}(${paramList(params, ctx)}): ${returns} {`, ...indent(body), '}');
+    } else {
+      lines.push(`${method['isStatic'] === true ? 'static ' : ''}${isAsync ? 'async ' : ''}${ctx.identifier(raw)}(${paramList(params, ctx)}): ${returns} {`, ...indent(body), '}');
+    }
+  }
+  if (!hasToString) lines.push('toString(): string {', `  return '${className}.' + this.name;`, '}');
+
+  // One instance per constant, built in declaration order; `values` after them.
+  asArray(decl['constants']).forEach((constant, index) => {
+    const name = String(constant['name']);
+    const ctor = constructorOf(decl, constant['constructorName'] as string | undefined);
+    const params = asArray(ctor?.['params']);
+    const positional = asArray(constant['args']).map((a) => ctx.expr(a, []));
+    const named = Object.fromEntries(
+      Object.entries((constant['namedArgs'] ?? {}) as Record<string, Node>).map(([k, v]) => [k, ctx.expr(v, [])]),
+    );
+    const passed = callArguments(params, positional, named);
+    const text = Array.isArray(passed) ? passed.join(', ') : '';
+    lines.push(
+      `static readonly ${ctx.identifier(name)}: ${className} = (() => {`,
+      `  const $self = new ${className}();`,
+      `  $self.name = '${name}';`,
+      `  $self.index = ${index};`,
+      `  $self.${initName(className, constant['constructorName'] as string | undefined)}(${text});`,
+      '  return $self;',
+      '})();',
+    );
+  });
+  lines.push(`static readonly values: readonly ${className}[] = [${values.map((v) => `${className}.${ctx.identifier(v)}`).join(', ')}];`);
+  return [`export class ${className} {`, ...indent(lines), '}'];
 }

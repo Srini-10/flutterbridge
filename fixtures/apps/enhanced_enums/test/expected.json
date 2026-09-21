@@ -1,0 +1,27 @@
+{
+  "Reading": [
+    [
+      "> 0.3 0.5 0.8 0.50",
+      "> Tune tune 1 MatchKind.tune 3",
+      "> true false Mode.fast slow",
+      "> 9.80 mercury,earth"
+    ]
+  ],
+  "KindPicker": [
+    [
+      "> Words 0.63 false false"
+    ],
+    [
+      "> Tune 0.5 true true"
+    ],
+    [
+      "> Loose 0.2 false true"
+    ],
+    [
+      "> Words 0.63 false false"
+    ],
+    [
+      "> Tune 0.5 true true"
+    ]
+  ]
+}

@@ -9823,7 +9823,7 @@ class Home extends StatelessWidget {
       expect((tag['props'] as Map<String, dynamic>).keys, isNot(contains('_positional0')));
     });
 
-    test('reading a field an enum declares is refused (BRG1312); merely declaring one is not; `.index` is opaque', () async {
+    test('an enhanced enum is a class (ADR-0056): its members are read, not refused; a plain enum’s `.index` stays opaque', () async {
       final Extracted used = await extract(r'''
 import 'package:flutter/material.dart';
 enum Level { low(1), high(9); const Level(this.w); final int w; int twice() => w * 2; }
@@ -9833,7 +9833,10 @@ class W extends StatelessWidget {
   Widget build(BuildContext context) => Text('${Level.low.w} ${Level.high.twice()}');
 }
 ''');
-      expect(codesOf(used), contains('BRG1312'));
+      expect(codesOf(used), isNot(contains('BRG1312')), reason: 'an enhanced enum is emitted as a class since M12');
+      expect(used.bytes, contains('"constants"'), reason: 'the constants and their arguments are carried');
+      expect(used.bytes, contains('"library"'), reason: 'and the enum is a general (class-model) declaration');
+      expect(used.bytes, isNot(contains('OpaqueExpr')), reason: '`Level.low.w` and `.twice()` lower');
 
       final Extracted declared = await extract(r'''
 import 'package:flutter/material.dart';

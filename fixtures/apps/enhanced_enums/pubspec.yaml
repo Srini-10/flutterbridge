@@ -1,0 +1,20 @@
+name: enhanced_enums
+description: >-
+  M12 (ADR-0056): enhanced enums — constants with constructor arguments, fields, methods, getters, `values`, `index`, `name`,
+  `switch`, interpolation. Run by Flutter and as the generated component, compared.
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

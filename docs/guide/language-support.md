@@ -47,8 +47,9 @@ computes a field, a named constructor, a `factory`, a redirecting constructor.
 (with `String` patterns; a `RegExp` is refused). Numbers: `isEven`, `isOdd`, `isNegative`, `isNaN`, `isFinite`, `isInfinite`,
 `toDouble`, `toStringAsFixed`, `remainder`. `switch` statements over constants (literals, `String`s, enum values), with `default`
 and grouped cases; a pattern or a `when` guard is refused. Increments and assignments used as values. `f.call(x)`. `Future.catchError`
-and `whenComplete`. `?.` on a variable, a prop or a field-read chain. Enums are their value names: `k.name` and `'$k'` (`Kind.a`)
-work; `k.index`, and reading a field or calling a method the enum itself declares (`BRG1312`), are refused; using an enhanced enum only by value is fine.
+and `whenComplete`. `?.` on a variable, a prop or a field-read chain. A plain enum is its value names: `k.name` and `'$k'` (`Kind.a`)
+work; a plain enum's `k.index` is refused. An *enhanced* enum (fields, methods, constants with arguments) is emitted as a class with one
+static instance per constant — fields, getters, methods, `values`, `index`, `name`, `switch` all work ([ADR-0056](../adr/0056-enhanced-enums.md)).
 
 ## Not supported (refused, by name)
 

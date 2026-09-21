@@ -44,20 +44,7 @@ final class DeclarationExtractor {
         _class(node, scope, state: state);
 
       case EnumDeclaration():
-        out.emit(
-          RawNode(
-            kind: 'logic.EnumDecl',
-            span: out.span(node),
-            symbol: out.symbols.type(node.namePart.typeName.lexeme),
-            fields: <String, RawValue>{
-              'name': RawLiteral(node.namePart.typeName.lexeme),
-              'values': RawList(<RawValue>[
-                for (final EnumConstantDeclaration constant in node.body.constants)
-                  RawLiteral(constant.name.lexeme),
-              ]),
-            },
-          ),
-        );
+        _enum(node, scope);
 
       case FunctionDeclaration():
         _function(node, scope);
@@ -132,12 +119,12 @@ final class DeclarationExtractor {
     // Computed **once**. Calling these inside the `if (…isNotEmpty)` guard *and* again in the value
     // extracted every field and body twice — doubling the work, and emitting every diagnostic twice.
     final String className = node.namePart.typeName.lexeme;
-    final List<RawValue> fields = _fields(node, scope, owner: className);
+    final List<RawValue> fields = _fields(node.body.members, scope, owner: className);
     final bool wasGeneral = expressions.generalClassBody;
     // Whether this class will be emitted as a real class is decided from the (cheap) constructor probe below, before the members
     // are extracted, because an unqualified `x` in a general class's body must be extracted as `this.x`.
     expressions.generalClassBody = !semantic && _isGeneralShape(node, className);
-    final List<RawValue> methods = semantic ? const <RawValue>[] : _methods(node, scope, owner: className);
+    final List<RawValue> methods = semantic ? const <RawValue>[] : _methods(node.body.members, scope, owner: className);
     final List<RawValue>? constructibleConstructors =
         semantic ? null : _constructibleConstructors(node, owner: className);
     // A class that is not a plain record is a *general* class (M12, ADR-0055): the generator emits it as a real class, so it
@@ -145,7 +132,7 @@ final class DeclarationExtractor {
     // (Structural = at least one constructor a plain record can stand in for, ADR-0036/0037; a class with none — `Point(this.x,
     // this.y)` written `const`, or with an initializer list — is not one, and is emitted as a class.)
     final bool general = !semantic && expressions.generalClassBody;
-    final List<RawValue> constructors = general ? _constructors(node, scope, owner: className) : const <RawValue>[];
+    final List<RawValue> constructors = general ? _constructors(node.body.members, scope, owner: className) : const <RawValue>[];
     expressions.generalClassBody = wasGeneral;
 
     out.emit(
@@ -186,6 +173,54 @@ final class DeclarationExtractor {
     );
   }
 
+  /// An enum. A plain one is its value names; an *enhanced* one — fields, methods, or constants with arguments — also carries
+  /// them, and the generator emits it as a class with one static instance per constant (M12, ADR-0056).
+  void _enum(EnumDeclaration node, Scope scope) {
+    final String name = node.namePart.typeName.lexeme;
+    final bool enhanced = node.body.members.isNotEmpty ||
+        node.body.constants.any((EnumConstantDeclaration c) => c.arguments != null);
+    List<RawValue> fields = const <RawValue>[];
+    List<RawValue> methods = const <RawValue>[];
+    List<RawValue> constructors = const <RawValue>[];
+    List<RawValue> constants = const <RawValue>[];
+    if (enhanced) {
+      final bool was = expressions.generalClassBody;
+      expressions.generalClassBody = true;
+      fields = _fields(node.body.members, scope, owner: name);
+      methods = _methods(node.body.members, scope, owner: name);
+      constructors = _constructors(node.body.members, scope, owner: name);
+      expressions.generalClassBody = was;
+      constants = <RawValue>[
+        for (final EnumConstantDeclaration constant in node.body.constants)
+          RawMap(<String, RawValue>{
+            'name': RawLiteral(constant.name.lexeme),
+            'constructorName': ?(constant.arguments?.constructorSelector == null
+                ? null
+                : RawLiteral(constant.arguments!.constructorSelector!.name.name)),
+            if (constant.arguments != null) ...expressions.argumentFields(constant.arguments!.argumentList, scope),
+          }),
+      ];
+    }
+    out.emit(
+      RawNode(
+        kind: 'logic.EnumDecl',
+        span: out.span(node),
+        symbol: out.symbols.type(name),
+        fields: <String, RawValue>{
+          'name': RawLiteral(name),
+          'values': RawList(<RawValue>[
+            for (final EnumConstantDeclaration constant in node.body.constants) RawLiteral(constant.name.lexeme),
+          ]),
+          if (enhanced) 'library': RawLiteral(out.symbols.path),
+          if (fields.isNotEmpty) 'fields': RawList(fields),
+          if (methods.isNotEmpty) 'methods': RawList(methods),
+          if (constructors.isNotEmpty) 'constructors': RawList(constructors),
+          if (constants.isNotEmpty) 'constants': RawList(constants),
+        },
+      ),
+    );
+  }
+
   /// Whether [node] is a *general* class (see `_class`): not a record the structural machinery can stand in for. Decided before its
   /// members are extracted, so it must not depend on them.
   bool _isGeneralShape(ClassDeclaration node, String owner) {
@@ -200,9 +235,9 @@ final class DeclarationExtractor {
   }
 
   /// Every constructor of a general class, with initializers, `super`/`this` calls and body (M12, ADR-0055).
-  List<RawValue> _constructors(ClassDeclaration node, Scope scope, {required String owner}) {
+  List<RawValue> _constructors(List<ClassMember> members, Scope scope, {required String owner}) {
     final List<RawValue> constructors = <RawValue>[];
-    for (final ClassMember member in node.body.members) {
+    for (final ClassMember member in members) {
       if (member is! ConstructorDeclaration) {
         continue;
       }
@@ -269,7 +304,7 @@ final class DeclarationExtractor {
       return;
     }
     final List<RawValue> statics = <RawValue>[
-      for (final RawValue field in _fields(state, scope, owner: className))
+      for (final RawValue field in _fields(state.body.members, scope, owner: className))
         if (field is RawChild && field.node.fields['isStatic'] != null) field,
     ];
     out.emit(
@@ -432,8 +467,8 @@ final class DeclarationExtractor {
   /// unrelated classes would otherwise produce: `logic.FieldDecl` carries no `symbol:` of its own
   /// before this, so the canonical builder falls back to content-addressing it (`IdAllocator.forContent`)
   /// exactly like an expression, and two fields with identical content hash to the same id.
-  List<RawValue> _fields(ClassDeclaration node, Scope scope, {required String owner}) => <RawValue>[
-    for (final ClassMember member in node.body.members)
+  List<RawValue> _fields(List<ClassMember> members, Scope scope, {required String owner}) => <RawValue>[
+    for (final ClassMember member in members)
       if (member is FieldDeclaration)
         for (final VariableDeclaration variable in member.fields.variables)
           RawChild(
@@ -476,9 +511,9 @@ final class DeclarationExtractor {
   /// local/parameter that shadows a field's own name now resolves to its *own* declaration first (Dart's
   /// own analyzer resolution — never a name-based guess), so `_instanceMemberTarget` correctly never
   /// fires for a shadowed read.
-  List<RawValue> _methods(ClassDeclaration node, Scope scope, {required String owner}) {
+  List<RawValue> _methods(List<ClassMember> members, Scope scope, {required String owner}) {
     final List<RawValue> methods = <RawValue>[];
-    for (final ClassMember member in node.body.members) {
+    for (final ClassMember member in members) {
       if (member is! MethodDeclaration) {
         continue;
       }

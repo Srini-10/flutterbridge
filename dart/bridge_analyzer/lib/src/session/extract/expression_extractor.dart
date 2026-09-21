@@ -125,7 +125,7 @@ final class ExpressionExtractor {
               for (final InterpolationElement part in node.elements) ...<RawValue>[
                 // `'$k'` for an enum value prints `Kind.a`; the target's value is the bare name `a`, so the enum's own name is
                 // written in front (ADR-0054).
-                if (part is InterpolationExpression && part.expression.staticType?.element is EnumElement)
+                if (part is InterpolationExpression && _isPlainEnumValue(part.expression))
                   RawChild(_literal(node, '${part.expression.staticType!.element!.name}.')),
                 RawChild(
                   part is InterpolationExpression
@@ -1246,11 +1246,18 @@ final class ExpressionExtractor {
     return element is GetterElement && element.isOriginVariable;
   }
 
+  /// Whether [value] is a value of a *plain* enum — one whose value is its bare name, so `'$k'` needs the enum's name in front.
+  static bool _isPlainEnumValue(Expression value) {
+    final Element? element = value.staticType?.element;
+    return element is EnumElement && !isEnhancedEnum(element);
+  }
+
   /// `'name'`/`'index'` when [target] is an enum value and [property] is that member, `'member'` when it is a field or method
   /// the enum itself *declares*, else `null`.
   static String? _enumMember(Expression? target, String property) {
     final Element? element = target?.staticType?.element;
-    if (element is! EnumElement) {
+    // An enhanced enum is a class: `k.floor`, `k.name` and `k.index` are ordinary member reads of it (ADR-0056).
+    if (element is! EnumElement || isEnhancedEnum(element)) {
       return null;
     }
     if (property == 'name' || property == 'index') {

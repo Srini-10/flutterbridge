@@ -31,7 +31,7 @@ const String uirVersion = '1.15.0';
 /// A hash of the schema sources this library was generated from.
 ///
 /// Stamped into every emitted manifest: a UIR document always says which schema produced it.
-const String uirSchemaHash = '2154c603f4fa171b';
+const String uirSchemaHash = 'f369c0e7f8ae8880';
 
 /// Node kind -> the fields of that node which hold `NodeId` references.
 ///
@@ -1417,6 +1417,86 @@ final class ConstructorInit {
     'ConstructorInit',
     _equality.hash(field),
     _equality.hash(value),
+  ]);
+}
+
+/// One constant of an enhanced enum: `words(floor: 0.45)`.
+@immutable
+final class EnumConstant {
+  /// Creates a [EnumConstant].
+  const EnumConstant({
+    required this.name,
+    this.args,
+    this.constructorName,
+    this.namedArgs,
+  });
+
+  /// Parses a [EnumConstant] from JSON, validating as it goes.
+  factory EnumConstant.fromJson(Object? value, [String path = 'EnumConstant']) {
+    final Map<String, Object?> json = _asObject(value, path);
+    return EnumConstant(
+      args: json['args'] == null ? null : _asList<Expr>(json['args'], '$path.args', Expr.fromJson),
+      constructorName: json['constructorName'] == null ? null : _asString(json['constructorName'], '$path.constructorName'),
+      name: _asString(_req(json, 'name', path), '$path.name'),
+      namedArgs: json['namedArgs'] == null ? null : _asMap<Expr>(json['namedArgs'], '$path.namedArgs', Expr.fromJson),
+    );
+  }
+
+  /// Positional arguments, in order.
+  final List<Expr>? args;
+
+  /// The named constructor it uses (`low.named(1)`). Absent for the unnamed one.
+  final String? constructorName;
+
+  /// The constant's name.
+  final String name;
+
+  /// Named arguments, by name.
+  final Map<String, Expr>? namedArgs;
+
+  /// Serializes to canonical JSON: keys sorted, nulls omitted.
+  Map<String, Object?> toJson() => canonicalJson(<String, Object?>{
+    'args': args?.map((Expr v) => v.toJson()).toList(),
+    'constructorName': constructorName,
+    'name': name,
+    'namedArgs': namedArgs?.map((String k, Expr v) => MapEntry<String, Object?>(k, v.toJson())),
+  })! as Map<String, Object?>;
+
+  /// Returns a copy with the given fields replaced. The original is never mutated.
+  ///
+  /// An omitted argument keeps its current value; `copyWith` cannot set a field back to
+  /// null. Construct a new node when that is what you mean.
+  EnumConstant copyWith({
+    List<Expr>? args,
+    String? constructorName,
+    String? name,
+    Map<String, Expr>? namedArgs,
+  }) {
+    return EnumConstant(
+      args: args ?? this.args,
+      constructorName: constructorName ?? this.constructorName,
+      name: name ?? this.name,
+      namedArgs: namedArgs ?? this.namedArgs,
+    );
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is EnumConstant &&
+        _equality.equals(other.args, args) &&
+        _equality.equals(other.constructorName, constructorName) &&
+        _equality.equals(other.name, name) &&
+        _equality.equals(other.namedArgs, namedArgs);
+  }
+
+  @override
+  int get hashCode => Object.hashAll(<Object?>[
+    'EnumConstant',
+    _equality.hash(args),
+    _equality.hash(constructorName),
+    _equality.hash(name),
+    _equality.hash(namedArgs),
   ]);
 }
 
@@ -4296,7 +4376,12 @@ final class EnumDecl extends Decl {
     required this.name,
     required this.span,
     this.anchor,
+    this.constants,
+    this.constructors,
     this.ext,
+    this.fields,
+    this.library,
+    this.methods,
     this.values,
   });
 
@@ -4309,8 +4394,13 @@ final class EnumDecl extends Decl {
     }
     return EnumDecl(
       anchor: json['anchor'] == null ? null : _asString(json['anchor'], '$path.anchor'),
+      constants: json['constants'] == null ? null : _asList<EnumConstant>(json['constants'], '$path.constants', EnumConstant.fromJson),
+      constructors: json['constructors'] == null ? null : _asList<ConstructorDecl>(json['constructors'], '$path.constructors', ConstructorDecl.fromJson),
       ext: json['ext'] == null ? null : _asMap<Object?>(json['ext'], '$path.ext', (Object? v, String p) => v),
+      fields: json['fields'] == null ? null : _asList<FieldDecl>(json['fields'], '$path.fields', FieldDecl.fromJson),
       id: _asString(_req(json, 'id', path), '$path.id'),
+      library: json['library'] == null ? null : _asString(json['library'], '$path.library'),
+      methods: json['methods'] == null ? null : _asList<FunctionDecl>(json['methods'], '$path.methods', FunctionDecl.fromJson),
       name: _asString(_req(json, 'name', path), '$path.name'),
       span: SourceSpan.fromJson(_req(json, 'span', path), '$path.span'),
       values: json['values'] == null ? null : _asList<String>(json['values'], '$path.values', _asString),
@@ -4320,11 +4410,26 @@ final class EnumDecl extends Decl {
   /// The override key, when the node is addressable by a human.
   final Anchor? anchor;
 
+  /// An enhanced enum's constants, in declaration order, with the arguments each is constructed from.
+  final List<EnumConstant>? constants;
+
+  /// An enhanced enum's constructors (always `const`).
+  final List<ConstructorDecl>? constructors;
+
   /// Plugin extension data, namespaced `x-<plugin>`. Core passes round-trip it untouched (Spec §2.6).
   final Map<String, Object?>? ext;
 
+  /// An enhanced enum's instance fields, in declaration order.
+  final List<FieldDecl>? fields;
+
   /// The node's stable, content-addressed identity.
   final NodeId id;
+
+  /// For an *enhanced* enum (one with fields, methods or constants with arguments), the library file it belongs to — present only then. An enhanced enum is emitted as a class with one static instance per constant; a plain enum is its value names (M12, ADR-0056).
+  final String? library;
+
+  /// An enhanced enum's methods, getters and operators.
+  final List<FunctionDecl>? methods;
 
   /// Enum name.
   final String name;
@@ -4343,9 +4448,14 @@ final class EnumDecl extends Decl {
   @override
   Map<String, Object?> toJson() => canonicalJson(<String, Object?>{
     'anchor': anchor,
+    'constants': constants?.map((EnumConstant v) => v.toJson()).toList(),
+    'constructors': constructors?.map((ConstructorDecl v) => v.toJson()).toList(),
     'ext': ext,
+    'fields': fields?.map((FieldDecl v) => v.toJson()).toList(),
     'id': id,
     'kind': 'logic.EnumDecl',
+    'library': library,
+    'methods': methods?.map((FunctionDecl v) => v.toJson()).toList(),
     'name': name,
     'span': span.toJson(),
     'values': values,
@@ -4357,16 +4467,26 @@ final class EnumDecl extends Decl {
   /// null. Construct a new node when that is what you mean.
   EnumDecl copyWith({
     Anchor? anchor,
+    List<EnumConstant>? constants,
+    List<ConstructorDecl>? constructors,
     Map<String, Object?>? ext,
+    List<FieldDecl>? fields,
     NodeId? id,
+    String? library,
+    List<FunctionDecl>? methods,
     String? name,
     SourceSpan? span,
     List<String>? values,
   }) {
     return EnumDecl(
       anchor: anchor ?? this.anchor,
+      constants: constants ?? this.constants,
+      constructors: constructors ?? this.constructors,
       ext: ext ?? this.ext,
+      fields: fields ?? this.fields,
       id: id ?? this.id,
+      library: library ?? this.library,
+      methods: methods ?? this.methods,
       name: name ?? this.name,
       span: span ?? this.span,
       values: values ?? this.values,
@@ -4381,8 +4501,13 @@ final class EnumDecl extends Decl {
     if (identical(this, other)) return true;
     return other is EnumDecl &&
         _equality.equals(other.anchor, anchor) &&
+        _equality.equals(other.constants, constants) &&
+        _equality.equals(other.constructors, constructors) &&
         _equality.equals(other.ext, ext) &&
+        _equality.equals(other.fields, fields) &&
         _equality.equals(other.id, id) &&
+        _equality.equals(other.library, library) &&
+        _equality.equals(other.methods, methods) &&
         _equality.equals(other.name, name) &&
         _equality.equals(other.span, span) &&
         _equality.equals(other.values, values);
@@ -4392,8 +4517,13 @@ final class EnumDecl extends Decl {
   int get hashCode => Object.hashAll(<Object?>[
     'EnumDecl',
     _equality.hash(anchor),
+    _equality.hash(constants),
+    _equality.hash(constructors),
     _equality.hash(ext),
+    _equality.hash(fields),
     _equality.hash(id),
+    _equality.hash(library),
+    _equality.hash(methods),
     _equality.hash(name),
     _equality.hash(span),
     _equality.hash(values),
