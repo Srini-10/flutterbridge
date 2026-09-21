@@ -65,6 +65,7 @@ final class Extractor {
     AdapterRegistry? registry,
     Set<String> localPackageNames = const <String>{},
     Set<String> extractedDependencyFiles = const <String>{},
+    Set<String> inheritedClasses = const <String>{},
   }) {
     // The compiler's entire package knowledge, in one object. An extractor that wanted to know whether
     // something was a `GoRoute` would have to go through here — and there is nowhere else to ask.
@@ -162,7 +163,7 @@ final class Extractor {
       unit: unit,
       context: context,
       components: components,
-      declarations: DeclarationExtractor(out, expressions, components, signals),
+      declarations: DeclarationExtractor(out, expressions, components, signals, inherited: inheritedClasses),
       routes: routes,
       tokens: tokens,
     );

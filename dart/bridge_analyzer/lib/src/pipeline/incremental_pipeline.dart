@@ -35,6 +35,7 @@ import 'package:bridge_analyzer/src/pipeline/stage.dart';
 import 'package:bridge_analyzer/src/pipeline/stages.dart';
 import 'package:bridge_analyzer/src/session/analysis_session.dart';
 import 'package:bridge_analyzer/src/session/extract/extractor.dart';
+import 'package:bridge_analyzer/src/session/extract/inheritance.dart';
 
 /// Runs the compiler against a cache, re-analyzing only what changed.
 final class IncrementalPipeline {
@@ -79,8 +80,7 @@ final class IncrementalPipeline {
     // see exactly the bytes the extractor will see — reading them twice invites a file to change
     // between the two reads and a cache key to describe a file that no longer exists.
     final Map<String, String> sources = <String, String>{
-      for (final String file in loaded.project.libraryFiles)
-        file: loaded.session.readSource(file),
+      for (final String file in loaded.project.libraryFiles) file: loaded.session.readSource(file),
     };
 
     final IncrementalResult result = await IncrementalAnalyzer(
@@ -138,27 +138,36 @@ final class IncrementalPipeline {
   /// `source` is deliberately unused. The incremental analyzer passes it because it is what the digest
   /// was computed from; the session reads the same file from disk through the analyzer's own resource
   /// provider, which is the only reader whose view of the file the *element model* agrees with.
-  ModuleExtractor _extractorFor(LoadResult loaded, StageContext context) =>
-      (String path, String source) async {
-        final ResolvedUnit? unit = await loaded.session.resolve(path);
-        if (unit == null) {
-          // The analyzer could not resolve a unit that preflight said was fine. That is a finding
-          // about the project, not a crash: it is recorded, and the file contributes nothing.
-          return const <RawNode>[];
-        }
-        // ADR-0031: the identical gate `ExtractStage` applies — a resolved AST is not proof of a valid
-        // program. Both pipelines share this one `resolve()` call, so neither needed its own copy.
-        if (unit.analyzerErrors.isNotEmpty) {
-          context.diagnostics.addAll(unit.analyzerErrors);
-          return const <RawNode>[];
-        }
-        return Extractor(
-          path: path,
-          packageName: loaded.project.packageName,
-          unit: unit.result.unit,
-          diagnostics: context.diagnostics,
-        ).extract();
-      };
+  ModuleExtractor _extractorFor(LoadResult loaded, StageContext context) {
+    // Which classes another class extends or mixes in (M12, ADR-0059) — read once per load, as `ExtractStage` reads it.
+    Future<Set<String>>? inherited;
+    return (String path, String source) async {
+      inherited ??= () async {
+        return inheritedClasses(<ResolvedUnit>[
+          await for (final ResolvedUnit unit in loaded.session.resolveAll()) unit,
+        ]);
+      }();
+      final ResolvedUnit? unit = await loaded.session.resolve(path);
+      if (unit == null) {
+        // The analyzer could not resolve a unit that preflight said was fine. That is a finding
+        // about the project, not a crash: it is recorded, and the file contributes nothing.
+        return const <RawNode>[];
+      }
+      // ADR-0031: the identical gate `ExtractStage` applies — a resolved AST is not proof of a valid
+      // program. Both pipelines share this one `resolve()` call, so neither needed its own copy.
+      if (unit.analyzerErrors.isNotEmpty) {
+        context.diagnostics.addAll(unit.analyzerErrors);
+        return const <RawNode>[];
+      }
+      return Extractor(
+        path: path,
+        packageName: loaded.project.packageName,
+        unit: unit.result.unit,
+        diagnostics: context.diagnostics,
+        inheritedClasses: await inherited!,
+      ).extract();
+    };
+  }
 }
 
 /// The `load` stage, as this pipeline needs to see it.

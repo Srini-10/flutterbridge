@@ -659,4 +659,4 @@ export {
 } from './internal/core/dart_string.js';
 
 export { dartIs, touchAfter } from './internal/core/dart_is.js';
-export { dartConstToken, dartHash, dartHashAll, unawaited } from './internal/core/dart_core.js';
+export { dartAs, dartConstToken, dartEntry, dartHash, dartHashAll, dartThrow, unawaited } from './internal/core/dart_core.js';

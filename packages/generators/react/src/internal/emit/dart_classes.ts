@@ -80,16 +80,30 @@ export const targetOfType = (type: unknown): NodeId | undefined =>
     ? ((type as Node)['target'] as NodeId)
     : undefined;
 
-/** A class, then its superclasses, as far as they are general classes. */
+/**
+ * A class, then the mixins it applies (the last first), then its superclass and so on, as far as they are general classes — the
+ * order Dart looks a member up in.
+ */
 export function classChain(id: NodeId, general: ReadonlyMap<NodeId, Node>): Node[] {
   const chain: Node[] = [];
   const seen = new Set<NodeId>();
   let current: NodeId | undefined = id;
+  const addMixins = (decl: Node): void => {
+    for (const type of [...asArray(decl['mixins'])].reverse()) {
+      const mixinId = targetOfType(type);
+      const mixin = mixinId === undefined ? undefined : general.get(mixinId);
+      if (mixinId === undefined || mixin === undefined || seen.has(mixinId)) continue;
+      seen.add(mixinId);
+      chain.push(mixin);
+      addMixins(mixin);
+    }
+  };
   while (current !== undefined && !seen.has(current)) {
     seen.add(current);
     const decl = general.get(current);
     if (decl === undefined) break;
     chain.push(decl);
+    addMixins(decl);
     current = targetOfType(decl['superclass']);
   }
   return chain;
@@ -194,7 +208,7 @@ function paramList(params: readonly Node[], ctx: ClassEmitContext): string {
     .map((param) => {
       const name = ctx.identifier(String(param['name'] ?? '_'));
       const type = ctx.typeText(param['type'] as Node | undefined);
-      const required = param['required'] === true || (param['named'] !== true && param['defaultValue'] === undefined && param['optionalPositional'] !== true);
+      const required = param['required'] === true || (param['named'] !== true && param['defaultValue'] === undefined && param['required'] !== false);
       if (param['defaultValue'] !== undefined) return `${name}: ${type} = ${ctx.expr(param['defaultValue'] as Node, params)}`;
       if (required) return `${name}: ${type}`;
       // Optional with no default: Dart's absent value is `null`.
@@ -208,13 +222,30 @@ const argList = (names: readonly string[]): string => names.join(', ');
 /** The names of a parameter list, in order — what a delegating call passes on. */
 const paramNames = (params: readonly Node[], ctx: ClassEmitContext): string[] => params.map((p) => ctx.identifier(String(p['name'] ?? '_')));
 
+/** The mixins `decl` applies, flattened in application order — or `undefined` if one is not a project mixin this generator emits. */
+function mixinsOf(decl: Node, ctx: ClassEmitContext, seen: Set<NodeId> = new Set()): Node[] | undefined {
+  const out: Node[] = [];
+  for (const type of asArray(decl['mixins'])) {
+    const mixinId = targetOfType(type);
+    const mixin = mixinId === undefined ? undefined : ctx.general.get(mixinId);
+    if (mixinId === undefined || mixin === undefined) return undefined;
+    if (seen.has(mixinId)) continue;
+    seen.add(mixinId);
+    const nested = mixinsOf(mixin, ctx, seen);
+    if (nested === undefined) return undefined;
+    out.push(...nested, mixin);
+  }
+  return out;
+}
+
 /**
  * The source of one general class.
  *
  * @returns the lines, or `undefined` after reporting why the class has no lowering.
  */
-export function emitClassSource(decl: Node, className: string, ctx: ClassEmitContext): string[] | undefined {
-  if (kindOf(decl) === 'logic.EnumDecl') return emitEnumSource(decl, className, ctx);
+export function emitClassSource(source: Node, className: string, ctx: ClassEmitContext): string[] | undefined {
+  if (kindOf(source) === 'logic.EnumDecl') return emitEnumSource(source, className, ctx);
+  let decl = source;
   const id = decl['id'] as NodeId;
   const superId = targetOfType(decl['superclass']);
   const superDecl = superId === undefined ? undefined : ctx.general.get(superId);
@@ -226,9 +257,39 @@ export function emitClassSource(decl: Node, className: string, ctx: ClassEmitCon
     );
     return undefined;
   }
-  if (asArray(decl['mixins']).length > 0) {
-    ctx.report(`\`${className}\` applies a mixin (\`with\`), which the class model does not yet lower (ADR-0055).`, id);
+  // A mixin's members are added to the class (ADR-0059): the class's own take precedence, and a later mixin's over an earlier one's.
+  const applied = mixinsOf(decl, ctx);
+  if (applied === undefined) {
+    ctx.report(`\`${className}\` applies a mixin this generator does not emit (a framework or package mixin).`, id);
     return undefined;
+  }
+  const own = new Set(asArray(decl['methods']).map((m) => `${String(m['name'])}:${m['isSetter'] === true ? 's' : 'g'}`));
+  const ownFields = new Set(asArray(decl['fields']).map((f) => String(f['name'])));
+  const mixedMethods: Node[] = [];
+  const mixedFields: Node[] = [];
+  for (const mixin of applied) {
+    for (const field of asArray(mixin['fields'])) {
+      if (field['isStatic'] === true || ownFields.has(String(field['name']))) continue;
+      ownFields.add(String(field['name']));
+      mixedFields.push(field);
+    }
+  }
+  // A later mixin overrides an earlier one, so the last is considered first.
+  for (const mixin of [...applied].reverse()) {
+    for (const method of asArray(mixin['methods'])) {
+      if (method['isAbstract'] === true || method['isStatic'] === true) continue;
+      const key = `${String(method['name'])}:${method['isSetter'] === true ? 's' : 'g'}`;
+      if (own.has(key)) continue;
+      own.add(key);
+      mixedMethods.push(method);
+    }
+  }
+  if (mixedFields.length > 0 || mixedMethods.length > 0) {
+    decl = {
+      ...decl,
+      fields: [...mixedFields, ...asArray(decl['fields'])],
+      methods: [...asArray(decl['methods']), ...mixedMethods],
+    };
   }
 
   const typeParams = Array.isArray(decl['typeParameters']) ? (decl['typeParameters'] as string[]) : [];
@@ -245,7 +306,9 @@ export function emitClassSource(decl: Node, className: string, ctx: ClassEmitCon
   }
 
   // ── type identity: `x is Foo` ──────────────────────────────────────────────────────────────────
-  const supers = [superId, ...asArray(decl['interfaces']).map((t) => targetOfType(t))].filter((t): t is NodeId => t !== undefined);
+  const supers = [superId, ...asArray(decl['interfaces']).map((t) => targetOfType(t)), ...asArray(decl['mixins']).map((t) => targetOfType(t))].filter(
+    (t): t is NodeId => t !== undefined,
+  );
   const checks = [`type === ${className}`, ...supers.map((t) => `${ctx.nameOf(t) ?? 'undefined'}.$isA(type)`)];
   lines.push(`static $isA(type: unknown): boolean {`, `  return ${checks.join(' || ')};`, `}`);
 
@@ -284,7 +347,16 @@ export function emitClassSource(decl: Node, className: string, ctx: ClassEmitCon
           ctx.report(`the redirecting factory \`${className}\` passes \`${forwarded.unknown}\`, which its target constructor does not take.`, id);
           return undefined;
         }
-        body.push(`return ${ctx.nameOf(targetId) ?? 'undefined'}.${ctorFactoryName(redirect['constructorName'] as string | undefined, String((targetDecl as Node)['name']))}(${forwarded.join(', ')});`);
+        // The target usually *implements* this class (freezed: `class _Dto implements Dto`, `factory Dto(...) = _Dto`) rather than
+        // extending it, and the emitted classes carry per-class `$init_*` members, so TypeScript would not see the one as the other.
+        let extendsThis = false;
+        for (let up: Node | undefined = targetDecl; up !== undefined && !extendsThis; ) {
+          const upId = targetOfType(up['superclass']);
+          extendsThis = upId === id;
+          up = upId === undefined ? undefined : ctx.general.get(upId);
+        }
+        const call = `${ctx.nameOf(targetId) ?? 'undefined'}.${ctorFactoryName(redirect['constructorName'] as string | undefined, String((targetDecl as Node)['name']))}(${forwarded.join(', ')})`;
+        body.push(extendsThis || targetId === id ? `return ${call};` : `return ${call} as unknown as ${className}${generics};`);
       } else {
         body.push(...ctx.body(asArray(ctor['body']), params));
       }

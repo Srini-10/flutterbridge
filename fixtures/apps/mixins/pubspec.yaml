@@ -1,0 +1,20 @@
+name: mixins
+description: >-
+  M12 (ADR-0059): mixins — fields, methods, getters, `on` constraints with `super`, order of application, class members
+  overriding mixin members, `is` against a mixin, `abstract mixin class`. Run by Flutter and as the generated component, compared.
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

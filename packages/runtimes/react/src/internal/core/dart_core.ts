@@ -72,3 +72,32 @@ export function dartConstToken(declaration: string): object {
   }
   return token;
 }
+
+/** `throw e` in expression position: a call, typed `never`, so it composes (`x ?? dartThrow(new Error())`). */
+export function dartThrow(error: unknown): never {
+  throw error;
+}
+
+/** A map entry `[key, value]`, typed as a tuple, so `new Map([...])` infers through spreads and `if`/`for` elements. */
+export function dartEntry<K, V>(key: K, value: V): [K, V] {
+  return [key, value];
+}
+
+/**
+ * `value as T`: Dart's checked downcast. Returns `value` typed as `T`, or throws a `TypeError` naming both types, as Dart does.
+ * `test` is the runtime test the generator derived from `T`.
+ */
+export function dartAs<T>(value: unknown, test: (value: unknown) => boolean, typeName: string): T {
+  if (test(value)) return value as T;
+  const actual =
+    value === null || value === undefined
+      ? 'Null'
+      : Array.isArray(value)
+        ? 'List'
+        : value instanceof Map
+          ? 'Map'
+          : typeof value === 'object'
+            ? (value as object).constructor.name
+            : typeof value;
+  throw new TypeError(`type '${actual}' is not a subtype of type '${typeName}' in type cast`);
+}

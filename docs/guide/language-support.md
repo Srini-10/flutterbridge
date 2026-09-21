@@ -51,6 +51,17 @@ and `whenComplete`. `?.` on a variable, a prop or a field-read chain. A plain en
 work; a plain enum's `k.index` is refused. An *enhanced* enum (fields, methods, constants with arguments) is emitted as a class with one
 static instance per constant — fields, getters, methods, `values`, `index`, `name`, `switch` all work ([ADR-0056](../adr/0056-enhanced-enums.md)).
 
+## Classes, statics, SDK functions, expression forms — ADR-0055, 0057, 0058, 0059
+
+A project class that is not a plain record is emitted as a TypeScript class: constructors (named, initializer lists, `super`, redirecting,
+`factory`), fields, methods, getters, operators, inheritance, abstract classes, `static` members, `is`, and **mixins**
+([ADR-0055](../adr/0055-general-class-model.md), [ADR-0059](../adr/0059-mixins.md)). Static `const`/`final` fields and top-level constants
+are module-level constants; a mutable static or top-level variable is refused (it would be state shared across requests).
+`identical`, `unawaited`, `Object.hash`/`hashAll` (contract only, not Dart's numbers) and the `double` constants lower exactly; a package
+`const` used as a sentinel is an opaque canonical token ([ADR-0057](../adr/0057-sdk-statics-and-external-constants.md)).
+`throw`/`rethrow` in expressions, constructor and generic-function tear-offs, cascades, `?.` on any receiver (whole-chain null-shorting),
+collection `...`/`if`/`for` in lists, sets and maps, adjacent strings, and checked `as` casts ([ADR-0058](../adr/0058-expression-forms.md)).
+
 ## Not supported (refused, by name)
 
 Everything not listed. The census of two real applications (see the final audit report) found the blockers in practice are: freezed

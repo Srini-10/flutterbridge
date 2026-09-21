@@ -740,6 +740,14 @@
             "type": {
               "$ref": "shared.json#/$defs/TypeRef",
               "description": "Resolved type."
+            },
+            "entries": {
+              "type": "array",
+              "items": {
+                "$ref": "l1.json#/$defs/Expr",
+                "description": "A map element: `logic.MapEntry`-shaped `logic.MapLit` with one key/value, a spread, or a collection-if/for whose element is one of those."
+              },
+              "description": "Present instead of `keys`/`values` when the literal has a spread or a collection-if/for; each entry is a one-entry `logic.MapLit`, a `logic.Spread`, an `logic.IfElement` or a `logic.ForElement`."
             }
           }
         }
@@ -1540,7 +1548,7 @@
             },
             "isMixin": {
               "type": "boolean",
-              "description": "Whether this declares a `mixin` rather than a class. Present only when true."
+              "description": "A `mixin` declaration (M12, ADR-0059): its members are added to every class that applies it with `with`. Not itself constructed."
             },
             "typeParameters": {
               "type": "array",
@@ -1900,6 +1908,27 @@
           "$ref": "#/$defs/Intrinsic"
         },
         {
+          "$ref": "#/$defs/ThrowExpr"
+        },
+        {
+          "$ref": "#/$defs/Rethrow"
+        },
+        {
+          "$ref": "#/$defs/Sequence"
+        },
+        {
+          "$ref": "#/$defs/Let"
+        },
+        {
+          "$ref": "#/$defs/Spread"
+        },
+        {
+          "$ref": "#/$defs/IfElement"
+        },
+        {
+          "$ref": "#/$defs/ForElement"
+        },
+        {
           "$ref": "#/$defs/OpaqueExpr"
         }
       ]
@@ -2163,6 +2192,278 @@
           "description": "Named arguments, by name."
         }
       }
+    },
+    "ThrowExpr": {
+      "description": "A `throw` in expression position: `x ?? throw Foo()`, `=> throw Foo()`, a switch arm. Its type is `Never`.",
+      "x-uir-kind": "logic.ThrowExpr",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "value",
+            "type"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "logic.ThrowExpr",
+              "description": "Discriminant."
+            },
+            "value": {
+              "$ref": "l1.json#/$defs/Expr",
+              "description": "The thrown value."
+            },
+            "type": {
+              "$ref": "shared.json#/$defs/TypeRef",
+              "description": "Resolved type."
+            }
+          }
+        }
+      ]
+    },
+    "Rethrow": {
+      "description": "`rethrow`: throws the exception the enclosing catch clause caught, with its original stack.",
+      "x-uir-kind": "logic.Rethrow",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "type"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "logic.Rethrow",
+              "description": "Discriminant."
+            },
+            "type": {
+              "$ref": "shared.json#/$defs/TypeRef",
+              "description": "Resolved type."
+            }
+          }
+        }
+      ]
+    },
+    "Sequence": {
+      "description": "Expressions evaluated in order; the value is the last one's (`(a, b, c)` in JavaScript).",
+      "x-uir-kind": "logic.Sequence",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "exprs",
+            "type"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "logic.Sequence",
+              "description": "Discriminant."
+            },
+            "exprs": {
+              "type": "array",
+              "items": {
+                "$ref": "l1.json#/$defs/Expr",
+                "description": "An expression."
+              },
+              "description": "In order; at least one."
+            },
+            "type": {
+              "$ref": "shared.json#/$defs/TypeRef",
+              "description": "Resolved type."
+            }
+          }
+        }
+      ]
+    },
+    "Let": {
+      "description": "Binds a value once and evaluates `body` with it in scope: a null-aware access on a receiver that is not a plain variable (`(json['a'] as num?)?.toDouble()`), and a cascade (`Paint()..color = c`). A `logic.Ref` in `body` targets `binding`'s own id.",
+      "x-uir-kind": "logic.Let",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "binding",
+            "body",
+            "type"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "logic.Let",
+              "description": "Discriminant."
+            },
+            "binding": {
+              "$ref": "#/$defs/VarDecl",
+              "description": "The bound variable; its `initializer` is the value."
+            },
+            "body": {
+              "$ref": "l1.json#/$defs/Expr",
+              "description": "The expression evaluated with the binding in scope."
+            },
+            "type": {
+              "$ref": "shared.json#/$defs/TypeRef",
+              "description": "Resolved type."
+            }
+          }
+        }
+      ]
+    },
+    "Spread": {
+      "description": "`...xs` / `...?xs` as an element of a collection literal.",
+      "x-uir-kind": "logic.Spread",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "value",
+            "type"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "logic.Spread",
+              "description": "Discriminant."
+            },
+            "value": {
+              "$ref": "l1.json#/$defs/Expr",
+              "description": "The spread collection."
+            },
+            "nullAware": {
+              "type": "boolean",
+              "description": "`...?`: a null collection spreads nothing."
+            },
+            "type": {
+              "$ref": "shared.json#/$defs/TypeRef",
+              "description": "Resolved type."
+            }
+          }
+        }
+      ]
+    },
+    "IfElement": {
+      "description": "`if (test) a else b` as an element of a collection literal. `then`/`otherwise` are elements: an expression, a spread, or another collection-if/for.",
+      "x-uir-kind": "logic.IfElement",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "test",
+            "then",
+            "type"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "logic.IfElement",
+              "description": "Discriminant."
+            },
+            "test": {
+              "$ref": "l1.json#/$defs/Expr",
+              "description": "The condition."
+            },
+            "then": {
+              "$ref": "l1.json#/$defs/Expr",
+              "description": "The element when true."
+            },
+            "otherwise": {
+              "$ref": "l1.json#/$defs/Expr",
+              "description": "The element when false, if any."
+            },
+            "type": {
+              "$ref": "shared.json#/$defs/TypeRef",
+              "description": "Resolved type."
+            }
+          }
+        }
+      ]
+    },
+    "ForElement": {
+      "description": "`for (final x in xs) element` or `for (var i = 0; i < n; i++) element` as an element of a collection literal.",
+      "x-uir-kind": "logic.ForElement",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "body",
+            "type"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "logic.ForElement",
+              "description": "Discriminant."
+            },
+            "loopDecl": {
+              "$ref": "#/$defs/VarDecl",
+              "description": "For-in: the loop variable's declaration; a `logic.Ref` in `body` resolves to it by name."
+            },
+            "iterable": {
+              "$ref": "l1.json#/$defs/Expr",
+              "description": "For-in: the iterable."
+            },
+            "body": {
+              "$ref": "l1.json#/$defs/Expr",
+              "description": "The element produced per iteration: an expression, a spread, or a nested collection-if/for."
+            },
+            "type": {
+              "$ref": "shared.json#/$defs/TypeRef",
+              "description": "Resolved type."
+            },
+            "init": {
+              "$ref": "#/$defs/VarDecl",
+              "description": "C-style `for (var i = 0; …)`: the declaration; each iteration sees its own copy, as in Dart."
+            },
+            "test": {
+              "$ref": "l1.json#/$defs/Expr",
+              "description": "C-style: the condition."
+            },
+            "update": {
+              "type": "array",
+              "items": {
+                "$ref": "l1.json#/$defs/Expr",
+                "description": "An update expression."
+              },
+              "description": "C-style: the update expressions, in order."
+            }
+          }
+        }
+      ]
     }
   }
 }

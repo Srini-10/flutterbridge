@@ -14,7 +14,7 @@ import { createHash } from 'node:crypto';
 export const UIR_VERSION = '1.15.0' as const;
 
 /** A hash of the schema sources this module was generated from. */
-export const UIR_SCHEMA_HASH = '7a0e349399b09af1' as const;
+export const UIR_SCHEMA_HASH = 'b614400e2a714d2b' as const;
 
 /** Node kind -> the fields of that node which hold `NodeId` references. */
 export const UIR_REFERENCE_FIELDS: Readonly<Record<string, readonly string[]>> = {
@@ -39,10 +39,13 @@ export const UIR_REFERENCE_FIELDS: Readonly<Record<string, readonly string[]>> =
   'logic.ExprStmt': ['id'],
   'logic.FieldDecl': ['id'],
   'logic.For': ['id'],
+  'logic.ForElement': ['id'],
   'logic.FunctionDecl': ['id'],
   'logic.If': ['id'],
+  'logic.IfElement': ['id'],
   'logic.Intrinsic': ['id'],
   'logic.Lambda': ['id'],
+  'logic.Let': ['id'],
   'logic.ListLit': ['id'],
   'logic.Lit': ['id'],
   'logic.MapLit': ['id'],
@@ -56,17 +59,21 @@ export const UIR_REFERENCE_FIELDS: Readonly<Record<string, readonly string[]>> =
   'bind.Param': ['id', 'target'],
   'logic.PropertyAccess': ['id', 'target'],
   'logic.Ref': ['id', 'target'],
+  'logic.Rethrow': ['id'],
   'logic.Return': ['id'],
   'app.Route': ['component', 'guards', 'id', 'layout'],
   'app.RouteTransition': ['component', 'id', 'source', 'target'],
+  'logic.Sequence': ['id'],
   'sig.Signal': ['id', 'store'],
   'bind.Signal': ['id', 'signal'],
   'l0.SourceFile': ['id'],
+  'logic.Spread': ['id'],
   'app.Store': ['actions', 'derived', 'id', 'signals'],
   'app.StoreInstance': ['id', 'store'],
   'logic.StringInterp': ['id'],
   'logic.Switch': ['id'],
   'logic.Throw': ['id'],
+  'logic.ThrowExpr': ['id'],
   'app.Token': ['id'],
   'logic.TryCatch': ['id'],
   'logic.TypeAliasDecl': ['id'],
@@ -1129,7 +1136,7 @@ export interface ClassDecl {
   readonly interfaces?: readonly TypeRef[];
   /// Whether the class is `abstract` (or `sealed`, which is abstract). Present only when true.
   readonly isAbstract?: boolean;
-  /// Whether this declares a `mixin` rather than a class. Present only when true.
+  /// A `mixin` declaration (M12, ADR-0059): its members are added to every class that applies it with `with`. Not itself constructed.
   readonly isMixin?: boolean;
   /// Discriminant.
   readonly kind: 'logic.ClassDecl';
@@ -1417,6 +1424,34 @@ export interface For {
   readonly update?: readonly Expr[];
 }
 
+/// `for (final x in xs) element` or `for (var i = 0; i < n; i++) element` as an element of a collection literal.
+export interface ForElement {
+  /// The override key, when the node is addressable by a human.
+  readonly anchor?: Anchor;
+  /// The element produced per iteration: an expression, a spread, or a nested collection-if/for.
+  readonly body: Expr;
+  /// Plugin extension data, namespaced `x-<plugin>`. Core passes round-trip it untouched (Spec §2.6).
+  readonly ext?: Readonly<Record<string, unknown>>;
+  /// The node's stable, content-addressed identity.
+  readonly id: NodeId;
+  /// C-style `for (var i = 0; …)`: the declaration; each iteration sees its own copy, as in Dart.
+  readonly init?: VarDecl;
+  /// For-in: the iterable.
+  readonly iterable?: Expr;
+  /// Discriminant.
+  readonly kind: 'logic.ForElement';
+  /// For-in: the loop variable's declaration; a `logic.Ref` in `body` resolves to it by name.
+  readonly loopDecl?: VarDecl;
+  /// Where the node came from.
+  readonly span: SourceSpan;
+  /// C-style: the condition.
+  readonly test?: Expr;
+  /// Resolved type.
+  readonly type: TypeRef;
+  /// C-style: the update expressions, in order.
+  readonly update?: readonly Expr[];
+}
+
 /// A function or method declaration.
 export interface FunctionDecl {
   /// The override key, when the node is addressable by a human.
@@ -1471,6 +1506,28 @@ export interface If {
   readonly then: Stmt;
 }
 
+/// `if (test) a else b` as an element of a collection literal. `then`/`otherwise` are elements: an expression, a spread, or another collection-if/for.
+export interface IfElement {
+  /// The override key, when the node is addressable by a human.
+  readonly anchor?: Anchor;
+  /// Plugin extension data, namespaced `x-<plugin>`. Core passes round-trip it untouched (Spec §2.6).
+  readonly ext?: Readonly<Record<string, unknown>>;
+  /// The node's stable, content-addressed identity.
+  readonly id: NodeId;
+  /// Discriminant.
+  readonly kind: 'logic.IfElement';
+  /// The element when false, if any.
+  readonly otherwise?: Expr;
+  /// Where the node came from.
+  readonly span: SourceSpan;
+  /// The condition.
+  readonly test: Expr;
+  /// The element when true.
+  readonly then: Expr;
+  /// Resolved type.
+  readonly type: TypeRef;
+}
+
 /// A value the host framework provides, which the program does not declare (ADR-0026).
 ///
 /// UIR's other two ways to spell a reference both need something the program contains: `logic.Ref{target}` a declaration, `logic.Ref{name}` a lexically enclosing parameter. A framework intrinsic like Flutter's `State.mounted`/`BuildContext.mounted` is neither — recognized by the analyzer from the resolved element (never from the spelling `mounted`, which an application's own field could share), and represented here as the target-neutral fact it answers rather than the framework API that answers it.
@@ -1517,6 +1574,26 @@ export interface Lambda {
   readonly type: TypeRef;
 }
 
+/// Binds a value once and evaluates `body` with it in scope: a null-aware access on a receiver that is not a plain variable (`(json['a'] as num?)?.toDouble()`), and a cascade (`Paint()..color = c`). A `logic.Ref` in `body` targets `binding`'s own id.
+export interface Let {
+  /// The override key, when the node is addressable by a human.
+  readonly anchor?: Anchor;
+  /// The bound variable; its `initializer` is the value.
+  readonly binding: VarDecl;
+  /// The expression evaluated with the binding in scope.
+  readonly body: Expr;
+  /// Plugin extension data, namespaced `x-<plugin>`. Core passes round-trip it untouched (Spec §2.6).
+  readonly ext?: Readonly<Record<string, unknown>>;
+  /// The node's stable, content-addressed identity.
+  readonly id: NodeId;
+  /// Discriminant.
+  readonly kind: 'logic.Let';
+  /// Where the node came from.
+  readonly span: SourceSpan;
+  /// Resolved type.
+  readonly type: TypeRef;
+}
+
 /// A list literal.
 export interface ListLit {
   /// The override key, when the node is addressable by a human.
@@ -1557,6 +1634,8 @@ export interface Lit {
 export interface MapLit {
   /// The override key, when the node is addressable by a human.
   readonly anchor?: Anchor;
+  /// Present instead of `keys`/`values` when the literal has a spread or a collection-if/for; each entry is a one-entry `logic.MapLit`, a `logic.Spread`, an `logic.IfElement` or a `logic.ForElement`.
+  readonly entries?: readonly Expr[];
   /// Plugin extension data, namespaced `x-<plugin>`. Core passes round-trip it untouched (Spec §2.6).
   readonly ext?: Readonly<Record<string, unknown>>;
   /// The node's stable, content-addressed identity.
@@ -1807,6 +1886,22 @@ export interface Ref {
   readonly type: TypeRef;
 }
 
+/// `rethrow`: throws the exception the enclosing catch clause caught, with its original stack.
+export interface Rethrow {
+  /// The override key, when the node is addressable by a human.
+  readonly anchor?: Anchor;
+  /// Plugin extension data, namespaced `x-<plugin>`. Core passes round-trip it untouched (Spec §2.6).
+  readonly ext?: Readonly<Record<string, unknown>>;
+  /// The node's stable, content-addressed identity.
+  readonly id: NodeId;
+  /// Discriminant.
+  readonly kind: 'logic.Rethrow';
+  /// Where the node came from.
+  readonly span: SourceSpan;
+  /// Resolved type.
+  readonly type: TypeRef;
+}
+
 /// A return statement.
 export interface Return {
   /// The override key, when the node is addressable by a human.
@@ -1893,6 +1988,24 @@ export interface RouteTransition {
   readonly target?: NodeId;
 }
 
+/// Expressions evaluated in order; the value is the last one's (`(a, b, c)` in JavaScript).
+export interface Sequence {
+  /// The override key, when the node is addressable by a human.
+  readonly anchor?: Anchor;
+  /// In order; at least one.
+  readonly exprs: readonly Expr[];
+  /// Plugin extension data, namespaced `x-<plugin>`. Core passes round-trip it untouched (Spec §2.6).
+  readonly ext?: Readonly<Record<string, unknown>>;
+  /// The node's stable, content-addressed identity.
+  readonly id: NodeId;
+  /// Discriminant.
+  readonly kind: 'logic.Sequence';
+  /// Where the node came from.
+  readonly span: SourceSpan;
+  /// Resolved type.
+  readonly type: TypeRef;
+}
+
 /// A unit of reactive state.
 ///
 /// Every target's reactivity is a lowering of this: React hooks, Vue `computed`, Svelte runes and Angular signals all come from here (ADR-4). No generator ever sees `setState`.
@@ -1957,6 +2070,26 @@ export interface SourceFile {
   readonly path: string;
   /// Where the node came from.
   readonly span: SourceSpan;
+}
+
+/// `...xs` / `...?xs` as an element of a collection literal.
+export interface Spread {
+  /// The override key, when the node is addressable by a human.
+  readonly anchor?: Anchor;
+  /// Plugin extension data, namespaced `x-<plugin>`. Core passes round-trip it untouched (Spec §2.6).
+  readonly ext?: Readonly<Record<string, unknown>>;
+  /// The node's stable, content-addressed identity.
+  readonly id: NodeId;
+  /// Discriminant.
+  readonly kind: 'logic.Spread';
+  /// `...?`: a null collection spreads nothing.
+  readonly nullAware?: boolean;
+  /// Where the node came from.
+  readonly span: SourceSpan;
+  /// Resolved type.
+  readonly type: TypeRef;
+  /// The spread collection.
+  readonly value: Expr;
 }
 
 /// A collection of signals, derivations and actions that outlives any one component.
@@ -2051,6 +2184,24 @@ export interface Throw {
   readonly kind: 'logic.Throw';
   /// Where the node came from.
   readonly span: SourceSpan;
+  /// The thrown value.
+  readonly value: Expr;
+}
+
+/// A `throw` in expression position: `x ?? throw Foo()`, `=> throw Foo()`, a switch arm. Its type is `Never`.
+export interface ThrowExpr {
+  /// The override key, when the node is addressable by a human.
+  readonly anchor?: Anchor;
+  /// Plugin extension data, namespaced `x-<plugin>`. Core passes round-trip it untouched (Spec §2.6).
+  readonly ext?: Readonly<Record<string, unknown>>;
+  /// The node's stable, content-addressed identity.
+  readonly id: NodeId;
+  /// Discriminant.
+  readonly kind: 'logic.ThrowExpr';
+  /// Where the node came from.
+  readonly span: SourceSpan;
+  /// Resolved type.
+  readonly type: TypeRef;
   /// The thrown value.
   readonly value: Expr;
 }
@@ -2403,8 +2554,11 @@ export type Expr =
   | Call
   | Cast
   | Conditional
+  | ForElement
+  | IfElement
   | Intrinsic
   | Lambda
+  | Let
   | ListLit
   | Lit
   | MapLit
@@ -2414,7 +2568,11 @@ export type Expr =
   | OpaqueExpr
   | PropertyAccess
   | Ref
+  | Rethrow
+  | Sequence
+  | Spread
   | StringInterp
+  | ThrowExpr
   | TypeCheck
   | Unary
 ;
@@ -3576,6 +3734,43 @@ export function copyWithFor(node: For, patch: Partial<For>): For {
   return { ...node, ...patch };
 }
 
+/** Parses a {@link ForElement}, validating as it goes. Throws {@link UirParseError} on bad input. */
+export function parseForElement(value: unknown, path = 'ForElement'): ForElement {
+  const o = asObject(value, path);
+  const kind = asString(req(o, 'kind', path), `${path}.kind`);
+  if (kind !== 'logic.ForElement') throw new UirParseError(`${path}.kind`, `expected "logic.ForElement", got "${kind}"`);
+
+  return {
+    ...(own(o, 'anchor') === undefined || own(o, 'anchor') === null ? {} : { anchor: parseAnchor(own(o, 'anchor'), `${path}.anchor`) }),
+    body: parseExpr(req(o, 'body', path), `${path}.body`),
+    ...(own(o, 'ext') === undefined || own(o, 'ext') === null ? {} : { ext: asMap(own(o, 'ext'), `${path}.ext`, (v) => v) }),
+    id: parseNodeId(req(o, 'id', path), `${path}.id`),
+    ...(own(o, 'init') === undefined || own(o, 'init') === null ? {} : { init: parseVarDecl(own(o, 'init'), `${path}.init`) }),
+    ...(own(o, 'iterable') === undefined || own(o, 'iterable') === null ? {} : { iterable: parseExpr(own(o, 'iterable'), `${path}.iterable`) }),
+    kind: 'logic.ForElement',
+    ...(own(o, 'loopDecl') === undefined || own(o, 'loopDecl') === null ? {} : { loopDecl: parseVarDecl(own(o, 'loopDecl'), `${path}.loopDecl`) }),
+    span: parseSourceSpan(req(o, 'span', path), `${path}.span`),
+    ...(own(o, 'test') === undefined || own(o, 'test') === null ? {} : { test: parseExpr(own(o, 'test'), `${path}.test`) }),
+    type: parseTypeRef(req(o, 'type', path), `${path}.type`),
+    ...(own(o, 'update') === undefined || own(o, 'update') === null ? {} : { update: asList(own(o, 'update'), `${path}.update`, (v, p) => parseExpr(v, p)) }),
+  };
+}
+
+/** Serializes a {@link ForElement} to canonical JSON. */
+export function serializeForElement(node: ForElement): Record<string, unknown> {
+  return canonicalJson(node) as Record<string, unknown>;
+}
+
+/** Structural equality. List order is significant: UIR children are ordered (Spec §2.3). */
+export function equalsForElement(a: ForElement, b: ForElement): boolean {
+  return deepEquals(canonicalJson(a), canonicalJson(b));
+}
+
+/** Returns a copy of [node] with [patch] applied. The original is never mutated. */
+export function copyWithForElement(node: ForElement, patch: Partial<ForElement>): ForElement {
+  return { ...node, ...patch };
+}
+
 /** Parses a {@link FunctionDecl}, validating as it goes. Throws {@link UirParseError} on bad input. */
 export function parseFunctionDecl(value: unknown, path = 'FunctionDecl'): FunctionDecl {
   const o = asObject(value, path);
@@ -3649,6 +3844,40 @@ export function copyWithIf(node: If, patch: Partial<If>): If {
   return { ...node, ...patch };
 }
 
+/** Parses a {@link IfElement}, validating as it goes. Throws {@link UirParseError} on bad input. */
+export function parseIfElement(value: unknown, path = 'IfElement'): IfElement {
+  const o = asObject(value, path);
+  const kind = asString(req(o, 'kind', path), `${path}.kind`);
+  if (kind !== 'logic.IfElement') throw new UirParseError(`${path}.kind`, `expected "logic.IfElement", got "${kind}"`);
+
+  return {
+    ...(own(o, 'anchor') === undefined || own(o, 'anchor') === null ? {} : { anchor: parseAnchor(own(o, 'anchor'), `${path}.anchor`) }),
+    ...(own(o, 'ext') === undefined || own(o, 'ext') === null ? {} : { ext: asMap(own(o, 'ext'), `${path}.ext`, (v) => v) }),
+    id: parseNodeId(req(o, 'id', path), `${path}.id`),
+    kind: 'logic.IfElement',
+    ...(own(o, 'otherwise') === undefined || own(o, 'otherwise') === null ? {} : { otherwise: parseExpr(own(o, 'otherwise'), `${path}.otherwise`) }),
+    span: parseSourceSpan(req(o, 'span', path), `${path}.span`),
+    test: parseExpr(req(o, 'test', path), `${path}.test`),
+    then: parseExpr(req(o, 'then', path), `${path}.then`),
+    type: parseTypeRef(req(o, 'type', path), `${path}.type`),
+  };
+}
+
+/** Serializes a {@link IfElement} to canonical JSON. */
+export function serializeIfElement(node: IfElement): Record<string, unknown> {
+  return canonicalJson(node) as Record<string, unknown>;
+}
+
+/** Structural equality. List order is significant: UIR children are ordered (Spec §2.3). */
+export function equalsIfElement(a: IfElement, b: IfElement): boolean {
+  return deepEquals(canonicalJson(a), canonicalJson(b));
+}
+
+/** Returns a copy of [node] with [patch] applied. The original is never mutated. */
+export function copyWithIfElement(node: IfElement, patch: Partial<IfElement>): IfElement {
+  return { ...node, ...patch };
+}
+
 /** Parses a {@link Intrinsic}, validating as it goes. Throws {@link UirParseError} on bad input. */
 export function parseIntrinsic(value: unknown, path = 'Intrinsic'): Intrinsic {
   const o = asObject(value, path);
@@ -3713,6 +3942,39 @@ export function equalsLambda(a: Lambda, b: Lambda): boolean {
 
 /** Returns a copy of [node] with [patch] applied. The original is never mutated. */
 export function copyWithLambda(node: Lambda, patch: Partial<Lambda>): Lambda {
+  return { ...node, ...patch };
+}
+
+/** Parses a {@link Let}, validating as it goes. Throws {@link UirParseError} on bad input. */
+export function parseLet(value: unknown, path = 'Let'): Let {
+  const o = asObject(value, path);
+  const kind = asString(req(o, 'kind', path), `${path}.kind`);
+  if (kind !== 'logic.Let') throw new UirParseError(`${path}.kind`, `expected "logic.Let", got "${kind}"`);
+
+  return {
+    ...(own(o, 'anchor') === undefined || own(o, 'anchor') === null ? {} : { anchor: parseAnchor(own(o, 'anchor'), `${path}.anchor`) }),
+    binding: parseVarDecl(req(o, 'binding', path), `${path}.binding`),
+    body: parseExpr(req(o, 'body', path), `${path}.body`),
+    ...(own(o, 'ext') === undefined || own(o, 'ext') === null ? {} : { ext: asMap(own(o, 'ext'), `${path}.ext`, (v) => v) }),
+    id: parseNodeId(req(o, 'id', path), `${path}.id`),
+    kind: 'logic.Let',
+    span: parseSourceSpan(req(o, 'span', path), `${path}.span`),
+    type: parseTypeRef(req(o, 'type', path), `${path}.type`),
+  };
+}
+
+/** Serializes a {@link Let} to canonical JSON. */
+export function serializeLet(node: Let): Record<string, unknown> {
+  return canonicalJson(node) as Record<string, unknown>;
+}
+
+/** Structural equality. List order is significant: UIR children are ordered (Spec §2.3). */
+export function equalsLet(a: Let, b: Let): boolean {
+  return deepEquals(canonicalJson(a), canonicalJson(b));
+}
+
+/** Returns a copy of [node] with [patch] applied. The original is never mutated. */
+export function copyWithLet(node: Let, patch: Partial<Let>): Let {
   return { ...node, ...patch };
 }
 
@@ -3788,6 +4050,7 @@ export function parseMapLit(value: unknown, path = 'MapLit'): MapLit {
 
   return {
     ...(own(o, 'anchor') === undefined || own(o, 'anchor') === null ? {} : { anchor: parseAnchor(own(o, 'anchor'), `${path}.anchor`) }),
+    ...(own(o, 'entries') === undefined || own(o, 'entries') === null ? {} : { entries: asList(own(o, 'entries'), `${path}.entries`, (v, p) => parseExpr(v, p)) }),
     ...(own(o, 'ext') === undefined || own(o, 'ext') === null ? {} : { ext: asMap(own(o, 'ext'), `${path}.ext`, (v) => v) }),
     id: parseNodeId(req(o, 'id', path), `${path}.id`),
     ...(own(o, 'keys') === undefined || own(o, 'keys') === null ? {} : { keys: asList(own(o, 'keys'), `${path}.keys`, (v, p) => parseExpr(v, p)) }),
@@ -4150,6 +4413,37 @@ export function copyWithRef(node: Ref, patch: Partial<Ref>): Ref {
   return { ...node, ...patch };
 }
 
+/** Parses a {@link Rethrow}, validating as it goes. Throws {@link UirParseError} on bad input. */
+export function parseRethrow(value: unknown, path = 'Rethrow'): Rethrow {
+  const o = asObject(value, path);
+  const kind = asString(req(o, 'kind', path), `${path}.kind`);
+  if (kind !== 'logic.Rethrow') throw new UirParseError(`${path}.kind`, `expected "logic.Rethrow", got "${kind}"`);
+
+  return {
+    ...(own(o, 'anchor') === undefined || own(o, 'anchor') === null ? {} : { anchor: parseAnchor(own(o, 'anchor'), `${path}.anchor`) }),
+    ...(own(o, 'ext') === undefined || own(o, 'ext') === null ? {} : { ext: asMap(own(o, 'ext'), `${path}.ext`, (v) => v) }),
+    id: parseNodeId(req(o, 'id', path), `${path}.id`),
+    kind: 'logic.Rethrow',
+    span: parseSourceSpan(req(o, 'span', path), `${path}.span`),
+    type: parseTypeRef(req(o, 'type', path), `${path}.type`),
+  };
+}
+
+/** Serializes a {@link Rethrow} to canonical JSON. */
+export function serializeRethrow(node: Rethrow): Record<string, unknown> {
+  return canonicalJson(node) as Record<string, unknown>;
+}
+
+/** Structural equality. List order is significant: UIR children are ordered (Spec §2.3). */
+export function equalsRethrow(a: Rethrow, b: Rethrow): boolean {
+  return deepEquals(canonicalJson(a), canonicalJson(b));
+}
+
+/** Returns a copy of [node] with [patch] applied. The original is never mutated. */
+export function copyWithRethrow(node: Rethrow, patch: Partial<Rethrow>): Rethrow {
+  return { ...node, ...patch };
+}
+
 /** Parses a {@link Return}, validating as it goes. Throws {@link UirParseError} on bad input. */
 export function parseReturn(value: unknown, path = 'Return'): Return {
   const o = asObject(value, path);
@@ -4253,6 +4547,38 @@ export function copyWithRouteTransition(node: RouteTransition, patch: Partial<Ro
   return { ...node, ...patch };
 }
 
+/** Parses a {@link Sequence}, validating as it goes. Throws {@link UirParseError} on bad input. */
+export function parseSequence(value: unknown, path = 'Sequence'): Sequence {
+  const o = asObject(value, path);
+  const kind = asString(req(o, 'kind', path), `${path}.kind`);
+  if (kind !== 'logic.Sequence') throw new UirParseError(`${path}.kind`, `expected "logic.Sequence", got "${kind}"`);
+
+  return {
+    ...(own(o, 'anchor') === undefined || own(o, 'anchor') === null ? {} : { anchor: parseAnchor(own(o, 'anchor'), `${path}.anchor`) }),
+    exprs: asList(req(o, 'exprs', path), `${path}.exprs`, (v, p) => parseExpr(v, p)),
+    ...(own(o, 'ext') === undefined || own(o, 'ext') === null ? {} : { ext: asMap(own(o, 'ext'), `${path}.ext`, (v) => v) }),
+    id: parseNodeId(req(o, 'id', path), `${path}.id`),
+    kind: 'logic.Sequence',
+    span: parseSourceSpan(req(o, 'span', path), `${path}.span`),
+    type: parseTypeRef(req(o, 'type', path), `${path}.type`),
+  };
+}
+
+/** Serializes a {@link Sequence} to canonical JSON. */
+export function serializeSequence(node: Sequence): Record<string, unknown> {
+  return canonicalJson(node) as Record<string, unknown>;
+}
+
+/** Structural equality. List order is significant: UIR children are ordered (Spec §2.3). */
+export function equalsSequence(a: Sequence, b: Sequence): boolean {
+  return deepEquals(canonicalJson(a), canonicalJson(b));
+}
+
+/** Returns a copy of [node] with [patch] applied. The original is never mutated. */
+export function copyWithSequence(node: Sequence, patch: Partial<Sequence>): Sequence {
+  return { ...node, ...patch };
+}
+
 /** Parses a {@link Signal}, validating as it goes. Throws {@link UirParseError} on bad input. */
 export function parseSignal(value: unknown, path = 'Signal'): Signal {
   const o = asObject(value, path);
@@ -4350,6 +4676,39 @@ export function equalsSourceFile(a: SourceFile, b: SourceFile): boolean {
 
 /** Returns a copy of [node] with [patch] applied. The original is never mutated. */
 export function copyWithSourceFile(node: SourceFile, patch: Partial<SourceFile>): SourceFile {
+  return { ...node, ...patch };
+}
+
+/** Parses a {@link Spread}, validating as it goes. Throws {@link UirParseError} on bad input. */
+export function parseSpread(value: unknown, path = 'Spread'): Spread {
+  const o = asObject(value, path);
+  const kind = asString(req(o, 'kind', path), `${path}.kind`);
+  if (kind !== 'logic.Spread') throw new UirParseError(`${path}.kind`, `expected "logic.Spread", got "${kind}"`);
+
+  return {
+    ...(own(o, 'anchor') === undefined || own(o, 'anchor') === null ? {} : { anchor: parseAnchor(own(o, 'anchor'), `${path}.anchor`) }),
+    ...(own(o, 'ext') === undefined || own(o, 'ext') === null ? {} : { ext: asMap(own(o, 'ext'), `${path}.ext`, (v) => v) }),
+    id: parseNodeId(req(o, 'id', path), `${path}.id`),
+    kind: 'logic.Spread',
+    ...(own(o, 'nullAware') === undefined || own(o, 'nullAware') === null ? {} : { nullAware: asBool(own(o, 'nullAware'), `${path}.nullAware`) }),
+    span: parseSourceSpan(req(o, 'span', path), `${path}.span`),
+    type: parseTypeRef(req(o, 'type', path), `${path}.type`),
+    value: parseExpr(req(o, 'value', path), `${path}.value`),
+  };
+}
+
+/** Serializes a {@link Spread} to canonical JSON. */
+export function serializeSpread(node: Spread): Record<string, unknown> {
+  return canonicalJson(node) as Record<string, unknown>;
+}
+
+/** Structural equality. List order is significant: UIR children are ordered (Spec §2.3). */
+export function equalsSpread(a: Spread, b: Spread): boolean {
+  return deepEquals(canonicalJson(a), canonicalJson(b));
+}
+
+/** Returns a copy of [node] with [patch] applied. The original is never mutated. */
+export function copyWithSpread(node: Spread, patch: Partial<Spread>): Spread {
   return { ...node, ...patch };
 }
 
@@ -4512,6 +4871,38 @@ export function equalsThrow(a: Throw, b: Throw): boolean {
 
 /** Returns a copy of [node] with [patch] applied. The original is never mutated. */
 export function copyWithThrow(node: Throw, patch: Partial<Throw>): Throw {
+  return { ...node, ...patch };
+}
+
+/** Parses a {@link ThrowExpr}, validating as it goes. Throws {@link UirParseError} on bad input. */
+export function parseThrowExpr(value: unknown, path = 'ThrowExpr'): ThrowExpr {
+  const o = asObject(value, path);
+  const kind = asString(req(o, 'kind', path), `${path}.kind`);
+  if (kind !== 'logic.ThrowExpr') throw new UirParseError(`${path}.kind`, `expected "logic.ThrowExpr", got "${kind}"`);
+
+  return {
+    ...(own(o, 'anchor') === undefined || own(o, 'anchor') === null ? {} : { anchor: parseAnchor(own(o, 'anchor'), `${path}.anchor`) }),
+    ...(own(o, 'ext') === undefined || own(o, 'ext') === null ? {} : { ext: asMap(own(o, 'ext'), `${path}.ext`, (v) => v) }),
+    id: parseNodeId(req(o, 'id', path), `${path}.id`),
+    kind: 'logic.ThrowExpr',
+    span: parseSourceSpan(req(o, 'span', path), `${path}.span`),
+    type: parseTypeRef(req(o, 'type', path), `${path}.type`),
+    value: parseExpr(req(o, 'value', path), `${path}.value`),
+  };
+}
+
+/** Serializes a {@link ThrowExpr} to canonical JSON. */
+export function serializeThrowExpr(node: ThrowExpr): Record<string, unknown> {
+  return canonicalJson(node) as Record<string, unknown>;
+}
+
+/** Structural equality. List order is significant: UIR children are ordered (Spec §2.3). */
+export function equalsThrowExpr(a: ThrowExpr, b: ThrowExpr): boolean {
+  return deepEquals(canonicalJson(a), canonicalJson(b));
+}
+
+/** Returns a copy of [node] with [patch] applied. The original is never mutated. */
+export function copyWithThrowExpr(node: ThrowExpr, patch: Partial<ThrowExpr>): ThrowExpr {
   return { ...node, ...patch };
 }
 
@@ -5142,10 +5533,16 @@ export function parseExpr(value: unknown, path = 'Expr'): Expr {
       return parseCast(o, path);
     case 'logic.Conditional':
       return parseConditional(o, path);
+    case 'logic.ForElement':
+      return parseForElement(o, path);
+    case 'logic.IfElement':
+      return parseIfElement(o, path);
     case 'logic.Intrinsic':
       return parseIntrinsic(o, path);
     case 'logic.Lambda':
       return parseLambda(o, path);
+    case 'logic.Let':
+      return parseLet(o, path);
     case 'logic.ListLit':
       return parseListLit(o, path);
     case 'logic.Lit':
@@ -5164,8 +5561,16 @@ export function parseExpr(value: unknown, path = 'Expr'): Expr {
       return parsePropertyAccess(o, path);
     case 'logic.Ref':
       return parseRef(o, path);
+    case 'logic.Rethrow':
+      return parseRethrow(o, path);
+    case 'logic.Sequence':
+      return parseSequence(o, path);
+    case 'logic.Spread':
+      return parseSpread(o, path);
     case 'logic.StringInterp':
       return parseStringInterp(o, path);
+    case 'logic.ThrowExpr':
+      return parseThrowExpr(o, path);
     case 'logic.TypeCheck':
       return parseTypeCheck(o, path);
     case 'logic.Unary':
@@ -5188,8 +5593,11 @@ export interface ExprVisitor<R> {
   visitCall(node: Call): R;
   visitCast(node: Cast): R;
   visitConditional(node: Conditional): R;
+  visitForElement(node: ForElement): R;
+  visitIfElement(node: IfElement): R;
   visitIntrinsic(node: Intrinsic): R;
   visitLambda(node: Lambda): R;
+  visitLet(node: Let): R;
   visitListLit(node: ListLit): R;
   visitLit(node: Lit): R;
   visitMapLit(node: MapLit): R;
@@ -5199,7 +5607,11 @@ export interface ExprVisitor<R> {
   visitOpaqueExpr(node: OpaqueExpr): R;
   visitPropertyAccess(node: PropertyAccess): R;
   visitRef(node: Ref): R;
+  visitRethrow(node: Rethrow): R;
+  visitSequence(node: Sequence): R;
+  visitSpread(node: Spread): R;
   visitStringInterp(node: StringInterp): R;
+  visitThrowExpr(node: ThrowExpr): R;
   visitTypeCheck(node: TypeCheck): R;
   visitUnary(node: Unary): R;
 }
@@ -5219,10 +5631,16 @@ export function acceptExpr<R>(node: Expr, visitor: ExprVisitor<R>): R {
       return visitor.visitCast(node as Cast);
     case 'logic.Conditional':
       return visitor.visitConditional(node as Conditional);
+    case 'logic.ForElement':
+      return visitor.visitForElement(node as ForElement);
+    case 'logic.IfElement':
+      return visitor.visitIfElement(node as IfElement);
     case 'logic.Intrinsic':
       return visitor.visitIntrinsic(node as Intrinsic);
     case 'logic.Lambda':
       return visitor.visitLambda(node as Lambda);
+    case 'logic.Let':
+      return visitor.visitLet(node as Let);
     case 'logic.ListLit':
       return visitor.visitListLit(node as ListLit);
     case 'logic.Lit':
@@ -5241,8 +5659,16 @@ export function acceptExpr<R>(node: Expr, visitor: ExprVisitor<R>): R {
       return visitor.visitPropertyAccess(node as PropertyAccess);
     case 'logic.Ref':
       return visitor.visitRef(node as Ref);
+    case 'logic.Rethrow':
+      return visitor.visitRethrow(node as Rethrow);
+    case 'logic.Sequence':
+      return visitor.visitSequence(node as Sequence);
+    case 'logic.Spread':
+      return visitor.visitSpread(node as Spread);
     case 'logic.StringInterp':
       return visitor.visitStringInterp(node as StringInterp);
+    case 'logic.ThrowExpr':
+      return visitor.visitThrowExpr(node as ThrowExpr);
     case 'logic.TypeCheck':
       return visitor.visitTypeCheck(node as TypeCheck);
     case 'logic.Unary':
@@ -5423,7 +5849,7 @@ export function acceptUiNode<R>(node: UiNode, visitor: UiNodeVisitor<R>): R {
 }
 
 /** Any UIR node. */
-export type AnyUirNode = Action | Assign | Await | Binary | Block | Break | Call | Cast | ClassDecl | Component | Conditional | ConstBinding | Continue | Derived | Effect | Endpoint | EnumDecl | ExprBinding | ExprStmt | FieldDecl | For | FunctionDecl | If | Intrinsic | Lambda | ListLit | Lit | MapLit | MethodCall | Navigate | New | NullCheck | OpaqueDecl | OpaqueExpr | OpaqueStmt | ParamBinding | PropertyAccess | Ref | Return | Route | RouteTransition | Signal | SignalBinding | SourceFile | Store | StoreInstance | StringInterp | Switch | Throw | Token | TryCatch | TypeAliasDecl | TypeCheck | UiAsync | UiCond | UiElement | UiList | UiOpaque | UiOverrideRef | UiSlotRef | UiText | Unary | VarDecl | While;
+export type AnyUirNode = Action | Assign | Await | Binary | Block | Break | Call | Cast | ClassDecl | Component | Conditional | ConstBinding | Continue | Derived | Effect | Endpoint | EnumDecl | ExprBinding | ExprStmt | FieldDecl | For | ForElement | FunctionDecl | If | IfElement | Intrinsic | Lambda | Let | ListLit | Lit | MapLit | MethodCall | Navigate | New | NullCheck | OpaqueDecl | OpaqueExpr | OpaqueStmt | ParamBinding | PropertyAccess | Ref | Rethrow | Return | Route | RouteTransition | Sequence | Signal | SignalBinding | SourceFile | Spread | Store | StoreInstance | StringInterp | Switch | Throw | ThrowExpr | Token | TryCatch | TypeAliasDecl | TypeCheck | UiAsync | UiCond | UiElement | UiList | UiOpaque | UiOverrideRef | UiSlotRef | UiText | Unary | VarDecl | While;
 
 /** Parses any UIR node, dispatching on `kind` across every node kind in the schema. */
 export function parseUirNode(value: unknown, path = 'UirNode'): AnyUirNode {
@@ -5472,14 +5898,20 @@ export function parseUirNode(value: unknown, path = 'UirNode'): AnyUirNode {
       return parseFieldDecl(o, path);
     case 'logic.For':
       return parseFor(o, path);
+    case 'logic.ForElement':
+      return parseForElement(o, path);
     case 'logic.FunctionDecl':
       return parseFunctionDecl(o, path);
     case 'logic.If':
       return parseIf(o, path);
+    case 'logic.IfElement':
+      return parseIfElement(o, path);
     case 'logic.Intrinsic':
       return parseIntrinsic(o, path);
     case 'logic.Lambda':
       return parseLambda(o, path);
+    case 'logic.Let':
+      return parseLet(o, path);
     case 'logic.ListLit':
       return parseListLit(o, path);
     case 'logic.Lit':
@@ -5506,18 +5938,24 @@ export function parseUirNode(value: unknown, path = 'UirNode'): AnyUirNode {
       return parsePropertyAccess(o, path);
     case 'logic.Ref':
       return parseRef(o, path);
+    case 'logic.Rethrow':
+      return parseRethrow(o, path);
     case 'logic.Return':
       return parseReturn(o, path);
     case 'app.Route':
       return parseRoute(o, path);
     case 'app.RouteTransition':
       return parseRouteTransition(o, path);
+    case 'logic.Sequence':
+      return parseSequence(o, path);
     case 'sig.Signal':
       return parseSignal(o, path);
     case 'bind.Signal':
       return parseSignalBinding(o, path);
     case 'l0.SourceFile':
       return parseSourceFile(o, path);
+    case 'logic.Spread':
+      return parseSpread(o, path);
     case 'app.Store':
       return parseStore(o, path);
     case 'app.StoreInstance':
@@ -5528,6 +5966,8 @@ export function parseUirNode(value: unknown, path = 'UirNode'): AnyUirNode {
       return parseSwitch(o, path);
     case 'logic.Throw':
       return parseThrow(o, path);
+    case 'logic.ThrowExpr':
+      return parseThrowExpr(o, path);
     case 'app.Token':
       return parseToken(o, path);
     case 'logic.TryCatch':

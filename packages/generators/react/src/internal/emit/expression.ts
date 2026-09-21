@@ -57,6 +57,8 @@ import { OWNER_LABEL, missingCapabilityOf, opaqueDetailOf, opaqueReasonSuffix } 
 export interface EmitScope {
   /** The file being written. */
   readonly module: ModuleBuilder;
+  /** The identifier the enclosing `catch` clause binds — what `rethrow` throws again. Set by the statement emitter while it lowers a catch body. */
+  catchBinding?: string | undefined;
   /** Reports a finding. */
   report(code: string, severity: 'error' | 'warning' | 'info', message: string, nodeId?: string): void;
   /**
@@ -981,6 +983,120 @@ function generalCallArguments(params: readonly Node[], node: Node, scope: EmitSc
  * @param scope - what is in scope, and where to report.
  * @returns the TypeScript text. Parenthesised where its own structure requires it.
  */
+/**
+ * The TypeScript type of an *empty* collection literal, when it is fully known: `[]` alone is `never[]` (or an implicit
+ * `any[]` in a local), so `<String>[]` has to say what it holds or a later `add` is a type error. `undefined` when the literal
+ * has elements (inference has them) or the type is not fully known.
+ */
+function emptyCollectionType(node: Node, isEmpty: boolean, scope: EmitScope): string | undefined {
+  if (!isEmpty) return undefined;
+  const type = node['type'] as Node | undefined;
+  if (type === undefined || sdkBaseTypeOf(type) === undefined) return undefined;
+  const text = typeTextOf(
+    type,
+    (rt) => scope.module.use(RUNTIME, rt),
+    (target) => (scope.generalClasses.has(target) ? generalClassName(target, scope) : undefined),
+  );
+  return text.includes('unknown') || text === 'unknown' ? undefined : text;
+}
+
+/**
+ * `new Map<K, V>` when a map literal's declared type has a `dynamic`/`Object?` part: `{'id': 1, 'name': 'a'}` typed
+ * `Map<String, Object?>` would otherwise infer `Map<string, number>` from its first entry and reject the rest. Empty otherwise,
+ * so a fully-typed literal is emitted as before.
+ */
+function mapTypeArguments(node: Node, scope: EmitScope): string {
+  const text = typeTextOf(
+    node['type'] as Node | undefined,
+    (rt) => scope.module.use(RUNTIME, rt),
+    (target) => (scope.generalClasses.has(target) ? generalClassName(target, scope) : undefined),
+  );
+  const match = /^Map<(.*)>$/.exec(text);
+  return match !== null && match[1]!.includes('unknown') ? `<${match[1]}>` : '';
+}
+
+/** Whether `node` evaluates an `await` of its own — not one inside a nested lambda, which has its own function. */
+function containsAwait(node: unknown): boolean {
+  if (Array.isArray(node)) return node.some((child) => containsAwait(child));
+  if (node === null || typeof node !== 'object') return false;
+  const record = node as Node;
+  if (record['kind'] === 'logic.Await') return true;
+  if (record['kind'] === 'logic.Lambda') return false;
+  return Object.values(record).some((child) => containsAwait(child));
+}
+
+/** `scope`, with `names` also in scope as bare identifiers: a `logic.Let` binding and a collection-`for` variable (name-only refs). */
+function scopeWithNames(scope: EmitScope, names: readonly string[]): EmitScope {
+  const declared = new Set(names);
+  return {
+    ...scope,
+    report: scope.report.bind(scope),
+    node: scope.node.bind(scope),
+    signalLocal: scope.signalLocal.bind(scope),
+    localName: scope.localName.bind(scope),
+    declaredName: scope.declaredName.bind(scope),
+    paramInScope: (name) => (declared.has(name) ? identifierOf(name) : scope.paramInScope(name)),
+  };
+}
+
+/**
+ * The elements of a collection literal as array-literal pieces: an expression, or a spread of an array. `if`/`for` elements
+ * become spreads of an array built from their own elements, so `[a, if (c) b, for (x in xs) f(x)]` is
+ * `[a, ...(c ? [b] : []), ...Array.from(xs).flatMap((x) => [f(x)])]`.
+ *
+ * @param entry - lowers a leaf element (a list element, or a map's `key: value` pair).
+ */
+function collectionPieces(elements: readonly Node[], scope: EmitScope, entry: (node: Node, scope: EmitScope) => string): string[] {
+  const out: string[] = [];
+  for (const element of elements) {
+    switch (kindOf(element)) {
+      case 'logic.Spread': {
+        const value = emitExpression(element['value'] as Node, scope);
+        out.push(element['nullAware'] === true ? `...(${value} ?? [])` : `...(${value})`);
+        break;
+      }
+      case 'logic.IfElement': {
+        const test = emitExpression(element['test'] as Node, scope);
+        const then = collectionPieces([element['then'] as Node], scope, entry).join(', ');
+        const otherwise = element['otherwise'] === undefined ? '' : collectionPieces([element['otherwise'] as Node], scope, entry).join(', ');
+        out.push(`...(${test} ? [${then}] : [${otherwise}])`);
+        break;
+      }
+      case 'logic.ForElement': {
+        const decl = element['loopDecl'] as Node | undefined;
+        if (decl !== undefined) {
+          const name = String(decl['name']);
+          const inner = scopeWithNames(scope, [name]);
+          const body = collectionPieces([element['body'] as Node], inner, entry).join(', ');
+          const iterable = emitExpression(element['iterable'] as Node, scope);
+          const isAsync = containsAwait(element['body']);
+          out.push(
+            isAsync
+              ? `...(await Promise.all(Array.from(${iterable}).map(async (${identifierOf(name)}) => [${body}]))).flat()`
+              : `...Array.from(${iterable}).flatMap((${identifierOf(name)}) => [${body}])`,
+          );
+          break;
+        }
+        // C-style: `for (var i = 0; i < n; i++) element`. Each iteration has its own `i`, as `let` gives it.
+        const init = element['init'] as Node | undefined;
+        const name = String(init?.['name'] ?? '_');
+        const inner = scopeWithNames(scope, [name]);
+        const initValue = init?.['initializer'] === undefined ? '' : ` = ${emitExpression(init['initializer'] as Node, inner)}`;
+        const test = element['test'] === undefined ? '' : emitExpression(element['test'] as Node, inner);
+        const update = asArray(element['update']).map((u) => emitExpression(u, inner)).join(', ');
+        const body = collectionPieces([element['body'] as Node], inner, entry).join(', ');
+        const isAsync = containsAwait(element);
+        const run = `${isAsync ? 'async ' : ''}() => { const $r: unknown[] = []; for (let ${identifierOf(name)}${initValue}; ${test}; ${update}) { $r.push(${body}); } return $r; }`;
+        out.push(isAsync ? `...(await (${run})())` : `...(${run})()`);
+        break;
+      }
+      default:
+        out.push(entry(element, scope));
+    }
+  }
+  return out;
+}
+
 /**
  * The `dart:` top-level functions and static members this generator lowers, by `library#name` — what the analyzer resolved,
  * not a spelling. Each entry is exact Dart semantics (or, for a hash, the Dart contract — see `dartHashAll`); anything else the
@@ -2144,11 +2260,14 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
     }
 
     case 'logic.ListLit': {
-      const elements = asArray(node['elements']).map((e) => emitExpression(e, scope));
+      const elements = collectionPieces(asArray(node['elements']), scope, (e, sc) => emitExpression(e, sc));
+      const typed = emptyCollectionType(node, elements.length === 0, scope);
       // A Dart set literal is a `ListLit` whose *type* is a `Set` (the schema has no set node, and the analyzer used
       // to drop the elements of `{1, 2}`): `new Set([1, 2])`, since an array has none of a `Set`'s operations.
-      if (sdkBaseTypeOf(node['type'] as Node | undefined) === 'Set') return `new Set([${elements.join(', ')}])`;
-      return `[${elements.join(', ')}]`;
+      if (sdkBaseTypeOf(node['type'] as Node | undefined) === 'Set') {
+        return typed === undefined ? `new Set([${elements.join(', ')}])` : `(new Set([]) as ${typed})`;
+      }
+      return typed === undefined ? `[${elements.join(', ')}]` : `([] as ${typed})`;
     }
 
     case 'logic.MapLit': {
@@ -2156,14 +2275,25 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
       // `logic.MapLit` and the resolved type is what tells them apart. Emitting `new Map()` for a Set gives
       // it `.add`, `.has` and `.delete` that all mean something else, and the mistake compiles.
       const typeName = String((node['type'] as Node | undefined)?.['name'] ?? '');
+      // A map with a spread or a collection-if/for carries `entries`: each is a one-entry map literal, a spread, or an `if`/`for`.
+      if (node['entries'] !== undefined) {
+        const pairs = collectionPieces(asArray(node['entries']), scope, (entry, sc) => {
+          const key = emitExpression(asArray(entry['keys'])[0] as Node, sc);
+          const value = emitExpression(asArray(entry['values'])[0] as Node, sc);
+          return `${sc.module.use(RUNTIME, 'dartEntry')}(${key}, ${value})`;
+        });
+        return `new Map${mapTypeArguments(node, scope)}([${pairs.join(', ')}])`;
+      }
       const keys = asArray(node['keys']).map((key) => emitExpression(key, scope));
+      const emptyType = emptyCollectionType(node, keys.length === 0, scope);
+      if (emptyType !== undefined) return `(new ${typeName.startsWith('Set') ? 'Set' : 'Map'}([]) as ${emptyType})`;
       if (typeName.startsWith('Set<') || typeName === 'Set') {
         return `new Set([${keys.join(', ')}])`;
       }
       const values = asArray(node['values']).map((value) => emitExpression(value, scope));
       // A Dart `Map` is not a JS object literal: its keys are not coerced to strings. `new Map` preserves that.
       const entries = keys.map((key, index) => `[${key}, ${values[index] ?? 'undefined'}]`);
-      return `new Map([${entries.join(', ')}])`;
+      return `new Map${mapTypeArguments(node, scope)}([${entries.join(', ')}])`;
     }
 
     case 'logic.StringInterp': {
@@ -2278,6 +2408,40 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
       return `(${params}) => ${emitExpression(node['body'] as Node, inner)}`;
     }
 
+    // `throw` in expression position (`x ?? throw E()`, `=> throw E()`, a switch arm): a call whose type is `never`.
+    case 'logic.ThrowExpr':
+      return `${scope.module.use(RUNTIME, 'dartThrow')}(${emitExpression(node['value'] as Node, scope)})`;
+
+    // `rethrow`: the catch clause's own binding, thrown again.
+    case 'logic.Rethrow': {
+      if (scope.catchBinding === undefined) {
+        scope.report(
+          GeneratorDiagnosticCode.UnsupportedExpression,
+          'error',
+          '`rethrow` outside a catch clause has nothing to throw again.',
+          idOf(node),
+        );
+        return REFUSED;
+      }
+      return `${scope.module.use(RUNTIME, 'dartThrow')}(${scope.catchBinding})`;
+    }
+
+    // `(a, b, c)`: evaluated in order, the last is the value.
+    case 'logic.Sequence':
+      return paren(asArray(node['exprs']).map((e) => emitExpression(e, scope)).join(', '));
+
+    // A value bound once: a cascade's target, a null-aware receiver. `((n) => body)(value)`; async when the body awaits.
+    case 'logic.Let': {
+      const binding = node['binding'] as Node;
+      const name = String(binding['name']);
+      const value = emitExpression(binding['initializer'] as Node, scope);
+      const body = emitExpression(node['body'] as Node, scopeWithNames(scope, [name]));
+      if (value === REFUSED || body === REFUSED) return REFUSED;
+      return containsAwait(node['body'])
+        ? paren(`await (async (${identifierOf(name)}) => ${body})(${value})`)
+        : `((${identifierOf(name)}) => ${body})(${value})`;
+    }
+
     case 'logic.Await':
       // Self-wrapped (M11-B, ADR-0046) — the identical `paren(...)` discipline `logic.Binary`/
       // `logic.Unary`/`logic.Conditional`/`logic.NullCheck` already apply to themselves, extended here for
@@ -2308,11 +2472,30 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
       return REFUSED;
     }
 
-    case 'logic.Cast':
-      // Dart's `as` is a *checked* downcast that throws; TypeScript's is erased. Emitting `as` would silently
-      // turn a runtime guarantee into a compile-time assertion, so the value passes through unchanged and the
-      // type is left to inference — which is honest about what the output actually checks.
-      return emitExpression(node['operand'] as Node, scope);
+    case 'logic.Cast': {
+      // Dart's `as` is a *checked* downcast that throws; TypeScript's is erased, and a bare `as` would turn a runtime
+      // guarantee into a compile-time assertion. So a cast to a type this generator can test at runtime (the same set
+      // `is` can: `int`, `double`, `num`, `String`, `bool`, `List`, `Map`, `Set`, `Object`, a project class — nullable or
+      // not) is `dartAs<T>(value, test, name)`, which throws a `TypeError` where Dart does, and types the result. A cast
+      // to any other type (a function type, a type parameter) has no runtime test: the value passes through unchanged.
+      const operand = emitExpression(node['operand'] as Node, scope);
+      if (operand === REFUSED) return REFUSED;
+      const type = node['type'] as Node | undefined;
+      const name = String(type?.['name'] ?? '');
+      const classId = generalClassOf(type, scope);
+      const test =
+        classId !== undefined
+          ? `${type?.['nullable'] === true ? '$v == null || ' : ''}${scope.module.use(RUNTIME, 'dartIs')}($v, ${generalClassName(classId, scope)})`
+          : sdkTypeTest(name, type?.['library'], '$v', scope);
+      if (test === undefined) return operand;
+      const text = typeTextOf(
+        type,
+        (rt) => scope.module.use(RUNTIME, rt),
+        (target) => (scope.generalClasses.has(target) ? generalClassName(target, scope) : undefined),
+      );
+      if (text.includes('unknown')) return operand;
+      return `${scope.module.use(RUNTIME, 'dartAs')}<${text}>(${operand}, ($v) => ${test}, ${JSON.stringify(name)})`;
+    }
 
     case 'logic.Assign':
       return emitAssignment(node, scope);

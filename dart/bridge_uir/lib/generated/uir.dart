@@ -31,7 +31,7 @@ const String uirVersion = '1.15.0';
 /// A hash of the schema sources this library was generated from.
 ///
 /// Stamped into every emitted manifest: a UIR document always says which schema produced it.
-const String uirSchemaHash = '7a0e349399b09af1';
+const String uirSchemaHash = 'b614400e2a714d2b';
 
 /// Node kind -> the fields of that node which hold `NodeId` references.
 ///
@@ -59,10 +59,13 @@ const Map<String, List<String>> uirReferenceFields = <String, List<String>>{
   'logic.ExprStmt': <String>['id'],
   'logic.FieldDecl': <String>['id'],
   'logic.For': <String>['id'],
+  'logic.ForElement': <String>['id'],
   'logic.FunctionDecl': <String>['id'],
   'logic.If': <String>['id'],
+  'logic.IfElement': <String>['id'],
   'logic.Intrinsic': <String>['id'],
   'logic.Lambda': <String>['id'],
+  'logic.Let': <String>['id'],
   'logic.ListLit': <String>['id'],
   'logic.Lit': <String>['id'],
   'logic.MapLit': <String>['id'],
@@ -76,17 +79,21 @@ const Map<String, List<String>> uirReferenceFields = <String, List<String>>{
   'bind.Param': <String>['id', 'target'],
   'logic.PropertyAccess': <String>['id', 'target'],
   'logic.Ref': <String>['id', 'target'],
+  'logic.Rethrow': <String>['id'],
   'logic.Return': <String>['id'],
   'app.Route': <String>['component', 'guards', 'id', 'layout'],
   'app.RouteTransition': <String>['component', 'id', 'source', 'target'],
+  'logic.Sequence': <String>['id'],
   'sig.Signal': <String>['id', 'store'],
   'bind.Signal': <String>['id', 'signal'],
   'l0.SourceFile': <String>['id'],
+  'logic.Spread': <String>['id'],
   'app.Store': <String>['actions', 'derived', 'id', 'signals'],
   'app.StoreInstance': <String>['id', 'store'],
   'logic.StringInterp': <String>['id'],
   'logic.Switch': <String>['id'],
   'logic.Throw': <String>['id'],
+  'logic.ThrowExpr': <String>['id'],
   'app.Token': <String>['id'],
   'logic.TryCatch': <String>['id'],
   'logic.TypeAliasDecl': <String>['id'],
@@ -881,10 +888,16 @@ sealed class Expr extends UirNode {
         return Cast.fromJson(json, path);
       case 'logic.Conditional':
         return Conditional.fromJson(json, path);
+      case 'logic.ForElement':
+        return ForElement.fromJson(json, path);
+      case 'logic.IfElement':
+        return IfElement.fromJson(json, path);
       case 'logic.Intrinsic':
         return Intrinsic.fromJson(json, path);
       case 'logic.Lambda':
         return Lambda.fromJson(json, path);
+      case 'logic.Let':
+        return Let.fromJson(json, path);
       case 'logic.ListLit':
         return ListLit.fromJson(json, path);
       case 'logic.Lit':
@@ -903,8 +916,16 @@ sealed class Expr extends UirNode {
         return PropertyAccess.fromJson(json, path);
       case 'logic.Ref':
         return Ref.fromJson(json, path);
+      case 'logic.Rethrow':
+        return Rethrow.fromJson(json, path);
+      case 'logic.Sequence':
+        return Sequence.fromJson(json, path);
+      case 'logic.Spread':
+        return Spread.fromJson(json, path);
       case 'logic.StringInterp':
         return StringInterp.fromJson(json, path);
+      case 'logic.ThrowExpr':
+        return ThrowExpr.fromJson(json, path);
       case 'logic.TypeCheck':
         return TypeCheck.fromJson(json, path);
       case 'logic.Unary':
@@ -3341,7 +3362,7 @@ final class ClassDecl extends Decl {
   /// Whether the class is `abstract` (or `sealed`, which is abstract). Present only when true.
   final bool? isAbstract;
 
-  /// Whether this declares a `mixin` rather than a class. Present only when true.
+  /// A `mixin` declaration (M12, ADR-0059): its members are added to every class that applies it with `with`. Not itself constructed.
   final bool? isMixin;
 
   /// The library file this class belongs to — its own path, or for a declaration in a `part of` file the path of the library that includes it. Absent for a class of a synthesized declaration. A generated module is per library (M12, ADR-0055).
@@ -5052,6 +5073,169 @@ final class For extends Stmt {
   ]);
 }
 
+/// `for (final x in xs) element` or `for (var i = 0; i < n; i++) element` as an element of a collection literal.
+@immutable
+final class ForElement extends Expr {
+  /// Creates a [ForElement].
+  const ForElement({
+    required this.body,
+    required this.id,
+    required this.span,
+    required this.type,
+    this.anchor,
+    this.ext,
+    this.init,
+    this.iterable,
+    this.loopDecl,
+    this.test,
+    this.update,
+  });
+
+  /// Parses a [ForElement] from JSON, validating as it goes.
+  factory ForElement.fromJson(Object? value, [String path = 'ForElement']) {
+    final Map<String, Object?> json = _asObject(value, path);
+    final String kind = _asString(_req(json, 'kind', path), '$path.kind');
+    if (kind != 'logic.ForElement') {
+      throw UirParseError('$path.kind', 'expected "logic.ForElement", got "$kind"');
+    }
+    return ForElement(
+      anchor: json['anchor'] == null ? null : _asString(json['anchor'], '$path.anchor'),
+      body: Expr.fromJson(_req(json, 'body', path), '$path.body'),
+      ext: json['ext'] == null ? null : _asMap<Object?>(json['ext'], '$path.ext', (Object? v, String p) => v),
+      id: _asString(_req(json, 'id', path), '$path.id'),
+      init: json['init'] == null ? null : VarDecl.fromJson(json['init'], '$path.init'),
+      iterable: json['iterable'] == null ? null : Expr.fromJson(json['iterable'], '$path.iterable'),
+      loopDecl: json['loopDecl'] == null ? null : VarDecl.fromJson(json['loopDecl'], '$path.loopDecl'),
+      span: SourceSpan.fromJson(_req(json, 'span', path), '$path.span'),
+      test: json['test'] == null ? null : Expr.fromJson(json['test'], '$path.test'),
+      type: TypeRef.fromJson(_req(json, 'type', path), '$path.type'),
+      update: json['update'] == null ? null : _asList<Expr>(json['update'], '$path.update', Expr.fromJson),
+    );
+  }
+
+  /// The override key, when the node is addressable by a human.
+  final Anchor? anchor;
+
+  /// The element produced per iteration: an expression, a spread, or a nested collection-if/for.
+  final Expr body;
+
+  /// Plugin extension data, namespaced `x-<plugin>`. Core passes round-trip it untouched (Spec §2.6).
+  final Map<String, Object?>? ext;
+
+  /// The node's stable, content-addressed identity.
+  final NodeId id;
+
+  /// C-style `for (var i = 0; …)`: the declaration; each iteration sees its own copy, as in Dart.
+  final VarDecl? init;
+
+  /// For-in: the iterable.
+  final Expr? iterable;
+
+  /// For-in: the loop variable's declaration; a `logic.Ref` in `body` resolves to it by name.
+  final VarDecl? loopDecl;
+
+  /// Where the node came from.
+  final SourceSpan span;
+
+  /// C-style: the condition.
+  final Expr? test;
+
+  /// Resolved type.
+  final TypeRef type;
+
+  /// C-style: the update expressions, in order.
+  final List<Expr>? update;
+
+  /// The node's discriminant.
+  @override
+  String get kind => 'logic.ForElement';
+
+  /// Serializes to canonical JSON: keys sorted, nulls omitted.
+  @override
+  Map<String, Object?> toJson() => canonicalJson(<String, Object?>{
+    'anchor': anchor,
+    'body': body.toJson(),
+    'ext': ext,
+    'id': id,
+    'init': init?.toJson(),
+    'iterable': iterable?.toJson(),
+    'kind': 'logic.ForElement',
+    'loopDecl': loopDecl?.toJson(),
+    'span': span.toJson(),
+    'test': test?.toJson(),
+    'type': type.toJson(),
+    'update': update?.map((Expr v) => v.toJson()).toList(),
+  })! as Map<String, Object?>;
+
+  /// Returns a copy with the given fields replaced. The original is never mutated.
+  ///
+  /// An omitted argument keeps its current value; `copyWith` cannot set a field back to
+  /// null. Construct a new node when that is what you mean.
+  ForElement copyWith({
+    Anchor? anchor,
+    Expr? body,
+    Map<String, Object?>? ext,
+    NodeId? id,
+    VarDecl? init,
+    Expr? iterable,
+    VarDecl? loopDecl,
+    SourceSpan? span,
+    Expr? test,
+    TypeRef? type,
+    List<Expr>? update,
+  }) {
+    return ForElement(
+      anchor: anchor ?? this.anchor,
+      body: body ?? this.body,
+      ext: ext ?? this.ext,
+      id: id ?? this.id,
+      init: init ?? this.init,
+      iterable: iterable ?? this.iterable,
+      loopDecl: loopDecl ?? this.loopDecl,
+      span: span ?? this.span,
+      test: test ?? this.test,
+      type: type ?? this.type,
+      update: update ?? this.update,
+    );
+  }
+
+  @override
+  R accept<R>(ExprVisitor<R> visitor) => visitor.visitForElement(this);
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is ForElement &&
+        _equality.equals(other.anchor, anchor) &&
+        _equality.equals(other.body, body) &&
+        _equality.equals(other.ext, ext) &&
+        _equality.equals(other.id, id) &&
+        _equality.equals(other.init, init) &&
+        _equality.equals(other.iterable, iterable) &&
+        _equality.equals(other.loopDecl, loopDecl) &&
+        _equality.equals(other.span, span) &&
+        _equality.equals(other.test, test) &&
+        _equality.equals(other.type, type) &&
+        _equality.equals(other.update, update);
+  }
+
+  @override
+  int get hashCode => Object.hashAll(<Object?>[
+    'ForElement',
+    _equality.hash(anchor),
+    _equality.hash(body),
+    _equality.hash(ext),
+    _equality.hash(id),
+    _equality.hash(init),
+    _equality.hash(iterable),
+    _equality.hash(loopDecl),
+    _equality.hash(span),
+    _equality.hash(test),
+    _equality.hash(type),
+    _equality.hash(update),
+  ]);
+}
+
 /// A function or method declaration.
 @immutable
 final class FunctionDecl extends Decl {
@@ -5368,6 +5552,139 @@ final class If extends Stmt {
   ]);
 }
 
+/// `if (test) a else b` as an element of a collection literal. `then`/`otherwise` are elements: an expression, a spread, or another collection-if/for.
+@immutable
+final class IfElement extends Expr {
+  /// Creates a [IfElement].
+  const IfElement({
+    required this.id,
+    required this.span,
+    required this.test,
+    required this.then,
+    required this.type,
+    this.anchor,
+    this.ext,
+    this.otherwise,
+  });
+
+  /// Parses a [IfElement] from JSON, validating as it goes.
+  factory IfElement.fromJson(Object? value, [String path = 'IfElement']) {
+    final Map<String, Object?> json = _asObject(value, path);
+    final String kind = _asString(_req(json, 'kind', path), '$path.kind');
+    if (kind != 'logic.IfElement') {
+      throw UirParseError('$path.kind', 'expected "logic.IfElement", got "$kind"');
+    }
+    return IfElement(
+      anchor: json['anchor'] == null ? null : _asString(json['anchor'], '$path.anchor'),
+      ext: json['ext'] == null ? null : _asMap<Object?>(json['ext'], '$path.ext', (Object? v, String p) => v),
+      id: _asString(_req(json, 'id', path), '$path.id'),
+      otherwise: json['otherwise'] == null ? null : Expr.fromJson(json['otherwise'], '$path.otherwise'),
+      span: SourceSpan.fromJson(_req(json, 'span', path), '$path.span'),
+      test: Expr.fromJson(_req(json, 'test', path), '$path.test'),
+      then: Expr.fromJson(_req(json, 'then', path), '$path.then'),
+      type: TypeRef.fromJson(_req(json, 'type', path), '$path.type'),
+    );
+  }
+
+  /// The override key, when the node is addressable by a human.
+  final Anchor? anchor;
+
+  /// Plugin extension data, namespaced `x-<plugin>`. Core passes round-trip it untouched (Spec §2.6).
+  final Map<String, Object?>? ext;
+
+  /// The node's stable, content-addressed identity.
+  final NodeId id;
+
+  /// The element when false, if any.
+  final Expr? otherwise;
+
+  /// Where the node came from.
+  final SourceSpan span;
+
+  /// The condition.
+  final Expr test;
+
+  /// The element when true.
+  final Expr then;
+
+  /// Resolved type.
+  final TypeRef type;
+
+  /// The node's discriminant.
+  @override
+  String get kind => 'logic.IfElement';
+
+  /// Serializes to canonical JSON: keys sorted, nulls omitted.
+  @override
+  Map<String, Object?> toJson() => canonicalJson(<String, Object?>{
+    'anchor': anchor,
+    'ext': ext,
+    'id': id,
+    'kind': 'logic.IfElement',
+    'otherwise': otherwise?.toJson(),
+    'span': span.toJson(),
+    'test': test.toJson(),
+    'then': then.toJson(),
+    'type': type.toJson(),
+  })! as Map<String, Object?>;
+
+  /// Returns a copy with the given fields replaced. The original is never mutated.
+  ///
+  /// An omitted argument keeps its current value; `copyWith` cannot set a field back to
+  /// null. Construct a new node when that is what you mean.
+  IfElement copyWith({
+    Anchor? anchor,
+    Map<String, Object?>? ext,
+    NodeId? id,
+    Expr? otherwise,
+    SourceSpan? span,
+    Expr? test,
+    Expr? then,
+    TypeRef? type,
+  }) {
+    return IfElement(
+      anchor: anchor ?? this.anchor,
+      ext: ext ?? this.ext,
+      id: id ?? this.id,
+      otherwise: otherwise ?? this.otherwise,
+      span: span ?? this.span,
+      test: test ?? this.test,
+      then: then ?? this.then,
+      type: type ?? this.type,
+    );
+  }
+
+  @override
+  R accept<R>(ExprVisitor<R> visitor) => visitor.visitIfElement(this);
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is IfElement &&
+        _equality.equals(other.anchor, anchor) &&
+        _equality.equals(other.ext, ext) &&
+        _equality.equals(other.id, id) &&
+        _equality.equals(other.otherwise, otherwise) &&
+        _equality.equals(other.span, span) &&
+        _equality.equals(other.test, test) &&
+        _equality.equals(other.then, then) &&
+        _equality.equals(other.type, type);
+  }
+
+  @override
+  int get hashCode => Object.hashAll(<Object?>[
+    'IfElement',
+    _equality.hash(anchor),
+    _equality.hash(ext),
+    _equality.hash(id),
+    _equality.hash(otherwise),
+    _equality.hash(span),
+    _equality.hash(test),
+    _equality.hash(then),
+    _equality.hash(type),
+  ]);
+}
+
 /// A value the host framework provides, which the program does not declare (ADR-0026).
 ///
 /// UIR's other two ways to spell a reference both need something the program contains: `logic.Ref{target}` a declaration, `logic.Ref{name}` a lexically enclosing parameter. A framework intrinsic like Flutter's `State.mounted`/`BuildContext.mounted` is neither — recognized by the analyzer from the resolved element (never from the spelling `mounted`, which an application's own field could share), and represented here as the target-neutral fact it answers rather than the framework API that answers it.
@@ -5628,6 +5945,129 @@ final class Lambda extends Expr {
   ]);
 }
 
+/// Binds a value once and evaluates `body` with it in scope: a null-aware access on a receiver that is not a plain variable (`(json['a'] as num?)?.toDouble()`), and a cascade (`Paint()..color = c`). A `logic.Ref` in `body` targets `binding`'s own id.
+@immutable
+final class Let extends Expr {
+  /// Creates a [Let].
+  const Let({
+    required this.binding,
+    required this.body,
+    required this.id,
+    required this.span,
+    required this.type,
+    this.anchor,
+    this.ext,
+  });
+
+  /// Parses a [Let] from JSON, validating as it goes.
+  factory Let.fromJson(Object? value, [String path = 'Let']) {
+    final Map<String, Object?> json = _asObject(value, path);
+    final String kind = _asString(_req(json, 'kind', path), '$path.kind');
+    if (kind != 'logic.Let') {
+      throw UirParseError('$path.kind', 'expected "logic.Let", got "$kind"');
+    }
+    return Let(
+      anchor: json['anchor'] == null ? null : _asString(json['anchor'], '$path.anchor'),
+      binding: VarDecl.fromJson(_req(json, 'binding', path), '$path.binding'),
+      body: Expr.fromJson(_req(json, 'body', path), '$path.body'),
+      ext: json['ext'] == null ? null : _asMap<Object?>(json['ext'], '$path.ext', (Object? v, String p) => v),
+      id: _asString(_req(json, 'id', path), '$path.id'),
+      span: SourceSpan.fromJson(_req(json, 'span', path), '$path.span'),
+      type: TypeRef.fromJson(_req(json, 'type', path), '$path.type'),
+    );
+  }
+
+  /// The override key, when the node is addressable by a human.
+  final Anchor? anchor;
+
+  /// The bound variable; its `initializer` is the value.
+  final VarDecl binding;
+
+  /// The expression evaluated with the binding in scope.
+  final Expr body;
+
+  /// Plugin extension data, namespaced `x-<plugin>`. Core passes round-trip it untouched (Spec §2.6).
+  final Map<String, Object?>? ext;
+
+  /// The node's stable, content-addressed identity.
+  final NodeId id;
+
+  /// Where the node came from.
+  final SourceSpan span;
+
+  /// Resolved type.
+  final TypeRef type;
+
+  /// The node's discriminant.
+  @override
+  String get kind => 'logic.Let';
+
+  /// Serializes to canonical JSON: keys sorted, nulls omitted.
+  @override
+  Map<String, Object?> toJson() => canonicalJson(<String, Object?>{
+    'anchor': anchor,
+    'binding': binding.toJson(),
+    'body': body.toJson(),
+    'ext': ext,
+    'id': id,
+    'kind': 'logic.Let',
+    'span': span.toJson(),
+    'type': type.toJson(),
+  })! as Map<String, Object?>;
+
+  /// Returns a copy with the given fields replaced. The original is never mutated.
+  ///
+  /// An omitted argument keeps its current value; `copyWith` cannot set a field back to
+  /// null. Construct a new node when that is what you mean.
+  Let copyWith({
+    Anchor? anchor,
+    VarDecl? binding,
+    Expr? body,
+    Map<String, Object?>? ext,
+    NodeId? id,
+    SourceSpan? span,
+    TypeRef? type,
+  }) {
+    return Let(
+      anchor: anchor ?? this.anchor,
+      binding: binding ?? this.binding,
+      body: body ?? this.body,
+      ext: ext ?? this.ext,
+      id: id ?? this.id,
+      span: span ?? this.span,
+      type: type ?? this.type,
+    );
+  }
+
+  @override
+  R accept<R>(ExprVisitor<R> visitor) => visitor.visitLet(this);
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is Let &&
+        _equality.equals(other.anchor, anchor) &&
+        _equality.equals(other.binding, binding) &&
+        _equality.equals(other.body, body) &&
+        _equality.equals(other.ext, ext) &&
+        _equality.equals(other.id, id) &&
+        _equality.equals(other.span, span) &&
+        _equality.equals(other.type, type);
+  }
+
+  @override
+  int get hashCode => Object.hashAll(<Object?>[
+    'Let',
+    _equality.hash(anchor),
+    _equality.hash(binding),
+    _equality.hash(body),
+    _equality.hash(ext),
+    _equality.hash(id),
+    _equality.hash(span),
+    _equality.hash(type),
+  ]);
+}
+
 /// A list literal.
 @immutable
 final class ListLit extends Expr {
@@ -5863,6 +6303,7 @@ final class MapLit extends Expr {
     required this.span,
     required this.type,
     this.anchor,
+    this.entries,
     this.ext,
     this.keys,
     this.values,
@@ -5877,6 +6318,7 @@ final class MapLit extends Expr {
     }
     return MapLit(
       anchor: json['anchor'] == null ? null : _asString(json['anchor'], '$path.anchor'),
+      entries: json['entries'] == null ? null : _asList<Expr>(json['entries'], '$path.entries', Expr.fromJson),
       ext: json['ext'] == null ? null : _asMap<Object?>(json['ext'], '$path.ext', (Object? v, String p) => v),
       id: _asString(_req(json, 'id', path), '$path.id'),
       keys: json['keys'] == null ? null : _asList<Expr>(json['keys'], '$path.keys', Expr.fromJson),
@@ -5888,6 +6330,9 @@ final class MapLit extends Expr {
 
   /// The override key, when the node is addressable by a human.
   final Anchor? anchor;
+
+  /// Present instead of `keys`/`values` when the literal has a spread or a collection-if/for; each entry is a one-entry `logic.MapLit`, a `logic.Spread`, an `logic.IfElement` or a `logic.ForElement`.
+  final List<Expr>? entries;
 
   /// Plugin extension data, namespaced `x-<plugin>`. Core passes round-trip it untouched (Spec §2.6).
   final Map<String, Object?>? ext;
@@ -5915,6 +6360,7 @@ final class MapLit extends Expr {
   @override
   Map<String, Object?> toJson() => canonicalJson(<String, Object?>{
     'anchor': anchor,
+    'entries': entries?.map((Expr v) => v.toJson()).toList(),
     'ext': ext,
     'id': id,
     'keys': keys?.map((Expr v) => v.toJson()).toList(),
@@ -5930,6 +6376,7 @@ final class MapLit extends Expr {
   /// null. Construct a new node when that is what you mean.
   MapLit copyWith({
     Anchor? anchor,
+    List<Expr>? entries,
     Map<String, Object?>? ext,
     NodeId? id,
     List<Expr>? keys,
@@ -5939,6 +6386,7 @@ final class MapLit extends Expr {
   }) {
     return MapLit(
       anchor: anchor ?? this.anchor,
+      entries: entries ?? this.entries,
       ext: ext ?? this.ext,
       id: id ?? this.id,
       keys: keys ?? this.keys,
@@ -5956,6 +6404,7 @@ final class MapLit extends Expr {
     if (identical(this, other)) return true;
     return other is MapLit &&
         _equality.equals(other.anchor, anchor) &&
+        _equality.equals(other.entries, entries) &&
         _equality.equals(other.ext, ext) &&
         _equality.equals(other.id, id) &&
         _equality.equals(other.keys, keys) &&
@@ -5968,6 +6417,7 @@ final class MapLit extends Expr {
   int get hashCode => Object.hashAll(<Object?>[
     'MapLit',
     _equality.hash(anchor),
+    _equality.hash(entries),
     _equality.hash(ext),
     _equality.hash(id),
     _equality.hash(keys),
@@ -7297,6 +7747,109 @@ final class Ref extends Expr {
   ]);
 }
 
+/// `rethrow`: throws the exception the enclosing catch clause caught, with its original stack.
+@immutable
+final class Rethrow extends Expr {
+  /// Creates a [Rethrow].
+  const Rethrow({
+    required this.id,
+    required this.span,
+    required this.type,
+    this.anchor,
+    this.ext,
+  });
+
+  /// Parses a [Rethrow] from JSON, validating as it goes.
+  factory Rethrow.fromJson(Object? value, [String path = 'Rethrow']) {
+    final Map<String, Object?> json = _asObject(value, path);
+    final String kind = _asString(_req(json, 'kind', path), '$path.kind');
+    if (kind != 'logic.Rethrow') {
+      throw UirParseError('$path.kind', 'expected "logic.Rethrow", got "$kind"');
+    }
+    return Rethrow(
+      anchor: json['anchor'] == null ? null : _asString(json['anchor'], '$path.anchor'),
+      ext: json['ext'] == null ? null : _asMap<Object?>(json['ext'], '$path.ext', (Object? v, String p) => v),
+      id: _asString(_req(json, 'id', path), '$path.id'),
+      span: SourceSpan.fromJson(_req(json, 'span', path), '$path.span'),
+      type: TypeRef.fromJson(_req(json, 'type', path), '$path.type'),
+    );
+  }
+
+  /// The override key, when the node is addressable by a human.
+  final Anchor? anchor;
+
+  /// Plugin extension data, namespaced `x-<plugin>`. Core passes round-trip it untouched (Spec §2.6).
+  final Map<String, Object?>? ext;
+
+  /// The node's stable, content-addressed identity.
+  final NodeId id;
+
+  /// Where the node came from.
+  final SourceSpan span;
+
+  /// Resolved type.
+  final TypeRef type;
+
+  /// The node's discriminant.
+  @override
+  String get kind => 'logic.Rethrow';
+
+  /// Serializes to canonical JSON: keys sorted, nulls omitted.
+  @override
+  Map<String, Object?> toJson() => canonicalJson(<String, Object?>{
+    'anchor': anchor,
+    'ext': ext,
+    'id': id,
+    'kind': 'logic.Rethrow',
+    'span': span.toJson(),
+    'type': type.toJson(),
+  })! as Map<String, Object?>;
+
+  /// Returns a copy with the given fields replaced. The original is never mutated.
+  ///
+  /// An omitted argument keeps its current value; `copyWith` cannot set a field back to
+  /// null. Construct a new node when that is what you mean.
+  Rethrow copyWith({
+    Anchor? anchor,
+    Map<String, Object?>? ext,
+    NodeId? id,
+    SourceSpan? span,
+    TypeRef? type,
+  }) {
+    return Rethrow(
+      anchor: anchor ?? this.anchor,
+      ext: ext ?? this.ext,
+      id: id ?? this.id,
+      span: span ?? this.span,
+      type: type ?? this.type,
+    );
+  }
+
+  @override
+  R accept<R>(ExprVisitor<R> visitor) => visitor.visitRethrow(this);
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is Rethrow &&
+        _equality.equals(other.anchor, anchor) &&
+        _equality.equals(other.ext, ext) &&
+        _equality.equals(other.id, id) &&
+        _equality.equals(other.span, span) &&
+        _equality.equals(other.type, type);
+  }
+
+  @override
+  int get hashCode => Object.hashAll(<Object?>[
+    'Rethrow',
+    _equality.hash(anchor),
+    _equality.hash(ext),
+    _equality.hash(id),
+    _equality.hash(span),
+    _equality.hash(type),
+  ]);
+}
+
 /// A return statement.
 @immutable
 final class Return extends Stmt {
@@ -7718,6 +8271,119 @@ final class RouteTransition extends UirNode {
   ]);
 }
 
+/// Expressions evaluated in order; the value is the last one's (`(a, b, c)` in JavaScript).
+@immutable
+final class Sequence extends Expr {
+  /// Creates a [Sequence].
+  const Sequence({
+    required this.exprs,
+    required this.id,
+    required this.span,
+    required this.type,
+    this.anchor,
+    this.ext,
+  });
+
+  /// Parses a [Sequence] from JSON, validating as it goes.
+  factory Sequence.fromJson(Object? value, [String path = 'Sequence']) {
+    final Map<String, Object?> json = _asObject(value, path);
+    final String kind = _asString(_req(json, 'kind', path), '$path.kind');
+    if (kind != 'logic.Sequence') {
+      throw UirParseError('$path.kind', 'expected "logic.Sequence", got "$kind"');
+    }
+    return Sequence(
+      anchor: json['anchor'] == null ? null : _asString(json['anchor'], '$path.anchor'),
+      exprs: _asList<Expr>(_req(json, 'exprs', path), '$path.exprs', Expr.fromJson),
+      ext: json['ext'] == null ? null : _asMap<Object?>(json['ext'], '$path.ext', (Object? v, String p) => v),
+      id: _asString(_req(json, 'id', path), '$path.id'),
+      span: SourceSpan.fromJson(_req(json, 'span', path), '$path.span'),
+      type: TypeRef.fromJson(_req(json, 'type', path), '$path.type'),
+    );
+  }
+
+  /// The override key, when the node is addressable by a human.
+  final Anchor? anchor;
+
+  /// In order; at least one.
+  final List<Expr> exprs;
+
+  /// Plugin extension data, namespaced `x-<plugin>`. Core passes round-trip it untouched (Spec §2.6).
+  final Map<String, Object?>? ext;
+
+  /// The node's stable, content-addressed identity.
+  final NodeId id;
+
+  /// Where the node came from.
+  final SourceSpan span;
+
+  /// Resolved type.
+  final TypeRef type;
+
+  /// The node's discriminant.
+  @override
+  String get kind => 'logic.Sequence';
+
+  /// Serializes to canonical JSON: keys sorted, nulls omitted.
+  @override
+  Map<String, Object?> toJson() => canonicalJson(<String, Object?>{
+    'anchor': anchor,
+    'exprs': exprs.map((Expr v) => v.toJson()).toList(),
+    'ext': ext,
+    'id': id,
+    'kind': 'logic.Sequence',
+    'span': span.toJson(),
+    'type': type.toJson(),
+  })! as Map<String, Object?>;
+
+  /// Returns a copy with the given fields replaced. The original is never mutated.
+  ///
+  /// An omitted argument keeps its current value; `copyWith` cannot set a field back to
+  /// null. Construct a new node when that is what you mean.
+  Sequence copyWith({
+    Anchor? anchor,
+    List<Expr>? exprs,
+    Map<String, Object?>? ext,
+    NodeId? id,
+    SourceSpan? span,
+    TypeRef? type,
+  }) {
+    return Sequence(
+      anchor: anchor ?? this.anchor,
+      exprs: exprs ?? this.exprs,
+      ext: ext ?? this.ext,
+      id: id ?? this.id,
+      span: span ?? this.span,
+      type: type ?? this.type,
+    );
+  }
+
+  @override
+  R accept<R>(ExprVisitor<R> visitor) => visitor.visitSequence(this);
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is Sequence &&
+        _equality.equals(other.anchor, anchor) &&
+        _equality.equals(other.exprs, exprs) &&
+        _equality.equals(other.ext, ext) &&
+        _equality.equals(other.id, id) &&
+        _equality.equals(other.span, span) &&
+        _equality.equals(other.type, type);
+  }
+
+  @override
+  int get hashCode => Object.hashAll(<Object?>[
+    'Sequence',
+    _equality.hash(anchor),
+    _equality.hash(exprs),
+    _equality.hash(ext),
+    _equality.hash(id),
+    _equality.hash(span),
+    _equality.hash(type),
+  ]);
+}
+
 /// A unit of reactive state.
 ///
 /// Every target's reactivity is a lowering of this: React hooks, Vue `computed`, Svelte runes and Angular signals all come from here (ADR-4). No generator ever sees `setState`.
@@ -8092,6 +8758,129 @@ final class SourceFile extends UirNode {
     _equality.hash(implFingerprint),
     _equality.hash(path),
     _equality.hash(span),
+  ]);
+}
+
+/// `...xs` / `...?xs` as an element of a collection literal.
+@immutable
+final class Spread extends Expr {
+  /// Creates a [Spread].
+  const Spread({
+    required this.id,
+    required this.span,
+    required this.type,
+    required this.value,
+    this.anchor,
+    this.ext,
+    this.nullAware,
+  });
+
+  /// Parses a [Spread] from JSON, validating as it goes.
+  factory Spread.fromJson(Object? value, [String path = 'Spread']) {
+    final Map<String, Object?> json = _asObject(value, path);
+    final String kind = _asString(_req(json, 'kind', path), '$path.kind');
+    if (kind != 'logic.Spread') {
+      throw UirParseError('$path.kind', 'expected "logic.Spread", got "$kind"');
+    }
+    return Spread(
+      anchor: json['anchor'] == null ? null : _asString(json['anchor'], '$path.anchor'),
+      ext: json['ext'] == null ? null : _asMap<Object?>(json['ext'], '$path.ext', (Object? v, String p) => v),
+      id: _asString(_req(json, 'id', path), '$path.id'),
+      nullAware: json['nullAware'] == null ? null : _asBool(json['nullAware'], '$path.nullAware'),
+      span: SourceSpan.fromJson(_req(json, 'span', path), '$path.span'),
+      type: TypeRef.fromJson(_req(json, 'type', path), '$path.type'),
+      value: Expr.fromJson(_req(json, 'value', path), '$path.value'),
+    );
+  }
+
+  /// The override key, when the node is addressable by a human.
+  final Anchor? anchor;
+
+  /// Plugin extension data, namespaced `x-<plugin>`. Core passes round-trip it untouched (Spec §2.6).
+  final Map<String, Object?>? ext;
+
+  /// The node's stable, content-addressed identity.
+  final NodeId id;
+
+  /// `...?`: a null collection spreads nothing.
+  final bool? nullAware;
+
+  /// Where the node came from.
+  final SourceSpan span;
+
+  /// Resolved type.
+  final TypeRef type;
+
+  /// The spread collection.
+  final Expr value;
+
+  /// The node's discriminant.
+  @override
+  String get kind => 'logic.Spread';
+
+  /// Serializes to canonical JSON: keys sorted, nulls omitted.
+  @override
+  Map<String, Object?> toJson() => canonicalJson(<String, Object?>{
+    'anchor': anchor,
+    'ext': ext,
+    'id': id,
+    'kind': 'logic.Spread',
+    'nullAware': nullAware,
+    'span': span.toJson(),
+    'type': type.toJson(),
+    'value': value.toJson(),
+  })! as Map<String, Object?>;
+
+  /// Returns a copy with the given fields replaced. The original is never mutated.
+  ///
+  /// An omitted argument keeps its current value; `copyWith` cannot set a field back to
+  /// null. Construct a new node when that is what you mean.
+  Spread copyWith({
+    Anchor? anchor,
+    Map<String, Object?>? ext,
+    NodeId? id,
+    bool? nullAware,
+    SourceSpan? span,
+    TypeRef? type,
+    Expr? value,
+  }) {
+    return Spread(
+      anchor: anchor ?? this.anchor,
+      ext: ext ?? this.ext,
+      id: id ?? this.id,
+      nullAware: nullAware ?? this.nullAware,
+      span: span ?? this.span,
+      type: type ?? this.type,
+      value: value ?? this.value,
+    );
+  }
+
+  @override
+  R accept<R>(ExprVisitor<R> visitor) => visitor.visitSpread(this);
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is Spread &&
+        _equality.equals(other.anchor, anchor) &&
+        _equality.equals(other.ext, ext) &&
+        _equality.equals(other.id, id) &&
+        _equality.equals(other.nullAware, nullAware) &&
+        _equality.equals(other.span, span) &&
+        _equality.equals(other.type, type) &&
+        _equality.equals(other.value, value);
+  }
+
+  @override
+  int get hashCode => Object.hashAll(<Object?>[
+    'Spread',
+    _equality.hash(anchor),
+    _equality.hash(ext),
+    _equality.hash(id),
+    _equality.hash(nullAware),
+    _equality.hash(span),
+    _equality.hash(type),
+    _equality.hash(value),
   ]);
 }
 
@@ -8672,6 +9461,119 @@ final class Throw extends Stmt {
     _equality.hash(ext),
     _equality.hash(id),
     _equality.hash(span),
+    _equality.hash(value),
+  ]);
+}
+
+/// A `throw` in expression position: `x ?? throw Foo()`, `=> throw Foo()`, a switch arm. Its type is `Never`.
+@immutable
+final class ThrowExpr extends Expr {
+  /// Creates a [ThrowExpr].
+  const ThrowExpr({
+    required this.id,
+    required this.span,
+    required this.type,
+    required this.value,
+    this.anchor,
+    this.ext,
+  });
+
+  /// Parses a [ThrowExpr] from JSON, validating as it goes.
+  factory ThrowExpr.fromJson(Object? value, [String path = 'ThrowExpr']) {
+    final Map<String, Object?> json = _asObject(value, path);
+    final String kind = _asString(_req(json, 'kind', path), '$path.kind');
+    if (kind != 'logic.ThrowExpr') {
+      throw UirParseError('$path.kind', 'expected "logic.ThrowExpr", got "$kind"');
+    }
+    return ThrowExpr(
+      anchor: json['anchor'] == null ? null : _asString(json['anchor'], '$path.anchor'),
+      ext: json['ext'] == null ? null : _asMap<Object?>(json['ext'], '$path.ext', (Object? v, String p) => v),
+      id: _asString(_req(json, 'id', path), '$path.id'),
+      span: SourceSpan.fromJson(_req(json, 'span', path), '$path.span'),
+      type: TypeRef.fromJson(_req(json, 'type', path), '$path.type'),
+      value: Expr.fromJson(_req(json, 'value', path), '$path.value'),
+    );
+  }
+
+  /// The override key, when the node is addressable by a human.
+  final Anchor? anchor;
+
+  /// Plugin extension data, namespaced `x-<plugin>`. Core passes round-trip it untouched (Spec §2.6).
+  final Map<String, Object?>? ext;
+
+  /// The node's stable, content-addressed identity.
+  final NodeId id;
+
+  /// Where the node came from.
+  final SourceSpan span;
+
+  /// Resolved type.
+  final TypeRef type;
+
+  /// The thrown value.
+  final Expr value;
+
+  /// The node's discriminant.
+  @override
+  String get kind => 'logic.ThrowExpr';
+
+  /// Serializes to canonical JSON: keys sorted, nulls omitted.
+  @override
+  Map<String, Object?> toJson() => canonicalJson(<String, Object?>{
+    'anchor': anchor,
+    'ext': ext,
+    'id': id,
+    'kind': 'logic.ThrowExpr',
+    'span': span.toJson(),
+    'type': type.toJson(),
+    'value': value.toJson(),
+  })! as Map<String, Object?>;
+
+  /// Returns a copy with the given fields replaced. The original is never mutated.
+  ///
+  /// An omitted argument keeps its current value; `copyWith` cannot set a field back to
+  /// null. Construct a new node when that is what you mean.
+  ThrowExpr copyWith({
+    Anchor? anchor,
+    Map<String, Object?>? ext,
+    NodeId? id,
+    SourceSpan? span,
+    TypeRef? type,
+    Expr? value,
+  }) {
+    return ThrowExpr(
+      anchor: anchor ?? this.anchor,
+      ext: ext ?? this.ext,
+      id: id ?? this.id,
+      span: span ?? this.span,
+      type: type ?? this.type,
+      value: value ?? this.value,
+    );
+  }
+
+  @override
+  R accept<R>(ExprVisitor<R> visitor) => visitor.visitThrowExpr(this);
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is ThrowExpr &&
+        _equality.equals(other.anchor, anchor) &&
+        _equality.equals(other.ext, ext) &&
+        _equality.equals(other.id, id) &&
+        _equality.equals(other.span, span) &&
+        _equality.equals(other.type, type) &&
+        _equality.equals(other.value, value);
+  }
+
+  @override
+  int get hashCode => Object.hashAll(<Object?>[
+    'ThrowExpr',
+    _equality.hash(anchor),
+    _equality.hash(ext),
+    _equality.hash(id),
+    _equality.hash(span),
+    _equality.hash(type),
     _equality.hash(value),
   ]);
 }
@@ -10661,11 +11563,20 @@ abstract interface class ExprVisitor<R> {
   /// Visits a [Conditional].
   R visitConditional(Conditional node);
 
+  /// Visits a [ForElement].
+  R visitForElement(ForElement node);
+
+  /// Visits a [IfElement].
+  R visitIfElement(IfElement node);
+
   /// Visits a [Intrinsic].
   R visitIntrinsic(Intrinsic node);
 
   /// Visits a [Lambda].
   R visitLambda(Lambda node);
+
+  /// Visits a [Let].
+  R visitLet(Let node);
 
   /// Visits a [ListLit].
   R visitListLit(ListLit node);
@@ -10694,8 +11605,20 @@ abstract interface class ExprVisitor<R> {
   /// Visits a [Ref].
   R visitRef(Ref node);
 
+  /// Visits a [Rethrow].
+  R visitRethrow(Rethrow node);
+
+  /// Visits a [Sequence].
+  R visitSequence(Sequence node);
+
+  /// Visits a [Spread].
+  R visitSpread(Spread node);
+
   /// Visits a [StringInterp].
   R visitStringInterp(StringInterp node);
+
+  /// Visits a [ThrowExpr].
+  R visitThrowExpr(ThrowExpr node);
 
   /// Visits a [TypeCheck].
   R visitTypeCheck(TypeCheck node);
@@ -10832,14 +11755,20 @@ UirNode uirNodeFromJson(Object? value, [String path = 'UirNode']) {
       return FieldDecl.fromJson(json, path);
     case 'logic.For':
       return For.fromJson(json, path);
+    case 'logic.ForElement':
+      return ForElement.fromJson(json, path);
     case 'logic.FunctionDecl':
       return FunctionDecl.fromJson(json, path);
     case 'logic.If':
       return If.fromJson(json, path);
+    case 'logic.IfElement':
+      return IfElement.fromJson(json, path);
     case 'logic.Intrinsic':
       return Intrinsic.fromJson(json, path);
     case 'logic.Lambda':
       return Lambda.fromJson(json, path);
+    case 'logic.Let':
+      return Let.fromJson(json, path);
     case 'logic.ListLit':
       return ListLit.fromJson(json, path);
     case 'logic.Lit':
@@ -10866,18 +11795,24 @@ UirNode uirNodeFromJson(Object? value, [String path = 'UirNode']) {
       return PropertyAccess.fromJson(json, path);
     case 'logic.Ref':
       return Ref.fromJson(json, path);
+    case 'logic.Rethrow':
+      return Rethrow.fromJson(json, path);
     case 'logic.Return':
       return Return.fromJson(json, path);
     case 'app.Route':
       return Route.fromJson(json, path);
     case 'app.RouteTransition':
       return RouteTransition.fromJson(json, path);
+    case 'logic.Sequence':
+      return Sequence.fromJson(json, path);
     case 'sig.Signal':
       return Signal.fromJson(json, path);
     case 'bind.Signal':
       return SignalBinding.fromJson(json, path);
     case 'l0.SourceFile':
       return SourceFile.fromJson(json, path);
+    case 'logic.Spread':
+      return Spread.fromJson(json, path);
     case 'app.Store':
       return Store.fromJson(json, path);
     case 'app.StoreInstance':
@@ -10888,6 +11823,8 @@ UirNode uirNodeFromJson(Object? value, [String path = 'UirNode']) {
       return Switch.fromJson(json, path);
     case 'logic.Throw':
       return Throw.fromJson(json, path);
+    case 'logic.ThrowExpr':
+      return ThrowExpr.fromJson(json, path);
     case 'app.Token':
       return Token.fromJson(json, path);
     case 'logic.TryCatch':

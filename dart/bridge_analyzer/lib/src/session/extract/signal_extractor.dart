@@ -448,7 +448,15 @@ final class SignalExtractor {
     if (owner is! ClassElement || owner.library.isInSdk) {
       return false;
     }
-    return owner.fields.any((FieldElement f) => !f.isStatic && !f.isFinal && f.isOriginDeclaration);
+    // Inherited fields count: a class whose only mutable state comes from a superclass or a mixin is just as mutable.
+    final Iterable<InterfaceElement> hierarchy = <InterfaceElement>[
+      owner,
+      for (final InterfaceType supertype in owner.allSupertypes)
+        if (!supertype.element.library.isInSdk) supertype.element,
+    ];
+    return hierarchy.any(
+      (InterfaceElement e) => e.fields.any((FieldElement f) => !f.isStatic && !f.isFinal && f.isOriginDeclaration),
+    );
   }
 
   /// Whether [node] is a store: state that outlives any one component.

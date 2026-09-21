@@ -13,6 +13,8 @@
 /// no generator could compile. It is the reason M1-T8 stopped before it started.
 library;
 
+import 'dart:collection';
+
 import 'package:analyzer/dart/ast/ast.dart';
 import 'package:analyzer/dart/ast/token.dart';
 import 'package:analyzer/dart/constant/value.dart';
@@ -66,8 +68,84 @@ final class ExpressionExtractor {
     '>>>=': 'unsignedShiftRightAssign',
   };
 
+  /// Expressions whose value is already bound to a name (`logic.Let`): the cascade target and a null-aware receiver are
+  /// evaluated once, and every place the AST would re-read them reads the binding instead. Keyed by identity — the same
+  /// AST object is what `realTarget` hands back.
+  final Map<Expression, RawNode> _bound = HashMap<Expression, RawNode>.identity();
+
+  /// Null-aware links whose whole chain is being guarded by [_nullShort]: extracted as plain accesses.
+  final Set<Expression> _shorted = HashSet<Expression>.identity();
+
+  static Expression? _realTargetOf(Expression node) => switch (node) {
+    PropertyAccess() => node.realTarget,
+    MethodInvocation() => node.realTarget,
+    IndexExpression() => node.realTarget,
+    // `a?.b!.c`: the `!` is part of the chain a null-aware link guards.
+    PostfixExpression() when node.operator.type == TokenType.BANG => node.operand,
+    _ => null,
+  };
+
+  static bool _isNullAwareLink(Expression node) => switch (node) {
+    PropertyAccess() => node.isNullAware,
+    MethodInvocation() => node.isNullAware,
+    IndexExpression() => node.isNullAware,
+    _ => false,
+  };
+
+  /// The null-aware link that short-circuits [node], when [node] is not that link itself (which the property and method
+  /// cases guard directly) — or [node] itself when it is a null-aware subscript, which has no case of its own.
+  Expression? _nullShortLink(Expression node) {
+    if (node is IndexExpression && node.isNullAware && !_shorted.contains(node) && !node.inSetterContext()) {
+      return node;
+    }
+    if (_isNullAwareLink(node) || _realTargetOf(node) == null || node is IndexExpression && node.inSetterContext()) {
+      return null;
+    }
+    for (Expression? t = _realTargetOf(node); t != null; t = _realTargetOf(t)) {
+      if (_isNullAwareLink(t)) {
+        return _shorted.contains(t) ? null : t;
+      }
+    }
+    return null;
+  }
+
+  /// `recv != null ? <chain on recv> : null`, evaluating the receiver of [link] once.
+  RawNode _nullShort(Expression node, Expression link, Scope scope) {
+    final Expression? receiver = _realTargetOf(link);
+    if (receiver == null) {
+      return out.opaqueExpr(node, 'null-aware access without a receiver');
+    }
+    RawNode build() {
+      _shorted.add(link);
+      try {
+        final RawNode chain = extract(node, scope);
+        return RawNode(
+          kind: 'logic.Conditional',
+          span: out.span(node),
+          fields: <String, RawValue>{
+            'test': RawChild(_nullAwareGuard(receiver, scope)),
+            'then': RawChild(chain),
+            'otherwise': RawChild(_nullLiteral(node)),
+            'type': out.typeRef(node.staticType, at: node),
+          },
+        );
+      } finally {
+        _shorted.remove(link);
+      }
+    }
+
+    return _isSafeToDuplicateNullAwareReceiver(receiver) ? build() : _bindReceiver(receiver, scope, node.staticType, build);
+  }
+
   /// Extracts [node] in [scope].
   RawNode extract(Expression node, Scope scope) {
+    if (_bound[node] case final RawNode bound) {
+      return bound;
+    }
+    // `a?.b.c`, `a?[i].c`, `f()?.x.y()`: a null-aware link anywhere down the chain short-circuits the whole chain.
+    if (_nullShortLink(node) case final Expression link) {
+      return _nullShort(node, link, scope);
+    }
     // A colour, before anything else. INV-20 (ADR-13) requires every colour a mapped widget paints to
     // resolve to an `app.Token`, and this is the only place in the pipeline that can make that true: a
     // colour's *value* exists in Dart's constant evaluator and nowhere downstream. `Colors.white` reaches
@@ -119,21 +197,7 @@ final class ExpressionExtractor {
           kind: 'logic.StringInterp',
           span: out.span(node),
           fields: <String, RawValue>{
-            // Every interpolation is a reactive read: `Text('Hello $name')` must re-render when
-            // `name` changes, and it can only do so if the parts survive as expressions.
-            'parts': RawList(<RawValue>[
-              for (final InterpolationElement part in node.elements) ...<RawValue>[
-                // `'$k'` for an enum value prints `Kind.a`; the target's value is the bare name `a`, so the enum's own name is
-                // written in front (ADR-0054).
-                if (part is InterpolationExpression && _isPlainEnumValue(part.expression))
-                  RawChild(_literal(node, '${part.expression.staticType!.element!.name}.')),
-                RawChild(
-                  part is InterpolationExpression
-                      ? extract(part.expression, scope)
-                      : _literal(node, (part as InterpolationString).value),
-                ),
-              ],
-            ]),
+            'parts': RawList(_interpolationParts(node, scope)),
             'type': out.typeRef(node.staticType, at: node),
           },
         );
@@ -222,6 +286,10 @@ final class ExpressionExtractor {
       case PropertyAccess() when _enumMember(node.target, node.propertyName.name) != null && !node.isNullAware:
         return _enumMemberRead(node, node.target!, node.propertyName.name, scope);
 
+      // `..color = c` / `..shader`: a cascade section's property, on the cascade's own (bound) target.
+      case PropertyAccess() when node.isCascaded:
+        return _propertyAccessOn(node, node.realTarget, scope, suppressTarget: false);
+
       case PropertyAccess() when node.target != null:
         final Expression target = node.target!;
         if (target is Identifier && _isStaticQualifier(target)) {
@@ -254,7 +322,7 @@ final class ExpressionExtractor {
         // exactly the way Dart's own `?.` already does; anything else withholds `target` instead, routing
         // through the pre-existing M9-J unmodelled-member refusal rather than silently attempting an
         // unsafe duplicate evaluation.
-        if (node.isNullAware) {
+        if (node.isNullAware && !_shorted.contains(node)) {
           if (_isSafeToDuplicateNullAwareReceiver(target)) {
             return RawNode(
               kind: 'logic.Conditional',
@@ -267,8 +335,7 @@ final class ExpressionExtractor {
               },
             );
           }
-          if (_isSdkMember(node.propertyName.element)) return _nullAwareSdk(node, scope);
-          return _propertyAccessOn(node, target, scope, suppressTarget: true);
+          return _bindReceiver(target, scope, node.staticType, () => extract(node, scope));
         }
         return _propertyAccessOn(node, target, scope, suppressTarget: false);
 
@@ -434,10 +501,226 @@ final class ExpressionExtractor {
       case SuperExpression():
         return _instanceRef(node, 'super');
 
+      case ThrowExpression():
+        return RawNode(
+          kind: 'logic.ThrowExpr',
+          span: out.span(node),
+          fields: <String, RawValue>{
+            'value': RawChild(extract(node.expression, scope)),
+            'type': out.typeRef(node.staticType, at: node),
+          },
+        );
+
+      case RethrowExpression():
+        return RawNode(
+          kind: 'logic.Rethrow',
+          span: out.span(node),
+          fields: <String, RawValue>{'type': out.typeRef(node.staticType, at: node)},
+        );
+
+      // `_$identity<T>`: an explicit instantiation of a generic function. The type arguments are inferred again where the
+      // emitted code is checked, so the reference is the function itself.
+      case FunctionReference():
+        return extract(node.function, scope);
+
+      // `Dto.fromJson`, `Dto.new`: a constructor as a value.
+      case ConstructorReference():
+        return _constructorTearOff(node, scope);
+
+      // `'a' 'b $c'`: one string.
+      case AdjacentStrings():
+        return _adjacentStrings(node, scope);
+
+      case CascadeExpression():
+        return _cascade(node, scope);
+
       case Expression():
         return _unsupported(node, scope);
     }
   }
+
+  /// The parts of an interpolated string, in order. Every interpolation is a reactive read: `Text('Hello $name')` must
+  /// re-render when `name` changes, and it can only do so if the parts survive as expressions.
+  List<RawValue> _interpolationParts(StringInterpolation node, Scope scope) => <RawValue>[
+    for (final InterpolationElement part in node.elements) ...<RawValue>[
+      // `'$k'` for an enum value prints `Kind.a`; the target's value is the bare name `a`, so the enum's own name is
+      // written in front (ADR-0054).
+      if (part is InterpolationExpression && _isPlainEnumValue(part.expression))
+        RawChild(_literal(node, '${part.expression.staticType!.element!.name}.')),
+      RawChild(
+        part is InterpolationExpression
+            ? extract(part.expression, scope)
+            : _literal(node, (part as InterpolationString).value),
+      ),
+    ],
+  ];
+
+  /// A constructor used as a value, as the lambda that calls it: `Dto.fromJson` is `(json) => Dto.fromJson(json)`. The
+  /// parameters are the constructor's own (positional and named, optional or required), so the call sites of the value
+  /// pass what the constructor accepts and the construction lowers through the same path as an explicit one.
+  RawNode _constructorTearOff(ConstructorReference node, Scope scope) {
+    final DartType? type = node.staticType;
+    final ConstructorElement? constructor = node.constructorName.element;
+    if (type is! FunctionType || constructor == null) {
+      return _unsupported(node, scope);
+    }
+    final List<RawValue> params = <RawValue>[];
+    final List<RawValue> positional = <RawValue>[];
+    final Map<String, RawValue> named = <String, RawValue>{};
+    final List<String> order = <String>[];
+    for (final FormalParameterElement parameter in type.formalParameters) {
+      final String name = parameter.name ?? '_';
+      params.add(
+        RawMap(<String, RawValue>{
+          'name': RawLiteral(name),
+          'type': out.typeRef(parameter.type, at: node),
+          if (parameter.isNamed) 'named': const RawLiteral(true),
+          if (parameter.isRequired) 'required': const RawLiteral(true),
+          if (parameter.isOptionalPositional) 'required': const RawLiteral(false),
+        }),
+      );
+      final RawNode ref = RawNode(
+        kind: 'logic.Ref',
+        span: out.span(node),
+        fields: <String, RawValue>{'name': RawLiteral(name), 'type': out.typeRef(parameter.type, at: node)},
+      );
+      if (parameter.isNamed) {
+        named[name] = RawChild(ref);
+        order.add(name);
+      } else {
+        positional.add(RawChild(ref));
+      }
+    }
+    final String? constructorName = node.constructorName.name?.name;
+    return RawNode(
+      kind: 'logic.Lambda',
+      span: out.span(node),
+      fields: <String, RawValue>{
+        'params': RawList(params),
+        'body': RawList(<RawValue>[
+          RawChild(
+            RawNode(
+              kind: 'logic.Return',
+              span: out.span(node),
+              fields: <String, RawValue>{
+                'value': RawChild(
+                  RawNode(
+                    kind: 'logic.New',
+                    span: out.span(node),
+                    fields: <String, RawValue>{
+                      'typeName': RawLiteral(node.constructorName.type.name.lexeme),
+                      if (constructorName != null && constructorName != 'new')
+                        'constructorName': RawLiteral(constructorName),
+                      if (positional.isNotEmpty) 'args': RawList(positional),
+                      if (named.isNotEmpty) 'namedArgs': RawMap(named),
+                      if (order.isNotEmpty) 'namedArgOrder': RawList(order.map(RawLiteral.new).toList()),
+                      'type': out.typeRef(type.returnType, at: node),
+                    },
+                  ),
+                ),
+              },
+            ),
+          ),
+        ]),
+        'type': out.typeRef(type, at: node),
+      },
+    );
+  }
+
+  /// Adjacent string literals are one string; each part is a literal or an interpolation.
+  RawNode _adjacentStrings(AdjacentStrings node, Scope scope) {
+    final List<RawValue> parts = <RawValue>[];
+    void add(StringLiteral literal) {
+      switch (literal) {
+        case SimpleStringLiteral():
+          parts.add(RawChild(_literal(literal, literal.value)));
+        case StringInterpolation():
+          parts.addAll(_interpolationParts(literal, scope));
+        case AdjacentStrings():
+          literal.strings.forEach(add);
+      }
+    }
+
+    node.strings.forEach(add);
+    return RawNode(
+      kind: 'logic.StringInterp',
+      span: out.span(node),
+      fields: <String, RawValue>{'parts': RawList(parts), 'type': out.typeRef(node.staticType, at: node)},
+    );
+  }
+
+  /// `target..a = 1..b()`: the target is evaluated once and bound; each section acts on the binding, and the value is the
+  /// binding. Nested cascades bind separately.
+  RawNode _cascade(CascadeExpression node, Scope scope) {
+    final Expression target = node.target;
+    final String name = '\$c${node.offset}';
+    final RawNode value = extract(target, scope);
+    final RawNode ref = _bindingRef(name, target, node);
+    _bound[target] = ref;
+    try {
+      final List<RawValue> sections = <RawValue>[
+        for (final Expression section in node.cascadeSections) RawChild(extract(section, scope)),
+        RawChild(ref),
+      ];
+      return RawNode(
+        kind: 'logic.Let',
+        span: out.span(node),
+        fields: <String, RawValue>{
+          'binding': RawChild(_bindingDecl(name, target, value, node)),
+          'body': RawChild(
+            RawNode(
+              kind: 'logic.Sequence',
+              span: out.span(node),
+              fields: <String, RawValue>{'exprs': RawList(sections), 'type': out.typeRef(node.staticType, at: node)},
+            ),
+          ),
+          'type': out.typeRef(node.staticType, at: node),
+        },
+      );
+    } finally {
+      _bound.remove(target);
+    }
+  }
+
+  /// Evaluates [receiver] once for [build]: `(json['a'] as num?)?.toDouble()` binds the cast, then guards and reads the
+  /// binding. [build] re-extracts the enclosing expression, which now finds its receiver bound (and so safe to read twice).
+  RawNode _bindReceiver(Expression receiver, Scope scope, DartType? type, RawNode Function() build) {
+    final String name = '\$n${receiver.offset}';
+    final RawNode value = extract(receiver, scope);
+    final RawNode ref = _bindingRef(name, receiver, receiver);
+    _bound[receiver] = ref;
+    try {
+      final RawNode body = build();
+      return RawNode(
+        kind: 'logic.Let',
+        span: out.span(receiver),
+        fields: <String, RawValue>{
+          'binding': RawChild(_bindingDecl(name, receiver, value, receiver)),
+          'body': RawChild(body),
+          'type': out.typeRef(type, at: receiver),
+        },
+      );
+    } finally {
+      _bound.remove(receiver);
+    }
+  }
+
+  RawNode _bindingRef(String name, Expression typed, AstNode at) => RawNode(
+    kind: 'logic.Ref',
+    span: out.span(at),
+    fields: <String, RawValue>{'name': RawLiteral(name), 'type': out.typeRef(typed.staticType, at: at)},
+  );
+
+  RawNode _bindingDecl(String name, Expression typed, RawNode value, AstNode at) => RawNode(
+    kind: 'logic.VarDecl',
+    span: out.span(at),
+    fields: <String, RawValue>{
+      'name': RawLiteral(name),
+      'type': out.typeRef(typed.staticType, at: at),
+      'initializer': RawChild(value),
+      'isFinal': const RawLiteral(true),
+    },
+  );
 
   /// A lambda. Exposed because a widget callback prop is one, and the widget extractor needs it.
   ///
@@ -824,12 +1107,12 @@ final class ExpressionExtractor {
             'type': out.typeRef(writeType, at: node),
           },
         );
-      case PropertyAccess() when node.target != null:
+      case PropertyAccess() when node.target != null || node.isCascaded:
         return RawNode(
           kind: 'logic.PropertyAccess',
           span: out.span(node),
           fields: <String, RawValue>{
-            'receiver': RawChild(extract(node.target!, scope)),
+            'receiver': RawChild(extract(node.realTarget, scope)),
             'property': RawLiteral(node.propertyName.name),
             'type': out.typeRef(writeType, at: node),
           },
@@ -1251,6 +1534,7 @@ final class ExpressionExtractor {
   /// onward) for no real capability gain (ADR-0044 §5/§19). A method call or a constructed value is
   /// excluded outright — duplicating either would call it, or construct it, twice.
   bool _isSafeToDuplicateNullAwareReceiver(Expression target) {
+    if (_bound.containsKey(target)) return true;
     // `a?.b`: a bare reference. `a.b?.c`, `this.a?.b`, `a.b.c?.d` (M11, ADR-0054): a chain of *field* reads over a bare
     // reference — evaluating it twice is the same as once, exactly the argument above, applied at each link. Without it
     // the guard was dropped for every receiver that was not a bare name, and (for an SDK member) that was silent.
@@ -1475,7 +1759,7 @@ final class ExpressionExtractor {
     // never this compiler's own honest `BRG3013`. Dart's own short-circuit already never evaluates the
     // call's own arguments when the receiver is null — achieved for free here, since `_arguments` is
     // only ever reached INSIDE `_methodCallOn`'s own guarded `then` branch, never in the guard itself.
-    if (node.isNullAware) {
+    if (node.isNullAware && !_shorted.contains(node)) {
       if (_isSafeToDuplicateNullAwareReceiver(target)) {
         return RawNode(
           kind: 'logic.Conditional',
@@ -1488,33 +1772,9 @@ final class ExpressionExtractor {
           },
         );
       }
-      if (_isSdkMember(node.methodName.element)) return _nullAwareSdk(node, scope);
-      return _methodCallOn(node, target, scope, suppressTarget: true, awaited: awaited);
+      return _bindReceiver(target, scope, node.staticType, () => _invocation(node, scope, awaited: awaited));
     }
     return _methodCallOn(node, target, scope, suppressTarget: false, awaited: awaited);
-  }
-
-  /// Whether [element] is a member of an SDK library (`dart:core`, `dart:async`, …) — one that has no project
-  /// `target` for the unmodelled-member refusal to key on.
-  bool _isSdkMember(Element? element) => element?.library?.uri.scheme == 'dart';
-
-  /// A null-aware `?.` on an SDK member whose receiver is not a plain variable.
-  ///
-  /// The receiver cannot be duplicated to guard it (`_isSafeToDuplicateNullAwareReceiver`), and the other
-  /// non-duplicable path withholds the member's `target` so that a later stage refuses the call. An SDK member has
-  /// no `target` to withhold, so that path silently dropped the `?.`: `m['k']?.join(',')` became `m['k'].join(',')`,
-  /// which throws where Dart yields `null`. It is preserved as an opaque expression instead — refused by name, with
-  /// its source — until a guard that evaluates the receiver once exists.
-  RawNode _nullAwareSdk(Expression node, Scope scope) {
-    const String reason =
-        'null-aware `?.` on a receiver that is not a plain variable (bind the receiver to a local first)';
-    out.report(
-      Codes.unsupportedSyntax,
-      'A $reason has no UIR representation: guarding it would evaluate the receiver twice, and dropping the `?.` '
-      'would throw where Dart yields null. It is preserved as an opaque expression.',
-      node,
-    );
-    return out.opaqueExpr(node, reason);
   }
 
   /// The ordinary (non-null-aware-semantics) `logic.MethodCall` for [node], receiver [target] — the
@@ -2325,29 +2585,32 @@ final class ExpressionExtractor {
 
   RawNode _mapLiteral(SetOrMapLiteral node, Scope scope) {
     // A set literal is a `ListLit` whose *type* is a `Set` — the schema has no set node, and the type is what says
-    // which it is. Until M11 the elements of `<int>{1, 2}` were reported and **dropped**, so the emitted program
-    // held `new Set([])` with only a warning.
+    // which it is.
     if (node.isSet) {
-      if (node.elements.every((CollectionElement e) => e is Expression)) {
-        return RawNode(
-          kind: 'logic.ListLit',
-          span: out.span(node),
-          fields: <String, RawValue>{
-            'elements': RawList(<RawValue>[
-              for (final CollectionElement element in node.elements)
-                RawChild(extract(element as Expression, scope)),
-            ]),
-            'type': out.typeRef(node.staticType, at: node),
-          },
-        );
-      }
-      return _unsupported(node, scope);
+      return RawNode(
+        kind: 'logic.ListLit',
+        span: out.span(node),
+        fields: <String, RawValue>{
+          'elements': RawList(<RawValue>[
+            for (final CollectionElement element in node.elements) RawChild(_collectionElement(element, scope)),
+          ]),
+          'type': out.typeRef(node.staticType, at: node),
+        },
+      );
     }
 
-    // A map literal whose elements are not all `key: value` entries (a spread, `if`, `for`) cannot be paired
-    // positionally: the whole literal is opaque, so it is refused rather than silently emitted without them.
+    // A map with a spread, `if` or `for` cannot be paired positionally: its elements are carried as `entries`.
     if (node.elements.any((CollectionElement e) => e is! MapLiteralEntry)) {
-      return _unsupported(node, scope);
+      return RawNode(
+        kind: 'logic.MapLit',
+        span: out.span(node),
+        fields: <String, RawValue>{
+          'entries': RawList(<RawValue>[
+            for (final CollectionElement element in node.elements) RawChild(_collectionElement(element, scope)),
+          ]),
+          'type': out.typeRef(node.staticType, at: node),
+        },
+      );
     }
 
     final List<RawValue> keys = <RawValue>[];
@@ -2371,14 +2634,105 @@ final class ExpressionExtractor {
     );
   }
 
-  /// One element of a collection literal.
-  ///
-  /// `...spread`, `if (c) e` and `for (x in xs) e` have no `Expr` node. Inside a *widget* list they do
-  /// have a home — `ui.Cond` and `ui.List` — and the widget extractor uses it. Inside a plain Dart
-  /// list they do not, and they become opaque rather than disappearing.
+  /// One element of a collection literal: an expression, `...spread`, `if (c) e else f`, `for (x in xs) e`, or (in a map) a
+  /// `key: value` entry, which is a one-entry `logic.MapLit`. Inside a *widget* list the widget extractor has its own
+  /// nodes (`ui.Cond`, `ui.List`) for these.
   RawNode _collectionElement(CollectionElement element, Scope scope) {
-    if (element is Expression) {
-      return extract(element, scope);
+    switch (element) {
+      case Expression():
+        return extract(element, scope);
+      case MapLiteralEntry():
+        return RawNode(
+          kind: 'logic.MapLit',
+          span: out.span(element),
+          fields: <String, RawValue>{
+            'keys': RawList(<RawValue>[RawChild(extract(element.key, scope))]),
+            'values': RawList(<RawValue>[RawChild(extract(element.value, scope))]),
+            'type': const RawMap(<String, RawValue>{'name': RawLiteral('dynamic')}),
+          },
+        );
+      case SpreadElement():
+        return RawNode(
+          kind: 'logic.Spread',
+          span: out.span(element),
+          fields: <String, RawValue>{
+            'value': RawChild(extract(element.expression, scope)),
+            if (element.isNullAware) 'nullAware': const RawLiteral(true),
+            'type': out.typeRef(element.expression.staticType, at: element),
+          },
+        );
+      case IfElement():
+        if (element.caseClause != null) {
+          break;
+        }
+        final CollectionElement? otherwise = element.elseElement;
+        return RawNode(
+          kind: 'logic.IfElement',
+          span: out.span(element),
+          fields: <String, RawValue>{
+            'test': RawChild(extract(element.expression, scope)),
+            'then': RawChild(_collectionElement(element.thenElement, scope)),
+            if (otherwise != null) 'otherwise': RawChild(_collectionElement(otherwise, scope)),
+            'type': const RawMap(<String, RawValue>{'name': RawLiteral('dynamic')}),
+          },
+        );
+      case ForElement():
+        final ForLoopParts parts = element.forLoopParts;
+        if (parts is ForEachPartsWithDeclaration) {
+          final DeclaredIdentifier variable = parts.loopVariable;
+          final String name = variable.name.lexeme;
+          final Scope inner = scope.withBinding(Binding(name: name, binds: Binds.parameter));
+          return RawNode(
+            kind: 'logic.ForElement',
+            span: out.span(element),
+            fields: <String, RawValue>{
+              'loopDecl': RawChild(
+                RawNode(
+                  kind: 'logic.VarDecl',
+                  span: out.span(variable),
+                  fields: <String, RawValue>{
+                    'name': RawLiteral(name),
+                    'type': out.typeRef(variable.declaredFragment?.element.type, at: variable),
+                    'isFinal': const RawLiteral(true),
+                  },
+                ),
+              ),
+              'iterable': RawChild(extract(parts.iterable, scope)),
+              'body': RawChild(_collectionElement(element.body, inner)),
+              'type': const RawMap(<String, RawValue>{'name': RawLiteral('dynamic')}),
+            },
+          );
+        }
+        if (parts is ForPartsWithDeclarations && parts.variables.variables.length == 1) {
+          final VariableDeclaration variable = parts.variables.variables.single;
+          final String name = variable.name.lexeme;
+          final Scope inner = scope.withBinding(Binding(name: name, binds: Binds.parameter));
+          return RawNode(
+            kind: 'logic.ForElement',
+            span: out.span(element),
+            fields: <String, RawValue>{
+              'init': RawChild(
+                RawNode(
+                  kind: 'logic.VarDecl',
+                  span: out.span(variable),
+                  fields: <String, RawValue>{
+                    'name': RawLiteral(name),
+                    'type': out.typeRef(variable.declaredFragment?.element.type, at: variable),
+                    if (variable.initializer != null) 'initializer': RawChild(extract(variable.initializer!, inner)),
+                  },
+                ),
+              ),
+              if (parts.condition != null) 'test': RawChild(extract(parts.condition!, inner)),
+              if (parts.updaters.isNotEmpty)
+                'update': RawList(<RawValue>[for (final Expression u in parts.updaters) RawChild(extract(u, inner))]),
+              'body': RawChild(_collectionElement(element.body, inner)),
+              'type': const RawMap(<String, RawValue>{'name': RawLiteral('dynamic')}),
+            },
+          );
+        }
+      // A null-aware element (`?x`), or any element kind not modelled: refused below, with its source.
+      default:
+        break;
     }
     out.report(
       Codes.unsupportedSyntax,

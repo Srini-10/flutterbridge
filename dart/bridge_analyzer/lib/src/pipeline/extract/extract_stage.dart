@@ -13,6 +13,7 @@ import 'package:bridge_analyzer/src/pipeline/stage.dart';
 import 'package:bridge_analyzer/src/pipeline/stages.dart';
 import 'package:bridge_analyzer/src/session/analysis_session.dart';
 import 'package:bridge_analyzer/src/session/extract/extractor.dart';
+import 'package:bridge_analyzer/src/session/extract/inheritance.dart';
 import 'package:meta/meta.dart';
 
 /// What `extract` produces: raw records, as the analyzer saw them.
@@ -72,6 +73,12 @@ final class ExtractStage extends Stage<LoadResult, ExtractionResult> {
     // this program actually extracted, so this is a reader of that decision, not a second one.
     final Set<String> extractedDependencyFiles = input.project.dependencyLibraryFiles.toSet();
 
+    // A class another class extends or mixes in is emitted as a class, which only the *inheriting* file says (M12, ADR-0059): read
+    // every unit's `extends`/`with` first.
+    final Set<String> inherited = inheritedClasses(<ResolvedUnit>[
+      await for (final ResolvedUnit unit in input.session.resolveAll()) unit,
+    ]);
+
     await for (final ResolvedUnit unit in input.session.resolveAll()) {
       // ADR-0031: a resolved AST is not proof of a valid program. If this unit's own source carries a
       // real analyzer error, extracting from it risks silently translating invalid Dart into
@@ -88,6 +95,7 @@ final class ExtractStage extends Stage<LoadResult, ExtractionResult> {
         diagnostics: context.diagnostics,
         localPackageNames: localPackageNames,
         extractedDependencyFiles: extractedDependencyFiles,
+        inheritedClasses: inherited,
       ).extract()) {
         final String? symbol = record.symbol;
         if (symbol != null && _isApplicationScoped(symbol) && !shared.add(symbol)) {

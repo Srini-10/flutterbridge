@@ -1,0 +1,21 @@
+name: expression_forms
+description: >-
+  M12 (ADR-0058): expression forms real code uses — throw/rethrow in expressions, constructor and generic-function tear-offs,
+  null-aware access on any receiver, cascades, collection spread/if/for, adjacent strings. Run by Flutter and as the
+  generated component, compared.
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

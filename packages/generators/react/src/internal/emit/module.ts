@@ -84,7 +84,7 @@ const GENERATED_NAMES: ReadonlySet<string> = new Set([
   'useThemeSurface', 'useUnmountEffect', 'useUpdateEffect', 'withOpacity', 'wrapAlignItems',
   'intAdd', 'intAnd', 'intMod', 'intMul', 'intNot', 'intOr', 'intShl', 'intShr', 'intSub', 'intTruncDiv', 'intUshr',
   'intXor', 'numMod', 'numTruncDiv',
-  'dartIs', 'dartHash', 'dartHashAll', 'dartConstToken', 'unawaited', 'touchAfter', 'strCodeUnitAt', 'strPadLeft', 'strPadRight', 'strRepeat', 'strReplaceAll', 'strReplaceFirst', 'strSubstring', 'useDefaults', 'useDidUpdateWidget', 'useInitState', 'useLifecycle', 'versionOf', 'inheritOwners', 'notifyMutation', 'defaultCompare', 'listAdd', 'listAddAll', 'listAny', 'listClear', 'listContains',
+  'dartIs', 'dartHash', 'dartHashAll', 'dartConstToken', 'dartThrow', 'dartEntry', 'dartAs', 'unawaited', 'touchAfter', 'strCodeUnitAt', 'strPadLeft', 'strPadRight', 'strRepeat', 'strReplaceAll', 'strReplaceFirst', 'strSubstring', 'useDefaults', 'useDidUpdateWidget', 'useInitState', 'useLifecycle', 'versionOf', 'inheritOwners', 'notifyMutation', 'defaultCompare', 'listAdd', 'listAddAll', 'listAny', 'listClear', 'listContains',
   'listFirst', 'listInsert', 'listInsertAll', 'listLast', 'listMap', 'listRemove', 'listRemoveAt', 'listRemoveLast',
   'listRemoveWhere', 'listRetainWhere', 'listReversed', 'listSetAt', 'listShuffle', 'listSkip', 'listSort',
   'listSublist', 'listTake', 'listToList', 'listWhere', 'mapAddAll', 'mapClear', 'mapContainsKey',

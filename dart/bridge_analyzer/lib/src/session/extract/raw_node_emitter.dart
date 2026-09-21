@@ -163,13 +163,17 @@ final class RawNodeEmitter {
         extractedDependencyFiles: extractedDependencyFiles,
       );
     }
-    if (element is! ClassElement) {
+    // A mixin names its declaration too (M12, ADR-0059): `with _$Dto` and `x is _$Dto`.
+    if (element == null || (element is! ClassElement && element is! MixinElement)) {
       return null;
     }
     if (registry.isComponentBase(type) || registry.isStateBase(type) || registry.isStoreBase(type)) {
       return null;
     }
-    final String library = element.library.identifier;
+    final String? library = element.library?.identifier;
+    if (library == null) {
+      return null;
+    }
     return Symbols.typeIn(
       library,
       element.name ?? '',

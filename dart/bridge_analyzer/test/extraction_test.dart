@@ -866,15 +866,29 @@ class Screen extends StatelessWidget {
   });
 
   group('declarations', () {
-    test('a mixin survives as logic.OpaqueDecl (v2.2 §A11) rather than vanishing', () async {
+    test('a mixin is a logic.ClassDecl marked isMixin (ADR-0059), with its members and its `on` constraint', () async {
       final Extracted app = await extract('''
-mixin Loggable {
-  void log(String m) {}
+class Base { String say() => 'b'; }
+mixin Loggable on Base {
+  int count = 0;
+  void log(String m) { count++; }
+  String get twice;
 }
+class Uses extends Base with Loggable { String get twice => 'x'; }
 ''');
 
-      expect(app.only('logic.OpaqueDecl')['reason'], 'mixin');
-      expect(app.only('logic.OpaqueDecl')['dartSource'], contains('mixin Loggable'));
+      final Map<String, dynamic> mixin = app.ofKind('logic.ClassDecl').singleWhere((Map<String, dynamic> d) => d['name'] == 'Loggable');
+      expect(mixin['isMixin'], true);
+      expect((mixin['superclass'] as Map<String, dynamic>)['name'], 'Base');
+      expect((mixin['methods'] as List<dynamic>).map((dynamic m) => (m as Map<String, dynamic>)['name']), <String>['log', 'twice']);
+      expect(((mixin['methods'] as List<dynamic>).last as Map<String, dynamic>)['isAbstract'], true);
+      expect(mixin.containsKey('library'), isTrue);
+      final Map<String, dynamic> base = app.ofKind('logic.ClassDecl').singleWhere((Map<String, dynamic> d) => d['name'] == 'Base');
+      expect(base.containsKey('library'), isTrue, reason: 'a class another class extends is emitted as a class, so it carries the class model');
+      final Map<String, dynamic> uses = app.ofKind('logic.ClassDecl').singleWhere((Map<String, dynamic> d) => d['name'] == 'Uses');
+      final Map<String, dynamic> applied = (uses['mixins'] as List<dynamic>).single as Map<String, dynamic>;
+      expect(applied['name'], 'Loggable');
+      expect(applied['target'], mixin['id']);
     });
 
     test('an extension survives too', () async {
@@ -8372,6 +8386,26 @@ class W extends StatelessWidget {
       return null;
     }
 
+    Map<String, dynamic>? nodeOfKind(Object? node, String kind) {
+      if (node is Map<String, dynamic>) {
+        if (node['kind'] == kind) {
+          return node;
+        }
+        for (final Object? value in node.values) {
+          if (nodeOfKind(value, kind) case final Map<String, dynamic> found) {
+            return found;
+          }
+        }
+      } else if (node is List) {
+        for (final Object? value in node) {
+          if (nodeOfKind(value, kind) case final Map<String, dynamic> found) {
+            return found;
+          }
+        }
+      }
+      return null;
+    }
+
     test('a safe-navigated field read on a bare nullable parameter lowers to logic.Conditional', () async {
       final Extracted app = await extract(r'''
 import 'package:flutter/material.dart';
@@ -8434,10 +8468,10 @@ class W extends StatelessWidget {
       expect(then['args'], hasLength(1));
     });
 
-    test('a safe-navigated access on a CONSTRUCTED/CALLED receiver never resolves a target', () async {
-      // `maybeModel()?.count` — the null-aware receiver is a call, never a bare reference (ADR-0044 §6):
-      // `target` must stay absent, routing through the pre-existing M9-J refusal, rather than silently
-      // duplicating the call.
+    test('a safe-navigated access on a CALLED receiver binds the call once (logic.Let), never duplicating it', () async {
+      // `maybeModel()?.count` — the null-aware receiver is a call, never a bare reference (ADR-0044 §6): duplicating it
+      // to guard it would call it twice. Since M12 the call is evaluated once, bound by a `logic.Let`, and the guard and
+      // the access both read the binding.
       final Extracted app = await extract(r'''
 import 'package:flutter/material.dart';
 class Model {
@@ -8451,18 +8485,22 @@ class W extends StatelessWidget {
   Widget build(BuildContext context) => Text('${maybeModel()?.count}');
 }
 ''');
-      final Map<String, dynamic>? access = propertyAccessOf(app.only('ui.Component')['render'], 'count');
-      expect(access, isNotNull);
-      expect(access!.containsKey('target'), isFalse);
-      // Never synthesized as a conditional either — an unsupported shape refuses, it does not attempt
-      // an unsafe duplicate evaluation of the call.
-      expect(access['kind'], 'logic.PropertyAccess');
+      final Map<String, dynamic> render = app.only('ui.Component')['render'] as Map<String, dynamic>;
+      final Map<String, dynamic>? let = nodeOfKind(render, 'logic.Let');
+      expect(let, isNotNull);
+      final Map<String, dynamic> binding = let!['binding'] as Map<String, dynamic>;
+      expect((binding['initializer'] as Map<String, dynamic>)['kind'], 'logic.Call');
+      final String bound = binding['name'] as String;
+      final Map<String, dynamic> body = let['body'] as Map<String, dynamic>;
+      expect(body['kind'], 'logic.Conditional');
+      expect(((body['test'] as Map<String, dynamic>)['left'] as Map<String, dynamic>)['name'], bound);
+      expect((propertyAccessOf(body, 'count')!['receiver'] as Map<String, dynamic>)['name'], bound);
+      expect('"name":"maybeModel"'.allMatches(jsonEncode(render)).length, 1, reason: 'the call appears once');
     });
 
-    test('a safe-navigated access on a bare reference resolving to a genuine getter never resolves a target', () async {
-      // `builder?.doubled`, `builder` a genuine (computed) getter, not field-backed (ADR-0044 §5/§19) —
-      // provably pure, but excluded to preserve this project's own "receiver evaluated exactly once, no
-      // exceptions" discipline.
+    test('a safe-navigated access on a bare reference resolving to a genuine getter binds the getter once (logic.Let)', () async {
+      // `builder?.doubled`, `builder` a genuine (computed) getter, not field-backed (ADR-0044 §5/§19): excluded from the
+      // duplicable set to keep "receiver evaluated exactly once", which the `logic.Let` binding now provides.
       final Extracted app = await extract(r'''
 import 'package:flutter/material.dart';
 class Model {
@@ -8482,9 +8520,8 @@ class W extends StatelessWidget {
       final Map<String, dynamic> model = app
           .ofKind('logic.ClassDecl')
           .singleWhere((Map<String, dynamic> d) => d['name'] == 'Model');
-      final Map<String, dynamic>? access = propertyAccessOf(model, 'doubled');
-      expect(access, isNotNull);
-      expect(access!.containsKey('target'), isFalse);
+      expect(nodeOfKind(model, 'logic.Let'), isNotNull);
+      expect(propertyAccessOf(model, 'doubled'), isNotNull);
     });
 
     test('a safe-navigated field read on a LOCAL bound to a nullable parameter also lowers to logic.Conditional', () async {
@@ -10097,6 +10134,134 @@ class W extends StatelessWidget {
       expect(library['Object.hash'], 'dart:core');
       expect(library['double.infinity'], 'dart:core');
       expect(library.keys, isNot(contains('projectSame')), reason: 'a project function has a target, not a library');
+    });
+  });
+
+  group('expression forms (M12, ADR-0058)', () {
+    Iterable<Map<String, dynamic>> nodesOfKind(Object? node, String kind) sync* {
+      if (node is Map<String, dynamic>) {
+        if (node['kind'] == kind) {
+          yield node;
+        }
+        for (final Object? value in node.values) {
+          yield* nodesOfKind(value, kind);
+        }
+      } else if (node is List) {
+        for (final Object? value in node) {
+          yield* nodesOfKind(value, kind);
+        }
+      }
+    }
+
+    Future<List<Map<String, dynamic>>> declarations(String body) async {
+      final Extracted e = await extract('''
+import 'package:flutter/material.dart';
+$body
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('x');
+}
+''');
+      return e.nodes;
+    }
+
+    test('throw in an expression, and rethrow', () async {
+      final List<Map<String, dynamic>> nodes = await declarations('''
+int need(int? v) => v ?? (throw 'missing');
+void again() { try { need(1); } catch (e) { rethrow; } }
+''');
+      expect(nodesOfKind(nodes, 'logic.ThrowExpr'), hasLength(1));
+      expect(nodesOfKind(nodes, 'logic.Rethrow'), hasLength(1));
+      expect(nodesOfKind(nodes, 'logic.OpaqueExpr'), isEmpty);
+    });
+
+    test('a constructor tear-off is the lambda that calls the constructor with its own parameters', () async {
+      final List<Map<String, dynamic>> nodes = await declarations('''
+class Dto { Dto(this.id, {this.label = ''}); Dto.fromJson(Map<String, Object?> j) : id = 0, label = ''; final int id; final String label; }
+T identity<T>(T v) => v;
+final f = Dto.fromJson;
+final g = Dto.new;
+final h = identity<int>;
+''');
+      final List<Map<String, dynamic>> lambdas = nodesOfKind(nodes, 'logic.Lambda').toList();
+      expect(lambdas, hasLength(2), reason: '`Dto.fromJson` and `Dto.new`; `identity<int>` is the function itself');
+      final Map<String, dynamic> fromJson = lambdas.first;
+      final Map<String, dynamic> created = nodesOfKind(fromJson, 'logic.New').single;
+      expect(created['constructorName'], 'fromJson');
+      expect(fromJson['params'], hasLength(1));
+      final Map<String, dynamic> viaNew = lambdas.last;
+      final Map<String, dynamic> newCall = nodesOfKind(viaNew, 'logic.New').single;
+      expect(newCall.containsKey('constructorName'), isFalse);
+      expect(newCall['namedArgs'], contains('label'), reason: 'the named parameter is passed by name');
+      expect(nodesOfKind(nodes, 'logic.OpaqueExpr'), isEmpty);
+    });
+
+    test('a cascade binds its target once and yields it; a null-aware receiver is bound once', () async {
+      final List<Map<String, dynamic>> nodes = await declarations('''
+class B { int n = 0; void add(int v) { n += v; } B? next() => null; int? len() => 1; }
+B make() => B()..add(1)..n = 5..add(2);
+int? chain(B? b) => b?.next()?.len();
+int? shorted(B? b) => b?.next()!.n;
+''');
+      final Map<String, dynamic> cascade = nodesOfKind(nodes, 'logic.Let').first;
+      final List<dynamic> sections = (cascade['body'] as Map<String, dynamic>)['exprs'] as List<dynamic>;
+      expect(sections, hasLength(4), reason: 'three sections and the target');
+      final String bound = (cascade['binding'] as Map<String, dynamic>)['name'] as String;
+      expect((sections.last as Map<String, dynamic>)['name'], bound, reason: 'the value of a cascade is its target');
+      expect(nodesOfKind(cascade, 'logic.New'), hasLength(1), reason: 'the target is constructed once');
+      expect(nodesOfKind(nodes, 'logic.OpaqueExpr'), isEmpty);
+      // `b?.next()!.n`: the null-aware link guards the whole chain, not only `next()`.
+      final Iterable<Map<String, dynamic>> conditionals = nodesOfKind(nodes, 'logic.Conditional');
+      expect(
+        conditionals.any(
+          (Map<String, dynamic> c) =>
+              (c['then'] as Map<String, dynamic>)['kind'] == 'logic.PropertyAccess' &&
+              (c['then'] as Map<String, dynamic>)['property'] == 'n',
+        ),
+        isTrue,
+        reason: '`.n` is inside the guard',
+      );
+    });
+
+    test('spread, collection-if and collection-for are elements of the literal', () async {
+      final List<Map<String, dynamic>> nodes = await declarations('''
+List<int> f(bool c, List<int> xs, List<int>? ys) =>
+    [0, if (c) 1 else 2, ...xs, ...?ys, for (final x in xs) x, for (var i = 0; i < 2; i++) i];
+Map<String, int> g(bool c, Map<String, int> m) => {'a': 1, if (c) 'b': 2, ...m, for (final k in ['x']) k: 1};
+Set<int> h(List<int> xs) => {1, ...xs};
+''');
+      final List<Map<String, dynamic>> lists = nodesOfKind(nodes, 'logic.ListLit').toList();
+      final List<dynamic> elements = lists.firstWhere((Map<String, dynamic> l) => (l['elements'] as List<dynamic>).length == 6)['elements'] as List<dynamic>;
+      expect(
+        elements.map((dynamic e) => (e as Map<String, dynamic>)['kind']),
+        <String>['logic.Lit', 'logic.IfElement', 'logic.Spread', 'logic.Spread', 'logic.ForElement', 'logic.ForElement'],
+      );
+      expect((elements[3] as Map<String, dynamic>)['nullAware'], true);
+      expect((elements[1] as Map<String, dynamic>).containsKey('otherwise'), isTrue);
+      final Map<String, dynamic> cStyle = elements.last as Map<String, dynamic>;
+      expect(cStyle.keys, containsAll(<String>['init', 'test', 'update', 'body']));
+      final Map<String, dynamic> map = nodesOfKind(nodes, 'logic.MapLit').firstWhere((Map<String, dynamic> m) => m.containsKey('entries'));
+      expect(
+        (map['entries'] as List<dynamic>).map((dynamic e) => (e as Map<String, dynamic>)['kind']),
+        <String>['logic.MapLit', 'logic.IfElement', 'logic.Spread', 'logic.ForElement'],
+      );
+      expect(lists.any((Map<String, dynamic> l) => (l['elements'] as List<dynamic>).length == 2), isTrue, reason: 'a set literal with a spread keeps both elements');
+      expect(nodesOfKind(nodes, 'logic.OpaqueExpr'), isEmpty);
+    });
+
+    test('adjacent strings are one interpolated string', () async {
+      final List<Map<String, dynamic>> nodes = await declarations(r'''
+String f(int n) => 'a $n, '
+    'b ${n + 1}';
+''');
+      final Map<String, dynamic> interp = nodesOfKind(nodes, 'logic.StringInterp').single;
+      final String text = (interp['parts'] as List<dynamic>)
+          .whereType<Map<String, dynamic>>()
+          .map((Map<String, dynamic> p) => p['kind'] == 'logic.Lit' ? p['value'] as String : '#')
+          .join();
+      expect(text, 'a #, b #', reason: 'the two literals are one string; the interpolations keep their places');
+      expect(nodesOfKind(nodes, 'logic.OpaqueExpr'), isEmpty);
     });
   });
 }

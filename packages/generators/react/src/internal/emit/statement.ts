@@ -287,7 +287,14 @@ export function emitStatement(statement: Stmt | Node | undefined, scope: EmitSco
           exceptionDecl !== undefined ? String(exceptionDecl['name'] ?? 'error') : String(first['exceptionName'] ?? 'error');
         const binding = identifierOf(exceptionName);
         lines.push(`} catch (${binding}) {`);
-        lines.push(...indent(emitStatement(first['body'] as Node, scope)));
+        // `rethrow` in the body throws this binding again.
+        const outerCatch = scope.catchBinding;
+        scope.catchBinding = binding;
+        try {
+          lines.push(...indent(emitStatement(first['body'] as Node, scope)));
+        } finally {
+          scope.catchBinding = outerCatch;
+        }
         if (clauses.length > 1) {
           scope.report(
             GeneratorDiagnosticCode.UnsupportedStatement,

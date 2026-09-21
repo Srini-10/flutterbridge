@@ -16,6 +16,7 @@ import 'package:analyzer/dart/element/type.dart';
 import 'package:bridge_analyzer/src/model/raw_node.dart';
 import 'package:bridge_analyzer/src/session/extract/component_extractor.dart';
 import 'package:bridge_analyzer/src/session/extract/expression_extractor.dart';
+import 'package:bridge_analyzer/src/session/extract/inheritance.dart';
 import 'package:bridge_analyzer/src/session/extract/raw_node_emitter.dart';
 import 'package:bridge_analyzer/src/session/extract/scope.dart';
 import 'package:bridge_analyzer/src/session/extract/signal_extractor.dart';
@@ -23,7 +24,7 @@ import 'package:bridge_analyzer/src/session/extract/signal_extractor.dart';
 /// Extracts top-level declarations.
 final class DeclarationExtractor {
   /// Creates an extractor.
-  const DeclarationExtractor(this.out, this.expressions, this.components, this.signals);
+  const DeclarationExtractor(this.out, this.expressions, this.components, this.signals, {this.inherited = const <String>{}});
 
   /// The record factory.
   final RawNodeEmitter out;
@@ -36,6 +37,10 @@ final class DeclarationExtractor {
 
   /// For stores.
   final SignalExtractor signals;
+
+  /// The classes some class in the program extends or mixes in (`inheritance.dart`): each is emitted as a class, so its subclasses
+  /// inherit real members.
+  final Set<String> inherited;
 
   /// Extracts [node], the `State` half of a stateful pair being supplied as [state] when there is one.
   void extract(CompilationUnitMember node, Scope scope, {ClassDeclaration? state}) {
@@ -85,7 +90,10 @@ final class DeclarationExtractor {
       // A mixin or an extension. The `Decl` union gained an opaque variant in v2.2 (§A11) precisely
       // so that these are *preserved* rather than silently discarded (INV-4). compass_app declares 11
       // mixins; before the amendment, all 11 would have vanished without a trace.
-      case MixinDeclaration() || ExtensionDeclaration() || ExtensionTypeDeclaration():
+      case MixinDeclaration():
+        _mixin(node, scope);
+
+      case ExtensionDeclaration() || ExtensionTypeDeclaration():
         out.emit(out.opaqueDecl(node, _describe(node)));
 
       case CompilationUnitMember():
@@ -173,6 +181,43 @@ final class DeclarationExtractor {
     );
   }
 
+  /// A `mixin` (M12, ADR-0059): a class-shaped declaration whose members are added to every class that applies it. Extracted like a
+  /// general class — `this.x` explicit, abstract members flagged — and marked `isMixin`.
+  void _mixin(MixinDeclaration node, Scope scope) {
+    final String name = node.name.lexeme;
+    final bool was = expressions.generalClassBody;
+    expressions.generalClassBody = true;
+    final List<RawValue> fields = _fields(node.body.members, scope, owner: name);
+    final List<RawValue> methods = _methods(node.body.members, scope, owner: name);
+    expressions.generalClassBody = was;
+    out.emit(
+      RawNode(
+        kind: 'logic.ClassDecl',
+        span: out.span(node),
+        symbol: out.symbols.type(name),
+        fields: <String, RawValue>{
+          'name': RawLiteral(name),
+          if (fields.isNotEmpty) 'fields': RawList(fields),
+          if (methods.isNotEmpty) 'methods': RawList(methods),
+          'library': RawLiteral(out.symbols.path),
+          'isMixin': const RawLiteral(true),
+          'isAbstract': const RawLiteral(true),
+          // `mixin M on Base`: its members may call `super`, which is `Base`'s — so the mixin's own class extends it.
+          if (node.onClause != null && node.onClause!.superclassConstraints.isNotEmpty)
+            'superclass': out.typeRef(node.onClause!.superclassConstraints.first.type, at: node),
+          if (node.typeParameters != null)
+            'typeParameters': RawList(<RawValue>[
+              for (final TypeParameter p in node.typeParameters!.typeParameters) RawLiteral(p.name.lexeme),
+            ]),
+          if (node.implementsClause != null)
+            'interfaces': RawList(<RawValue>[
+              for (final NamedType t in node.implementsClause!.interfaces) out.typeRef(t.type, at: node),
+            ]),
+        },
+      ),
+    );
+  }
+
   /// An enum. A plain one is its value names; an *enhanced* one — fields, methods, or constants with arguments — also carries
   /// them, and the generator emits it as a class with one static instance per constant (M12, ADR-0056).
   void _enum(EnumDeclaration node, Scope scope) {
@@ -224,6 +269,9 @@ final class DeclarationExtractor {
   /// Whether [node] is a *general* class (see `_class`): not a record the structural machinery can stand in for. Decided before its
   /// members are extracted, so it must not depend on them.
   bool _isGeneralShape(ClassDeclaration node, String owner) {
+    if (node.declaredFragment?.element case final ClassElement element when inherited.contains(classKey(element))) {
+      return true;
+    }
     final List<RawValue>? structural = _constructibleConstructors(node, owner: owner);
     if (structural == null || structural.isEmpty) {
       return true;
@@ -624,6 +672,8 @@ final class DeclarationExtractor {
         'type': out.typeRef(parameter.declaredFragment?.element.type, at: parameter),
         if (parameter.isNamed) 'named': const RawLiteral(true),
         if (parameter.isRequired) 'required': const RawLiteral(true),
+        // `[int? n]`: optional and positional, with no default — the caller may leave it out.
+        if (parameter.isOptionalPositional && parameter.defaultClause == null) 'required': const RawLiteral(false),
         // `this.x` initializes the field `x`; `super.x` is forwarded to the superclass constructor (M12, ADR-0055).
         if (parameter is FieldFormalParameter) 'initializesField': RawLiteral(parameter.name.lexeme),
         if (parameter is SuperFormalParameter) 'isSuper': const RawLiteral(true),
