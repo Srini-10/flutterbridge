@@ -565,6 +565,7 @@ export const WIDGET_MAP: Readonly<Record<string, WidgetMapping>> = {
       maxLines: 'maxLines',
       minLines: 'minLines',
       maxLength: 'maxLength',
+      inputFormatters: 'inputFormatters',
       enabled: 'enabled',
       readOnly: 'readOnly',
       autofocus: 'autofocus',
@@ -587,11 +588,27 @@ export const WIDGET_MAP: Readonly<Record<string, WidgetMapping>> = {
       decoration: 'decoration',
       validator: 'validator',
       onChanged: 'onChanged',
+      onFieldSubmitted: 'onSubmitted',
       obscureText: 'obscureText',
       enabled: 'enabled',
       keyboardType: 'keyboardType',
+      // The same editing surface as `TextField` (one runtime function edits both), so every parameter it has here is forwarded, not dropped.
+      focusNode: 'focusNode',
+      textInputAction: 'textInputAction',
+      textCapitalization: 'textCapitalization',
+      maxLines: 'maxLines',
+      minLines: 'minLines',
+      maxLength: 'maxLength',
+      inputFormatters: 'inputFormatters',
+      readOnly: 'readOnly',
+      autofocus: 'autofocus',
+      onEditingComplete: 'onEditingComplete',
     },
-    enums: { keyboardType: TEXT_INPUT_TYPE },
+    enums: {
+      keyboardType: TEXT_INPUT_TYPE,
+      textInputAction: TEXT_INPUT_ACTION,
+      textCapitalization: TEXT_CAPITALIZATION,
+    },
     roles: ['onSurface', 'onSurfaceVariant', 'primary', 'error'],
   },
   InputDecorator: {
@@ -911,6 +928,9 @@ export const WIDGET_MAP: Readonly<Record<string, WidgetMapping>> = {
  */
 export const UNSUPPORTED_PARAMETERS: Readonly<Record<string, string>> = {
   ...gestureRefusals(),
+  'TextFormField.autovalidateMode':
+    'it chooses *when* the validator runs (never until validated, on every edit, or after the first interaction), and the runtime validates on ' +
+    'every edit and on submit whatever it says — a form that validated at another time is a different form. Owner: the runtime kit.',
   'IntrinsicWidth.stepWidth':
     'it rounds the intrinsic width up to a multiple, and CSS has no expression that rounds a computed ' +
     'layout value. Owner: the runtime kit.',

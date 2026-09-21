@@ -35,4 +35,13 @@ test.describe('the development build', () => {
     await expect(page.getByText(/^page: (5|6)\d\d free=true$/)).toBeVisible();
     expectClean(transcript);
   });
+
+  test('lists of widgets passed to a project widget raise no React key warning as they grow', async ({ page }) => {
+    const transcript = recordConsole(page);
+    await page.goto('/', { waitUntil: 'networkidle' });
+    await page.getByRole('button', { name: 'add action' }).click();
+    await page.getByRole('button', { name: 'add action' }).click();
+    await expect(page.getByText('action 2')).toBeVisible();
+    expectClean(transcript);
+  });
 });

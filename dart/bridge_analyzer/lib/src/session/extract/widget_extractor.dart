@@ -20,6 +20,7 @@
 library;
 
 import 'package:analyzer/dart/ast/ast.dart';
+import 'package:analyzer/dart/ast/token.dart';
 import 'package:analyzer/dart/ast/visitor.dart';
 import 'package:analyzer/dart/element/element.dart';
 import 'package:analyzer/dart/element/type.dart';
@@ -160,6 +161,10 @@ final class WidgetExtractor {
       case SimpleIdentifier() || PrefixedIdentifier() || PropertyAccess():
         return _nodes(node, scope, index: index, slot: slot);
 
+      // `title!` — a nullable widget held in a value, asserted non-null: still a widget value rendered where it is.
+      case PostfixExpression() when node.operator.type == TokenType.BANG:
+        return _nodes(node, scope, index: index, slot: slot);
+
       // A `switch` expression of widgets: a value whose arms are widget values, rendered where it is (ADR-0065).
       case SwitchExpression():
         return _switchNodes(node, scope, index: index, slot: slot);
@@ -205,6 +210,12 @@ final class WidgetExtractor {
     anchorSegment: _segment('nodes', index, slot),
     fields: <String, RawValue>{'value': RawChild(bindings.extract(node, scope))},
   );
+
+  /// Whether [type] names a widget class the application declares (rather than a framework one).
+  bool _isProjectWidget(DartType? type) {
+    final String? library = type?.element?.library?.identifier;
+    return library != null && !registry.isFrameworkLibrary(library);
+  }
 
   /// Whether [value] is a closure written at the call site whose result is a widget.
   bool _isWidgetBuilder(Expression value) {
@@ -500,8 +511,13 @@ final class WidgetExtractor {
     //
     // Only when there is exactly one such parameter. Two would be ambiguous, and `ui.Element` has one
     // `children` list — so rather than pick, extraction leaves them and says so.
-    final String? childrenProp =
-        registry.childrenPropOf(name) ?? _soleWidgetListParameter(arguments);
+    //
+    // **Not for a widget the application declares.** A project widget's `List<Widget> actions` is a parameter of *that* widget, by name; lifting
+    // it to `children` erased the name and the generator, which passes a project widget's props by name, dropped the whole list —
+    // `Bar(actions: [Text('a')])` emitted `<Bar />` (found by a probe, ADR-0074). Its widget-typed arguments stay named props, extracted
+    // as widget values.
+    final bool project = _isProjectWidget(node.staticType);
+    final String? childrenProp = project ? null : registry.childrenPropOf(name) ?? _soleWidgetListParameter(arguments);
 
     // Positional arguments are counted separately from `props`, because the index a name is keyed by is
     // the argument's position in the *call*, not its position among whatever has been extracted so far.
@@ -548,6 +564,13 @@ final class WidgetExtractor {
         // routed it into the `children` list emitted `<Center><X/></Center>` against a `Center` that reads
         // `props.child` — the subtree dropped, and the code did not typecheck (validation B1). So `child`
         // falls through to the slot resolution below like every other slot, named by the catalog.
+        // A widget-typed argument that is not the children, a slot or a project widget's parameter — `TabBar(tabs: [...])`, a second list — is still a
+        // subtree: extracted as widget values, so it is UI a generator can see (a list of constructions in `props` is what `BRG2110` exists to refuse).
+        case _ when _isWidgetList(value.staticType) || (project && isWidget(value.staticType)):
+          final bool was = expressions.widgetValues;
+          expressions.widgetValues = true;
+          props[label] = RawChild(bindings.extract(value, scope));
+          expressions.widgetValues = was;
         case _ when registry.isSlot(name, label) && isWidget(value.staticType):
           slots[label] = RawChild(extract(value, scope, slot: label));
         case _ when isWidget(value.staticType):

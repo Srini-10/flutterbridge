@@ -1206,7 +1206,8 @@ export function emitUiNode(node: Node, module: ModuleBuilder, scope: EmitScope, 
 
     // Widgets held in a value (ADR-0062): a `List<Widget>` local, a `Widget` parameter, a spread — React renders the value.
     case 'ui.Nodes':
-      return emitBinding(node['value'] as Node, scope);
+      // A `List<Widget>` renders as positionally-keyed children, not as an array React would demand keys of (ADR-0074).
+      return `${useRuntime(module, 'widgetNodes')}(${emitBinding(node['value'] as Node, scope)})`;
 
     case 'ui.Element':
       return emitElement(node, module, scope, depth);

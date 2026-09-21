@@ -19,7 +19,7 @@ class HomeScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => const Scaffold(
-    body: SingleChildScrollView(child: Column(children: [GestureSection(), LayoutSection()])),
+    body: SingleChildScrollView(child: Column(children: [GestureSection(), LayoutSection(), WidgetPropsSection()])),
   );
 }
 
@@ -125,6 +125,44 @@ class _LayoutSectionState extends State<LayoutSection> {
               builder: (BuildContext context, BoxConstraints c) => Text('nested: ${c.maxWidth}'),
             ),
           ),
+        ),
+      ],
+    );
+  }
+}
+
+// ---- widgets and lists of widgets as named parameters of a project widget (ADR-0074) --------------------------------------------
+
+class TitledRow extends StatelessWidget {
+  const TitledRow({super.key, required this.header, this.actions, this.leading = const <Widget>[]});
+
+  final Widget header;
+  final List<Widget>? actions;
+  final List<Widget> leading;
+
+  @override
+  Widget build(BuildContext context) => Row(children: [header, ...leading, ...?actions]);
+}
+
+class WidgetPropsSection extends StatefulWidget {
+  const WidgetPropsSection({super.key});
+
+  @override
+  State<WidgetPropsSection> createState() => _WidgetPropsSectionState();
+}
+
+class _WidgetPropsSectionState extends State<WidgetPropsSection> {
+  int count = 1;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        ElevatedButton(onPressed: () => setState(() => count++), child: const Text('add action')),
+        TitledRow(
+          header: const Text('row header'),
+          leading: const [Text('lead one')],
+          actions: [for (int i = 0; i < count; i++) Text('action $i')],
         ),
       ],
     );

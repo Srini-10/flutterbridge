@@ -168,3 +168,13 @@ test.describe('a LayoutBuilder (ADR-0071)', () => {
     await expect(page.getByText('box: narrow 300.0 x 90.0')).toBeVisible();
   });
 });
+
+test.describe('widgets and lists of widgets as named parameters of a project widget (ADR-0074)', () => {
+  test('a header, a leading list and a growing actions list all arrive, in order — none dropped', async ({ page }) => {
+    await page.goto('/');
+    const row = page.locator('div', { has: page.getByText('row header', { exact: true }) }).last();
+    await expect(row).toContainText('row headerlead oneaction 0');
+    await page.getByRole('button', { name: 'add action' }).click();
+    await expect(row).toContainText('row headerlead oneaction 0action 1');
+  });
+});

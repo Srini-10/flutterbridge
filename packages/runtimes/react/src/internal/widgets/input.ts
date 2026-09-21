@@ -45,6 +45,7 @@ import {
   type ReactElement,
   type ReactNode,
 } from 'react';
+import { applyFormatters, type TextInputFormatter } from './formatters.js';
 
 import { componentDefault } from '../generated/material_metadata.js';
 import { mergeStyles } from '../layout/constraints.js';
@@ -390,6 +391,8 @@ interface TextFieldLike {
   readonly minLines?: number;
   /** The most characters accepted. */
   readonly maxLength?: number;
+  /** Filters applied, in order, to every edit — Flutter's `inputFormatters`. */
+  readonly inputFormatters?: readonly TextInputFormatter[] | null | undefined;
   /** Whether the field accepts input. Defaults to `true`, as in Flutter. */
   readonly enabled?: boolean;
   /** Whether the field shows its value without accepting edits. */
@@ -435,7 +438,10 @@ function useTextControl(
   const mode = INPUT_MODE[props.keyboardType ?? 'text'];
   const disabled = props.enabled === false;
 
-  const handleChange = (next: string): void => {
+  const handleChange = (typed: string): void => {
+    const next = applyFormatters(props.inputFormatters, controller.text, typed);
+    // A formatter that rejects the edit leaves the text as it was, and Flutter reports a change only when the text changed.
+    if (next === controller.text && next !== typed) return;
     // The controller is written first, so a reader that runs inside `onChanged` sees the new text — which is
     // what Flutter guarantees, since the controller has already notified by the time the callback runs.
     controller.text = next;

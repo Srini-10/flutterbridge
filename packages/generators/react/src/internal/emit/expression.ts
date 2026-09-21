@@ -1398,6 +1398,9 @@ const SDK_STATICS: Readonly<Record<string, (scope: EmitScope) => string>> = {
   'dart:core#DateTime.parse': (scope) => `${scope.module.use(RUNTIME, 'DartDateTime')}.parse`,
   'dart:core#DateTime.tryParse': (scope) => `${scope.module.use(RUNTIME, 'DartDateTime')}.tryParse`,
   'dart:async#Future.wait': () => 'Promise.all',
+  // The one `FilteringTextInputFormatter` that needs no `RegExp` (ADR-0074).
+  'package:flutter/src/services/text_formatter.dart#FilteringTextInputFormatter.digitsOnly': (scope) =>
+    `${scope.module.use(RUNTIME, 'FilteringTextInputFormatter')}.digitsOnly`,
   // `debugPrint` writes a line to the developer console (`wrapWidth` is a terminal wrapping hint and means nothing to one).
   'package:flutter/src/foundation/print.dart#debugPrint': (scope) => scope.module.use(RUNTIME, 'dartDebugPrint'),
   // `identical(a, b)` is reference identity for objects and value identity for numbers, `NaN` identical to itself and `0.0` not

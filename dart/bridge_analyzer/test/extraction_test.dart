@@ -10607,4 +10607,61 @@ class Host extends StatelessWidget {
       expect(kinds(e.nodes, 'logic.New').where((Map<String, dynamic> n) => n['typeName'] == 'Text'), isEmpty);
     });
   });
+
+  group('widget-valued parameters of a project widget (M14, ADR-0074)', () {
+    Iterable<Map<String, dynamic>> kinds(Object? node, String kind) sync* {
+      if (node is Map<String, dynamic>) {
+        if (node['kind'] == kind) {
+          yield node;
+        }
+        for (final Object? v in node.values) {
+          yield* kinds(v, kind);
+        }
+      } else if (node is List) {
+        for (final Object? v in node) {
+          yield* kinds(v, kind);
+        }
+      }
+    }
+
+    const String source = '''
+import 'package:flutter/material.dart';
+class Bar extends StatelessWidget {
+  const Bar({super.key, required this.header, this.actions, this.leading = const <Widget>[]});
+  final Widget header;
+  final List<Widget>? actions;
+  final List<Widget> leading;
+  @override
+  Widget build(BuildContext context) => Row(children: [header, ...leading, ...?actions]);
+}
+class Home extends StatelessWidget {
+  const Home({super.key});
+  @override
+  Widget build(BuildContext context) => const Column(children: [
+    Bar(header: Text('h'), actions: [Text('a')], leading: [Text('l')]),
+    Bar(header: Text('h2'), actions: [Text('only')]),
+  ]);
+}
+''';
+
+    test('a widget and every list of widgets stay named props, as widget values — none is lifted to children (which erased the name)', () async {
+      final Extracted e = await extract(source);
+      final List<Map<String, dynamic>> calls = kinds(e.nodes, 'ui.Element')
+          .where((Map<String, dynamic> n) => (n['component'] as Map<String, dynamic>)['name'] == 'Bar')
+          .toList();
+      expect(calls, hasLength(2));
+      // The sole list of the second call was once inferred to be its `children` — erasing that it is `Bar.actions`.
+      for (final Map<String, dynamic> each in calls) {
+        expect(each.containsKey('children'), isFalse, reason: 'the list is `Bar.actions`, not the children of Bar');
+        expect(each.containsKey('slots'), isFalse);
+      }
+      final Map<String, dynamic> call = calls.first;
+      final Map<String, dynamic> props = call['props'] as Map<String, dynamic>;
+      expect(props.keys, containsAll(<String>['header', 'actions', 'leading']));
+      // Each is code that yields UI, so N8 does not see a list of constructions in props.
+      expect(kinds(props['actions'], 'logic.WidgetExpr'), hasLength(1));
+      expect(kinds(props['leading'], 'logic.WidgetExpr'), hasLength(1));
+      expect(kinds(props['header'], 'logic.WidgetExpr'), hasLength(1));
+    });
+  });
 }

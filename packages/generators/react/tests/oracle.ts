@@ -30,6 +30,8 @@ export interface OracleOptions {
   readonly waitMs?: number;
   /** Installs the jsdom layout shim and `ResizeObserver` (for components that measure). */
   readonly layout?: boolean;
+  /** Mounts each component inside the generated `Providers` (the theme), as the application does. */
+  readonly providers?: boolean;
   /** Steps whose output is asserted to DIFFER from Flutter's (a documented deviation), by scenario, 1-based. */
   readonly deviations?: Readonly<Record<string, readonly number[]>>;
 }
@@ -51,7 +53,7 @@ export function defineOracleSuite(options: OracleOptions): void {
     runner = await loadGenerated(
       files,
       [...Object.keys(scripts), ...(options.extraComponents ?? [])].map((name) => [kebab(name), name] as const),
-      { layout: options.layout === true },
+      { layout: options.layout === true, providers: options.providers === true },
     );
   }, 180_000);
   afterAll(cleanupBuildProofTemporaries);
@@ -66,6 +68,12 @@ export function defineOracleSuite(options: OracleOptions): void {
   describe(`${options.fixture}: each scenario matches Flutter, step by step`, () => {
     for (const [name, steps] of Object.entries(scripts)) {
       it(name, async () => {
+        // A list of elements rendered without keys is a defect React reports on the console and nothing else does (ADR-0074).
+        const reactErrors: string[] = [];
+        const original = console.error;
+        console.error = (...args: unknown[]): void => {
+          reactErrors.push(args.map(String).join(' '));
+        };
         const mounted = runner.mount(kebab(name), name);
         try {
           const trace = expected[name] as string[][];
@@ -81,7 +89,9 @@ export function defineOracleSuite(options: OracleOptions): void {
           }
         } finally {
           mounted.unmount();
+          console.error = original;
         }
+        expect(reactErrors.filter((line) => line.includes('unique "key"')), `${name}: React key warnings`).toEqual([]);
       }, 30_000);
     }
   });

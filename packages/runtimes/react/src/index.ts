@@ -445,6 +445,13 @@ export {
 } from './internal/widgets/text.js';
 
 export { ElevatedButton, type ElevatedButtonProps } from './internal/widgets/button.js';
+export {
+  FilteringTextInputFormatter,
+  LengthLimitingTextInputFormatter,
+  TextInputFormatter,
+  applyFormatters,
+} from './internal/widgets/formatters.js';
+export { widgetNodes } from './internal/widgets/keyed.js';
 export { LayoutBuilder, type LayoutBuilderProps, type LayoutConstraints } from './internal/widgets/layout_builder.js';
 export {
   GestureDetector,

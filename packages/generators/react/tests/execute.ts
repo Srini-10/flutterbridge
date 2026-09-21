@@ -93,7 +93,7 @@ interface Mounted {
   wait(ms: number): Promise<void>;
   /**
    * One scripted input step, in the vocabulary `fixtures/apps/gestures/test/scenarios_test.dart` performs in Flutter:
-   * `@tap:T`, `@double:T`, `@long:T`, `@down:T`, `@up`, `@cancel`, `@hover:T`, `@unhover`, `@key:tab|enter|space`, where `T` is
+   * `@enter:N:text`, `@tap:T`, `@double:T`, `@long:T`, `@down:T`, `@up`, `@cancel`, `@hover:T`, `@unhover`, `@key:tab|enter|space`, where `T` is
    * the text of the element pressed. Real (not fake) time passes where Flutter's clock is advanced.
    */
   input(step: string): Promise<void>;
@@ -116,7 +116,7 @@ export interface Harness {
 export async function loadGenerated(
   files: readonly { path: string; contents: string }[],
   components: readonly (readonly [string, string])[],
-  options: { readonly layout?: boolean } = {},
+  options: { readonly layout?: boolean; readonly providers?: boolean } = {},
 ): Promise<Harness> {
   if (options.layout === true) installLayoutShim();
   const root = materialise(files);
@@ -125,6 +125,7 @@ export async function loadGenerated(
     `import { act, createElement, StrictMode } from 'react';`,
     `import { renderToString } from 'react-dom/server';`,
     ...components.map(([file, name]) => `import { ${name} } from '@/components/${file}';`),
+    ...(options.providers === true ? [`import { Providers } from './app/providers';`, `export { Providers };`] : []),
     `export const registry = { ${components.map(([, name]) => name).join(', ')} };`,
     `export { act, createRoot, createElement, StrictMode, renderToString };`,
   ].join('\n');
@@ -142,6 +143,7 @@ export async function loadGenerated(
   // refuses a file outside the package.
   const bundle = new Function(`${readFileSync(outfile, 'utf8')}\nreturn __bundle;`)() as {
     registry: Record<string, (props: object) => unknown>;
+    Providers?: (props: { children: unknown }) => unknown;
     act: (fn: () => void | Promise<void>) => void | Promise<void>;
     StrictMode: unknown;
     renderToString: (node: unknown) => string;
@@ -161,7 +163,9 @@ export async function loadGenerated(
       const container = document.createElement('div');
       document.body.appendChild(container);
       const reactRoot = bundle.createRoot(container);
-      const element = bundle.createElement(type);
+      // The generated `Providers` (theme, assets) around the component, as the running application has them, when the suite asks.
+      const bare = bundle.createElement(type);
+      const element = bundle.Providers === undefined ? bare : bundle.createElement(bundle.Providers as never, null, bare);
       let held: Element | undefined;
       let hovered: Element | undefined;
       // Reports a size change to every `ResizeObserver` (the layout shim's), inside `act`, until nothing changes.
@@ -225,6 +229,19 @@ export async function loadGenerated(
           const [verb, ...rest] = step.split(':');
           const argument = rest.join(':');
           if (verb === '@wait') return pause(Number(argument));
+          if (verb === '@enter') {
+            // `@enter:N:text` types `text` into the Nth text field, replacing what it holds — Flutter's `tester.enterText`.
+            const [index, ...typed] = argument.split(':');
+            const field = [...container.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>('input, textarea')][Number(index)];
+            if (field === undefined) throw new Error(`no text field number ${String(index)}`);
+            const proto = field instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+            const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+            void bundle.act(() => {
+              setter?.call(field, typed.join(':'));
+              field.dispatchEvent(new Event('input', { bubbles: true }));
+            });
+            return Promise.resolve();
+          }
           if (verb === '@tap') {
             fire(target(argument), 'pointerdown');
             fire(target(argument), 'pointerup');

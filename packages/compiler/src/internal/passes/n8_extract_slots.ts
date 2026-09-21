@@ -203,6 +203,12 @@ function isWidgetList(binding: unknown): boolean {
   const literal = expr as Record<string, unknown>;
   if (literal['kind'] !== 'logic.ListLit') return false;
 
+  // Only a list *typed* as widgets. A list of constructions is otherwise a list of values — `inputFormatters`, `DataColumn`s, chart slices —
+  // and calling it UI was a false positive that stopped `bridge build` on real applications (found by running them). The analyzer now extracts
+  // every `List<Widget>` argument as widget values, so a widget list that reaches here as constructions is the hole this check exists for.
+  const listType = String(((literal['type'] ?? {}) as Record<string, unknown>)['name'] ?? '');
+  if (!/^List<(?:[\w.]*Widget|Widget)\??>$/.test(listType)) return false;
+
   const elements = literal['elements'];
   return (
     Array.isArray(elements) &&

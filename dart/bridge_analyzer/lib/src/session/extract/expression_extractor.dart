@@ -1584,6 +1584,11 @@ final class ExpressionExtractor {
       if ((unwrapped is TopLevelFunctionElement || unwrapped is TopLevelVariableElement) && library.startsWith('package:flutter/')) {
         return library;
       }
+      // A `static` field of a framework class (`FilteringTextInputFormatter.digitsOnly`): named by its library so the generator can tell the
+      // framework's from a project name, as for an SDK static.
+      if (unwrapped is FieldElement && unwrapped.isStatic && library.startsWith('package:flutter/')) {
+        return library;
+      }
       return unwrapped is TopLevelVariableElement && unwrapped.isConst ? library : null;
     }
     final bool isStaticOrTopLevel = switch (unwrapped) {

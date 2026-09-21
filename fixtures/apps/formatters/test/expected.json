@@ -1,0 +1,31 @@
+{
+  "Fields": [
+    [
+      "> digits=[] changes=0 limited=[] both=[] form=[]"
+    ],
+    [
+      "> digits=[123] changes=1 limited=[] both=[] form=[]"
+    ],
+    [
+      "> digits=[123] changes=1 limited=[] both=[] form=[]"
+    ],
+    [
+      "> digits=[] changes=2 limited=[] both=[] form=[]"
+    ],
+    [
+      "> digits=[] changes=2 limited=[abcd] both=[] form=[]"
+    ],
+    [
+      "> digits=[] changes=2 limited=[abc] both=[] form=[]"
+    ],
+    [
+      "> digits=[] changes=2 limited=[abc] both=[123] form=[]"
+    ],
+    [
+      "> digits=[] changes=2 limited=[abc] both=[123] form=[xy]"
+    ],
+    [
+      "> digits=[] changes=2 limited=[é🙂🙂é] both=[123] form=[xy]"
+    ]
+  ]
+}
