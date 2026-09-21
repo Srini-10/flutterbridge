@@ -1,0 +1,131 @@
+{
+  "label": "B",
+  "dartFiles": 476,
+  "filesImportingRiverpod": 173,
+  "matrix": {
+    "Provider(": {
+      "count": 65,
+      "files": 42
+    },
+    "Provider.family": {
+      "count": 2,
+      "files": 1
+    },
+    "StateProvider": {
+      "count": 51,
+      "files": 23
+    },
+    "StateNotifierProvider": {
+      "count": 2,
+      "files": 1
+    },
+    "FutureProvider": {
+      "count": 149,
+      "files": 34
+    },
+    "StreamProvider": {
+      "count": 24,
+      "files": 14
+    },
+    "NotifierProvider": {
+      "count": 2,
+      "files": 1
+    },
+    "extends StateNotifier": {
+      "count": 2,
+      "files": 1
+    },
+    ".family": {
+      "count": 88,
+      "files": 24
+    },
+    ".autoDispose": {
+      "count": 222,
+      "files": 40
+    },
+    "ProviderScope": {
+      "count": 2,
+      "files": 2
+    },
+    "overrides:": {
+      "count": 1,
+      "files": 1
+    },
+    ".overrideWith": {
+      "count": 4,
+      "files": 2
+    },
+    "ConsumerWidget": {
+      "count": 137,
+      "files": 70
+    },
+    "ConsumerStatefulWidget": {
+      "count": 93,
+      "files": 79
+    },
+    "ConsumerState": {
+      "count": 93,
+      "files": 79
+    },
+    "Consumer(": {
+      "count": 5,
+      "files": 4
+    },
+    "ref.watch": {
+      "count": 667,
+      "files": 152
+    },
+    "ref.read": {
+      "count": 254,
+      "files": 81
+    },
+    "ref.listen": {
+      "count": 14,
+      "files": 9
+    },
+    "ref.invalidate": {
+      "count": 295,
+      "files": 83
+    },
+    "ref.refresh": {
+      "count": 4,
+      "files": 4
+    },
+    "ref.onDispose": {
+      "count": 4,
+      "files": 3
+    },
+    ".notifier": {
+      "count": 78,
+      "files": 29
+    },
+    ".future": {
+      "count": 54,
+      "files": 32
+    },
+    ".select(": {
+      "count": 170,
+      "files": 46
+    },
+    ".when(": {
+      "count": 70,
+      "files": 42
+    },
+    ".maybeWhen(": {
+      "count": 8,
+      "files": 3
+    },
+    ".whenData(": {
+      "count": 6,
+      "files": 4
+    },
+    "AsyncValue": {
+      "count": 59,
+      "files": 20
+    },
+    ".valueOrNull/.requireValue": {
+      "count": 272,
+      "files": 94
+    }
+  }
+}

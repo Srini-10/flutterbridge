@@ -1,0 +1,55 @@
+{
+  "label": "A",
+  "dartFiles": 240,
+  "filesImportingRiverpod": 29,
+  "matrix": {
+    "Provider(": {
+      "count": 11,
+      "files": 10
+    },
+    "StateNotifierProvider": {
+      "count": 9,
+      "files": 9
+    },
+    "extends StateNotifier": {
+      "count": 9,
+      "files": 9
+    },
+    ".family": {
+      "count": 3,
+      "files": 3
+    },
+    "ProviderScope": {
+      "count": 1,
+      "files": 1
+    },
+    "ConsumerWidget": {
+      "count": 1,
+      "files": 1
+    },
+    "ConsumerStatefulWidget": {
+      "count": 12,
+      "files": 12
+    },
+    "ConsumerState": {
+      "count": 12,
+      "files": 12
+    },
+    "ref.watch": {
+      "count": 29,
+      "files": 27
+    },
+    "ref.read": {
+      "count": 25,
+      "files": 11
+    },
+    "ref.onDispose": {
+      "count": 2,
+      "files": 1
+    },
+    ".notifier": {
+      "count": 20,
+      "files": 10
+    }
+  }
+}

@@ -1,0 +1,151 @@
+# Riverpod — measured usage and the supported-subset design
+
+Status: **inventory measured; design proposed; nothing implemented.** This is the input to an ADR, not the ADR.
+Numbers come from `tools/riverpod-inventory/inventory.mjs` (a textual count of `.dart` files, tests excluded), run on
+disposable copies of the two real applications used as a corpus (raw output: `riverpod-usage-A.json`,
+`riverpod-usage-B.json`). A textual count sizes the feature and names files; the compiler's own recognition must be
+analyzer-based (resolved type identity from `package:flutter_riverpod` / `package:riverpod`), never spelling.
+
+## 1. What the two applications use
+
+| Construct | App A (240 files) | App B (476 files) |
+|---|---:|---:|
+| Dart files importing Riverpod | 29 | 173 |
+| `Provider(` | 11 | 65 |
+| `Provider.family` | – | 2 |
+| `StateProvider` | – | 51 |
+| `StateNotifierProvider` / `extends StateNotifier` | 9 / 9 | 2 / 2 |
+| `NotifierProvider` | – | 2 |
+| `FutureProvider` | – | 149 |
+| `StreamProvider` | – | 24 |
+| `.family` modifier | 3 | 88 |
+| `.autoDispose` modifier | – | 222 |
+| `ProviderScope` | 1 | 2 |
+| `overrides:` / `.overrideWith` (lib code) | – | 1 / 4 |
+| `ConsumerWidget` | 1 | 137 |
+| `ConsumerStatefulWidget` + `ConsumerState` | 12 + 12 | 93 + 93 |
+| `Consumer(` builder | – | 5 |
+| `ref.watch` | 29 | 667 |
+| `ref.read` | 25 | 254 |
+| `ref.listen` | – | 14 |
+| `ref.invalidate` | – | 295 |
+| `ref.refresh` | – | 4 |
+| `ref.onDispose` | 2 | 4 |
+| `.notifier` | 20 | 78 |
+| `.future` | – | 54 |
+| `.select(` | – | 170 |
+| `.when(` / `.maybeWhen(` / `.whenData(` | – | 70 / 8 / 6 |
+| `AsyncValue` (named) | – | 59 |
+| `.valueOrNull` / `.requireValue` | – | 272 |
+
+Not used by either (so out of the first subset, and refused with a precise diagnostic rather than approximated):
+`@riverpod` code generation, `AsyncNotifier`/`StreamNotifier`, `ChangeNotifierProvider`, `HookConsumerWidget`,
+`ref.keepAlive`, `ref.exists`, `UncontrolledProviderScope` in lib code, `ProviderContainer` in lib code.
+
+`overrides:` and `ProviderContainer` are dominated by **tests** (hundreds of uses) and are not part of the compiled
+application; in `lib/` they are limited to a handful of `ProviderScope(overrides: …)` sites.
+
+### What the shapes look like
+
+- **App A** is the small-surface shape: a `StateNotifier<S>` holding a sealed state class, exposed by a
+  `StateNotifierProvider<N, S>((ref) => N(repository: ref.watch(repoProvider)))`, read by `ConsumerStatefulWidget`s
+  with `ref.watch(p)` (state) and `ref.read(p.notifier).method()` (commands). The dependency graph is a two-level chain:
+  repository `Provider` → controller `StateNotifierProvider` → screen.
+- **App B** is the async-data shape: `FutureProvider.autoDispose.family<T, Arg>` per query, screens read
+  `ref.watch(p(arg))` and branch on `.when(data:, loading:, error:)` or `.valueOrNull`, and mutations end with
+  `ref.invalidate(p)` (295 sites — the single most used operation after `watch`). `StateProvider` holds UI filters;
+  `select` narrows rebuilds.
+
+## 2. The semantic model that has to be preserved
+
+A provider is not a store field. The behaviours below are observable in a running application, and each one must have a
+test against the real `flutter_riverpod` before it is claimed:
+
+1. **Lazy creation.** A provider's body runs on first read, not at declaration.
+2. **One value per (provider, family argument).** Two reads of `p(1)` are the same instance; `p(1)` and `p(2)` are
+   different. Family arguments are compared by `==`/`hashCode`, so value-equal records and enums must collide and
+   identity-distinct objects must not.
+3. **Dependency graph via `ref.watch` inside a provider.** When a watched provider changes, the dependent is
+   disposed and re-created, and its own watchers are notified. `ref.read` inside a provider creates no edge.
+4. **`ref.watch` in a widget subscribes; `ref.read` does not.** A widget rebuilds when a watched provider's value
+   changes (by `==`, except `AsyncValue` transitions and `StateNotifier` state), never when a read one does.
+5. **`select`** narrows a subscription to a projection compared by `==`.
+6. **`ref.listen`** runs a callback with `(previous, next)` on change and does not rebuild.
+7. **Lifetime.** Without `autoDispose` a provider lives as long as its container. With it, it is disposed one frame
+   after its last listener leaves, and `ref.onDispose` callbacks run then; re-reading re-creates it.
+8. **`AsyncValue`.** `FutureProvider`/`StreamProvider` yield `AsyncLoading` → `AsyncData`/`AsyncError`. A refresh keeps
+   the previous value (`isRefreshing`, `hasValue`, `valueOrNull` still answers) — the property `.valueOrNull` (272
+   uses in B) depends on.
+9. **`invalidate` / `refresh`.** Invalidate marks the provider for re-creation on next read (or immediately if it has
+   listeners); refresh does it and returns the new value.
+10. **`StateProvider`/`StateNotifier`** notify on `state = x` when the new value is not `==` the old.
+11. **Scopes and overrides.** `ProviderScope(overrides: [...])` substitutes providers for its subtree; nested scopes
+    inherit.
+
+## 3. Where it fits in the frozen architecture
+
+No new UIR node kind is needed for the subset below, so no spec amendment. It follows the shape that worked for `dio`
+(ADR-0075): a **runtime library + a package adapter + one generator rule**.
+
+- **Runtime kit** (`packages/runtimes/react`): a small `ProviderContainer` implementing §2 — providers as plain objects
+  `{ kind, create(ref), family?, autoDispose }`, a per-container cache keyed by provider identity + family key, a
+  dependency graph, and `useSyncExternalStore`-based hooks `useWatch(provider)` / `useListen(provider, fn)`;
+  `ProviderScope` is a React context holding a container. `AsyncValue` is a runtime class with the real API
+  (`when`, `maybeWhen`, `whenData`, `valueOrNull`, `requireValue`, `isLoading`, `hasValue`, `isRefreshing`).
+- **Analyzer adapter**: recognises providers, consumers and `ref` operations by the **resolved element** (library
+  `package:riverpod`/`flutter_riverpod`), the way the dio adapter recognises `Dio`. A provider declaration becomes a
+  top-level `logic.New` of the runtime class with its `(ref) => …` closure, so the existing top-level-value and
+  lambda emission carries it. `ConsumerWidget.build(context, ref)` and `ConsumerState.ref` bind `ref` as the
+  component's container handle.
+- **Generator rule (the one hard part).** `ref.watch(p)` in a `build` is a *subscription*, i.e. a hook. ADR-0048 inlines
+  build-locals so each use would become its own hook call, with conditionally-executed ones violating the rules of hooks.
+  The rule: every `ref.watch`/`ref.listen` reachable from a `build` is **hoisted to the top of the component**, in
+  source order, exactly as `declareLocalSignals` already hoists signal subscriptions, and reads inside the body use the
+  hoisted value. A `ref.watch` whose provider argument depends on a value only known later in the body (a family
+  argument computed from a local declared after a conditional) cannot be hoisted and is **refused with a diagnostic naming
+  the source span**, not approximated.
+- **Inside providers and notifier methods** `ref` is the container-side ref — no hooks, direct calls.
+
+## 4. Proposed supported subset (v1)
+
+SUPPORTED: `Provider`, `StateProvider`, `StateNotifierProvider` (+ `extends StateNotifier`), `FutureProvider`,
+`StreamProvider`, `NotifierProvider` (+ `extends Notifier`); `.family` (single argument: primitive, enum, record of
+primitives, or a value class with `==`); `.autoDispose`; `ConsumerWidget`, `ConsumerStatefulWidget`/`ConsumerState`,
+`Consumer`; `ref.watch`, `ref.read`, `ref.listen`, `ref.invalidate`, `ref.refresh`, `ref.onDispose`, `.notifier`,
+`.future`, `.select`; `AsyncValue` and its `when`/`maybeWhen`/`whenData`/`valueOrNull`/`requireValue`;
+`ProviderScope` with `overrides:` using `overrideWithValue`/`overrideWith`.
+
+DOCUMENTED DIFFERENCE (to be measured, then written down): disposal timing (Flutter disposes after a frame; the runtime
+uses a microtask/`queueMicrotask` after the last unsubscribe), `Duration`-based `cacheFor`, error reporting to the
+zone.
+
+EXPLICITLY REFUSED with a precise diagnostic: `@riverpod`/`riverpod_generator`, `AsyncNotifier`/`StreamNotifier`/
+code-generated families, `ProviderContainer` constructed in application code, `ref.keepAlive`, `ref.exists`,
+`ref.state` outside a notifier, dynamic family arguments that are not comparable, `ref.watch` that cannot be hoisted.
+
+## 5. How it will be verified
+
+1. **Oracle against the real package.** A Dart test using `flutter_riverpod` records, for each scenario, the sequence of
+   `(provider, value|AsyncState, build count, dispose count)` events; the generated runtime is driven through the same
+   scenario and the traces are compared — the same fixture-oracle method used for widgets. Scenarios: lazy creation,
+   watch chain A→B→C with a change at A, `read` vs `watch`, family equality (records, enums, identity-distinct
+   objects), `select` narrowing, `listen` previous/next, `autoDispose` with a re-read after the last listener leaves,
+   `invalidate` with and without listeners, `AsyncValue` refresh keeping the previous value, `StateNotifier` no-op
+   assignment, nested scope override.
+2. **Mutation tests** (skipped = killed): drop the dependency edge; make `read` subscribe; key family by identity; never
+   dispose; drop `isRefreshing`'s previous value; notify on equal assignment; ignore overrides; hoist out of order.
+3. **Browser.** A fixture app run in Chromium: a screen with a `FutureProvider.autoDispose.family` list, filter
+   `StateProvider`, `invalidate` after a mutation, `.when` branches for loading/error/data, driven with a real click and
+   a fulfilled/failed network route.
+4. **Real-app measurement.** Re-run the taxonomy on A (which uses only the StateNotifier/Provider/Consumer subset) and B
+   after each stage; a Riverpod-related error count must fall and no new silent loss may appear.
+
+## 6. Order of work
+
+1. Runtime `ProviderContainer` + `AsyncValue` + hooks, with the oracle scenarios (no compiler changes; testable alone).
+2. Analyzer recognition and top-level provider emission for `Provider`/`StateNotifierProvider` + `ConsumerStatefulWidget`
+   — this is all App A needs.
+3. Hoisting rule for `ref.watch` in `build`; `ConsumerWidget`; `.select`, `.listen`.
+4. Async family: `FutureProvider`/`StreamProvider`, `.family`, `.autoDispose`, `invalidate`, `.when`.
+5. `ProviderScope` overrides; refusal diagnostics for the unsupported list; documentation and an ADR (number to be
+   assigned when written — coordinate with whoever holds the ADR sequence).
