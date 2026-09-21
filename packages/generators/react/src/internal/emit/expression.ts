@@ -1056,6 +1056,88 @@ function mapTypeArguments(node: Node, scope: EmitScope): string {
   return match !== null && match[1]!.includes('unknown') ? `<${match[1]}>` : '';
 }
 
+/** A pattern lowered to a runtime test on a subject, and the variables it binds (each: a name and the expression that reads it). */
+export interface CompiledPattern {
+  readonly test: string;
+  readonly binds: readonly { readonly name: string; readonly expr: string }[];
+}
+
+/**
+ * A `logic.Pattern` as `{ test, binds }` over `subject` (ADR-0065): a constant is `===`, an object pattern is a type test and its field
+ * patterns over `subject.field`, `|` is `||` (it binds nothing), `&` is `&&`, `x?` is `!== null`. `undefined` (reported) when a type
+ * cannot be told at runtime.
+ */
+export function compilePattern(pattern: Node, subject: string, scope: EmitScope): CompiledPattern | undefined {
+  const variant = String(pattern['variant']);
+  const typeTest = (type: Node | undefined, operand: string): { test: string; typeText: string } | undefined => {
+    if (type === undefined) return { test: 'true', typeText: 'unknown' };
+    const compiled = catchTypeTest(type, operand, scope);
+    if (compiled === undefined) {
+      scope.report(
+        GeneratorDiagnosticCode.UnsupportedExpression,
+        'error',
+        `a pattern tests \`${String(type['name'] ?? 'this type')}\`, which cannot be told at runtime here (only a project class, an SDK exception, ` +
+          '`int`, `double`, `num`, `String`, `bool`, `List`, `Map`, `Set` or `Object` can).',
+        idOf(pattern),
+      );
+      return undefined;
+    }
+    return compiled === 'catchAll' ? { test: 'true', typeText: 'unknown' } : compiled;
+  };
+  switch (variant) {
+    case 'const': {
+      const value = emitExpression(pattern['value'] as Node, scope);
+      return value === REFUSED ? undefined : { test: `${subject} === ${value}`, binds: [] };
+    }
+    case 'wildcard': {
+      const t = typeTest(pattern['matchType'] as Node | undefined, subject);
+      return t === undefined ? undefined : { test: t.test, binds: [] };
+    }
+    case 'bind': {
+      const t = typeTest(pattern['matchType'] as Node | undefined, subject);
+      if (t === undefined) return undefined;
+      const name = String((pattern['decl'] as Node)['name']);
+      return { test: t.test, binds: [{ name, expr: t.typeText === 'unknown' ? subject : `${subject} as ${t.typeText}` }] };
+    }
+    case 'object': {
+      const t = typeTest(pattern['matchType'] as Node | undefined, subject);
+      if (t === undefined) return undefined;
+      const typed = t.typeText === 'unknown' ? subject : `(${subject} as ${t.typeText})`;
+      const tests = [t.test];
+      const binds: { name: string; expr: string }[] = [];
+      for (const field of asArray(pattern['fields'])) {
+        const inner = compilePattern(field['pattern'] as Node, `${typed}.${identifierOf(String(field['name']))}`, scope);
+        if (inner === undefined) return undefined;
+        tests.push(inner.test);
+        binds.push(...inner.binds);
+      }
+      return { test: tests.filter((x) => x !== 'true').join(' && ') || 'true', binds };
+    }
+    case 'or':
+    case 'and': {
+      const parts = asArray(pattern['patterns']).map((p) => compilePattern(p, subject, scope));
+      if (parts.some((p) => p === undefined)) return undefined;
+      const done = parts as CompiledPattern[];
+      const joiner = variant === 'or' ? ' || ' : ' && ';
+      return { test: `(${done.map((p) => p.test).join(joiner)})`, binds: done.flatMap((p) => p.binds) };
+    }
+    case 'relational': {
+      const value = emitExpression(pattern['value'] as Node, scope);
+      return value === REFUSED ? undefined : { test: `${subject} ${String(pattern['operator'])} ${value}`, binds: [] };
+    }
+    case 'nullCheck': {
+      const inner = compilePattern(pattern['pattern'] as Node, subject, scope);
+      return inner === undefined ? undefined : { test: `${subject} !== null && ${inner.test}`, binds: inner.binds };
+    }
+    case 'nullAssert':
+    case 'cast':
+      return compilePattern(pattern['pattern'] as Node, subject, scope);
+    default:
+      scope.report(GeneratorDiagnosticCode.UnsupportedExpression, 'error', `the pattern \`${variant}\` has no lowering.`, idOf(pattern));
+      return undefined;
+  }
+}
+
 /** Whether `node` evaluates an `await` of its own — not one inside a nested lambda, which has its own function. */
 function containsAwait(node: unknown): boolean {
   if (Array.isArray(node)) return node.some((child) => containsAwait(child));
@@ -1067,7 +1149,7 @@ function containsAwait(node: unknown): boolean {
 }
 
 /** `scope`, with `names` also in scope as bare identifiers: a `logic.Let` binding and a collection-`for` variable (name-only refs). */
-function scopeWithNames(scope: EmitScope, names: readonly string[]): EmitScope {
+export function scopeWithNames(scope: EmitScope, names: readonly string[]): EmitScope {
   const declared = new Set(names);
   return {
     ...scope,
@@ -2494,6 +2576,29 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
       }
 
       return `(${params}) => ${emitExpression(node['body'] as Node, inner)}`;
+    }
+
+    // A `switch` expression (ADR-0065): an immediately-invoked function testing each arm in order; no arm matching throws, as Dart's
+    // exhaustiveness guarantees it cannot happen.
+    case 'logic.SwitchExpr': {
+      const subject = emitExpression(node['subject'] as Node, scope);
+      if (subject === REFUSED) return REFUSED;
+      const arms: string[] = [];
+      for (const arm of asArray(node['cases'])) {
+        const compiled = compilePattern(arm['pattern'] as Node, '$s', scope);
+        if (compiled === undefined) return REFUSED;
+        const inner = scopeWithNames(scope, compiled.binds.map((b) => b.name));
+        const guard = arm['guard'] === undefined ? undefined : emitExpression(arm['guard'] as Node, inner);
+        const value = emitExpression(arm['value'] as Node, inner);
+        if (guard === REFUSED || value === REFUSED) return REFUSED;
+        const declared = compiled.binds.map((b) => `const ${identifierOf(b.name)} = ${b.expr};`).join(' ');
+        const body = guard === undefined ? `return ${value};` : `if (${guard}) return ${value};`;
+        arms.push(`if (${compiled.test}) { ${declared} ${body} }`);
+      }
+      const isAsync = containsAwait(node);
+      const fail = `return ${scope.module.use(RUNTIME, 'dartThrow')}(new ${scope.module.use(RUNTIME, 'DartStateError')}('No switch case matched'));`;
+      const fn = `${isAsync ? 'async ' : ''}($s) => { ${arms.join(' ')} ${fail} }`;
+      return isAsync ? paren(`await (${fn})(${subject})`) : `(${fn})(${subject})`;
     }
 
     // A widget as a value (M12, ADR-0062): its tree, rendered where the expression is.

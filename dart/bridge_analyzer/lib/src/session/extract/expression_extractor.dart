@@ -546,8 +546,128 @@ final class ExpressionExtractor {
       case CascadeExpression():
         return _cascade(node, scope);
 
+      case SwitchExpression():
+        return _switchExpression(node, scope);
+
       case Expression():
         return _unsupported(node, scope);
+    }
+  }
+
+  /// A `switch` expression whose arms are patterns this model holds (ADR-0065); anything else is refused, whole, with its source.
+  RawNode _switchExpression(SwitchExpression node, Scope scope) {
+    final List<RawValue> cases = <RawValue>[];
+    for (final SwitchExpressionCase arm in node.cases) {
+      final List<Binding> binds = <Binding>[];
+      final RawNode? pattern = patternOf(arm.guardedPattern.pattern, scope, binds);
+      if (pattern == null) {
+        return _unsupported(node, scope);
+      }
+      final Scope armScope = binds.isEmpty ? scope : scope.child(binds);
+      cases.add(
+        RawMap(<String, RawValue>{
+          'pattern': RawChild(pattern),
+          if (arm.guardedPattern.whenClause case final WhenClause clause) 'guard': RawChild(extract(clause.expression, armScope)),
+          'value': RawChild(extract(arm.expression, armScope)),
+        }),
+      );
+    }
+    return RawNode(
+      kind: 'logic.SwitchExpr',
+      span: out.span(node),
+      fields: <String, RawValue>{
+        'subject': RawChild(extract(node.expression, scope)),
+        'cases': RawList(cases),
+        'type': out.typeRef(node.staticType, at: node),
+      },
+    );
+  }
+
+  /// [pattern] as a `logic.Pattern`, adding the variables it declares to [binds]; null when it is one this model does not hold (a list,
+  /// map or record pattern, an or-pattern that binds).
+  RawNode? patternOf(DartPattern pattern, Scope scope, List<Binding> binds) {
+    RawNode make(String variant, Map<String, RawValue> more) => RawNode(
+      kind: 'logic.Pattern',
+      span: out.span(pattern),
+      fields: <String, RawValue>{'variant': RawLiteral(variant), ...more},
+    );
+    switch (pattern) {
+      case ParenthesizedPattern():
+        return patternOf(pattern.pattern, scope, binds);
+      case ConstantPattern():
+        return make('const', <String, RawValue>{'value': RawChild(extract(pattern.expression, scope))});
+      case WildcardPattern():
+        return make('wildcard', <String, RawValue>{
+          if (pattern.type case final TypeAnnotation type) 'matchType': out.typeRef(type.type, at: pattern),
+        });
+      case DeclaredVariablePattern():
+        final String name = pattern.name.lexeme;
+        binds.add(Binding(name: name, binds: Binds.parameter));
+        return make('bind', <String, RawValue>{
+          'decl': RawChild(
+            RawNode(
+              kind: 'logic.VarDecl',
+              span: out.span(pattern),
+              fields: <String, RawValue>{
+                'name': RawLiteral(name),
+                'type': out.typeRef(pattern.declaredFragment?.element.type, at: pattern),
+                'isFinal': const RawLiteral(true),
+              },
+            ),
+          ),
+          if (pattern.type case final TypeAnnotation type) 'matchType': out.typeRef(type.type, at: pattern),
+        });
+      case ObjectPattern():
+        final List<RawValue> fields = <RawValue>[];
+        for (final PatternField field in pattern.fields) {
+          final String? name = field.effectiveName;
+          final RawNode? inner = patternOf(field.pattern, scope, binds);
+          if (name == null || inner == null) {
+            return null;
+          }
+          fields.add(RawMap(<String, RawValue>{'name': RawLiteral(name), 'pattern': RawChild(inner)}));
+        }
+        return make('object', <String, RawValue>{
+          'matchType': out.typeRef(pattern.type.type, at: pattern),
+          if (fields.isNotEmpty) 'fields': RawList(fields),
+        });
+      case LogicalOrPattern():
+        final List<Binding> left = <Binding>[];
+        final List<Binding> right = <Binding>[];
+        final RawNode? a = patternOf(pattern.leftOperand, scope, left);
+        final RawNode? b = patternOf(pattern.rightOperand, scope, right);
+        // Variables bound in one branch only are undefined in the other; this model holds or-patterns that bind nothing.
+        if (a == null || b == null || left.isNotEmpty || right.isNotEmpty) {
+          return null;
+        }
+        return make('or', <String, RawValue>{'patterns': RawList(<RawValue>[RawChild(a), RawChild(b)])});
+      case LogicalAndPattern():
+        final RawNode? a = patternOf(pattern.leftOperand, scope, binds);
+        final RawNode? b = patternOf(pattern.rightOperand, scope, binds);
+        return a == null || b == null
+            ? null
+            : make('and', <String, RawValue>{'patterns': RawList(<RawValue>[RawChild(a), RawChild(b)])});
+      case RelationalPattern():
+        return make('relational', <String, RawValue>{
+          'operator': RawLiteral(pattern.operator.lexeme),
+          'value': RawChild(extract(pattern.operand, scope)),
+        });
+      case NullCheckPattern():
+        final RawNode? inner = patternOf(pattern.pattern, scope, binds);
+        return inner == null ? null : make('nullCheck', <String, RawValue>{'pattern': RawChild(inner)});
+      case NullAssertPattern():
+        final RawNode? inner = patternOf(pattern.pattern, scope, binds);
+        return inner == null ? null : make('nullAssert', <String, RawValue>{'pattern': RawChild(inner)});
+      case CastPattern():
+        final RawNode? inner = patternOf(pattern.pattern, scope, binds);
+        return inner == null
+            ? null
+            : make('cast', <String, RawValue>{
+                'pattern': RawChild(inner),
+                'matchType': out.typeRef(pattern.type.type, at: pattern),
+              });
+      default:
+        return null;
     }
   }
 

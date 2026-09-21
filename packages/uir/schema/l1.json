@@ -93,6 +93,14 @@
             "description": "A statement in the case body."
           },
           "description": "Body, in order."
+        },
+        "pattern": {
+          "$ref": "#/$defs/Pattern",
+          "description": "The pattern a Dart 3 `case` matches, when it is not a plain constant (`test`)."
+        },
+        "guard": {
+          "$ref": "l1.json#/$defs/Expr",
+          "description": "The `when` clause of a pattern case."
         }
       }
     },
@@ -1932,6 +1940,9 @@
           "$ref": "#/$defs/WidgetExpr"
         },
         {
+          "$ref": "#/$defs/SwitchExpr"
+        },
+        {
           "$ref": "#/$defs/OpaqueExpr"
         }
       ]
@@ -2500,6 +2511,163 @@
           }
         }
       ]
+    },
+    "Pattern": {
+      "description": "A Dart 3 pattern (ADR-0065): what a `switch` case or a switch-expression arm matches. `variant` says which; the other fields are the ones that variant uses.",
+      "x-uir-kind": "logic.Pattern",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "variant"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "logic.Pattern",
+              "description": "Discriminant."
+            },
+            "variant": {
+              "type": "string",
+              "enum": [
+                "const",
+                "wildcard",
+                "bind",
+                "object",
+                "or",
+                "and",
+                "relational",
+                "nullCheck",
+                "nullAssert",
+                "cast"
+              ],
+              "description": "`const`: `value` (a literal, an enum constant, a `const`); `wildcard`: `_`; `bind`: `var x` / `T x` — `decl` and an optional `matchType`; `object`: `Type(field: pattern, …)` — `matchType` and `fields`; `or`/`and`: `patterns`; `relational`: `operator` `value`; `nullCheck`: `x?`; `nullAssert`: `x!`; `cast`: `x as T` — `pattern` and `matchType`."
+            },
+            "value": {
+              "$ref": "l1.json#/$defs/Expr",
+              "description": "A `const`/`relational` pattern's value."
+            },
+            "operator": {
+              "type": "string",
+              "description": "A `relational` pattern's operator."
+            },
+            "decl": {
+              "$ref": "#/$defs/VarDecl",
+              "description": "A `bind` pattern's variable (no initializer); reads of it resolve by name."
+            },
+            "matchType": {
+              "$ref": "shared.json#/$defs/TypeRef",
+              "description": "The type a `bind`/`object`/`cast` pattern tests."
+            },
+            "fields": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/PatternField"
+              },
+              "description": "An `object` pattern's field patterns."
+            },
+            "patterns": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Pattern"
+              },
+              "description": "`or`/`and` operands."
+            },
+            "pattern": {
+              "$ref": "#/$defs/Pattern",
+              "description": "The inner pattern of a `nullCheck`/`nullAssert`/`cast`."
+            }
+          }
+        }
+      ]
+    },
+    "SwitchExprCase": {
+      "type": "object",
+      "description": "One arm of a switch expression: `pattern when guard => value`.",
+      "additionalProperties": false,
+      "required": [
+        "pattern",
+        "value"
+      ],
+      "properties": {
+        "pattern": {
+          "$ref": "#/$defs/Pattern",
+          "description": "What the arm matches."
+        },
+        "guard": {
+          "$ref": "l1.json#/$defs/Expr",
+          "description": "The `when` clause."
+        },
+        "value": {
+          "$ref": "l1.json#/$defs/Expr",
+          "description": "The arm's value."
+        }
+      }
+    },
+    "SwitchExpr": {
+      "description": "A `switch` expression (ADR-0065). Exhaustive by Dart's rules: when no arm matches it throws.",
+      "x-uir-kind": "logic.SwitchExpr",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "subject",
+            "cases",
+            "type"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "logic.SwitchExpr",
+              "description": "Discriminant."
+            },
+            "subject": {
+              "$ref": "l1.json#/$defs/Expr",
+              "description": "The value matched."
+            },
+            "cases": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/SwitchExprCase"
+              },
+              "description": "Arms, in order."
+            },
+            "type": {
+              "$ref": "shared.json#/$defs/TypeRef",
+              "description": "Resolved type."
+            }
+          }
+        }
+      ]
+    },
+    "PatternField": {
+      "type": "object",
+      "description": "One field of an `object` pattern.",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "pattern"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "The getter read."
+        },
+        "pattern": {
+          "$ref": "#/$defs/Pattern",
+          "description": "What its value must match."
+        }
+      }
     }
   }
 }

@@ -81,6 +81,11 @@ widgets can be held in locals and lists (`ReactNode`), spread (`...rows`) and pa
 Initializer-list constants, named constructors and factories of a project widget ([ADR-0063](../adr/0063-widget-constructors.md)). A redirecting
 constructor, a value computed from a parameter, and a named constructor of a stateful widget are refused (`BRG1309`).
 
+## Dart 3 patterns — ADR-0065
+
+Switch expressions and pattern cases: constant, wildcard, variable, object (with fields), `||`, `&&`, relational, `?`/`!`/`as` patterns and
+`when` guards ([ADR-0065](../adr/0065-dart3-patterns.md)). List, map and record patterns, and an or-pattern that binds, are refused whole.
+
 ## Not supported (refused, by name)
 
 Everything not listed. The census of two real applications (see the final audit report) found the blockers in practice are: freezed

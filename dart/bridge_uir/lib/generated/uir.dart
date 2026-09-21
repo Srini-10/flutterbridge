@@ -31,7 +31,7 @@ const String uirVersion = '1.15.0';
 /// A hash of the schema sources this library was generated from.
 ///
 /// Stamped into every emitted manifest: a UIR document always says which schema produced it.
-const String uirSchemaHash = 'c09a36a8090b0e0c';
+const String uirSchemaHash = 'ac84dbe2d06a807b';
 
 /// Node kind -> the fields of that node which hold `NodeId` references.
 ///
@@ -77,6 +77,7 @@ const Map<String, List<String>> uirReferenceFields = <String, List<String>>{
   'logic.OpaqueExpr': <String>['id'],
   'logic.OpaqueStmt': <String>['id'],
   'bind.Param': <String>['id', 'target'],
+  'logic.Pattern': <String>['id'],
   'logic.PropertyAccess': <String>['id', 'target'],
   'logic.Ref': <String>['id', 'target'],
   'logic.Rethrow': <String>['id'],
@@ -92,6 +93,7 @@ const Map<String, List<String>> uirReferenceFields = <String, List<String>>{
   'app.StoreInstance': <String>['id', 'store'],
   'logic.StringInterp': <String>['id'],
   'logic.Switch': <String>['id'],
+  'logic.SwitchExpr': <String>['id'],
   'logic.Throw': <String>['id'],
   'logic.ThrowExpr': <String>['id'],
   'app.Token': <String>['id'],
@@ -926,6 +928,8 @@ sealed class Expr extends UirNode {
         return Spread.fromJson(json, path);
       case 'logic.StringInterp':
         return StringInterp.fromJson(json, path);
+      case 'logic.SwitchExpr':
+        return SwitchExpr.fromJson(json, path);
       case 'logic.ThrowExpr':
         return ThrowExpr.fromJson(json, path);
       case 'logic.TypeCheck':
@@ -1709,6 +1713,66 @@ final class ParamDecl {
   ]);
 }
 
+/// One field of an `object` pattern.
+@immutable
+final class PatternField {
+  /// Creates a [PatternField].
+  const PatternField({
+    required this.name,
+    required this.pattern,
+  });
+
+  /// Parses a [PatternField] from JSON, validating as it goes.
+  factory PatternField.fromJson(Object? value, [String path = 'PatternField']) {
+    final Map<String, Object?> json = _asObject(value, path);
+    return PatternField(
+      name: _asString(_req(json, 'name', path), '$path.name'),
+      pattern: Pattern.fromJson(_req(json, 'pattern', path), '$path.pattern'),
+    );
+  }
+
+  /// The getter read.
+  final String name;
+
+  /// What its value must match.
+  final Pattern pattern;
+
+  /// Serializes to canonical JSON: keys sorted, nulls omitted.
+  Map<String, Object?> toJson() => canonicalJson(<String, Object?>{
+    'name': name,
+    'pattern': pattern.toJson(),
+  })! as Map<String, Object?>;
+
+  /// Returns a copy with the given fields replaced. The original is never mutated.
+  ///
+  /// An omitted argument keeps its current value; `copyWith` cannot set a field back to
+  /// null. Construct a new node when that is what you mean.
+  PatternField copyWith({
+    String? name,
+    Pattern? pattern,
+  }) {
+    return PatternField(
+      name: name ?? this.name,
+      pattern: pattern ?? this.pattern,
+    );
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is PatternField &&
+        _equality.equals(other.name, name) &&
+        _equality.equals(other.pattern, pattern);
+  }
+
+  @override
+  int get hashCode => Object.hashAll(<Object?>[
+    'PatternField',
+    _equality.hash(name),
+    _equality.hash(pattern),
+  ]);
+}
+
 /// The constructor a redirecting factory is defined as.
 @immutable
 final class RedirectedFactory {
@@ -2087,6 +2151,8 @@ final class SwitchCase {
   /// Creates a [SwitchCase].
   const SwitchCase({
     required this.body,
+    this.guard,
+    this.pattern,
     this.test,
   });
 
@@ -2095,6 +2161,8 @@ final class SwitchCase {
     final Map<String, Object?> json = _asObject(value, path);
     return SwitchCase(
       body: _asList<Stmt>(_req(json, 'body', path), '$path.body', Stmt.fromJson),
+      guard: json['guard'] == null ? null : Expr.fromJson(json['guard'], '$path.guard'),
+      pattern: json['pattern'] == null ? null : Pattern.fromJson(json['pattern'], '$path.pattern'),
       test: json['test'] == null ? null : Expr.fromJson(json['test'], '$path.test'),
     );
   }
@@ -2102,12 +2170,20 @@ final class SwitchCase {
   /// Body, in order.
   final List<Stmt> body;
 
+  /// The `when` clause of a pattern case.
+  final Expr? guard;
+
+  /// The pattern a Dart 3 `case` matches, when it is not a plain constant (`test`).
+  final Pattern? pattern;
+
   /// The value matched. Absent for the default case.
   final Expr? test;
 
   /// Serializes to canonical JSON: keys sorted, nulls omitted.
   Map<String, Object?> toJson() => canonicalJson(<String, Object?>{
     'body': body.map((Stmt v) => v.toJson()).toList(),
+    'guard': guard?.toJson(),
+    'pattern': pattern?.toJson(),
     'test': test?.toJson(),
   })! as Map<String, Object?>;
 
@@ -2117,10 +2193,14 @@ final class SwitchCase {
   /// null. Construct a new node when that is what you mean.
   SwitchCase copyWith({
     List<Stmt>? body,
+    Expr? guard,
+    Pattern? pattern,
     Expr? test,
   }) {
     return SwitchCase(
       body: body ?? this.body,
+      guard: guard ?? this.guard,
+      pattern: pattern ?? this.pattern,
       test: test ?? this.test,
     );
   }
@@ -2130,6 +2210,8 @@ final class SwitchCase {
     if (identical(this, other)) return true;
     return other is SwitchCase &&
         _equality.equals(other.body, body) &&
+        _equality.equals(other.guard, guard) &&
+        _equality.equals(other.pattern, pattern) &&
         _equality.equals(other.test, test);
   }
 
@@ -2137,7 +2219,79 @@ final class SwitchCase {
   int get hashCode => Object.hashAll(<Object?>[
     'SwitchCase',
     _equality.hash(body),
+    _equality.hash(guard),
+    _equality.hash(pattern),
     _equality.hash(test),
+  ]);
+}
+
+/// One arm of a switch expression: `pattern when guard => value`.
+@immutable
+final class SwitchExprCase {
+  /// Creates a [SwitchExprCase].
+  const SwitchExprCase({
+    required this.pattern,
+    required this.value,
+    this.guard,
+  });
+
+  /// Parses a [SwitchExprCase] from JSON, validating as it goes.
+  factory SwitchExprCase.fromJson(Object? value, [String path = 'SwitchExprCase']) {
+    final Map<String, Object?> json = _asObject(value, path);
+    return SwitchExprCase(
+      guard: json['guard'] == null ? null : Expr.fromJson(json['guard'], '$path.guard'),
+      pattern: Pattern.fromJson(_req(json, 'pattern', path), '$path.pattern'),
+      value: Expr.fromJson(_req(json, 'value', path), '$path.value'),
+    );
+  }
+
+  /// The `when` clause.
+  final Expr? guard;
+
+  /// What the arm matches.
+  final Pattern pattern;
+
+  /// The arm's value.
+  final Expr value;
+
+  /// Serializes to canonical JSON: keys sorted, nulls omitted.
+  Map<String, Object?> toJson() => canonicalJson(<String, Object?>{
+    'guard': guard?.toJson(),
+    'pattern': pattern.toJson(),
+    'value': value.toJson(),
+  })! as Map<String, Object?>;
+
+  /// Returns a copy with the given fields replaced. The original is never mutated.
+  ///
+  /// An omitted argument keeps its current value; `copyWith` cannot set a field back to
+  /// null. Construct a new node when that is what you mean.
+  SwitchExprCase copyWith({
+    Expr? guard,
+    Pattern? pattern,
+    Expr? value,
+  }) {
+    return SwitchExprCase(
+      guard: guard ?? this.guard,
+      pattern: pattern ?? this.pattern,
+      value: value ?? this.value,
+    );
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is SwitchExprCase &&
+        _equality.equals(other.guard, guard) &&
+        _equality.equals(other.pattern, pattern) &&
+        _equality.equals(other.value, value);
+  }
+
+  @override
+  int get hashCode => Object.hashAll(<Object?>[
+    'SwitchExprCase',
+    _equality.hash(guard),
+    _equality.hash(pattern),
+    _equality.hash(value),
   ]);
 }
 
@@ -7497,6 +7651,176 @@ final class ParamBinding extends Binding {
   ]);
 }
 
+/// A Dart 3 pattern (ADR-0065): what a `switch` case or a switch-expression arm matches. `variant` says which; the other fields are the ones that variant uses.
+@immutable
+final class Pattern extends UirNode {
+  /// Creates a [Pattern].
+  const Pattern({
+    required this.id,
+    required this.span,
+    required this.variant,
+    this.anchor,
+    this.decl,
+    this.ext,
+    this.fields,
+    this.matchType,
+    this.operator,
+    this.pattern,
+    this.patterns,
+    this.value,
+  });
+
+  /// Parses a [Pattern] from JSON, validating as it goes.
+  factory Pattern.fromJson(Object? value, [String path = 'Pattern']) {
+    final Map<String, Object?> json = _asObject(value, path);
+    final String kind = _asString(_req(json, 'kind', path), '$path.kind');
+    if (kind != 'logic.Pattern') {
+      throw UirParseError('$path.kind', 'expected "logic.Pattern", got "$kind"');
+    }
+    return Pattern(
+      anchor: json['anchor'] == null ? null : _asString(json['anchor'], '$path.anchor'),
+      decl: json['decl'] == null ? null : VarDecl.fromJson(json['decl'], '$path.decl'),
+      ext: json['ext'] == null ? null : _asMap<Object?>(json['ext'], '$path.ext', (Object? v, String p) => v),
+      fields: json['fields'] == null ? null : _asList<PatternField>(json['fields'], '$path.fields', PatternField.fromJson),
+      id: _asString(_req(json, 'id', path), '$path.id'),
+      matchType: json['matchType'] == null ? null : TypeRef.fromJson(json['matchType'], '$path.matchType'),
+      operator: json['operator'] == null ? null : _asString(json['operator'], '$path.operator'),
+      pattern: json['pattern'] == null ? null : Pattern.fromJson(json['pattern'], '$path.pattern'),
+      patterns: json['patterns'] == null ? null : _asList<Pattern>(json['patterns'], '$path.patterns', Pattern.fromJson),
+      span: SourceSpan.fromJson(_req(json, 'span', path), '$path.span'),
+      value: json['value'] == null ? null : Expr.fromJson(json['value'], '$path.value'),
+      variant: _asString(_req(json, 'variant', path), '$path.variant'),
+    );
+  }
+
+  /// The override key, when the node is addressable by a human.
+  final Anchor? anchor;
+
+  /// A `bind` pattern's variable (no initializer); reads of it resolve by name.
+  final VarDecl? decl;
+
+  /// Plugin extension data, namespaced `x-<plugin>`. Core passes round-trip it untouched (Spec §2.6).
+  final Map<String, Object?>? ext;
+
+  /// An `object` pattern's field patterns.
+  final List<PatternField>? fields;
+
+  /// The node's stable, content-addressed identity.
+  final NodeId id;
+
+  /// The type a `bind`/`object`/`cast` pattern tests.
+  final TypeRef? matchType;
+
+  /// A `relational` pattern's operator.
+  final String? operator;
+
+  /// The inner pattern of a `nullCheck`/`nullAssert`/`cast`.
+  final Pattern? pattern;
+
+  /// `or`/`and` operands.
+  final List<Pattern>? patterns;
+
+  /// Where the node came from.
+  final SourceSpan span;
+
+  /// A `const`/`relational` pattern's value.
+  final Expr? value;
+
+  /// `const`: `value` (a literal, an enum constant, a `const`); `wildcard`: `_`; `bind`: `var x` / `T x` — `decl` and an optional `matchType`; `object`: `Type(field: pattern, …)` — `matchType` and `fields`; `or`/`and`: `patterns`; `relational`: `operator` `value`; `nullCheck`: `x?`; `nullAssert`: `x!`; `cast`: `x as T` — `pattern` and `matchType`.
+  final String variant;
+
+  /// The node's discriminant.
+  @override
+  String get kind => 'logic.Pattern';
+
+  /// Serializes to canonical JSON: keys sorted, nulls omitted.
+  @override
+  Map<String, Object?> toJson() => canonicalJson(<String, Object?>{
+    'anchor': anchor,
+    'decl': decl?.toJson(),
+    'ext': ext,
+    'fields': fields?.map((PatternField v) => v.toJson()).toList(),
+    'id': id,
+    'kind': 'logic.Pattern',
+    'matchType': matchType?.toJson(),
+    'operator': operator,
+    'pattern': pattern?.toJson(),
+    'patterns': patterns?.map((Pattern v) => v.toJson()).toList(),
+    'span': span.toJson(),
+    'value': value?.toJson(),
+    'variant': variant,
+  })! as Map<String, Object?>;
+
+  /// Returns a copy with the given fields replaced. The original is never mutated.
+  ///
+  /// An omitted argument keeps its current value; `copyWith` cannot set a field back to
+  /// null. Construct a new node when that is what you mean.
+  Pattern copyWith({
+    Anchor? anchor,
+    VarDecl? decl,
+    Map<String, Object?>? ext,
+    List<PatternField>? fields,
+    NodeId? id,
+    TypeRef? matchType,
+    String? operator,
+    Pattern? pattern,
+    List<Pattern>? patterns,
+    SourceSpan? span,
+    Expr? value,
+    String? variant,
+  }) {
+    return Pattern(
+      anchor: anchor ?? this.anchor,
+      decl: decl ?? this.decl,
+      ext: ext ?? this.ext,
+      fields: fields ?? this.fields,
+      id: id ?? this.id,
+      matchType: matchType ?? this.matchType,
+      operator: operator ?? this.operator,
+      pattern: pattern ?? this.pattern,
+      patterns: patterns ?? this.patterns,
+      span: span ?? this.span,
+      value: value ?? this.value,
+      variant: variant ?? this.variant,
+    );
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is Pattern &&
+        _equality.equals(other.anchor, anchor) &&
+        _equality.equals(other.decl, decl) &&
+        _equality.equals(other.ext, ext) &&
+        _equality.equals(other.fields, fields) &&
+        _equality.equals(other.id, id) &&
+        _equality.equals(other.matchType, matchType) &&
+        _equality.equals(other.operator, operator) &&
+        _equality.equals(other.pattern, pattern) &&
+        _equality.equals(other.patterns, patterns) &&
+        _equality.equals(other.span, span) &&
+        _equality.equals(other.value, value) &&
+        _equality.equals(other.variant, variant);
+  }
+
+  @override
+  int get hashCode => Object.hashAll(<Object?>[
+    'Pattern',
+    _equality.hash(anchor),
+    _equality.hash(decl),
+    _equality.hash(ext),
+    _equality.hash(fields),
+    _equality.hash(id),
+    _equality.hash(matchType),
+    _equality.hash(operator),
+    _equality.hash(pattern),
+    _equality.hash(patterns),
+    _equality.hash(span),
+    _equality.hash(value),
+    _equality.hash(variant),
+  ]);
+}
+
 /// Reading a property of a value.
 @immutable
 final class PropertyAccess extends Expr {
@@ -9375,6 +9699,129 @@ final class Switch extends Stmt {
     _equality.hash(id),
     _equality.hash(span),
     _equality.hash(subject),
+  ]);
+}
+
+/// A `switch` expression (ADR-0065). Exhaustive by Dart's rules: when no arm matches it throws.
+@immutable
+final class SwitchExpr extends Expr {
+  /// Creates a [SwitchExpr].
+  const SwitchExpr({
+    required this.cases,
+    required this.id,
+    required this.span,
+    required this.subject,
+    required this.type,
+    this.anchor,
+    this.ext,
+  });
+
+  /// Parses a [SwitchExpr] from JSON, validating as it goes.
+  factory SwitchExpr.fromJson(Object? value, [String path = 'SwitchExpr']) {
+    final Map<String, Object?> json = _asObject(value, path);
+    final String kind = _asString(_req(json, 'kind', path), '$path.kind');
+    if (kind != 'logic.SwitchExpr') {
+      throw UirParseError('$path.kind', 'expected "logic.SwitchExpr", got "$kind"');
+    }
+    return SwitchExpr(
+      anchor: json['anchor'] == null ? null : _asString(json['anchor'], '$path.anchor'),
+      cases: _asList<SwitchExprCase>(_req(json, 'cases', path), '$path.cases', SwitchExprCase.fromJson),
+      ext: json['ext'] == null ? null : _asMap<Object?>(json['ext'], '$path.ext', (Object? v, String p) => v),
+      id: _asString(_req(json, 'id', path), '$path.id'),
+      span: SourceSpan.fromJson(_req(json, 'span', path), '$path.span'),
+      subject: Expr.fromJson(_req(json, 'subject', path), '$path.subject'),
+      type: TypeRef.fromJson(_req(json, 'type', path), '$path.type'),
+    );
+  }
+
+  /// The override key, when the node is addressable by a human.
+  final Anchor? anchor;
+
+  /// Arms, in order.
+  final List<SwitchExprCase> cases;
+
+  /// Plugin extension data, namespaced `x-<plugin>`. Core passes round-trip it untouched (Spec §2.6).
+  final Map<String, Object?>? ext;
+
+  /// The node's stable, content-addressed identity.
+  final NodeId id;
+
+  /// Where the node came from.
+  final SourceSpan span;
+
+  /// The value matched.
+  final Expr subject;
+
+  /// Resolved type.
+  final TypeRef type;
+
+  /// The node's discriminant.
+  @override
+  String get kind => 'logic.SwitchExpr';
+
+  /// Serializes to canonical JSON: keys sorted, nulls omitted.
+  @override
+  Map<String, Object?> toJson() => canonicalJson(<String, Object?>{
+    'anchor': anchor,
+    'cases': cases.map((SwitchExprCase v) => v.toJson()).toList(),
+    'ext': ext,
+    'id': id,
+    'kind': 'logic.SwitchExpr',
+    'span': span.toJson(),
+    'subject': subject.toJson(),
+    'type': type.toJson(),
+  })! as Map<String, Object?>;
+
+  /// Returns a copy with the given fields replaced. The original is never mutated.
+  ///
+  /// An omitted argument keeps its current value; `copyWith` cannot set a field back to
+  /// null. Construct a new node when that is what you mean.
+  SwitchExpr copyWith({
+    Anchor? anchor,
+    List<SwitchExprCase>? cases,
+    Map<String, Object?>? ext,
+    NodeId? id,
+    SourceSpan? span,
+    Expr? subject,
+    TypeRef? type,
+  }) {
+    return SwitchExpr(
+      anchor: anchor ?? this.anchor,
+      cases: cases ?? this.cases,
+      ext: ext ?? this.ext,
+      id: id ?? this.id,
+      span: span ?? this.span,
+      subject: subject ?? this.subject,
+      type: type ?? this.type,
+    );
+  }
+
+  @override
+  R accept<R>(ExprVisitor<R> visitor) => visitor.visitSwitchExpr(this);
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is SwitchExpr &&
+        _equality.equals(other.anchor, anchor) &&
+        _equality.equals(other.cases, cases) &&
+        _equality.equals(other.ext, ext) &&
+        _equality.equals(other.id, id) &&
+        _equality.equals(other.span, span) &&
+        _equality.equals(other.subject, subject) &&
+        _equality.equals(other.type, type);
+  }
+
+  @override
+  int get hashCode => Object.hashAll(<Object?>[
+    'SwitchExpr',
+    _equality.hash(anchor),
+    _equality.hash(cases),
+    _equality.hash(ext),
+    _equality.hash(id),
+    _equality.hash(span),
+    _equality.hash(subject),
+    _equality.hash(type),
   ]);
 }
 
@@ -11849,6 +12296,9 @@ abstract interface class ExprVisitor<R> {
   /// Visits a [StringInterp].
   R visitStringInterp(StringInterp node);
 
+  /// Visits a [SwitchExpr].
+  R visitSwitchExpr(SwitchExpr node);
+
   /// Visits a [ThrowExpr].
   R visitThrowExpr(ThrowExpr node);
 
@@ -12029,6 +12479,8 @@ UirNode uirNodeFromJson(Object? value, [String path = 'UirNode']) {
       return OpaqueStmt.fromJson(json, path);
     case 'bind.Param':
       return ParamBinding.fromJson(json, path);
+    case 'logic.Pattern':
+      return Pattern.fromJson(json, path);
     case 'logic.PropertyAccess':
       return PropertyAccess.fromJson(json, path);
     case 'logic.Ref':
@@ -12059,6 +12511,8 @@ UirNode uirNodeFromJson(Object? value, [String path = 'UirNode']) {
       return StringInterp.fromJson(json, path);
     case 'logic.Switch':
       return Switch.fromJson(json, path);
+    case 'logic.SwitchExpr':
+      return SwitchExpr.fromJson(json, path);
     case 'logic.Throw':
       return Throw.fromJson(json, path);
     case 'logic.ThrowExpr':

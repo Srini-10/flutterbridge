@@ -14,7 +14,7 @@ import { createHash } from 'node:crypto';
 export const UIR_VERSION = '1.15.0' as const;
 
 /** A hash of the schema sources this module was generated from. */
-export const UIR_SCHEMA_HASH = 'c09a36a8090b0e0c' as const;
+export const UIR_SCHEMA_HASH = 'ac84dbe2d06a807b' as const;
 
 /** Node kind -> the fields of that node which hold `NodeId` references. */
 export const UIR_REFERENCE_FIELDS: Readonly<Record<string, readonly string[]>> = {
@@ -57,6 +57,7 @@ export const UIR_REFERENCE_FIELDS: Readonly<Record<string, readonly string[]>> =
   'logic.OpaqueExpr': ['id'],
   'logic.OpaqueStmt': ['id'],
   'bind.Param': ['id', 'target'],
+  'logic.Pattern': ['id'],
   'logic.PropertyAccess': ['id', 'target'],
   'logic.Ref': ['id', 'target'],
   'logic.Rethrow': ['id'],
@@ -72,6 +73,7 @@ export const UIR_REFERENCE_FIELDS: Readonly<Record<string, readonly string[]>> =
   'app.StoreInstance': ['id', 'store'],
   'logic.StringInterp': ['id'],
   'logic.Switch': ['id'],
+  'logic.SwitchExpr': ['id'],
   'logic.Throw': ['id'],
   'logic.ThrowExpr': ['id'],
   'app.Token': ['id'],
@@ -860,6 +862,14 @@ export interface ParamDecl {
   readonly type: TypeRef;
 }
 
+/// One field of an `object` pattern.
+export interface PatternField {
+  /// The getter read.
+  readonly name: string;
+  /// What its value must match.
+  readonly pattern: Pattern;
+}
+
 /// The constructor a redirecting factory is defined as.
 export interface RedirectedFactory {
   /// Its constructor, if named.
@@ -920,8 +930,22 @@ export interface SourceSpan {
 export interface SwitchCase {
   /// Body, in order.
   readonly body: readonly Stmt[];
+  /// The `when` clause of a pattern case.
+  readonly guard?: Expr;
+  /// The pattern a Dart 3 `case` matches, when it is not a plain constant (`test`).
+  readonly pattern?: Pattern;
   /// The value matched. Absent for the default case.
   readonly test?: Expr;
+}
+
+/// One arm of a switch expression: `pattern when guard => value`.
+export interface SwitchExprCase {
+  /// The `when` clause.
+  readonly guard?: Expr;
+  /// What the arm matches.
+  readonly pattern: Pattern;
+  /// The arm's value.
+  readonly value: Expr;
 }
 
 /// A resolved Dart type, as the analyzer saw it.
@@ -1846,6 +1870,36 @@ export interface ParamBinding {
   readonly target?: NodeId;
 }
 
+/// A Dart 3 pattern (ADR-0065): what a `switch` case or a switch-expression arm matches. `variant` says which; the other fields are the ones that variant uses.
+export interface Pattern {
+  /// The override key, when the node is addressable by a human.
+  readonly anchor?: Anchor;
+  /// A `bind` pattern's variable (no initializer); reads of it resolve by name.
+  readonly decl?: VarDecl;
+  /// Plugin extension data, namespaced `x-<plugin>`. Core passes round-trip it untouched (Spec §2.6).
+  readonly ext?: Readonly<Record<string, unknown>>;
+  /// An `object` pattern's field patterns.
+  readonly fields?: readonly PatternField[];
+  /// The node's stable, content-addressed identity.
+  readonly id: NodeId;
+  /// Discriminant.
+  readonly kind: 'logic.Pattern';
+  /// The type a `bind`/`object`/`cast` pattern tests.
+  readonly matchType?: TypeRef;
+  /// A `relational` pattern's operator.
+  readonly operator?: string;
+  /// The inner pattern of a `nullCheck`/`nullAssert`/`cast`.
+  readonly pattern?: Pattern;
+  /// `or`/`and` operands.
+  readonly patterns?: readonly Pattern[];
+  /// Where the node came from.
+  readonly span: SourceSpan;
+  /// A `const`/`relational` pattern's value.
+  readonly value?: Expr;
+  /// `const`: `value` (a literal, an enum constant, a `const`); `wildcard`: `_`; `bind`: `var x` / `T x` — `decl` and an optional `matchType`; `object`: `Type(field: pattern, …)` — `matchType` and `fields`; `or`/`and`: `patterns`; `relational`: `operator` `value`; `nullCheck`: `x?`; `nullAssert`: `x!`; `cast`: `x as T` — `pattern` and `matchType`.
+  readonly variant: string;
+}
+
 /// Reading a property of a value.
 export interface PropertyAccess {
   /// The override key, when the node is addressable by a human.
@@ -2174,6 +2228,26 @@ export interface Switch {
   readonly span: SourceSpan;
   /// The value switched on.
   readonly subject: Expr;
+}
+
+/// A `switch` expression (ADR-0065). Exhaustive by Dart's rules: when no arm matches it throws.
+export interface SwitchExpr {
+  /// The override key, when the node is addressable by a human.
+  readonly anchor?: Anchor;
+  /// Arms, in order.
+  readonly cases: readonly SwitchExprCase[];
+  /// Plugin extension data, namespaced `x-<plugin>`. Core passes round-trip it untouched (Spec §2.6).
+  readonly ext?: Readonly<Record<string, unknown>>;
+  /// The node's stable, content-addressed identity.
+  readonly id: NodeId;
+  /// Discriminant.
+  readonly kind: 'logic.SwitchExpr';
+  /// Where the node came from.
+  readonly span: SourceSpan;
+  /// The value matched.
+  readonly subject: Expr;
+  /// Resolved type.
+  readonly type: TypeRef;
 }
 
 /// A throw statement.
@@ -2610,6 +2684,7 @@ export type Expr =
   | Sequence
   | Spread
   | StringInterp
+  | SwitchExpr
   | ThrowExpr
   | TypeCheck
   | Unary
@@ -2859,6 +2934,30 @@ export function copyWithParamDecl(node: ParamDecl, patch: Partial<ParamDecl>): P
   return { ...node, ...patch };
 }
 
+/** Parses a {@link PatternField}, validating as it goes. Throws {@link UirParseError} on bad input. */
+export function parsePatternField(value: unknown, path = 'PatternField'): PatternField {
+  const o = asObject(value, path);
+  return {
+    name: asString(req(o, 'name', path), `${path}.name`),
+    pattern: parsePattern(req(o, 'pattern', path), `${path}.pattern`),
+  };
+}
+
+/** Serializes a {@link PatternField} to canonical JSON. */
+export function serializePatternField(node: PatternField): Record<string, unknown> {
+  return canonicalJson(node) as Record<string, unknown>;
+}
+
+/** Structural equality. List order is significant: UIR children are ordered (Spec §2.3). */
+export function equalsPatternField(a: PatternField, b: PatternField): boolean {
+  return deepEquals(canonicalJson(a), canonicalJson(b));
+}
+
+/** Returns a copy of [node] with [patch] applied. The original is never mutated. */
+export function copyWithPatternField(node: PatternField, patch: Partial<PatternField>): PatternField {
+  return { ...node, ...patch };
+}
+
 /** Parses a {@link RedirectedFactory}, validating as it goes. Throws {@link UirParseError} on bad input. */
 export function parseRedirectedFactory(value: unknown, path = 'RedirectedFactory'): RedirectedFactory {
   const o = asObject(value, path);
@@ -2991,6 +3090,8 @@ export function parseSwitchCase(value: unknown, path = 'SwitchCase'): SwitchCase
   const o = asObject(value, path);
   return {
     body: asList(req(o, 'body', path), `${path}.body`, (v, p) => parseStmt(v, p)),
+    ...(own(o, 'guard') === undefined || own(o, 'guard') === null ? {} : { guard: parseExpr(own(o, 'guard'), `${path}.guard`) }),
+    ...(own(o, 'pattern') === undefined || own(o, 'pattern') === null ? {} : { pattern: parsePattern(own(o, 'pattern'), `${path}.pattern`) }),
     ...(own(o, 'test') === undefined || own(o, 'test') === null ? {} : { test: parseExpr(own(o, 'test'), `${path}.test`) }),
   };
 }
@@ -3007,6 +3108,31 @@ export function equalsSwitchCase(a: SwitchCase, b: SwitchCase): boolean {
 
 /** Returns a copy of [node] with [patch] applied. The original is never mutated. */
 export function copyWithSwitchCase(node: SwitchCase, patch: Partial<SwitchCase>): SwitchCase {
+  return { ...node, ...patch };
+}
+
+/** Parses a {@link SwitchExprCase}, validating as it goes. Throws {@link UirParseError} on bad input. */
+export function parseSwitchExprCase(value: unknown, path = 'SwitchExprCase'): SwitchExprCase {
+  const o = asObject(value, path);
+  return {
+    ...(own(o, 'guard') === undefined || own(o, 'guard') === null ? {} : { guard: parseExpr(own(o, 'guard'), `${path}.guard`) }),
+    pattern: parsePattern(req(o, 'pattern', path), `${path}.pattern`),
+    value: parseExpr(req(o, 'value', path), `${path}.value`),
+  };
+}
+
+/** Serializes a {@link SwitchExprCase} to canonical JSON. */
+export function serializeSwitchExprCase(node: SwitchExprCase): Record<string, unknown> {
+  return canonicalJson(node) as Record<string, unknown>;
+}
+
+/** Structural equality. List order is significant: UIR children are ordered (Spec §2.3). */
+export function equalsSwitchExprCase(a: SwitchExprCase, b: SwitchExprCase): boolean {
+  return deepEquals(canonicalJson(a), canonicalJson(b));
+}
+
+/** Returns a copy of [node] with [patch] applied. The original is never mutated. */
+export function copyWithSwitchExprCase(node: SwitchExprCase, patch: Partial<SwitchExprCase>): SwitchExprCase {
   return { ...node, ...patch };
 }
 
@@ -4386,6 +4512,44 @@ export function copyWithParamBinding(node: ParamBinding, patch: Partial<ParamBin
   return { ...node, ...patch };
 }
 
+/** Parses a {@link Pattern}, validating as it goes. Throws {@link UirParseError} on bad input. */
+export function parsePattern(value: unknown, path = 'Pattern'): Pattern {
+  const o = asObject(value, path);
+  const kind = asString(req(o, 'kind', path), `${path}.kind`);
+  if (kind !== 'logic.Pattern') throw new UirParseError(`${path}.kind`, `expected "logic.Pattern", got "${kind}"`);
+
+  return {
+    ...(own(o, 'anchor') === undefined || own(o, 'anchor') === null ? {} : { anchor: parseAnchor(own(o, 'anchor'), `${path}.anchor`) }),
+    ...(own(o, 'decl') === undefined || own(o, 'decl') === null ? {} : { decl: parseVarDecl(own(o, 'decl'), `${path}.decl`) }),
+    ...(own(o, 'ext') === undefined || own(o, 'ext') === null ? {} : { ext: asMap(own(o, 'ext'), `${path}.ext`, (v) => v) }),
+    ...(own(o, 'fields') === undefined || own(o, 'fields') === null ? {} : { fields: asList(own(o, 'fields'), `${path}.fields`, (v, p) => parsePatternField(v, p)) }),
+    id: parseNodeId(req(o, 'id', path), `${path}.id`),
+    kind: 'logic.Pattern',
+    ...(own(o, 'matchType') === undefined || own(o, 'matchType') === null ? {} : { matchType: parseTypeRef(own(o, 'matchType'), `${path}.matchType`) }),
+    ...(own(o, 'operator') === undefined || own(o, 'operator') === null ? {} : { operator: asString(own(o, 'operator'), `${path}.operator`) }),
+    ...(own(o, 'pattern') === undefined || own(o, 'pattern') === null ? {} : { pattern: parsePattern(own(o, 'pattern'), `${path}.pattern`) }),
+    ...(own(o, 'patterns') === undefined || own(o, 'patterns') === null ? {} : { patterns: asList(own(o, 'patterns'), `${path}.patterns`, (v, p) => parsePattern(v, p)) }),
+    span: parseSourceSpan(req(o, 'span', path), `${path}.span`),
+    ...(own(o, 'value') === undefined || own(o, 'value') === null ? {} : { value: parseExpr(own(o, 'value'), `${path}.value`) }),
+    variant: asString(req(o, 'variant', path), `${path}.variant`),
+  };
+}
+
+/** Serializes a {@link Pattern} to canonical JSON. */
+export function serializePattern(node: Pattern): Record<string, unknown> {
+  return canonicalJson(node) as Record<string, unknown>;
+}
+
+/** Structural equality. List order is significant: UIR children are ordered (Spec §2.3). */
+export function equalsPattern(a: Pattern, b: Pattern): boolean {
+  return deepEquals(canonicalJson(a), canonicalJson(b));
+}
+
+/** Returns a copy of [node] with [patch] applied. The original is never mutated. */
+export function copyWithPattern(node: Pattern, patch: Partial<Pattern>): Pattern {
+  return { ...node, ...patch };
+}
+
 /** Parses a {@link PropertyAccess}, validating as it goes. Throws {@link UirParseError} on bad input. */
 export function parsePropertyAccess(value: unknown, path = 'PropertyAccess'): PropertyAccess {
   const o = asObject(value, path);
@@ -4881,6 +5045,39 @@ export function equalsSwitch(a: Switch, b: Switch): boolean {
 
 /** Returns a copy of [node] with [patch] applied. The original is never mutated. */
 export function copyWithSwitch(node: Switch, patch: Partial<Switch>): Switch {
+  return { ...node, ...patch };
+}
+
+/** Parses a {@link SwitchExpr}, validating as it goes. Throws {@link UirParseError} on bad input. */
+export function parseSwitchExpr(value: unknown, path = 'SwitchExpr'): SwitchExpr {
+  const o = asObject(value, path);
+  const kind = asString(req(o, 'kind', path), `${path}.kind`);
+  if (kind !== 'logic.SwitchExpr') throw new UirParseError(`${path}.kind`, `expected "logic.SwitchExpr", got "${kind}"`);
+
+  return {
+    ...(own(o, 'anchor') === undefined || own(o, 'anchor') === null ? {} : { anchor: parseAnchor(own(o, 'anchor'), `${path}.anchor`) }),
+    cases: asList(req(o, 'cases', path), `${path}.cases`, (v, p) => parseSwitchExprCase(v, p)),
+    ...(own(o, 'ext') === undefined || own(o, 'ext') === null ? {} : { ext: asMap(own(o, 'ext'), `${path}.ext`, (v) => v) }),
+    id: parseNodeId(req(o, 'id', path), `${path}.id`),
+    kind: 'logic.SwitchExpr',
+    span: parseSourceSpan(req(o, 'span', path), `${path}.span`),
+    subject: parseExpr(req(o, 'subject', path), `${path}.subject`),
+    type: parseTypeRef(req(o, 'type', path), `${path}.type`),
+  };
+}
+
+/** Serializes a {@link SwitchExpr} to canonical JSON. */
+export function serializeSwitchExpr(node: SwitchExpr): Record<string, unknown> {
+  return canonicalJson(node) as Record<string, unknown>;
+}
+
+/** Structural equality. List order is significant: UIR children are ordered (Spec §2.3). */
+export function equalsSwitchExpr(a: SwitchExpr, b: SwitchExpr): boolean {
+  return deepEquals(canonicalJson(a), canonicalJson(b));
+}
+
+/** Returns a copy of [node] with [patch] applied. The original is never mutated. */
+export function copyWithSwitchExpr(node: SwitchExpr, patch: Partial<SwitchExpr>): SwitchExpr {
   return { ...node, ...patch };
 }
 
@@ -5673,6 +5870,8 @@ export function parseExpr(value: unknown, path = 'Expr'): Expr {
       return parseSpread(o, path);
     case 'logic.StringInterp':
       return parseStringInterp(o, path);
+    case 'logic.SwitchExpr':
+      return parseSwitchExpr(o, path);
     case 'logic.ThrowExpr':
       return parseThrowExpr(o, path);
     case 'logic.TypeCheck':
@@ -5717,6 +5916,7 @@ export interface ExprVisitor<R> {
   visitSequence(node: Sequence): R;
   visitSpread(node: Spread): R;
   visitStringInterp(node: StringInterp): R;
+  visitSwitchExpr(node: SwitchExpr): R;
   visitThrowExpr(node: ThrowExpr): R;
   visitTypeCheck(node: TypeCheck): R;
   visitUnary(node: Unary): R;
@@ -5774,6 +5974,8 @@ export function acceptExpr<R>(node: Expr, visitor: ExprVisitor<R>): R {
       return visitor.visitSpread(node as Spread);
     case 'logic.StringInterp':
       return visitor.visitStringInterp(node as StringInterp);
+    case 'logic.SwitchExpr':
+      return visitor.visitSwitchExpr(node as SwitchExpr);
     case 'logic.ThrowExpr':
       return visitor.visitThrowExpr(node as ThrowExpr);
     case 'logic.TypeCheck':
@@ -5963,7 +6165,7 @@ export function acceptUiNode<R>(node: UiNode, visitor: UiNodeVisitor<R>): R {
 }
 
 /** Any UIR node. */
-export type AnyUirNode = Action | Assign | Await | Binary | Block | Break | Call | Cast | ClassDecl | Component | Conditional | ConstBinding | Continue | Derived | Effect | Endpoint | EnumDecl | ExprBinding | ExprStmt | FieldDecl | For | ForElement | FunctionDecl | If | IfElement | Intrinsic | Lambda | Let | ListLit | Lit | MapLit | MethodCall | Navigate | New | NullCheck | OpaqueDecl | OpaqueExpr | OpaqueStmt | ParamBinding | PropertyAccess | Ref | Rethrow | Return | Route | RouteTransition | Sequence | Signal | SignalBinding | SourceFile | Spread | Store | StoreInstance | StringInterp | Switch | Throw | ThrowExpr | Token | TryCatch | TypeAliasDecl | TypeCheck | UiAsync | UiCond | UiElement | UiList | UiNodes | UiOpaque | UiOverrideRef | UiSlotRef | UiText | Unary | VarDecl | While | WidgetExpr;
+export type AnyUirNode = Action | Assign | Await | Binary | Block | Break | Call | Cast | ClassDecl | Component | Conditional | ConstBinding | Continue | Derived | Effect | Endpoint | EnumDecl | ExprBinding | ExprStmt | FieldDecl | For | ForElement | FunctionDecl | If | IfElement | Intrinsic | Lambda | Let | ListLit | Lit | MapLit | MethodCall | Navigate | New | NullCheck | OpaqueDecl | OpaqueExpr | OpaqueStmt | ParamBinding | Pattern | PropertyAccess | Ref | Rethrow | Return | Route | RouteTransition | Sequence | Signal | SignalBinding | SourceFile | Spread | Store | StoreInstance | StringInterp | Switch | SwitchExpr | Throw | ThrowExpr | Token | TryCatch | TypeAliasDecl | TypeCheck | UiAsync | UiCond | UiElement | UiList | UiNodes | UiOpaque | UiOverrideRef | UiSlotRef | UiText | Unary | VarDecl | While | WidgetExpr;
 
 /** Parses any UIR node, dispatching on `kind` across every node kind in the schema. */
 export function parseUirNode(value: unknown, path = 'UirNode'): AnyUirNode {
@@ -6048,6 +6250,8 @@ export function parseUirNode(value: unknown, path = 'UirNode'): AnyUirNode {
       return parseOpaqueStmt(o, path);
     case 'bind.Param':
       return parseParamBinding(o, path);
+    case 'logic.Pattern':
+      return parsePattern(o, path);
     case 'logic.PropertyAccess':
       return parsePropertyAccess(o, path);
     case 'logic.Ref':
@@ -6078,6 +6282,8 @@ export function parseUirNode(value: unknown, path = 'UirNode'): AnyUirNode {
       return parseStringInterp(o, path);
     case 'logic.Switch':
       return parseSwitch(o, path);
+    case 'logic.SwitchExpr':
+      return parseSwitchExpr(o, path);
     case 'logic.Throw':
       return parseThrow(o, path);
     case 'logic.ThrowExpr':

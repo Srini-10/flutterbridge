@@ -160,6 +160,10 @@ final class WidgetExtractor {
       case SimpleIdentifier() || PrefixedIdentifier() || PropertyAccess():
         return _nodes(node, scope, index: index, slot: slot);
 
+      // A `switch` expression of widgets: a value whose arms are widget values, rendered where it is (ADR-0065).
+      case SwitchExpression():
+        return _switchNodes(node, scope, index: index, slot: slot);
+
       case Expression():
         out.report(
           Codes.unknownWidget,
@@ -201,6 +205,22 @@ final class WidgetExtractor {
     anchorSegment: _segment('nodes', index, slot),
     fields: <String, RawValue>{'value': RawChild(bindings.extract(node, scope))},
   );
+
+  /// A widget-typed `switch` expression as `ui.Nodes`: each arm's value is a `logic.WidgetExpr`.
+  RawNode _switchNodes(SwitchExpression node, Scope scope, {int? index, String? slot}) {
+    final bool was = expressions.widgetValues;
+    expressions.widgetValues = true;
+    final RawNode value = expressions.extract(node, scope);
+    expressions.widgetValues = was;
+    return RawNode(
+      kind: 'ui.Nodes',
+      span: out.span(node),
+      anchorSegment: _segment('nodes', index, slot),
+      fields: <String, RawValue>{
+        'value': RawChild(RawNode(kind: 'bind.Expr', span: out.span(node), fields: <String, RawValue>{'expr': RawChild(value)})),
+      },
+    );
+  }
 
   /// A collection element the tree has no node for (a C-style `for`): evaluated as a list whose elements are widget values.
   RawNode _elementNodes(CollectionElement element, Scope scope, {int? index, String? slot}) {

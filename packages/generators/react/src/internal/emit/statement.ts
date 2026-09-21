@@ -10,7 +10,7 @@
 import type { Stmt } from '@bridge/uir';
 
 import { GeneratorDiagnosticCode } from '../diagnostics/codes.js';
-import { catchTypeTest, emitExpression, markValueUnused, setStatementLowering, type EmitScope } from './expression.js';
+import { catchTypeTest, compilePattern, emitExpression, scopeWithNames, markValueUnused, setStatementLowering, type EmitScope } from './expression.js';
 import { identifierOf } from './module.js';
 import { routeNameOf, screenKeyFor } from './routes.js';
 import { opaqueDetailOf, opaqueReasonSuffix } from './unsupported.js';
@@ -347,6 +347,37 @@ export function emitStatement(statement: Stmt | Node | undefined, scope: EmitSco
       // `SwitchCase.test` (uir.ts) — read as `item['value']` until M8-Y found it: `logic.Switch` had no
       // real fixture or test exercising a non-empty case, so a case's own test always lowered to the
       // literal text `undefined` unnoticed.
+      // A case with a pattern or a `when` guard (ADR-0065): the cases become labelled blocks tried in order — each tests its pattern,
+      // declares the variables it binds, tests its guard, runs its body and leaves the switch.
+      if (asArray(node['cases']).some((entry) => (entry as Node)['pattern'] !== undefined)) {
+        const label = `$sw_${String(idOf(node) ?? 'x').replace(/[^a-zA-Z0-9]/g, '')}`;
+        const out = [`${label}: {`, `  const $s = ${emitExpression(node['subject'] as Node, scope)};`];
+        asArray(node['cases']).forEach((entry, index) => {
+          const item = entry as Node;
+          const caseLabel = `${label}_${index}`;
+          let body = asArray(item['body']);
+          // Dart's cases never fall through; a trailing `break` only ends the case.
+          while (body.length > 0 && kindOf(body[body.length - 1] as Node) === 'logic.Break') body = body.slice(0, -1);
+          let inner = scope;
+          const head: string[] = [];
+          if (item['pattern'] !== undefined) {
+            const compiled = compilePattern(item['pattern'] as Node, '$s', scope);
+            if (compiled === undefined) return;
+            head.push(`if (!(${compiled.test})) break ${caseLabel};`);
+            for (const bind of compiled.binds) head.push(`const ${identifierOf(bind.name)} = ${bind.expr};`);
+            inner = scopeWithNames(scope, compiled.binds.map((b) => b.name));
+            if (item['guard'] !== undefined) head.push(`if (!(${emitExpression(item['guard'] as Node, inner)})) break ${caseLabel};`);
+          } else if (item['test'] !== undefined) {
+            head.push(`if (!($s === ${emitExpression(item['test'] as Node, scope)})) break ${caseLabel};`);
+          }
+          const lines2 = emitStatements(body, inner);
+          out.push(`  ${caseLabel}: {`, ...indent(indent(head)), ...indent(indent(lines2)));
+          if (!leaves(lines2)) out.push(`    break ${label};`);
+          out.push('  }');
+        });
+        out.push('}');
+        return out;
+      }
       const lines = [`switch (${emitExpression(node['subject'] as Node, scope)}) {`];
       for (const entry of asArray(node['cases'])) {
         const item = entry as Node;

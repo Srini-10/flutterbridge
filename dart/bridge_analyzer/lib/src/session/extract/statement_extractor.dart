@@ -265,21 +265,7 @@ final class StatementExtractor implements StatementExtractorRef {
           fields: <String, RawValue>{
             'subject': RawChild(expressions.extract(node.expression, scope)),
             'cases': RawList(<RawValue>[
-              for (final SwitchMember member in node.members)
-                RawMap(<String, RawValue>{
-                  // A `default` has no test. Absent, not null: the two say different things.
-                  //
-                  // Since Dart 3 every `case X:` is a `SwitchPatternCase`, not a `SwitchCase` — so the test that
-                  // was read only from a `SwitchCase` was never read at all, every case in every switch looked like a
-                  // `default`, and the generated `switch` matched nothing (`case undefined:`) with no diagnostic
-                  // anywhere. A constant pattern (a literal, an enum constant, a `const`) is the test; any other
-                  // pattern, or a `when` guard, is preserved as an opaque expression and refused downstream.
-                  if (_switchTest(member, scope) case final RawValue test) 'test': test,
-                  'body': RawList(<RawValue>[
-                    for (final Statement statement in member.statements)
-                      RawChild(extract(statement, scope)),
-                  ]),
-                }),
+              for (final SwitchMember member in node.members) _switchCase(member, scope),
             ]),
           },
         );
@@ -717,6 +703,36 @@ final class StatementExtractor implements StatementExtractorRef {
     PatternVariableDeclarationStatement() => 'pattern declaration',
     _ => node.runtimeType.toString(),
   };
+
+  /// One member of a `switch` statement. A case that is a plain constant keeps `test`; any other pattern (an object pattern, a binding, a
+  /// guard, …) is a `pattern` with an optional `guard`, and its variables are in scope for both and for the body (ADR-0065).
+  RawMap _switchCase(SwitchMember member, Scope scope) {
+    Scope bodyScope = scope;
+    RawValue? pattern;
+    RawValue? guard;
+    if (member is SwitchPatternCase &&
+        !(member.guardedPattern.whenClause == null && member.guardedPattern.pattern is ConstantPattern)) {
+      final List<Binding> binds = <Binding>[];
+      final RawNode? lowered = expressions.patternOf(member.guardedPattern.pattern, scope, binds);
+      if (lowered != null) {
+        bodyScope = binds.isEmpty ? scope : scope.child(binds);
+        pattern = RawChild(lowered);
+        if (member.guardedPattern.whenClause case final WhenClause clause) {
+          guard = RawChild(expressions.extract(clause.expression, bodyScope));
+        }
+      }
+    }
+    return RawMap(<String, RawValue>{
+      // A `default` has no test. Absent, not null: the two say different things. A constant pattern (a literal, an enum constant, a
+      // `const`) is the test; any other pattern is a `pattern`; one this model does not hold is preserved as an opaque expression and
+      // refused downstream.
+      if (pattern != null) 'pattern': pattern else if (_switchTest(member, scope) case final RawValue test) 'test': test,
+      'guard': ?guard,
+      'body': RawList(<RawValue>[
+        for (final Statement statement in member.statements) RawChild(extract(statement, bodyScope)),
+      ]),
+    });
+  }
 
   /// The `test` of one switch member, or `null` for a `default`.
   RawValue? _switchTest(SwitchMember member, Scope scope) {

@@ -9532,7 +9532,7 @@ class W extends StatelessWidget {
 
     // ── negative controls: every unsupported neighbouring shape stays exactly as opaque as before ──
 
-    test('assigned to a local (not direct-return position) stays opaque', () async {
+    test('assigned to a local is a logic.SwitchExpr (ADR-0065)', () async {
       final Extracted app = await extract('''
 import 'package:flutter/material.dart';
 enum Reason { a, b }
@@ -9548,11 +9548,11 @@ class W extends StatelessWidget {
 }
 ''');
       expect(app.errors, isEmpty);
-      expect(app.ofKind('logic.Switch'), isEmpty);
-      expect(app.ofKind('logic.OpaqueExpr'), hasLength(1));
+      expect(app.ofKind('logic.SwitchExpr'), hasLength(1));
+      expect(app.ofKind('logic.OpaqueExpr'), isEmpty);
     });
 
-    test('used as a function argument (not direct-return position) stays opaque', () async {
+    test('used as a function argument is a logic.SwitchExpr (ADR-0065)', () async {
       final Extracted app = await extract('''
 import 'package:flutter/material.dart';
 enum Reason { a, b }
@@ -9566,11 +9566,11 @@ class W extends StatelessWidget {
 }
 ''');
       expect(app.errors, isEmpty);
-      expect(app.ofKind('logic.Switch'), isEmpty);
-      expect(app.ofKind('logic.OpaqueExpr'), hasLength(1));
+      expect(app.ofKind('logic.SwitchExpr'), hasLength(1));
+      expect(app.ofKind('logic.OpaqueExpr'), isEmpty);
     });
 
-    test('a wildcard pattern anywhere in the switch keeps the whole switch opaque', () async {
+    test('a wildcard pattern is a wildcard arm, not an opaque switch (ADR-0065)', () async {
       final Extracted app = await extract('''
 import 'package:flutter/material.dart';
 String f(int n) => switch (n) { 1 => 'one', _ => 'other' };
@@ -9582,11 +9582,11 @@ class W extends StatelessWidget {
 }
 ''');
       expect(app.errors, isEmpty);
-      expect(app.ofKind('logic.Switch'), isEmpty);
-      expect(app.ofKind('logic.OpaqueExpr'), hasLength(1));
+      expect(app.ofKind('logic.SwitchExpr'), hasLength(1));
+      expect(app.ofKind('logic.OpaqueExpr'), isEmpty);
     });
 
-    test('a guarded pattern keeps the whole switch opaque, not just the guarded case', () async {
+    test('a guarded pattern is an arm with a guard (ADR-0065)', () async {
       final Extracted app = await extract('''
 import 'package:flutter/material.dart';
 enum Reason { a, b }
@@ -9602,11 +9602,11 @@ class W extends StatelessWidget {
 }
 ''');
       expect(app.errors, isEmpty);
-      expect(app.ofKind('logic.Switch'), isEmpty);
-      expect(app.ofKind('logic.OpaqueExpr'), hasLength(1));
+      expect(app.ofKind('logic.SwitchExpr'), hasLength(1));
+      expect(app.ofKind('logic.OpaqueExpr'), isEmpty);
     });
 
-    test('a logical-or pattern keeps the whole switch opaque', () async {
+    test('a logical-or pattern is an or-pattern (ADR-0065)', () async {
       final Extracted app = await extract('''
 import 'package:flutter/material.dart';
 enum Reason { a, b, c }
@@ -9619,11 +9619,11 @@ class W extends StatelessWidget {
 }
 ''');
       expect(app.errors, isEmpty);
-      expect(app.ofKind('logic.Switch'), isEmpty);
-      expect(app.ofKind('logic.OpaqueExpr'), hasLength(1));
+      expect(app.ofKind('logic.SwitchExpr'), hasLength(1));
+      expect(app.ofKind('logic.OpaqueExpr'), isEmpty);
     });
 
-    test('one unsupported case among otherwise-admitted cases still keeps the whole switch opaque', () async {
+    test('a wildcard among constant arms is one more arm (ADR-0065)', () async {
       final Extracted app = await extract('''
 import 'package:flutter/material.dart';
 enum Reason { a, b, c }
@@ -9641,7 +9641,7 @@ class W extends StatelessWidget {
         isEmpty,
         reason: 'a partial lowering would silently drop the wildcard case — refused entirely instead',
       );
-      expect(app.ofKind('logic.OpaqueExpr'), hasLength(1));
+      expect(app.ofKind('logic.OpaqueExpr'), isEmpty);
     });
   });
 
@@ -10444,6 +10444,52 @@ class W extends StatelessWidget {
 ''');
       expect(e.result.diagnostics.map((Diagnostic d) => d.code.id), isNot(contains('BRG1204')));
       expect(e.nodes, isNotEmpty);
+    });
+  });
+
+  group('Dart 3 patterns (M12, ADR-0065)', () {
+    Iterable<Map<String, dynamic>> kinds(Object? node, String kind) sync* {
+      if (node is Map<String, dynamic>) {
+        if (node['kind'] == kind) {
+          yield node;
+        }
+        for (final Object? v in node.values) {
+          yield* kinds(v, kind);
+        }
+      } else if (node is List) {
+        for (final Object? v in node) {
+          yield* kinds(v, kind);
+        }
+      }
+    }
+
+    test('switch expressions and pattern cases become logic.SwitchExpr and pattern cases; list and record patterns stay opaque', () async {
+      final Extracted e = await extract(r'''
+sealed class S {}
+class A extends S { A(this.x); final int x; }
+class B extends S {}
+String f(S s, Object? o, int n) => switch (s) { A(:final x) when x > 1 => 'a$x', A() => 'a', B() => 'b' };
+String g(Object? o) => switch (o) { null => 'n', int i => 'i$i', 1 || 2 => 'x', _ => 'o' };
+String h(int n) => switch (n) { < 0 => 'neg', >= 1 && <= 9 => 'digit', _ => 'big' };
+String st(S s) { switch (s) { case A(:final x) when x > 1: return 'a'; default: return 'd'; } }
+String l(List<int> xs) => switch (xs) { [] => 'empty', [var a, ...] => 'a$a', _ => 'x' };
+''');
+      final List<Map<String, dynamic>> switches = kinds(e.nodes, 'logic.SwitchExpr').toList();
+      expect(switches, hasLength(3), reason: 'f, g and h; l has list patterns and stays opaque');
+      expect(kinds(e.nodes, 'logic.OpaqueExpr').where((Map<String, dynamic> o) => o['reason'] == 'switch expression'), hasLength(1));
+      final Set<Object?> variants = kinds(e.nodes, 'logic.Pattern').map((Map<String, dynamic> p) => p['variant']).toSet();
+      expect(variants, containsAll(<String>['object', 'const', 'wildcard', 'bind', 'or', 'relational', 'and']));
+      expect(
+        switches.any(
+          (Map<String, dynamic> sw) => (sw['cases'] as List<dynamic>).any((dynamic c) => (c as Map<String, dynamic>).containsKey('guard')),
+        ),
+        isTrue,
+        reason: '`when x > 1` is a guard',
+      );
+      final Map<String, dynamic> statement = kinds(e.nodes, 'logic.Switch').single;
+      final Map<String, dynamic> firstCase = (statement['cases'] as List<dynamic>).first as Map<String, dynamic>;
+      expect(firstCase.containsKey('pattern'), isTrue);
+      expect(firstCase.containsKey('guard'), isTrue);
     });
   });
 }
