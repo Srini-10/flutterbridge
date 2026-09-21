@@ -1,0 +1,199 @@
+{
+  "lazy_and_cached": [
+    "container made",
+    "create p",
+    "read 1",
+    "read 1"
+  ],
+  "watch_chain": [
+    "build c",
+    "build b",
+    "read c 1",
+    "after set (sync) read a=5",
+    "build b",
+    "build c",
+    "c: 1 -> 11",
+    "after flush read c=11"
+  ],
+  "read_makes_no_edge": [
+    "build r",
+    "read r 100",
+    "read r 100"
+  ],
+  "family_keys": [
+    "build f(1)",
+    "v1",
+    "v1",
+    "build f(2)",
+    "v2",
+    "build g(1,2)",
+    "g12",
+    "g12",
+    "build h(1)",
+    "h 1",
+    "build h(1)",
+    "h 1"
+  ],
+  "listen_previous_next": [
+    "a: 0 -> 1",
+    "a: 1 -> 2",
+    "done"
+  ],
+  "listen_fire_immediately": [
+    "a: null -> 3",
+    "listening"
+  ],
+  "select_narrows": [
+    "parity: 0 -> 1",
+    "parity: 1 -> 0",
+    "parity: 0 -> 1",
+    "done"
+  ],
+  "auto_dispose": [
+    "create ap",
+    "listening 1",
+    "closed",
+    "dispose ap",
+    "after flush",
+    "create ap",
+    "read 1",
+    "read again",
+    "dispose ap",
+    "end"
+  ],
+  "keep_alive_without_auto_dispose": [
+    "create p",
+    "still alive: 1",
+    "dispose p",
+    "container disposed"
+  ],
+  "future_provider": [
+    "run 1",
+    "-> loading(value=null) hasValue=false hasError=false isLoading=true isRefreshing=false isReloading=false",
+    "-> data(10) hasValue=true hasError=false isLoading=false isRefreshing=false isReloading=false",
+    "run 2",
+    "-> data(10) hasValue=true hasError=false isLoading=true isRefreshing=true isReloading=false",
+    "-> data(20) hasValue=true hasError=false isLoading=false isRefreshing=false isReloading=false",
+    "run 3",
+    "-> data(20) hasValue=true hasError=false isLoading=true isRefreshing=true isReloading=false",
+    "-> error(Bad state: boom) hasValue=true hasError=true isLoading=false isRefreshing=false isReloading=false",
+    "run 4",
+    "-> error(Bad state: boom) hasValue=true hasError=true isLoading=true isRefreshing=true isReloading=false",
+    "-> data(40) hasValue=true hasError=false isLoading=false isRefreshing=false isReloading=false",
+    "final data(40) hasValue=true hasError=false isLoading=false isRefreshing=false isReloading=false"
+  ],
+  "future_value_read": [
+    "first loading(value=null) hasValue=false hasError=false isLoading=true isRefreshing=false isReloading=false",
+    "future 7",
+    "then data(7) hasValue=true hasError=false isLoading=false isRefreshing=false isReloading=false"
+  ],
+  "invalidate_without_listeners": [
+    "build 1",
+    "read 1",
+    "invalidated",
+    "after flush",
+    "build 2",
+    "read 2"
+  ],
+  "refresh_returns_new_value": [
+    "read 1",
+    "refresh 2",
+    "read 2"
+  ],
+  "state_notifier": [
+    "count: 0 -> 4",
+    "final 4"
+  ],
+  "overrides": [
+    "q 10",
+    "create override",
+    "q 21"
+  ],
+  "on_dispose_container": [
+    "disposing",
+    "dispose p",
+    "disposed"
+  ],
+  "dependent_rebuilds_on_watch_change": [
+    "build d with 1",
+    "d1",
+    "dispose d(1)",
+    "build d with 2",
+    "sync read d2",
+    "dispose d(2)",
+    "build d with 4",
+    "batched read d4",
+    "dispose d(4)"
+  ],
+  "listen_creates_eagerly": [
+    "create p",
+    "listened"
+  ],
+  "source_notifies_when": [
+    "a: 0 -> 1",
+    "after set 1",
+    "a: 1 -> 2",
+    "after set 2",
+    "flushed"
+  ],
+  "derived_batches_notifications": [
+    "d: 0 -> 20",
+    "flushed",
+    "flushed again"
+  ],
+  "future_refresh": [
+    "-> data(1) hasValue=true hasError=false isLoading=false isRefreshing=false isReloading=false",
+    "-> data(1) hasValue=true hasError=false isLoading=true isRefreshing=true isReloading=false",
+    "refresh returned data(1) hasValue=true hasError=false isLoading=true isRefreshing=true isReloading=false",
+    "-> data(2) hasValue=true hasError=false isLoading=false isRefreshing=false isReloading=false",
+    "final data(2) hasValue=true hasError=false isLoading=false isRefreshing=false isReloading=false"
+  ],
+  "stale_future_result_is_dropped": [
+    "-> data(2) hasValue=true hasError=false isLoading=false isRefreshing=false isReloading=false",
+    "final data(2) hasValue=true hasError=false isLoading=false isRefreshing=false isReloading=false"
+  ],
+  "stream_provider": [
+    "-> loading(value=null) hasValue=false hasError=false isLoading=true isRefreshing=false isReloading=false",
+    "-> data(1) hasValue=true hasError=false isLoading=false isRefreshing=false isReloading=false",
+    "-> data(2) hasValue=true hasError=false isLoading=false isRefreshing=false isReloading=false",
+    "-> error(bad) hasValue=true hasError=true isLoading=false isRefreshing=false isReloading=false",
+    "-> data(3) hasValue=true hasError=false isLoading=false isRefreshing=false isReloading=false"
+  ],
+  "equality_kinds": [
+    "state: V0 -> V0",
+    "state: V0 -> V1",
+    "notifier: V0 -> V0",
+    "notifier: V0 -> V2",
+    "derived: V0 -> V1",
+    "done"
+  ],
+  "unchanged_intermediate": [
+    "build c",
+    "build b",
+    "build b",
+    "flushed 1",
+    "build b",
+    "build c",
+    "c: 1 -> 2",
+    "flushed 2"
+  ],
+  "invalidate_with_listener_is_immediate": [
+    "build 1",
+    "invalidated",
+    "build 2",
+    "p: 1 -> 2",
+    "flushed"
+  ],
+  "when_branches": [
+    "when=L noskip=L skipError=L maybe=other whenData=false/true/false/null valueOrNull=null value=null",
+    "when=D1 noskip=D1 skipError=D1 maybe=D1 whenData=true/false/false/2 valueOrNull=1 value=1",
+    "when=D1 noskip=L skipError=D1 maybe=D1 whenData=true/true/false/2 valueOrNull=1 value=1",
+    "when=D2 noskip=D2 skipError=D2 maybe=D2 whenData=true/false/false/4 valueOrNull=2 value=2",
+    "when=D2 noskip=L skipError=D2 maybe=D2 whenData=true/true/false/4 valueOrNull=2 value=2",
+    "when=E noskip=E skipError=D2 maybe=other whenData=false/false/true/null valueOrNull=2 value=2",
+    "when=E noskip=L skipError=D2 maybe=other whenData=false/true/true/null valueOrNull=2 value=2",
+    "when=D4 noskip=D4 skipError=D4 maybe=D4 whenData=true/false/false/8 valueOrNull=4 value=4",
+    "requireValue on loading throws: StateError",
+    "data equality: true false true"
+  ]
+}

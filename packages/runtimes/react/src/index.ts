@@ -741,3 +741,26 @@ export {
   isDartException,
 } from './internal/core/dart_exceptions.js';
 export { dartAs, dartConstToken, dartIndex, dartIsRecord, dartRecordEquals, dartDoubleParse, dartDoubleTryParse, dartIntParse, dartIntTryParse, dartEntry, dartHash, dartHashAll, dartThrow, unawaited } from './internal/core/dart_core.js';
+
+// Riverpod: the provider container, `AsyncValue`, and the React binding (`ProviderScope` and the hooks a `ref.watch` lowers to).
+// Every rule in the container is recorded from the real `riverpod` 2.6.1 — see `fixtures/riverpod_oracle`.
+export { AsyncValue, type WhenOptions } from './internal/riverpod/async_value.js';
+export {
+  ProviderContainer,
+  ProviderInstance,
+  StateController,
+  StateNotifier,
+  defineFamily,
+  defineProvider,
+  type ContainerOptions,
+  type Family,
+  type ListenOptions,
+  type Listenable,
+  type Override,
+  type ProviderKind,
+  type ProviderOptions,
+  type Ref as ProviderRef,
+  type StreamLike,
+  type Subscription as ProviderSubscription,
+} from './internal/riverpod/container.js';
+export { ProviderScope, useListen, useProviderContainer, useRead, useWatch, type ProviderScopeProps } from './internal/riverpod/react.js';

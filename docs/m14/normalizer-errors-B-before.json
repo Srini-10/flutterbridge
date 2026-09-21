@@ -1,0 +1,246 @@
+{
+  "input": "/private/tmp/claude-501/-Users-srini-Zenthink-flutterbridge/ca0ebf97-3d3c-46c5-9816-56b463cc1872/scratchpad/mono/apps/customer/.bridge/uir.ndjson",
+  "total": 23,
+  "byCode": {
+    "BRG2305": {
+      "count": 22,
+      "items": [
+        {
+          "nodeId": "10324e78968dd91b",
+          "source": {
+            "column": 28,
+            "file": "package:products/src/presentation/product_detail_page.dart",
+            "length": 212,
+            "line": 413
+          },
+          "message": "`firmOptions` forwards the source component's own constructor parameter across a route boundary. A parameter has no id (ADR-17), so this pass cannot prove what the forwarded value resolves to without inferring from its name, which it refuses to do. If it should be promoted, promote it at the boundary it actually originates from — the owner of tracing a value through more than one component boundary is a future, whole-program provenance analysis, not this pass (ADR-11 amendment §\"multi-hop\")."
+        },
+        {
+          "nodeId": "29c73938427ad14c",
+          "source": {
+            "column": 24,
+            "file": "package:products/src/presentation/offers_page.dart",
+            "length": 124,
+            "line": 615
+          },
+          "message": "`existing` forwards the source component's own constructor parameter across a route boundary. A parameter has no id (ADR-17), so this pass cannot prove what the forwarded value resolves to without inferring from its name, which it refuses to do. If it should be promoted, promote it at the boundary it actually originates from — the owner of tracing a value through more than one component boundary is a future, whole-program provenance analysis, not this pass (ADR-11 amendment §\"multi-hop\")."
+        },
+        {
+          "nodeId": "381927204263ae01",
+          "source": {
+            "column": 44,
+            "file": "package:firms/src/presentation/firm_scoped_pages.dart",
+            "length": 207,
+            "line": 498
+          },
+          "message": "`firmId` forwards the source component's own constructor parameter across a route boundary. A parameter has no id (ADR-17), so this pass cannot prove what the forwarded value resolves to without inferring from its name, which it refuses to do. If it should be promoted, promote it at the boundary it actually originates from — the owner of tracing a value through more than one component boundary is a future, whole-program provenance analysis, not this pass (ADR-11 amendment §\"multi-hop\")."
+        },
+        {
+          "nodeId": "381927204263ae01",
+          "source": {
+            "column": 44,
+            "file": "package:firms/src/presentation/firm_scoped_pages.dart",
+            "length": 207,
+            "line": 498
+          },
+          "message": "`sku` forwards the source component's own constructor parameter across a route boundary. A parameter has no id (ADR-17), so this pass cannot prove what the forwarded value resolves to without inferring from its name, which it refuses to do. If it should be promoted, promote it at the boundary it actually originates from — the owner of tracing a value through more than one component boundary is a future, whole-program provenance analysis, not this pass (ADR-11 amendment §\"multi-hop\")."
+        },
+        {
+          "nodeId": "6492ba4f81ab9b92",
+          "source": {
+            "column": 36,
+            "file": "package:pricing/src/presentation/pricing_page.dart",
+            "length": 146,
+            "line": 357
+          },
+          "message": "`pricing` forwards the source component's own constructor parameter across a route boundary. A parameter has no id (ADR-17), so this pass cannot prove what the forwarded value resolves to without inferring from its name, which it refuses to do. If it should be promoted, promote it at the boundary it actually originates from — the owner of tracing a value through more than one component boundary is a future, whole-program provenance analysis, not this pass (ADR-11 amendment §\"multi-hop\")."
+        },
+        {
+          "nodeId": "7705056974fe5672",
+          "source": {
+            "column": 15,
+            "file": "lib/router.dart",
+            "length": 396,
+            "line": 297
+          },
+          "message": "`initialCustomerId` forwards the source component's own constructor parameter across a route boundary. A parameter has no id (ADR-17), so this pass cannot prove what the forwarded value resolves to without inferring from its name, which it refuses to do. If it should be promoted, promote it at the boundary it actually originates from — the owner of tracing a value through more than one component boundary is a future, whole-program provenance analysis, not this pass (ADR-11 amendment §\"multi-hop\")."
+        },
+        {
+          "nodeId": "7ab12a5c85c5ed26",
+          "source": {
+            "column": 28,
+            "file": "package:products/src/presentation/product_catalog_page.dart",
+            "length": 201,
+            "line": 1881
+          },
+          "message": "`firmOptions` forwards the source component's own constructor parameter across a route boundary. A parameter has no id (ADR-17), so this pass cannot prove what the forwarded value resolves to without inferring from its name, which it refuses to do. If it should be promoted, promote it at the boundary it actually originates from — the owner of tracing a value through more than one component boundary is a future, whole-program provenance analysis, not this pass (ADR-11 amendment §\"multi-hop\")."
+        },
+        {
+          "nodeId": "7ab12a5c85c5ed26",
+          "source": {
+            "column": 28,
+            "file": "package:products/src/presentation/product_catalog_page.dart",
+            "length": 201,
+            "line": 1881
+          },
+          "message": "`currentFirmId` forwards the source component's own constructor parameter across a route boundary. A parameter has no id (ADR-17), so this pass cannot prove what the forwarded value resolves to without inferring from its name, which it refuses to do. If it should be promoted, promote it at the boundary it actually originates from — the owner of tracing a value through more than one component boundary is a future, whole-program provenance analysis, not this pass (ADR-11 amendment §\"multi-hop\")."
+        },
+        {
+          "nodeId": "96eb56c1524433f9",
+          "source": {
+            "column": 24,
+            "file": "package:products/src/presentation/offers_page.dart",
+            "length": 147,
+            "line": 435
+          },
+          "message": "`existing` forwards the source component's own constructor parameter across a route boundary. A parameter has no id (ADR-17), so this pass cannot prove what the forwarded value resolves to without inferring from its name, which it refuses to do. If it should be promoted, promote it at the boundary it actually originates from — the owner of tracing a value through more than one component boundary is a future, whole-program provenance analysis, not this pass (ADR-11 amendment §\"multi-hop\")."
+        },
+        {
+          "nodeId": "96eb56c1524433f9",
+          "source": {
+            "column": 24,
+            "file": "package:products/src/presentation/offers_page.dart",
+            "length": 147,
+            "line": 435
+          },
+          "message": "`presetProductId` forwards the source component's own constructor parameter across a route boundary. A parameter has no id (ADR-17), so this pass cannot prove what the forwarded value resolves to without inferring from its name, which it refuses to do. If it should be promoted, promote it at the boundary it actually originates from — the owner of tracing a value through more than one component boundary is a future, whole-program provenance analysis, not this pass (ADR-11 amendment §\"multi-hop\")."
+        },
+        {
+          "nodeId": "ad941601183faada",
+          "source": {
+            "column": 24,
+            "file": "package:payments/src/data/ccavenue_checkout_io.dart",
+            "length": 163,
+            "line": 20
+          },
+          "message": "`order` forwards the source component's own constructor parameter across a route boundary. A parameter has no id (ADR-17), so this pass cannot prove what the forwarded value resolves to without inferring from its name, which it refuses to do. If it should be promoted, promote it at the boundary it actually originates from — the owner of tracing a value through more than one component boundary is a future, whole-program provenance analysis, not this pass (ADR-11 amendment §\"multi-hop\")."
+        },
+        {
+          "nodeId": "ad941601183faada",
+          "source": {
+            "column": 24,
+            "file": "package:payments/src/data/ccavenue_checkout_io.dart",
+            "length": 163,
+            "line": 20
+          },
+          "message": "`title` forwards the source component's own constructor parameter across a route boundary. A parameter has no id (ADR-17), so this pass cannot prove what the forwarded value resolves to without inferring from its name, which it refuses to do. If it should be promoted, promote it at the boundary it actually originates from — the owner of tracing a value through more than one component boundary is a future, whole-program provenance analysis, not this pass (ADR-11 amendment §\"multi-hop\")."
+        },
+        {
+          "nodeId": "c1a5e915ea8b4cd9",
+          "source": {
+            "column": 10,
+            "file": "package:design_system/src/widgets/app_bottom_sheet.dart",
+            "length": 290,
+            "line": 22
+          },
+          "message": "`title` forwards the source component's own constructor parameter across a route boundary. A parameter has no id (ADR-17), so this pass cannot prove what the forwarded value resolves to without inferring from its name, which it refuses to do. If it should be promoted, promote it at the boundary it actually originates from — the owner of tracing a value through more than one component boundary is a future, whole-program provenance analysis, not this pass (ADR-11 amendment §\"multi-hop\")."
+        },
+        {
+          "nodeId": "c1a5e915ea8b4cd9",
+          "source": {
+            "column": 10,
+            "file": "package:design_system/src/widgets/app_bottom_sheet.dart",
+            "length": 290,
+            "line": 22
+          },
+          "message": "`footer` forwards the source component's own constructor parameter across a route boundary. A parameter has no id (ADR-17), so this pass cannot prove what the forwarded value resolves to without inferring from its name, which it refuses to do. If it should be promoted, promote it at the boundary it actually originates from — the owner of tracing a value through more than one component boundary is a future, whole-program provenance analysis, not this pass (ADR-11 amendment §\"multi-hop\")."
+        },
+        {
+          "nodeId": "c1a5e915ea8b4cd9",
+          "source": {
+            "column": 10,
+            "file": "package:design_system/src/widgets/app_bottom_sheet.dart",
+            "length": 290,
+            "line": 22
+          },
+          "message": "`onReset` forwards the source component's own constructor parameter across a route boundary. A parameter has no id (ADR-17), so this pass cannot prove what the forwarded value resolves to without inferring from its name, which it refuses to do. If it should be promoted, promote it at the boundary it actually originates from — the owner of tracing a value through more than one component boundary is a future, whole-program provenance analysis, not this pass (ADR-11 amendment §\"multi-hop\")."
+        },
+        {
+          "nodeId": "c1a5e915ea8b4cd9",
+          "source": {
+            "column": 10,
+            "file": "package:design_system/src/widgets/app_bottom_sheet.dart",
+            "length": 290,
+            "line": 22
+          },
+          "message": "`closeable` forwards the source component's own constructor parameter across a route boundary. A parameter has no id (ADR-17), so this pass cannot prove what the forwarded value resolves to without inferring from its name, which it refuses to do. If it should be promoted, promote it at the boundary it actually originates from — the owner of tracing a value through more than one component boundary is a future, whole-program provenance analysis, not this pass (ADR-11 amendment §\"multi-hop\")."
+        },
+        {
+          "nodeId": "c1a5e915ea8b4cd9",
+          "source": {
+            "column": 10,
+            "file": "package:design_system/src/widgets/app_bottom_sheet.dart",
+            "length": 290,
+            "line": 22
+          },
+          "message": "`child` forwards the source component's own constructor parameter across a route boundary. A parameter has no id (ADR-17), so this pass cannot prove what the forwarded value resolves to without inferring from its name, which it refuses to do. If it should be promoted, promote it at the boundary it actually originates from — the owner of tracing a value through more than one component boundary is a future, whole-program provenance analysis, not this pass (ADR-11 amendment §\"multi-hop\")."
+        },
+        {
+          "nodeId": "c64591de850a470a",
+          "source": {
+            "column": 17,
+            "file": "package:agents/src/presentation/agents_page.dart",
+            "length": 183,
+            "line": 167
+          },
+          "message": "`existing` forwards the source component's own constructor parameter across a route boundary. A parameter has no id (ADR-17), so this pass cannot prove what the forwarded value resolves to without inferring from its name, which it refuses to do. If it should be promoted, promote it at the boundary it actually originates from — the owner of tracing a value through more than one component boundary is a future, whole-program provenance analysis, not this pass (ADR-11 amendment §\"multi-hop\")."
+        },
+        {
+          "nodeId": "e051eb469baf40d7",
+          "source": {
+            "column": 25,
+            "file": "package:admin/app/profile_page.dart",
+            "length": 101,
+            "line": 113
+          },
+          "message": "`user` forwards the source component's own constructor parameter across a route boundary. A parameter has no id (ADR-17), so this pass cannot prove what the forwarded value resolves to without inferring from its name, which it refuses to do. If it should be promoted, promote it at the boundary it actually originates from — the owner of tracing a value through more than one component boundary is a future, whole-program provenance analysis, not this pass (ADR-11 amendment §\"multi-hop\")."
+        },
+        {
+          "nodeId": "ea070df6b154a1e1",
+          "source": {
+            "column": 24,
+            "file": "package:products/src/presentation/offers_page.dart",
+            "length": 183,
+            "line": 717
+          },
+          "message": "`section` forwards the source component's own constructor parameter across a route boundary. A parameter has no id (ADR-17), so this pass cannot prove what the forwarded value resolves to without inferring from its name, which it refuses to do. If it should be promoted, promote it at the boundary it actually originates from — the owner of tracing a value through more than one component boundary is a future, whole-program provenance analysis, not this pass (ADR-11 amendment §\"multi-hop\")."
+        },
+        {
+          "nodeId": "fdfc5ac479578602",
+          "source": {
+            "column": 12,
+            "file": "package:products/src/presentation/product_detail_page.dart",
+            "length": 182,
+            "line": 914
+          },
+          "message": "`productId` forwards the source component's own constructor parameter across a route boundary. A parameter has no id (ADR-17), so this pass cannot prove what the forwarded value resolves to without inferring from its name, which it refuses to do. If it should be promoted, promote it at the boundary it actually originates from — the owner of tracing a value through more than one component boundary is a future, whole-program provenance analysis, not this pass (ADR-11 amendment §\"multi-hop\")."
+        },
+        {
+          "nodeId": "fdfc5ac479578602",
+          "source": {
+            "column": 12,
+            "file": "package:products/src/presentation/product_detail_page.dart",
+            "length": 182,
+            "line": 914
+          },
+          "message": "`firmId` forwards the source component's own constructor parameter across a route boundary. A parameter has no id (ADR-17), so this pass cannot prove what the forwarded value resolves to without inferring from its name, which it refuses to do. If it should be promoted, promote it at the boundary it actually originates from — the owner of tracing a value through more than one component boundary is a future, whole-program provenance analysis, not this pass (ADR-11 amendment §\"multi-hop\")."
+        }
+      ]
+    },
+    "BRG2301": {
+      "count": 1,
+      "items": [
+        {
+          "nodeId": "7705056974fe5672",
+          "source": {
+            "column": 15,
+            "file": "lib/router.dart",
+            "length": 396,
+            "line": 297
+          },
+          "message": "`key` passes a live object across a route boundary. A URL carries an identifier, not an object graph — a user who reloads the page, or arrives from a bookmark, has no object to pass. Pass an id and load from it (ADR-11a)."
+        }
+      ]
+    }
+  }
+}

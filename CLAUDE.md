@@ -63,7 +63,7 @@ application, `npm install`s it, runs `next build`, and drives it in Chromium. Se
 
 ## Measuring a real application
 
-`bridge generate` normalizes on its own and **ignores the normalizer's errors**; `bridge build` stops on them. Count both: `node tools/taxonomy/taxonomy.mjs <disposable copy> --label X --out docs/m14/taxonomy-X` runs
+`bridge generate` normalizes on its own and, like `bridge build`, **stops on the normalizer's errors** (ADR-0077 D5 — it used to ignore them). Count both: `node tools/taxonomy/taxonomy.mjs <disposable copy> --label X --out docs/m14/taxonomy-X` runs
 both, buckets each diagnostic by root cause (`tools/taxonomy/rules.json`) and writes JSON and Markdown. Work on a *copy* of the application, never the original. A generator count that goes **up** after a fix can be the fix working: code that was
 silently dropped is reached now (ADR-0074) — check what changed before calling it a regression.
 

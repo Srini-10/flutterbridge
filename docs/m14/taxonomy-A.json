@@ -1,5 +1,5 @@
 {
-  "application": "Application A (240 files)",
+  "application": "A",
   "buildStages": [
     {
       "name": "analyze",

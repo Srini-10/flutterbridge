@@ -1,4 +1,4 @@
-# Generator taxonomy — Application A (240 files)
+# Generator taxonomy — A
 
 `bridge build` stages: analyze ok → normalize ok → generate FAILED.
 Normalizer errors: **0**. Generator errors (past the normalizer): **536**. Unique root causes: **20**.

@@ -3,8 +3,7 @@
 //
 //   node tools/taxonomy/taxonomy.mjs <project-dir> [--label A] [--out docs/m14/taxonomy-A]
 //
-// Runs `bridge build --json` (which stops at the first failing stage), and `bridge generate` (which normalizes on its own and ignores the normalizer's
-// errors, so it always reaches the generator), classifies every diagnostic with `rules.json` (first match wins), and writes `<out>.json` (machine-readable)
+// Runs `bridge build --json` (which stops at the first failing stage), and `bridge generate` (which, since ADR-0077 D5, also stops on normalizer errors), classifies every diagnostic with `rules.json` (first match wins), and writes `<out>.json` (machine-readable)
 // and `<out>.md` (human-readable). The diagnostics carry no file/line: the generator reports a node id, and `bridge inspect`/`bridge graph` map it to a span.
 //
 // It never modifies the project: `bridge build`/`generate` write only inside the project's own `.bridge/` and `build/`, which a disposable copy owns.

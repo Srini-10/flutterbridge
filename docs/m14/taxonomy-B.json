@@ -1,5 +1,5 @@
 {
-  "application": "Application B (21 packages, 127 routes)",
+  "application": "B",
   "buildStages": [
     {
       "name": "analyze",
@@ -7,16 +7,20 @@
     },
     {
       "name": "normalize",
+      "ok": true
+    },
+    {
+      "name": "generate",
       "ok": false
     }
   ],
-  "normalizerErrors": 23,
-  "generatorErrors": 5451,
-  "uniqueRootCauses": 26,
+  "normalizerErrors": 0,
+  "generatorErrors": 5439,
+  "uniqueRootCauses": 24,
   "occurrencesByCategory": {
     "C": 3829,
-    "B": 1614,
-    "D": 26,
+    "B": 1580,
+    "D": 25,
     "?": 5
   },
   "rootCauses": [
@@ -119,19 +123,6 @@
     },
     {
       "stage": "generate",
-      "root": "unsupported-capability",
-      "category": "B",
-      "layer": "generator",
-      "cause": "a construct the generator names as unsupported",
-      "adr": "0073",
-      "count": 249,
-      "codes": [
-        "BRG3013"
-      ],
-      "sample": "`AppSpacing.pageOf` has no supported lowering for this call, even though its own declaration is otherwise eligible (ADR-0045). FlutterBridge does not yet lower this method's own body."
-    },
-    {
-      "stage": "generate",
       "root": "opaque-expression",
       "category": "B",
       "layer": "analyzer",
@@ -142,6 +133,19 @@
         "BRG3004"
       ],
       "sample": "`void bump() {if (scheduled || controller.isClosed) return; scheduled = true; scheduleMicrotask(() {scheduled = false;...` has no UIR representation and reached the generator as opaque source (INV-4). Lowering it would m"
+    },
+    {
+      "stage": "generate",
+      "root": "unsupported-capability",
+      "category": "B",
+      "layer": "generator",
+      "cause": "a construct the generator names as unsupported",
+      "adr": "0073",
+      "count": 237,
+      "codes": [
+        "BRG3013"
+      ],
+      "sample": "`AppSpacing.pageOf` has no supported lowering for this call, even though its own declaration is otherwise eligible (ADR-0045). FlutterBridge does not yet lower this method's own body."
     },
     {
       "stage": "generate",
@@ -274,19 +278,6 @@
       "sample": "a `GlobalKey` is a handle on a live widget's State, and UIR has no construct that denotes one — it is not a value, a signal, a route or a component. That gap belongs to the schema. A `Form` in this kit validates every re"
     },
     {
-      "stage": "normalize",
-      "root": "normalize-route-forwarded-param",
-      "category": "B",
-      "layer": "normalizer",
-      "cause": "a screen's own constructor parameter forwarded across a route boundary (N11 multi-hop provenance)",
-      "adr": "0025",
-      "count": 22,
-      "codes": [
-        "BRG2305"
-      ],
-      "sample": "`firmOptions` forwards the source component's own constructor parameter across a route boundary. A parameter has no id (ADR-17), so this pass cannot prove what the forwarded value resolves to without inferring from its n"
-    },
-    {
       "stage": "generate",
       "root": "navigation-inline",
       "category": "B",
@@ -338,19 +329,6 @@
         "BRG3016"
       ],
       "sample": "`MaterialApp.builder` has no equivalent in the emitted project. Missing capability: a root builder — a widget wrapping every route, below the navigator. Owner: the generator (it would become a nested layout in `app/layou"
-    },
-    {
-      "stage": "normalize",
-      "root": "normalize-route-live-object",
-      "category": "D",
-      "layer": "normalizer",
-      "cause": "a live object passed across a route boundary (a URL carries an identifier, not an object graph)",
-      "adr": "0025",
-      "count": 1,
-      "codes": [
-        "BRG2301"
-      ],
-      "sample": "`key` passes a live object across a route boundary. A URL carries an identifier, not an object graph — a user who reloads the page, or arrives from a bookmark, has no object to pass. Pass an id and load from it (ADR-11a)"
     },
     {
       "stage": "generate",
