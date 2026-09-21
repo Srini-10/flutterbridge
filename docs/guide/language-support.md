@@ -91,8 +91,34 @@ Switch expressions and pattern cases: constant, wildcard, variable, object (with
 `DateTime`, `Timer`, `Future.value/delayed/microtask/wait`, `int`/`double` `parse`/`tryParse`, `DeepCollectionEquality`; async top-level functions; named
 parameters on top-level functions ([ADR-0066](../adr/0066-sdk-time-async-named-functions.md)). Difference: no microseconds.
 
-## Not supported (refused, by name)
+## Compatibility contract
 
-Everything not listed. The census of two real applications (see the final audit report) found the blockers in practice are: freezed
-and part-file classes, widget-returning helper methods, spread / `for` / `if` in widget children, members of project classes,
-top-level declarations, go_router shapes beyond the simplest, and widgets such as `InkWell`, `LayoutBuilder`, `showDialog`.
+Every construct is in exactly one of three classes. Nothing is in a fourth ("works, mostly").
+
+### SUPPORTED (compared with Flutter in a fixture app, or refused by name)
+
+Everything listed above. Each has a fixture in `fixtures/apps/` whose scenarios run in real Flutter and in the generated component
+(`tests/*_execution.test.ts`), with mutation-tested lowerings.
+
+### SUPPORTED WITH A DOCUMENTED SEMANTIC DIFFERENCE
+
+| Construct | Difference |
+| --- | --- |
+| `Object.hash` / `hashAll` | Contract kept (equal inputs, equal hash), values are not Dart's — Dart does not specify them. |
+| `DateTime` | No microseconds. |
+| `List.from(..., growable: false)` | A fixed-length list is growable (differs only where Dart would throw). |
+| Errors thrown by runtime helpers (`list.first` on `[]`, `reduce` on `[]`) | `BRG4014` errors, not `StateError` — an `on StateError` does not catch them. |
+| A mixin's `super` | Reaches the class's superclass (exact when the mixin sits directly above it). |
+| `int.parse` / integers | Beyond 2^53 it is refused or throws, never rounds (ADR-0050). |
+| The incremental analyzer | A class newly extended from another file is not re-extracted until its own file changes; a clean run is exact (ADR-0059). |
+
+### EXPLICITLY REFUSED (a diagnostic names it)
+
+Riverpod (`ref`, `Provider`, `ConsumerWidget`, `state`), `dio`, audio/recording/file-picker plugins, `supabase`, `Theme.extension`
+design-system context extensions, `InkWell`/gestures (`BRG3013` "gesture model"), `LayoutBuilder`/constraints (`BRG3013` "constraint model"),
+slivers, `CustomPainter`, drag-to-reorder, `GlobalKey`, records and list/map/record patterns, extension methods (`BRG1302` `extension`),
+local function declarations, `yield`, route *names* (`goNamed`), a route held in a variable, custom `RenderObjectWidget`/`InheritedWidget`
+(declared as opaque components), a named generative constructor of a stateful widget, a redirecting widget constructor, mutable statics and
+top-level variables (state shared across requests, INV-19), `on` clauses naming a type that cannot be tested at runtime.
+
+FlutterBridge is **not** a universal Flutter compiler.
