@@ -116,6 +116,9 @@ export function typeTextOf(
   // A `dart:core` collection, spelled with its element types (ADR-0051). Until M11 every `List<T>`, `Set<T>` and
   // `Map<K, V>` was `unknown`, so a signal holding one was typed by inference alone — `signal([])` is `never[]` — and a
   // parameter of one could be read but not used.
+  const record = recordTypeText(name, use, classOf);
+  if (record !== undefined) return nullable ? `${record} | null` : record;
+
   const collection = collectionTypeText(type, name, use, classOf);
   if (collection !== undefined) return nullable ? `${collection} | null` : collection;
 
@@ -134,6 +137,31 @@ export function typeTextOf(
   // Dart's nullable `int?` is `number | null`, not `number | undefined`: Dart has one absent value and it is
   // `null`, and a Dart `null` crossing into JavaScript is still `null`.
   return nullable ? `${base} | null` : base;
+}
+
+/** `(int, String)` → `{ readonly $1: number; readonly $2: string }`; `({int id})` → `{ readonly id: number }`; `undefined` for a non-record. */
+function recordTypeText(
+  name: string,
+  use?: (name: string) => string,
+  classOf?: (target: NodeId) => string | undefined,
+): string | undefined {
+  if (!name.startsWith('(') || !name.endsWith(')')) return undefined;
+  const inner = name.slice(1, -1);
+  const named = /\{(.*)\}\s*$/s.exec(inner);
+  const positionalText = named === null ? inner : inner.slice(0, named.index).replace(/,\s*$/, '');
+  const fields: string[] = [];
+  splitTopLevel(positionalText).forEach((part, i) => {
+    fields.push(`readonly $${i + 1}: ${typeTextOf({ name: part, nullable: part.endsWith('?') }, use, classOf)}`);
+  });
+  if (named !== null) {
+    for (const part of splitTopLevel(named[1] as string)) {
+      const at = part.lastIndexOf(' ');
+      const type = part.slice(0, at).trim();
+      const field = part.slice(at + 1).trim();
+      fields.push(`readonly ${field}: ${typeTextOf({ name: type, nullable: type.endsWith('?') }, use, classOf)}`);
+    }
+  }
+  return `{ ${fields.join('; ')} }`;
 }
 
 /** Splits `text` on the commas that are not inside `<>`, `()`, `{}` or `[]`. */

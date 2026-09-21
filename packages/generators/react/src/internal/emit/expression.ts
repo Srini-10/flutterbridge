@@ -49,6 +49,7 @@ import {
   unsupportedStringMember,
   type SdkDeps,
 } from './sdk_members.js';
+import { functionFailures } from './failures.js';
 import { typeTextOf } from './types.js';
 import { OWNER_LABEL, missingCapabilityOf, opaqueDetailOf, opaqueReasonSuffix } from './unsupported.js';
 
@@ -1103,6 +1104,20 @@ export function compilePattern(pattern: Node, subject: string, scope: EmitScope)
       return { test: t.test, binds: [{ name, expr: t.typeText === 'unknown' ? subject : `${subject} as ${t.typeText}` }] };
     }
     case 'object': {
+      // A record pattern (no type to test): the value must be a record with exactly these fields, read through `any`.
+      if (pattern['matchType'] === undefined) {
+        const fields = asArray(pattern['fields']);
+        const names = fields.map((f) => String(f['name']));
+        const tests = [`${scope.module.use(RUNTIME, 'dartIsRecord')}(${subject}, ${JSON.stringify(names)})`];
+        const binds: { name: string; expr: string }[] = [];
+        for (const field of fields) {
+          const inner = compilePattern(field['pattern'] as Node, `(${subject} as any).${identifierOf(String(field['name']))}`, scope);
+          if (inner === undefined) return undefined;
+          if (inner.test !== 'true') tests.push(inner.test);
+          binds.push(...inner.binds);
+        }
+        return { test: tests.join(' && '), binds };
+      }
       const t = typeTest(pattern['matchType'] as Node | undefined, subject);
       if (t === undefined) return undefined;
       const typed = t.typeText === 'unknown' ? subject : `(${subject} as ${t.typeText})`;
@@ -1131,6 +1146,47 @@ export function compilePattern(pattern: Node, subject: string, scope: EmitScope)
     case 'nullCheck': {
       const inner = compilePattern(pattern['pattern'] as Node, subject, scope);
       return inner === undefined ? undefined : { test: `${subject} !== null && ${inner.test}`, binds: inner.binds };
+    }
+    case 'list': {
+      const items = asArray(pattern['patterns']);
+      const restAt = items.findIndex((p) => p['variant'] === 'rest');
+      const fixedBefore = restAt === -1 ? items.length : restAt;
+      const fixedAfter = restAt === -1 ? 0 : items.length - restAt - 1;
+      const list = `(${subject} as any[])`;
+      const tests = [`Array.isArray(${subject})`, `${list}.length ${restAt === -1 ? '===' : '>='} ${fixedBefore + fixedAfter}`];
+      const binds: { name: string; expr: string }[] = [];
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i] as Node;
+        if (i === restAt) {
+          if (item['pattern'] !== undefined) {
+            const inner = compilePattern(item['pattern'] as Node, `${list}.slice(${fixedBefore}, ${list}.length - ${fixedAfter})`, scope);
+            if (inner === undefined) return undefined;
+            binds.push(...inner.binds);
+          }
+          continue;
+        }
+        const index = restAt !== -1 && i > restAt ? `${list}.length - ${items.length - i}` : String(i);
+        const inner = compilePattern(item, `${list}[${index}]`, scope);
+        if (inner === undefined) return undefined;
+        if (inner.test !== 'true') tests.push(inner.test);
+        binds.push(...inner.binds);
+      }
+      return { test: tests.join(' && '), binds };
+    }
+    case 'map': {
+      const map = `(${subject} as Map<any, any>)`;
+      const tests = [`${subject} instanceof Map`];
+      const binds: { name: string; expr: string }[] = [];
+      for (const entry of asArray(pattern['entries'])) {
+        const key = emitExpression(entry['key'] as Node, scope);
+        if (key === REFUSED) return undefined;
+        tests.push(`${map}.has(${key})`);
+        const inner = compilePattern(entry['pattern'] as Node, `${map}.get(${key})`, scope);
+        if (inner === undefined) return undefined;
+        if (inner.test !== 'true') tests.push(inner.test);
+        binds.push(...inner.binds);
+      }
+      return { test: tests.join(' && '), binds };
     }
     case 'nullAssert':
     case 'cast':
@@ -1540,7 +1596,9 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
             'error',
             `\`${fnName}\` is a project-defined top-level function, and this generator does not yet lower ` +
               `a \`logic.FunctionDecl\` to a module-level TypeScript function. That work belongs to ` +
-              `${OWNER_LABEL['generator']}.`,
+              `${OWNER_LABEL['generator']}.` +
+              // The reason its own body gave (the last attempt's), so the developer sees what to fix, not only that it failed.
+              (functionFailures.has(String(declaration['id'])) ? ` Its body reports: ${functionFailures.get(String(declaration['id']))}` : ''),
             idOf(node),
           );
           return REFUSED;
@@ -1667,6 +1725,18 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
       const operator = String(node['operator'] ?? '');
       const left = emitExpression(node['left'] as Node, scope);
       const right = emitExpression(node['right'] as Node, scope);
+
+      // `a == b` on two records is field-wise equality (ADR-0069).
+      if (
+        (operator === '==' || operator === '!=') &&
+        left !== REFUSED &&
+        right !== REFUSED &&
+        String(((node['left'] as Node | undefined)?.['type'] as Node | undefined)?.['name'] ?? '').startsWith('(') &&
+        String(((node['right'] as Node | undefined)?.['type'] as Node | undefined)?.['name'] ?? '').startsWith('(')
+      ) {
+        const eq = `${scope.module.use(RUNTIME, 'dartRecordEquals')}(${left}, ${right})`;
+        return operator === '==' ? eq : `(!${eq})`;
+      }
 
       // `a == b` on two `DateTime`s is "the same instant", not identity (M12, ADR-0066).
       if (
@@ -2768,6 +2838,25 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
       }
       return scope.renderWidget(node['tree'] as Node, 0, scope);
     }
+
+    // A record: an object of `$1`, `$2`, … and its named fields (ADR-0069).
+    case 'logic.RecordLit': {
+      const parts: string[] = [];
+      asArray(node['positional']).forEach((field, i) => parts.push(`$${i + 1}: ${emitExpression(field, scope)}`));
+      const named = (node['named'] ?? {}) as Record<string, Node>;
+      const order = Array.isArray(node['namedOrder']) ? (node['namedOrder'] as string[]) : Object.keys(named);
+      for (const name of order) parts.push(`${identifierOf(name)}: ${emitExpression(named[name] as Node, scope)}`);
+      return parts.length === 0 ? '{}' : `{ ${parts.join(', ')} }`;
+    }
+
+    case 'logic.PatternMatch':
+      scope.report(
+        GeneratorDiagnosticCode.UnsupportedExpression,
+        'error',
+        '`value case pattern` is lowered as the condition of an `if` statement; used as an expression it has no lowering.',
+        idOf(node),
+      );
+      return REFUSED;
 
     // `throw` in expression position (`x ?? throw E()`, `=> throw E()`, a switch arm): a call whose type is `never`.
     case 'logic.ThrowExpr':

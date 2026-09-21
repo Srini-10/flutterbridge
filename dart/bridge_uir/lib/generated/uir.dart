@@ -31,7 +31,7 @@ const String uirVersion = '1.15.0';
 /// A hash of the schema sources this library was generated from.
 ///
 /// Stamped into every emitted manifest: a UIR document always says which schema produced it.
-const String uirSchemaHash = '0b10ab32bd8ab149';
+const String uirSchemaHash = '216952f97b54d57d';
 
 /// Node kind -> the fields of that node which hold `NodeId` references.
 ///
@@ -78,7 +78,10 @@ const Map<String, List<String>> uirReferenceFields = <String, List<String>>{
   'logic.OpaqueStmt': <String>['id'],
   'bind.Param': <String>['id', 'target'],
   'logic.Pattern': <String>['id'],
+  'logic.PatternDecl': <String>['id'],
+  'logic.PatternMatch': <String>['id'],
   'logic.PropertyAccess': <String>['extensionTarget', 'id', 'target'],
+  'logic.RecordLit': <String>['id'],
   'logic.Ref': <String>['id', 'target'],
   'logic.Rethrow': <String>['id'],
   'logic.Return': <String>['id'],
@@ -916,8 +919,12 @@ sealed class Expr extends UirNode {
         return NullCheck.fromJson(json, path);
       case 'logic.OpaqueExpr':
         return OpaqueExpr.fromJson(json, path);
+      case 'logic.PatternMatch':
+        return PatternMatch.fromJson(json, path);
       case 'logic.PropertyAccess':
         return PropertyAccess.fromJson(json, path);
+      case 'logic.RecordLit':
+        return RecordLit.fromJson(json, path);
       case 'logic.Ref':
         return Ref.fromJson(json, path);
       case 'logic.Rethrow':
@@ -973,6 +980,8 @@ sealed class Stmt extends UirNode {
         return Navigate.fromJson(json, path);
       case 'logic.OpaqueStmt':
         return OpaqueStmt.fromJson(json, path);
+      case 'logic.PatternDecl':
+        return PatternDecl.fromJson(json, path);
       case 'logic.Return':
         return Return.fromJson(json, path);
       case 'logic.Switch':
@@ -1769,6 +1778,66 @@ final class PatternField {
   int get hashCode => Object.hashAll(<Object?>[
     'PatternField',
     _equality.hash(name),
+    _equality.hash(pattern),
+  ]);
+}
+
+/// One entry of a map pattern.
+@immutable
+final class PatternMapEntry {
+  /// Creates a [PatternMapEntry].
+  const PatternMapEntry({
+    required this.key,
+    required this.pattern,
+  });
+
+  /// Parses a [PatternMapEntry] from JSON, validating as it goes.
+  factory PatternMapEntry.fromJson(Object? value, [String path = 'PatternMapEntry']) {
+    final Map<String, Object?> json = _asObject(value, path);
+    return PatternMapEntry(
+      key: Expr.fromJson(_req(json, 'key', path), '$path.key'),
+      pattern: Pattern.fromJson(_req(json, 'pattern', path), '$path.pattern'),
+    );
+  }
+
+  /// The key.
+  final Expr key;
+
+  /// What its value must match.
+  final Pattern pattern;
+
+  /// Serializes to canonical JSON: keys sorted, nulls omitted.
+  Map<String, Object?> toJson() => canonicalJson(<String, Object?>{
+    'key': key.toJson(),
+    'pattern': pattern.toJson(),
+  })! as Map<String, Object?>;
+
+  /// Returns a copy with the given fields replaced. The original is never mutated.
+  ///
+  /// An omitted argument keeps its current value; `copyWith` cannot set a field back to
+  /// null. Construct a new node when that is what you mean.
+  PatternMapEntry copyWith({
+    Expr? key,
+    Pattern? pattern,
+  }) {
+    return PatternMapEntry(
+      key: key ?? this.key,
+      pattern: pattern ?? this.pattern,
+    );
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is PatternMapEntry &&
+        _equality.equals(other.key, key) &&
+        _equality.equals(other.pattern, pattern);
+  }
+
+  @override
+  int get hashCode => Object.hashAll(<Object?>[
+    'PatternMapEntry',
+    _equality.hash(key),
     _equality.hash(pattern),
   ]);
 }
@@ -7701,6 +7770,7 @@ final class Pattern extends UirNode {
     required this.variant,
     this.anchor,
     this.decl,
+    this.entries,
     this.ext,
     this.fields,
     this.matchType,
@@ -7720,6 +7790,7 @@ final class Pattern extends UirNode {
     return Pattern(
       anchor: json['anchor'] == null ? null : _asString(json['anchor'], '$path.anchor'),
       decl: json['decl'] == null ? null : VarDecl.fromJson(json['decl'], '$path.decl'),
+      entries: json['entries'] == null ? null : _asList<PatternMapEntry>(json['entries'], '$path.entries', PatternMapEntry.fromJson),
       ext: json['ext'] == null ? null : _asMap<Object?>(json['ext'], '$path.ext', (Object? v, String p) => v),
       fields: json['fields'] == null ? null : _asList<PatternField>(json['fields'], '$path.fields', PatternField.fromJson),
       id: _asString(_req(json, 'id', path), '$path.id'),
@@ -7738,6 +7809,9 @@ final class Pattern extends UirNode {
 
   /// A `bind` pattern's variable (no initializer); reads of it resolve by name.
   final VarDecl? decl;
+
+  /// A `map` pattern's entries: the key must be present and its value match.
+  final List<PatternMapEntry>? entries;
 
   /// Plugin extension data, namespaced `x-<plugin>`. Core passes round-trip it untouched (Spec §2.6).
   final Map<String, Object?>? ext;
@@ -7766,7 +7840,7 @@ final class Pattern extends UirNode {
   /// A `const`/`relational` pattern's value.
   final Expr? value;
 
-  /// `const`: `value` (a literal, an enum constant, a `const`); `wildcard`: `_`; `bind`: `var x` / `T x` — `decl` and an optional `matchType`; `object`: `Type(field: pattern, …)` — `matchType` and `fields`; `or`/`and`: `patterns`; `relational`: `operator` `value`; `nullCheck`: `x?`; `nullAssert`: `x!`; `cast`: `x as T` — `pattern` and `matchType`.
+  /// `const`: `value` (a literal, an enum constant, a `const`); `wildcard`: `_`; `bind`: `var x` / `T x` — `decl` and an optional `matchType`; `object`: `Type(field: pattern, …)` — `matchType` and `fields`; `or`/`and`: `patterns`; `relational`: `operator` `value`; `nullCheck`: `x?`; `nullAssert`: `x!`; `cast`: `x as T` — `pattern` and `matchType`. `list`: `patterns` (elements, at most one `rest`); `rest`: `...` or `...var r` with an optional `pattern`; `map`: `entries`; a record pattern is an `object` pattern with no `matchType` whose `fields` are `$1`… and names.
   final String variant;
 
   /// The node's discriminant.
@@ -7778,6 +7852,7 @@ final class Pattern extends UirNode {
   Map<String, Object?> toJson() => canonicalJson(<String, Object?>{
     'anchor': anchor,
     'decl': decl?.toJson(),
+    'entries': entries?.map((PatternMapEntry v) => v.toJson()).toList(),
     'ext': ext,
     'fields': fields?.map((PatternField v) => v.toJson()).toList(),
     'id': id,
@@ -7798,6 +7873,7 @@ final class Pattern extends UirNode {
   Pattern copyWith({
     Anchor? anchor,
     VarDecl? decl,
+    List<PatternMapEntry>? entries,
     Map<String, Object?>? ext,
     List<PatternField>? fields,
     NodeId? id,
@@ -7812,6 +7888,7 @@ final class Pattern extends UirNode {
     return Pattern(
       anchor: anchor ?? this.anchor,
       decl: decl ?? this.decl,
+      entries: entries ?? this.entries,
       ext: ext ?? this.ext,
       fields: fields ?? this.fields,
       id: id ?? this.id,
@@ -7831,6 +7908,7 @@ final class Pattern extends UirNode {
     return other is Pattern &&
         _equality.equals(other.anchor, anchor) &&
         _equality.equals(other.decl, decl) &&
+        _equality.equals(other.entries, entries) &&
         _equality.equals(other.ext, ext) &&
         _equality.equals(other.fields, fields) &&
         _equality.equals(other.id, id) &&
@@ -7848,6 +7926,7 @@ final class Pattern extends UirNode {
     'Pattern',
     _equality.hash(anchor),
     _equality.hash(decl),
+    _equality.hash(entries),
     _equality.hash(ext),
     _equality.hash(fields),
     _equality.hash(id),
@@ -7858,6 +7937,252 @@ final class Pattern extends UirNode {
     _equality.hash(span),
     _equality.hash(value),
     _equality.hash(variant),
+  ]);
+}
+
+/// A pattern variable declaration, `final (a, b) = value;` (ADR-0069): the pattern's variables are declared for the rest of the block.
+@immutable
+final class PatternDecl extends Stmt {
+  /// Creates a [PatternDecl].
+  const PatternDecl({
+    required this.id,
+    required this.pattern,
+    required this.span,
+    required this.value,
+    this.anchor,
+    this.ext,
+  });
+
+  /// Parses a [PatternDecl] from JSON, validating as it goes.
+  factory PatternDecl.fromJson(Object? value, [String path = 'PatternDecl']) {
+    final Map<String, Object?> json = _asObject(value, path);
+    final String kind = _asString(_req(json, 'kind', path), '$path.kind');
+    if (kind != 'logic.PatternDecl') {
+      throw UirParseError('$path.kind', 'expected "logic.PatternDecl", got "$kind"');
+    }
+    return PatternDecl(
+      anchor: json['anchor'] == null ? null : _asString(json['anchor'], '$path.anchor'),
+      ext: json['ext'] == null ? null : _asMap<Object?>(json['ext'], '$path.ext', (Object? v, String p) => v),
+      id: _asString(_req(json, 'id', path), '$path.id'),
+      pattern: Pattern.fromJson(_req(json, 'pattern', path), '$path.pattern'),
+      span: SourceSpan.fromJson(_req(json, 'span', path), '$path.span'),
+      value: Expr.fromJson(_req(json, 'value', path), '$path.value'),
+    );
+  }
+
+  /// The override key, when the node is addressable by a human.
+  final Anchor? anchor;
+
+  /// Plugin extension data, namespaced `x-<plugin>`. Core passes round-trip it untouched (Spec §2.6).
+  final Map<String, Object?>? ext;
+
+  /// The node's stable, content-addressed identity.
+  final NodeId id;
+
+  /// The pattern.
+  final Pattern pattern;
+
+  /// Where the node came from.
+  final SourceSpan span;
+
+  /// The value destructured.
+  final Expr value;
+
+  /// The node's discriminant.
+  @override
+  String get kind => 'logic.PatternDecl';
+
+  /// Serializes to canonical JSON: keys sorted, nulls omitted.
+  @override
+  Map<String, Object?> toJson() => canonicalJson(<String, Object?>{
+    'anchor': anchor,
+    'ext': ext,
+    'id': id,
+    'kind': 'logic.PatternDecl',
+    'pattern': pattern.toJson(),
+    'span': span.toJson(),
+    'value': value.toJson(),
+  })! as Map<String, Object?>;
+
+  /// Returns a copy with the given fields replaced. The original is never mutated.
+  ///
+  /// An omitted argument keeps its current value; `copyWith` cannot set a field back to
+  /// null. Construct a new node when that is what you mean.
+  PatternDecl copyWith({
+    Anchor? anchor,
+    Map<String, Object?>? ext,
+    NodeId? id,
+    Pattern? pattern,
+    SourceSpan? span,
+    Expr? value,
+  }) {
+    return PatternDecl(
+      anchor: anchor ?? this.anchor,
+      ext: ext ?? this.ext,
+      id: id ?? this.id,
+      pattern: pattern ?? this.pattern,
+      span: span ?? this.span,
+      value: value ?? this.value,
+    );
+  }
+
+  @override
+  R accept<R>(StmtVisitor<R> visitor) => visitor.visitPatternDecl(this);
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is PatternDecl &&
+        _equality.equals(other.anchor, anchor) &&
+        _equality.equals(other.ext, ext) &&
+        _equality.equals(other.id, id) &&
+        _equality.equals(other.pattern, pattern) &&
+        _equality.equals(other.span, span) &&
+        _equality.equals(other.value, value);
+  }
+
+  @override
+  int get hashCode => Object.hashAll(<Object?>[
+    'PatternDecl',
+    _equality.hash(anchor),
+    _equality.hash(ext),
+    _equality.hash(id),
+    _equality.hash(pattern),
+    _equality.hash(span),
+    _equality.hash(value),
+  ]);
+}
+
+/// `value case pattern when guard` as a condition (ADR-0069): true when the pattern (and guard) match; the variables it binds are in scope in the branch the condition selects.
+@immutable
+final class PatternMatch extends Expr {
+  /// Creates a [PatternMatch].
+  const PatternMatch({
+    required this.id,
+    required this.pattern,
+    required this.span,
+    required this.subject,
+    required this.type,
+    this.anchor,
+    this.ext,
+    this.guard,
+  });
+
+  /// Parses a [PatternMatch] from JSON, validating as it goes.
+  factory PatternMatch.fromJson(Object? value, [String path = 'PatternMatch']) {
+    final Map<String, Object?> json = _asObject(value, path);
+    final String kind = _asString(_req(json, 'kind', path), '$path.kind');
+    if (kind != 'logic.PatternMatch') {
+      throw UirParseError('$path.kind', 'expected "logic.PatternMatch", got "$kind"');
+    }
+    return PatternMatch(
+      anchor: json['anchor'] == null ? null : _asString(json['anchor'], '$path.anchor'),
+      ext: json['ext'] == null ? null : _asMap<Object?>(json['ext'], '$path.ext', (Object? v, String p) => v),
+      guard: json['guard'] == null ? null : Expr.fromJson(json['guard'], '$path.guard'),
+      id: _asString(_req(json, 'id', path), '$path.id'),
+      pattern: Pattern.fromJson(_req(json, 'pattern', path), '$path.pattern'),
+      span: SourceSpan.fromJson(_req(json, 'span', path), '$path.span'),
+      subject: Expr.fromJson(_req(json, 'subject', path), '$path.subject'),
+      type: TypeRef.fromJson(_req(json, 'type', path), '$path.type'),
+    );
+  }
+
+  /// The override key, when the node is addressable by a human.
+  final Anchor? anchor;
+
+  /// Plugin extension data, namespaced `x-<plugin>`. Core passes round-trip it untouched (Spec §2.6).
+  final Map<String, Object?>? ext;
+
+  /// The `when` clause.
+  final Expr? guard;
+
+  /// The node's stable, content-addressed identity.
+  final NodeId id;
+
+  /// The pattern.
+  final Pattern pattern;
+
+  /// Where the node came from.
+  final SourceSpan span;
+
+  /// The value matched.
+  final Expr subject;
+
+  /// `bool`.
+  final TypeRef type;
+
+  /// The node's discriminant.
+  @override
+  String get kind => 'logic.PatternMatch';
+
+  /// Serializes to canonical JSON: keys sorted, nulls omitted.
+  @override
+  Map<String, Object?> toJson() => canonicalJson(<String, Object?>{
+    'anchor': anchor,
+    'ext': ext,
+    'guard': guard?.toJson(),
+    'id': id,
+    'kind': 'logic.PatternMatch',
+    'pattern': pattern.toJson(),
+    'span': span.toJson(),
+    'subject': subject.toJson(),
+    'type': type.toJson(),
+  })! as Map<String, Object?>;
+
+  /// Returns a copy with the given fields replaced. The original is never mutated.
+  ///
+  /// An omitted argument keeps its current value; `copyWith` cannot set a field back to
+  /// null. Construct a new node when that is what you mean.
+  PatternMatch copyWith({
+    Anchor? anchor,
+    Map<String, Object?>? ext,
+    Expr? guard,
+    NodeId? id,
+    Pattern? pattern,
+    SourceSpan? span,
+    Expr? subject,
+    TypeRef? type,
+  }) {
+    return PatternMatch(
+      anchor: anchor ?? this.anchor,
+      ext: ext ?? this.ext,
+      guard: guard ?? this.guard,
+      id: id ?? this.id,
+      pattern: pattern ?? this.pattern,
+      span: span ?? this.span,
+      subject: subject ?? this.subject,
+      type: type ?? this.type,
+    );
+  }
+
+  @override
+  R accept<R>(ExprVisitor<R> visitor) => visitor.visitPatternMatch(this);
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is PatternMatch &&
+        _equality.equals(other.anchor, anchor) &&
+        _equality.equals(other.ext, ext) &&
+        _equality.equals(other.guard, guard) &&
+        _equality.equals(other.id, id) &&
+        _equality.equals(other.pattern, pattern) &&
+        _equality.equals(other.span, span) &&
+        _equality.equals(other.subject, subject) &&
+        _equality.equals(other.type, type);
+  }
+
+  @override
+  int get hashCode => Object.hashAll(<Object?>[
+    'PatternMatch',
+    _equality.hash(anchor),
+    _equality.hash(ext),
+    _equality.hash(guard),
+    _equality.hash(id),
+    _equality.hash(pattern),
+    _equality.hash(span),
+    _equality.hash(subject),
+    _equality.hash(type),
   ]);
 }
 
@@ -8000,6 +8325,139 @@ final class PropertyAccess extends Expr {
     _equality.hash(receiver),
     _equality.hash(span),
     _equality.hash(target),
+    _equality.hash(type),
+  ]);
+}
+
+/// A record literal, `(1, 'a')` / `(id: 1, name: 'a')` (ADR-0069). Positional fields are `$1`, `$2`, … and named ones are their names.
+@immutable
+final class RecordLit extends Expr {
+  /// Creates a [RecordLit].
+  const RecordLit({
+    required this.id,
+    required this.span,
+    required this.type,
+    this.anchor,
+    this.ext,
+    this.named,
+    this.namedOrder,
+    this.positional,
+  });
+
+  /// Parses a [RecordLit] from JSON, validating as it goes.
+  factory RecordLit.fromJson(Object? value, [String path = 'RecordLit']) {
+    final Map<String, Object?> json = _asObject(value, path);
+    final String kind = _asString(_req(json, 'kind', path), '$path.kind');
+    if (kind != 'logic.RecordLit') {
+      throw UirParseError('$path.kind', 'expected "logic.RecordLit", got "$kind"');
+    }
+    return RecordLit(
+      anchor: json['anchor'] == null ? null : _asString(json['anchor'], '$path.anchor'),
+      ext: json['ext'] == null ? null : _asMap<Object?>(json['ext'], '$path.ext', (Object? v, String p) => v),
+      id: _asString(_req(json, 'id', path), '$path.id'),
+      named: json['named'] == null ? null : _asMap<Expr>(json['named'], '$path.named', Expr.fromJson),
+      namedOrder: json['namedOrder'] == null ? null : _asList<String>(json['namedOrder'], '$path.namedOrder', _asString),
+      positional: json['positional'] == null ? null : _asList<Expr>(json['positional'], '$path.positional', Expr.fromJson),
+      span: SourceSpan.fromJson(_req(json, 'span', path), '$path.span'),
+      type: TypeRef.fromJson(_req(json, 'type', path), '$path.type'),
+    );
+  }
+
+  /// The override key, when the node is addressable by a human.
+  final Anchor? anchor;
+
+  /// Plugin extension data, namespaced `x-<plugin>`. Core passes round-trip it untouched (Spec §2.6).
+  final Map<String, Object?>? ext;
+
+  /// The node's stable, content-addressed identity.
+  final NodeId id;
+
+  /// Named fields.
+  final Map<String, Expr>? named;
+
+  /// The labels of `named` in source order.
+  final List<String>? namedOrder;
+
+  /// Positional fields, in order.
+  final List<Expr>? positional;
+
+  /// Where the node came from.
+  final SourceSpan span;
+
+  /// Resolved record type.
+  final TypeRef type;
+
+  /// The node's discriminant.
+  @override
+  String get kind => 'logic.RecordLit';
+
+  /// Serializes to canonical JSON: keys sorted, nulls omitted.
+  @override
+  Map<String, Object?> toJson() => canonicalJson(<String, Object?>{
+    'anchor': anchor,
+    'ext': ext,
+    'id': id,
+    'kind': 'logic.RecordLit',
+    'named': named?.map((String k, Expr v) => MapEntry<String, Object?>(k, v.toJson())),
+    'namedOrder': namedOrder,
+    'positional': positional?.map((Expr v) => v.toJson()).toList(),
+    'span': span.toJson(),
+    'type': type.toJson(),
+  })! as Map<String, Object?>;
+
+  /// Returns a copy with the given fields replaced. The original is never mutated.
+  ///
+  /// An omitted argument keeps its current value; `copyWith` cannot set a field back to
+  /// null. Construct a new node when that is what you mean.
+  RecordLit copyWith({
+    Anchor? anchor,
+    Map<String, Object?>? ext,
+    NodeId? id,
+    Map<String, Expr>? named,
+    List<String>? namedOrder,
+    List<Expr>? positional,
+    SourceSpan? span,
+    TypeRef? type,
+  }) {
+    return RecordLit(
+      anchor: anchor ?? this.anchor,
+      ext: ext ?? this.ext,
+      id: id ?? this.id,
+      named: named ?? this.named,
+      namedOrder: namedOrder ?? this.namedOrder,
+      positional: positional ?? this.positional,
+      span: span ?? this.span,
+      type: type ?? this.type,
+    );
+  }
+
+  @override
+  R accept<R>(ExprVisitor<R> visitor) => visitor.visitRecordLit(this);
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is RecordLit &&
+        _equality.equals(other.anchor, anchor) &&
+        _equality.equals(other.ext, ext) &&
+        _equality.equals(other.id, id) &&
+        _equality.equals(other.named, named) &&
+        _equality.equals(other.namedOrder, namedOrder) &&
+        _equality.equals(other.positional, positional) &&
+        _equality.equals(other.span, span) &&
+        _equality.equals(other.type, type);
+  }
+
+  @override
+  int get hashCode => Object.hashAll(<Object?>[
+    'RecordLit',
+    _equality.hash(anchor),
+    _equality.hash(ext),
+    _equality.hash(id),
+    _equality.hash(named),
+    _equality.hash(namedOrder),
+    _equality.hash(positional),
+    _equality.hash(span),
     _equality.hash(type),
   ]);
 }
@@ -12328,8 +12786,14 @@ abstract interface class ExprVisitor<R> {
   /// Visits a [OpaqueExpr].
   R visitOpaqueExpr(OpaqueExpr node);
 
+  /// Visits a [PatternMatch].
+  R visitPatternMatch(PatternMatch node);
+
   /// Visits a [PropertyAccess].
   R visitPropertyAccess(PropertyAccess node);
+
+  /// Visits a [RecordLit].
+  R visitRecordLit(RecordLit node);
 
   /// Visits a [Ref].
   R visitRef(Ref node);
@@ -12390,6 +12854,9 @@ abstract interface class StmtVisitor<R> {
 
   /// Visits a [OpaqueStmt].
   R visitOpaqueStmt(OpaqueStmt node);
+
+  /// Visits a [PatternDecl].
+  R visitPatternDecl(PatternDecl node);
 
   /// Visits a [Return].
   R visitReturn(Return node);
@@ -12531,8 +12998,14 @@ UirNode uirNodeFromJson(Object? value, [String path = 'UirNode']) {
       return ParamBinding.fromJson(json, path);
     case 'logic.Pattern':
       return Pattern.fromJson(json, path);
+    case 'logic.PatternDecl':
+      return PatternDecl.fromJson(json, path);
+    case 'logic.PatternMatch':
+      return PatternMatch.fromJson(json, path);
     case 'logic.PropertyAccess':
       return PropertyAccess.fromJson(json, path);
+    case 'logic.RecordLit':
+      return RecordLit.fromJson(json, path);
     case 'logic.Ref':
       return Ref.fromJson(json, path);
     case 'logic.Rethrow':

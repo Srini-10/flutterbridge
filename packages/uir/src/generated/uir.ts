@@ -14,7 +14,7 @@ import { createHash } from 'node:crypto';
 export const UIR_VERSION = '1.15.0' as const;
 
 /** A hash of the schema sources this module was generated from. */
-export const UIR_SCHEMA_HASH = '0b10ab32bd8ab149' as const;
+export const UIR_SCHEMA_HASH = '216952f97b54d57d' as const;
 
 /** Node kind -> the fields of that node which hold `NodeId` references. */
 export const UIR_REFERENCE_FIELDS: Readonly<Record<string, readonly string[]>> = {
@@ -58,7 +58,10 @@ export const UIR_REFERENCE_FIELDS: Readonly<Record<string, readonly string[]>> =
   'logic.OpaqueStmt': ['id'],
   'bind.Param': ['id', 'target'],
   'logic.Pattern': ['id'],
+  'logic.PatternDecl': ['id'],
+  'logic.PatternMatch': ['id'],
   'logic.PropertyAccess': ['extensionTarget', 'id', 'target'],
+  'logic.RecordLit': ['id'],
   'logic.Ref': ['id', 'target'],
   'logic.Rethrow': ['id'],
   'logic.Return': ['id'],
@@ -866,6 +869,14 @@ export interface ParamDecl {
 export interface PatternField {
   /// The getter read.
   readonly name: string;
+  /// What its value must match.
+  readonly pattern: Pattern;
+}
+
+/// One entry of a map pattern.
+export interface PatternMapEntry {
+  /// The key.
+  readonly key: Expr;
   /// What its value must match.
   readonly pattern: Pattern;
 }
@@ -1884,6 +1895,8 @@ export interface Pattern {
   readonly anchor?: Anchor;
   /// A `bind` pattern's variable (no initializer); reads of it resolve by name.
   readonly decl?: VarDecl;
+  /// A `map` pattern's entries: the key must be present and its value match.
+  readonly entries?: readonly PatternMapEntry[];
   /// Plugin extension data, namespaced `x-<plugin>`. Core passes round-trip it untouched (Spec §2.6).
   readonly ext?: Readonly<Record<string, unknown>>;
   /// An `object` pattern's field patterns.
@@ -1904,8 +1917,48 @@ export interface Pattern {
   readonly span: SourceSpan;
   /// A `const`/`relational` pattern's value.
   readonly value?: Expr;
-  /// `const`: `value` (a literal, an enum constant, a `const`); `wildcard`: `_`; `bind`: `var x` / `T x` — `decl` and an optional `matchType`; `object`: `Type(field: pattern, …)` — `matchType` and `fields`; `or`/`and`: `patterns`; `relational`: `operator` `value`; `nullCheck`: `x?`; `nullAssert`: `x!`; `cast`: `x as T` — `pattern` and `matchType`.
+  /// `const`: `value` (a literal, an enum constant, a `const`); `wildcard`: `_`; `bind`: `var x` / `T x` — `decl` and an optional `matchType`; `object`: `Type(field: pattern, …)` — `matchType` and `fields`; `or`/`and`: `patterns`; `relational`: `operator` `value`; `nullCheck`: `x?`; `nullAssert`: `x!`; `cast`: `x as T` — `pattern` and `matchType`. `list`: `patterns` (elements, at most one `rest`); `rest`: `...` or `...var r` with an optional `pattern`; `map`: `entries`; a record pattern is an `object` pattern with no `matchType` whose `fields` are `$1`… and names.
   readonly variant: string;
+}
+
+/// A pattern variable declaration, `final (a, b) = value;` (ADR-0069): the pattern's variables are declared for the rest of the block.
+export interface PatternDecl {
+  /// The override key, when the node is addressable by a human.
+  readonly anchor?: Anchor;
+  /// Plugin extension data, namespaced `x-<plugin>`. Core passes round-trip it untouched (Spec §2.6).
+  readonly ext?: Readonly<Record<string, unknown>>;
+  /// The node's stable, content-addressed identity.
+  readonly id: NodeId;
+  /// Discriminant.
+  readonly kind: 'logic.PatternDecl';
+  /// The pattern.
+  readonly pattern: Pattern;
+  /// Where the node came from.
+  readonly span: SourceSpan;
+  /// The value destructured.
+  readonly value: Expr;
+}
+
+/// `value case pattern when guard` as a condition (ADR-0069): true when the pattern (and guard) match; the variables it binds are in scope in the branch the condition selects.
+export interface PatternMatch {
+  /// The override key, when the node is addressable by a human.
+  readonly anchor?: Anchor;
+  /// Plugin extension data, namespaced `x-<plugin>`. Core passes round-trip it untouched (Spec §2.6).
+  readonly ext?: Readonly<Record<string, unknown>>;
+  /// The `when` clause.
+  readonly guard?: Expr;
+  /// The node's stable, content-addressed identity.
+  readonly id: NodeId;
+  /// Discriminant.
+  readonly kind: 'logic.PatternMatch';
+  /// The pattern.
+  readonly pattern: Pattern;
+  /// Where the node came from.
+  readonly span: SourceSpan;
+  /// The value matched.
+  readonly subject: Expr;
+  /// `bool`.
+  readonly type: TypeRef;
 }
 
 /// Reading a property of a value.
@@ -1929,6 +1982,28 @@ export interface PropertyAccess {
   /// The store member (sig.Signal/sig.Derived) this resolves to, when the receiver's resolved type is a declared store (ADR-27). Absent for an ordinary property access.
   readonly target?: NodeId;
   /// Resolved type.
+  readonly type: TypeRef;
+}
+
+/// A record literal, `(1, 'a')` / `(id: 1, name: 'a')` (ADR-0069). Positional fields are `$1`, `$2`, … and named ones are their names.
+export interface RecordLit {
+  /// The override key, when the node is addressable by a human.
+  readonly anchor?: Anchor;
+  /// Plugin extension data, namespaced `x-<plugin>`. Core passes round-trip it untouched (Spec §2.6).
+  readonly ext?: Readonly<Record<string, unknown>>;
+  /// The node's stable, content-addressed identity.
+  readonly id: NodeId;
+  /// Discriminant.
+  readonly kind: 'logic.RecordLit';
+  /// Named fields.
+  readonly named?: Readonly<Record<string, Expr>>;
+  /// The labels of `named` in source order.
+  readonly namedOrder?: readonly string[];
+  /// Positional fields, in order.
+  readonly positional?: readonly Expr[];
+  /// Where the node came from.
+  readonly span: SourceSpan;
+  /// Resolved record type.
   readonly type: TypeRef;
 }
 
@@ -2688,7 +2763,9 @@ export type Expr =
   | New
   | NullCheck
   | OpaqueExpr
+  | PatternMatch
   | PropertyAccess
+  | RecordLit
   | Ref
   | Rethrow
   | Sequence
@@ -2711,6 +2788,7 @@ export type Stmt =
   | If
   | Navigate
   | OpaqueStmt
+  | PatternDecl
   | Return
   | Switch
   | Throw
@@ -2965,6 +3043,30 @@ export function equalsPatternField(a: PatternField, b: PatternField): boolean {
 
 /** Returns a copy of [node] with [patch] applied. The original is never mutated. */
 export function copyWithPatternField(node: PatternField, patch: Partial<PatternField>): PatternField {
+  return { ...node, ...patch };
+}
+
+/** Parses a {@link PatternMapEntry}, validating as it goes. Throws {@link UirParseError} on bad input. */
+export function parsePatternMapEntry(value: unknown, path = 'PatternMapEntry'): PatternMapEntry {
+  const o = asObject(value, path);
+  return {
+    key: parseExpr(req(o, 'key', path), `${path}.key`),
+    pattern: parsePattern(req(o, 'pattern', path), `${path}.pattern`),
+  };
+}
+
+/** Serializes a {@link PatternMapEntry} to canonical JSON. */
+export function serializePatternMapEntry(node: PatternMapEntry): Record<string, unknown> {
+  return canonicalJson(node) as Record<string, unknown>;
+}
+
+/** Structural equality. List order is significant: UIR children are ordered (Spec §2.3). */
+export function equalsPatternMapEntry(a: PatternMapEntry, b: PatternMapEntry): boolean {
+  return deepEquals(canonicalJson(a), canonicalJson(b));
+}
+
+/** Returns a copy of [node] with [patch] applied. The original is never mutated. */
+export function copyWithPatternMapEntry(node: PatternMapEntry, patch: Partial<PatternMapEntry>): PatternMapEntry {
   return { ...node, ...patch };
 }
 
@@ -4535,6 +4637,7 @@ export function parsePattern(value: unknown, path = 'Pattern'): Pattern {
   return {
     ...(own(o, 'anchor') === undefined || own(o, 'anchor') === null ? {} : { anchor: parseAnchor(own(o, 'anchor'), `${path}.anchor`) }),
     ...(own(o, 'decl') === undefined || own(o, 'decl') === null ? {} : { decl: parseVarDecl(own(o, 'decl'), `${path}.decl`) }),
+    ...(own(o, 'entries') === undefined || own(o, 'entries') === null ? {} : { entries: asList(own(o, 'entries'), `${path}.entries`, (v, p) => parsePatternMapEntry(v, p)) }),
     ...(own(o, 'ext') === undefined || own(o, 'ext') === null ? {} : { ext: asMap(own(o, 'ext'), `${path}.ext`, (v) => v) }),
     ...(own(o, 'fields') === undefined || own(o, 'fields') === null ? {} : { fields: asList(own(o, 'fields'), `${path}.fields`, (v, p) => parsePatternField(v, p)) }),
     id: parseNodeId(req(o, 'id', path), `${path}.id`),
@@ -4561,6 +4664,72 @@ export function equalsPattern(a: Pattern, b: Pattern): boolean {
 
 /** Returns a copy of [node] with [patch] applied. The original is never mutated. */
 export function copyWithPattern(node: Pattern, patch: Partial<Pattern>): Pattern {
+  return { ...node, ...patch };
+}
+
+/** Parses a {@link PatternDecl}, validating as it goes. Throws {@link UirParseError} on bad input. */
+export function parsePatternDecl(value: unknown, path = 'PatternDecl'): PatternDecl {
+  const o = asObject(value, path);
+  const kind = asString(req(o, 'kind', path), `${path}.kind`);
+  if (kind !== 'logic.PatternDecl') throw new UirParseError(`${path}.kind`, `expected "logic.PatternDecl", got "${kind}"`);
+
+  return {
+    ...(own(o, 'anchor') === undefined || own(o, 'anchor') === null ? {} : { anchor: parseAnchor(own(o, 'anchor'), `${path}.anchor`) }),
+    ...(own(o, 'ext') === undefined || own(o, 'ext') === null ? {} : { ext: asMap(own(o, 'ext'), `${path}.ext`, (v) => v) }),
+    id: parseNodeId(req(o, 'id', path), `${path}.id`),
+    kind: 'logic.PatternDecl',
+    pattern: parsePattern(req(o, 'pattern', path), `${path}.pattern`),
+    span: parseSourceSpan(req(o, 'span', path), `${path}.span`),
+    value: parseExpr(req(o, 'value', path), `${path}.value`),
+  };
+}
+
+/** Serializes a {@link PatternDecl} to canonical JSON. */
+export function serializePatternDecl(node: PatternDecl): Record<string, unknown> {
+  return canonicalJson(node) as Record<string, unknown>;
+}
+
+/** Structural equality. List order is significant: UIR children are ordered (Spec §2.3). */
+export function equalsPatternDecl(a: PatternDecl, b: PatternDecl): boolean {
+  return deepEquals(canonicalJson(a), canonicalJson(b));
+}
+
+/** Returns a copy of [node] with [patch] applied. The original is never mutated. */
+export function copyWithPatternDecl(node: PatternDecl, patch: Partial<PatternDecl>): PatternDecl {
+  return { ...node, ...patch };
+}
+
+/** Parses a {@link PatternMatch}, validating as it goes. Throws {@link UirParseError} on bad input. */
+export function parsePatternMatch(value: unknown, path = 'PatternMatch'): PatternMatch {
+  const o = asObject(value, path);
+  const kind = asString(req(o, 'kind', path), `${path}.kind`);
+  if (kind !== 'logic.PatternMatch') throw new UirParseError(`${path}.kind`, `expected "logic.PatternMatch", got "${kind}"`);
+
+  return {
+    ...(own(o, 'anchor') === undefined || own(o, 'anchor') === null ? {} : { anchor: parseAnchor(own(o, 'anchor'), `${path}.anchor`) }),
+    ...(own(o, 'ext') === undefined || own(o, 'ext') === null ? {} : { ext: asMap(own(o, 'ext'), `${path}.ext`, (v) => v) }),
+    ...(own(o, 'guard') === undefined || own(o, 'guard') === null ? {} : { guard: parseExpr(own(o, 'guard'), `${path}.guard`) }),
+    id: parseNodeId(req(o, 'id', path), `${path}.id`),
+    kind: 'logic.PatternMatch',
+    pattern: parsePattern(req(o, 'pattern', path), `${path}.pattern`),
+    span: parseSourceSpan(req(o, 'span', path), `${path}.span`),
+    subject: parseExpr(req(o, 'subject', path), `${path}.subject`),
+    type: parseTypeRef(req(o, 'type', path), `${path}.type`),
+  };
+}
+
+/** Serializes a {@link PatternMatch} to canonical JSON. */
+export function serializePatternMatch(node: PatternMatch): Record<string, unknown> {
+  return canonicalJson(node) as Record<string, unknown>;
+}
+
+/** Structural equality. List order is significant: UIR children are ordered (Spec §2.3). */
+export function equalsPatternMatch(a: PatternMatch, b: PatternMatch): boolean {
+  return deepEquals(canonicalJson(a), canonicalJson(b));
+}
+
+/** Returns a copy of [node] with [patch] applied. The original is never mutated. */
+export function copyWithPatternMatch(node: PatternMatch, patch: Partial<PatternMatch>): PatternMatch {
   return { ...node, ...patch };
 }
 
@@ -4596,6 +4765,40 @@ export function equalsPropertyAccess(a: PropertyAccess, b: PropertyAccess): bool
 
 /** Returns a copy of [node] with [patch] applied. The original is never mutated. */
 export function copyWithPropertyAccess(node: PropertyAccess, patch: Partial<PropertyAccess>): PropertyAccess {
+  return { ...node, ...patch };
+}
+
+/** Parses a {@link RecordLit}, validating as it goes. Throws {@link UirParseError} on bad input. */
+export function parseRecordLit(value: unknown, path = 'RecordLit'): RecordLit {
+  const o = asObject(value, path);
+  const kind = asString(req(o, 'kind', path), `${path}.kind`);
+  if (kind !== 'logic.RecordLit') throw new UirParseError(`${path}.kind`, `expected "logic.RecordLit", got "${kind}"`);
+
+  return {
+    ...(own(o, 'anchor') === undefined || own(o, 'anchor') === null ? {} : { anchor: parseAnchor(own(o, 'anchor'), `${path}.anchor`) }),
+    ...(own(o, 'ext') === undefined || own(o, 'ext') === null ? {} : { ext: asMap(own(o, 'ext'), `${path}.ext`, (v) => v) }),
+    id: parseNodeId(req(o, 'id', path), `${path}.id`),
+    kind: 'logic.RecordLit',
+    ...(own(o, 'named') === undefined || own(o, 'named') === null ? {} : { named: asMap(own(o, 'named'), `${path}.named`, (v, p) => parseExpr(v, p)) }),
+    ...(own(o, 'namedOrder') === undefined || own(o, 'namedOrder') === null ? {} : { namedOrder: asList(own(o, 'namedOrder'), `${path}.namedOrder`, (v, p) => asString(v, p)) }),
+    ...(own(o, 'positional') === undefined || own(o, 'positional') === null ? {} : { positional: asList(own(o, 'positional'), `${path}.positional`, (v, p) => parseExpr(v, p)) }),
+    span: parseSourceSpan(req(o, 'span', path), `${path}.span`),
+    type: parseTypeRef(req(o, 'type', path), `${path}.type`),
+  };
+}
+
+/** Serializes a {@link RecordLit} to canonical JSON. */
+export function serializeRecordLit(node: RecordLit): Record<string, unknown> {
+  return canonicalJson(node) as Record<string, unknown>;
+}
+
+/** Structural equality. List order is significant: UIR children are ordered (Spec §2.3). */
+export function equalsRecordLit(a: RecordLit, b: RecordLit): boolean {
+  return deepEquals(canonicalJson(a), canonicalJson(b));
+}
+
+/** Returns a copy of [node] with [patch] applied. The original is never mutated. */
+export function copyWithRecordLit(node: RecordLit, patch: Partial<RecordLit>): RecordLit {
   return { ...node, ...patch };
 }
 
@@ -5873,8 +6076,12 @@ export function parseExpr(value: unknown, path = 'Expr'): Expr {
       return parseNullCheck(o, path);
     case 'logic.OpaqueExpr':
       return parseOpaqueExpr(o, path);
+    case 'logic.PatternMatch':
+      return parsePatternMatch(o, path);
     case 'logic.PropertyAccess':
       return parsePropertyAccess(o, path);
+    case 'logic.RecordLit':
+      return parseRecordLit(o, path);
     case 'logic.Ref':
       return parseRef(o, path);
     case 'logic.Rethrow':
@@ -5925,7 +6132,9 @@ export interface ExprVisitor<R> {
   visitNew(node: New): R;
   visitNullCheck(node: NullCheck): R;
   visitOpaqueExpr(node: OpaqueExpr): R;
+  visitPatternMatch(node: PatternMatch): R;
   visitPropertyAccess(node: PropertyAccess): R;
+  visitRecordLit(node: RecordLit): R;
   visitRef(node: Ref): R;
   visitRethrow(node: Rethrow): R;
   visitSequence(node: Sequence): R;
@@ -5977,8 +6186,12 @@ export function acceptExpr<R>(node: Expr, visitor: ExprVisitor<R>): R {
       return visitor.visitNullCheck(node as NullCheck);
     case 'logic.OpaqueExpr':
       return visitor.visitOpaqueExpr(node as OpaqueExpr);
+    case 'logic.PatternMatch':
+      return visitor.visitPatternMatch(node as PatternMatch);
     case 'logic.PropertyAccess':
       return visitor.visitPropertyAccess(node as PropertyAccess);
+    case 'logic.RecordLit':
+      return visitor.visitRecordLit(node as RecordLit);
     case 'logic.Ref':
       return visitor.visitRef(node as Ref);
     case 'logic.Rethrow':
@@ -6027,6 +6240,8 @@ export function parseStmt(value: unknown, path = 'Stmt'): Stmt {
       return parseNavigate(o, path);
     case 'logic.OpaqueStmt':
       return parseOpaqueStmt(o, path);
+    case 'logic.PatternDecl':
+      return parsePatternDecl(o, path);
     case 'logic.Return':
       return parseReturn(o, path);
     case 'logic.Switch':
@@ -6059,6 +6274,7 @@ export interface StmtVisitor<R> {
   visitIf(node: If): R;
   visitNavigate(node: Navigate): R;
   visitOpaqueStmt(node: OpaqueStmt): R;
+  visitPatternDecl(node: PatternDecl): R;
   visitReturn(node: Return): R;
   visitSwitch(node: Switch): R;
   visitThrow(node: Throw): R;
@@ -6086,6 +6302,8 @@ export function acceptStmt<R>(node: Stmt, visitor: StmtVisitor<R>): R {
       return visitor.visitNavigate(node as Navigate);
     case 'logic.OpaqueStmt':
       return visitor.visitOpaqueStmt(node as OpaqueStmt);
+    case 'logic.PatternDecl':
+      return visitor.visitPatternDecl(node as PatternDecl);
     case 'logic.Return':
       return visitor.visitReturn(node as Return);
     case 'logic.Switch':
@@ -6180,7 +6398,7 @@ export function acceptUiNode<R>(node: UiNode, visitor: UiNodeVisitor<R>): R {
 }
 
 /** Any UIR node. */
-export type AnyUirNode = Action | Assign | Await | Binary | Block | Break | Call | Cast | ClassDecl | Component | Conditional | ConstBinding | Continue | Derived | Effect | Endpoint | EnumDecl | ExprBinding | ExprStmt | FieldDecl | For | ForElement | FunctionDecl | If | IfElement | Intrinsic | Lambda | Let | ListLit | Lit | MapLit | MethodCall | Navigate | New | NullCheck | OpaqueDecl | OpaqueExpr | OpaqueStmt | ParamBinding | Pattern | PropertyAccess | Ref | Rethrow | Return | Route | RouteTransition | Sequence | Signal | SignalBinding | SourceFile | Spread | Store | StoreInstance | StringInterp | Switch | SwitchExpr | Throw | ThrowExpr | Token | TryCatch | TypeAliasDecl | TypeCheck | UiAsync | UiCond | UiElement | UiList | UiNodes | UiOpaque | UiOverrideRef | UiSlotRef | UiText | Unary | VarDecl | While | WidgetExpr;
+export type AnyUirNode = Action | Assign | Await | Binary | Block | Break | Call | Cast | ClassDecl | Component | Conditional | ConstBinding | Continue | Derived | Effect | Endpoint | EnumDecl | ExprBinding | ExprStmt | FieldDecl | For | ForElement | FunctionDecl | If | IfElement | Intrinsic | Lambda | Let | ListLit | Lit | MapLit | MethodCall | Navigate | New | NullCheck | OpaqueDecl | OpaqueExpr | OpaqueStmt | ParamBinding | Pattern | PatternDecl | PatternMatch | PropertyAccess | RecordLit | Ref | Rethrow | Return | Route | RouteTransition | Sequence | Signal | SignalBinding | SourceFile | Spread | Store | StoreInstance | StringInterp | Switch | SwitchExpr | Throw | ThrowExpr | Token | TryCatch | TypeAliasDecl | TypeCheck | UiAsync | UiCond | UiElement | UiList | UiNodes | UiOpaque | UiOverrideRef | UiSlotRef | UiText | Unary | VarDecl | While | WidgetExpr;
 
 /** Parses any UIR node, dispatching on `kind` across every node kind in the schema. */
 export function parseUirNode(value: unknown, path = 'UirNode'): AnyUirNode {
@@ -6267,8 +6485,14 @@ export function parseUirNode(value: unknown, path = 'UirNode'): AnyUirNode {
       return parseParamBinding(o, path);
     case 'logic.Pattern':
       return parsePattern(o, path);
+    case 'logic.PatternDecl':
+      return parsePatternDecl(o, path);
+    case 'logic.PatternMatch':
+      return parsePatternMatch(o, path);
     case 'logic.PropertyAccess':
       return parsePropertyAccess(o, path);
+    case 'logic.RecordLit':
+      return parseRecordLit(o, path);
     case 'logic.Ref':
       return parseRef(o, path);
     case 'logic.Rethrow':

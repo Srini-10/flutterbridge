@@ -18,6 +18,7 @@ import { emitExpression, isEligibleStructuralField, localBindingsIn, type EmitSc
 import { fileNameOf, identifierOf, ModuleBuilder } from './module.js';
 import { useRuntime, useRuntimeType } from './runtime.js';
 import { emitStatements } from './statement.js';
+import { functionFailures } from './failures.js';
 import { paramListOf, typeParamScope, typeTextOf } from './types.js';
 
 type Node = Record<string, unknown>;
@@ -497,6 +498,7 @@ export function emitFunctionModules(
   const reachable = reachableFunctions(nodes, scope, generalAll, reachableGeneral);
   // Filled below, before any function body is emitted: a `logic.New` of a general class needs its name at expression time.
   const generalInfo = new Map<NodeId, { readonly path: string; readonly module: string; readonly name: string }>();
+  functionFailures.clear();
   const staticFields = staticFieldsOf(nodes);
   // Computed here, like `projectClassGetterIdsLocal`: the root scope's copy is filled only after this function returns, and
   // a function or constant emitted from WITHIN it must already tell a static field from an unresolved name.
@@ -1022,8 +1024,10 @@ export function emitFunctionModules(
         localName: (localId) => locals.get(localId) ?? scope.localName(localId),
         ...(fn['extensionOn'] === undefined ? {} : { thisAs: '$this' }),
         report: (code, severity, message, nodeId) => {
-          if (severity === 'error') hadError = true;
-          else scope.report(code, severity, message, nodeId);
+          if (severity === 'error') {
+            hadError = true;
+            functionFailures.set(id, message);
+          } else scope.report(code, severity, message, nodeId);
         },
       };
       // An explicit return type, but only where TypeScript cannot otherwise prove one: a body that is

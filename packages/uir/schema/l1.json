@@ -1962,6 +1962,12 @@
           "$ref": "#/$defs/SwitchExpr"
         },
         {
+          "$ref": "#/$defs/PatternMatch"
+        },
+        {
+          "$ref": "#/$defs/RecordLit"
+        },
+        {
           "$ref": "#/$defs/OpaqueExpr"
         }
       ]
@@ -2008,6 +2014,9 @@
         },
         {
           "$ref": "#/$defs/Continue"
+        },
+        {
+          "$ref": "#/$defs/PatternDecl"
         },
         {
           "$ref": "#/$defs/OpaqueStmt"
@@ -2563,9 +2572,12 @@
                 "relational",
                 "nullCheck",
                 "nullAssert",
-                "cast"
+                "cast",
+                "list",
+                "map",
+                "rest"
               ],
-              "description": "`const`: `value` (a literal, an enum constant, a `const`); `wildcard`: `_`; `bind`: `var x` / `T x` — `decl` and an optional `matchType`; `object`: `Type(field: pattern, …)` — `matchType` and `fields`; `or`/`and`: `patterns`; `relational`: `operator` `value`; `nullCheck`: `x?`; `nullAssert`: `x!`; `cast`: `x as T` — `pattern` and `matchType`."
+              "description": "`const`: `value` (a literal, an enum constant, a `const`); `wildcard`: `_`; `bind`: `var x` / `T x` — `decl` and an optional `matchType`; `object`: `Type(field: pattern, …)` — `matchType` and `fields`; `or`/`and`: `patterns`; `relational`: `operator` `value`; `nullCheck`: `x?`; `nullAssert`: `x!`; `cast`: `x as T` — `pattern` and `matchType`. `list`: `patterns` (elements, at most one `rest`); `rest`: `...` or `...var r` with an optional `pattern`; `map`: `entries`; a record pattern is an `object` pattern with no `matchType` whose `fields` are `$1`… and names."
             },
             "value": {
               "$ref": "l1.json#/$defs/Expr",
@@ -2600,6 +2612,13 @@
             "pattern": {
               "$ref": "#/$defs/Pattern",
               "description": "The inner pattern of a `nullCheck`/`nullAssert`/`cast`."
+            },
+            "entries": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/PatternMapEntry"
+              },
+              "description": "A `map` pattern's entries: the key must be present and its value match."
             }
           }
         }
@@ -2681,6 +2700,151 @@
         "name": {
           "type": "string",
           "description": "The getter read."
+        },
+        "pattern": {
+          "$ref": "#/$defs/Pattern",
+          "description": "What its value must match."
+        }
+      }
+    },
+    "RecordLit": {
+      "description": "A record literal, `(1, 'a')` / `(id: 1, name: 'a')` (ADR-0069). Positional fields are `$1`, `$2`, … and named ones are their names.",
+      "x-uir-kind": "logic.RecordLit",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "type"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "logic.RecordLit",
+              "description": "Discriminant."
+            },
+            "positional": {
+              "type": "array",
+              "items": {
+                "$ref": "l1.json#/$defs/Expr",
+                "description": "A positional field."
+              },
+              "description": "Positional fields, in order."
+            },
+            "named": {
+              "type": "object",
+              "additionalProperties": {
+                "$ref": "l1.json#/$defs/Expr",
+                "description": "A named field."
+              },
+              "description": "Named fields."
+            },
+            "namedOrder": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "The labels of `named` in source order."
+            },
+            "type": {
+              "$ref": "shared.json#/$defs/TypeRef",
+              "description": "Resolved record type."
+            }
+          }
+        }
+      ]
+    },
+    "PatternMatch": {
+      "description": "`value case pattern when guard` as a condition (ADR-0069): true when the pattern (and guard) match; the variables it binds are in scope in the branch the condition selects.",
+      "x-uir-kind": "logic.PatternMatch",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "subject",
+            "pattern",
+            "type"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "logic.PatternMatch",
+              "description": "Discriminant."
+            },
+            "subject": {
+              "$ref": "l1.json#/$defs/Expr",
+              "description": "The value matched."
+            },
+            "pattern": {
+              "$ref": "#/$defs/Pattern",
+              "description": "The pattern."
+            },
+            "guard": {
+              "$ref": "l1.json#/$defs/Expr",
+              "description": "The `when` clause."
+            },
+            "type": {
+              "$ref": "shared.json#/$defs/TypeRef",
+              "description": "`bool`."
+            }
+          }
+        }
+      ]
+    },
+    "PatternDecl": {
+      "description": "A pattern variable declaration, `final (a, b) = value;` (ADR-0069): the pattern's variables are declared for the rest of the block.",
+      "x-uir-kind": "logic.PatternDecl",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "pattern",
+            "value"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "logic.PatternDecl",
+              "description": "Discriminant."
+            },
+            "pattern": {
+              "$ref": "#/$defs/Pattern",
+              "description": "The pattern."
+            },
+            "value": {
+              "$ref": "l1.json#/$defs/Expr",
+              "description": "The value destructured."
+            }
+          }
+        }
+      ]
+    },
+    "PatternMapEntry": {
+      "type": "object",
+      "description": "One entry of a map pattern.",
+      "additionalProperties": false,
+      "required": [
+        "key",
+        "pattern"
+      ],
+      "properties": {
+        "key": {
+          "$ref": "l1.json#/$defs/Expr",
+          "description": "The key."
         },
         "pattern": {
           "$ref": "#/$defs/Pattern",

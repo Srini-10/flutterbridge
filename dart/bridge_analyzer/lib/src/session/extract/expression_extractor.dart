@@ -587,6 +587,30 @@ final class ExpressionExtractor {
       case SwitchExpression():
         return _switchExpression(node, scope);
 
+      // `(1, 'a')` / `(id: 1)` (ADR-0069).
+      case RecordLiteral():
+        final List<RawValue> positional = <RawValue>[];
+        final Map<String, RawValue> named = <String, RawValue>{};
+        final List<RawValue> order = <RawValue>[];
+        for (final RecordLiteralField field in node.fields) {
+          if (field is RecordLiteralNamedField) {
+            named[field.name.lexeme] = RawChild(extract(field.fieldExpression, scope));
+            order.add(RawLiteral(field.name.lexeme));
+          } else {
+            positional.add(RawChild(extract(field.fieldExpression, scope)));
+          }
+        }
+        return RawNode(
+          kind: 'logic.RecordLit',
+          span: out.span(node),
+          fields: <String, RawValue>{
+            if (positional.isNotEmpty) 'positional': RawList(positional),
+            if (named.isNotEmpty) 'named': RawMap(named),
+            if (order.isNotEmpty) 'namedOrder': RawList(order),
+            'type': out.typeRef(node.staticType, at: node),
+          },
+        );
+
       case Expression():
         return _unsupported(node, scope);
     }
@@ -696,6 +720,52 @@ final class ExpressionExtractor {
       case NullAssertPattern():
         final RawNode? inner = patternOf(pattern.pattern, scope, binds);
         return inner == null ? null : make('nullAssert', <String, RawValue>{'pattern': RawChild(inner)});
+      case RecordPattern():
+        final List<RawValue> fields = <RawValue>[];
+        int index = 0;
+        for (final PatternField field in pattern.fields) {
+          final String? name = field.name == null ? '\$${++index}' : field.effectiveName;
+          final RawNode? inner = patternOf(field.pattern, scope, binds);
+          if (name == null || inner == null) {
+            return null;
+          }
+          fields.add(RawMap(<String, RawValue>{'name': RawLiteral(name), 'pattern': RawChild(inner)}));
+        }
+        // A record pattern is an object pattern with no type to test: its fields are the record's fields.
+        return make('object', <String, RawValue>{if (fields.isNotEmpty) 'fields': RawList(fields)});
+      case ListPattern():
+        final List<RawValue> items = <RawValue>[];
+        for (final ListPatternElement element in pattern.elements) {
+          if (element is RestPatternElement) {
+            final RawNode? rest = element.pattern == null ? null : patternOf(element.pattern!, scope, binds);
+            if (element.pattern != null && rest == null) {
+              return null;
+            }
+            items.add(RawChild(make('rest', <String, RawValue>{'pattern': ?(rest == null ? null : RawChild(rest))})));
+          } else if (element is DartPattern) {
+            final RawNode? inner = patternOf(element, scope, binds);
+            if (inner == null) {
+              return null;
+            }
+            items.add(RawChild(inner));
+          } else {
+            return null;
+          }
+        }
+        return make('list', <String, RawValue>{'patterns': RawList(items)});
+      case MapPattern():
+        final List<RawValue> entries = <RawValue>[];
+        for (final MapPatternElement element in pattern.elements) {
+          if (element is! MapPatternEntry) {
+            return null;
+          }
+          final RawNode? inner = patternOf(element.value, scope, binds);
+          if (inner == null) {
+            return null;
+          }
+          entries.add(RawMap(<String, RawValue>{'key': RawChild(extract(element.key, scope)), 'pattern': RawChild(inner)}));
+        }
+        return make('map', <String, RawValue>{'entries': RawList(entries)});
       case CastPattern():
         final RawNode? inner = patternOf(pattern.pattern, scope, binds);
         return inner == null

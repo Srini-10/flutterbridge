@@ -5444,12 +5444,12 @@ class W extends StatelessWidget {
   const W({super.key});
   @override
   Widget build(BuildContext context) {
-    final record = (1, 2);
-    return Text('$record');
+    final symbol = #sym;
+    return Text('$symbol');
   }
 }
 ''');
-      expect(app.errors, isEmpty, reason: 'a record literal is valid Dart; BRG1302 is a warning, never BRG1310');
+      expect(app.errors, isEmpty, reason: 'a symbol literal is valid Dart; BRG1302 is a warning, never BRG1310');
       expect(app.ofKind('logic.OpaqueExpr'), isNotEmpty);
     });
 
@@ -10465,7 +10465,7 @@ class W extends StatelessWidget {
       }
     }
 
-    test('switch expressions and pattern cases become logic.SwitchExpr and pattern cases; list and record patterns stay opaque', () async {
+    test('switch expressions and pattern cases become logic.SwitchExpr and pattern cases; list, map and record patterns are patterns too (ADR-0069)', () async {
       final Extracted e = await extract(r'''
 sealed class S {}
 class A extends S { A(this.x); final int x; }
@@ -10477,10 +10477,10 @@ String st(S s) { switch (s) { case A(:final x) when x > 1: return 'a'; default: 
 String l(List<int> xs) => switch (xs) { [] => 'empty', [var a, ...] => 'a$a', _ => 'x' };
 ''');
       final List<Map<String, dynamic>> switches = kinds(e.nodes, 'logic.SwitchExpr').toList();
-      expect(switches, hasLength(3), reason: 'f, g and h; l has list patterns and stays opaque');
-      expect(kinds(e.nodes, 'logic.OpaqueExpr').where((Map<String, dynamic> o) => o['reason'] == 'switch expression'), hasLength(1));
+      expect(switches, hasLength(4), reason: 'f, g, h and l (list patterns)');
+      expect(kinds(e.nodes, 'logic.OpaqueExpr').where((Map<String, dynamic> o) => o['reason'] == 'switch expression'), isEmpty);
       final Set<Object?> variants = kinds(e.nodes, 'logic.Pattern').map((Map<String, dynamic> p) => p['variant']).toSet();
-      expect(variants, containsAll(<String>['object', 'const', 'wildcard', 'bind', 'or', 'relational', 'and']));
+      expect(variants, containsAll(<String>['object', 'const', 'wildcard', 'bind', 'or', 'relational', 'and', 'list', 'rest']));
       expect(
         switches.any(
           (Map<String, dynamic> sw) => (sw['cases'] as List<dynamic>).any((dynamic c) => (c as Map<String, dynamic>).containsKey('guard')),
@@ -10528,6 +10528,46 @@ int f(String s, Box b) { b.p; return s.twice() + 1.d + s.up.length; }
       walk(both);
       expect(uses, 2, reason: 'the bare `up` and `twice()` inside the extension resolve through the extension');
       expect(e.ofKind('logic.OpaqueDecl'), isEmpty);
+    });
+  });
+
+  group('records and destructuring (M13, ADR-0069)', () {
+    Iterable<Map<String, dynamic>> kinds(Object? node, String kind) sync* {
+      if (node is Map<String, dynamic>) {
+        if (node['kind'] == kind) {
+          yield node;
+        }
+        for (final Object? v in node.values) {
+          yield* kinds(v, kind);
+        }
+      } else if (node is List) {
+        for (final Object? v in node) {
+          yield* kinds(v, kind);
+        }
+      }
+    }
+
+    test('record literals, pattern declarations, if-case and for-in patterns are modelled, not opaque', () async {
+      final Extracted e = await extract(r'''
+(int, {String tag}) mk() => (1, tag: 'x');
+String f(List<int> xs, Map<String, Object?> m, List<(int, int)> ps) {
+  final (a, tag: t) = mk();
+  if (xs case [var h, ...var r] when h > 0) { return '$a$t$h${r.length}'; }
+  if (m case {'k': int k}) { return '$k'; }
+  var n = 0;
+  for (final (x, y) in ps) { n += x + y; }
+  return '$n';
+}
+''');
+      expect(kinds(e.nodes, 'logic.OpaqueExpr'), isEmpty);
+      expect(kinds(e.nodes, 'logic.OpaqueStmt'), isEmpty);
+      final Map<String, dynamic> lit = kinds(e.nodes, 'logic.RecordLit').single;
+      expect(lit['positional'], hasLength(1));
+      expect((lit['named'] as Map<String, dynamic>).keys, <String>['tag']);
+      expect(kinds(e.nodes, 'logic.PatternDecl'), hasLength(2), reason: 'the declaration and the for-in destructuring');
+      expect(kinds(e.nodes, 'logic.PatternMatch'), hasLength(2));
+      final Set<Object?> variants = kinds(e.nodes, 'logic.Pattern').map((Map<String, dynamic> p) => p['variant']).toSet();
+      expect(variants, containsAll(<String>['list', 'rest', 'map', 'object', 'bind']));
     });
   });
 }

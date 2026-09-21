@@ -122,6 +122,11 @@ export function emitStatements(
   reservedNames: ReadonlySet<string> = EMPTY_RESERVED_NAMES,
 ): string[] {
   const seen = new Set<string>();
+  // The variables a pattern declaration in this list binds are in scope for its statements (ADR-0069).
+  const patternNames = asArray(statements).flatMap((statement) =>
+    kindOf(statement) === 'logic.PatternDecl' ? patternVariableNames(statement['pattern'] as Node) : [],
+  );
+  if (patternNames.length > 0) scope = scopeWithNames(scope, patternNames);
   return asArray(statements).flatMap((statement) => {
     // A state-batch call is spliced open at extraction time (INV-22), with no JS-level block left to mark
     // where it began — so two `logic.VarDecl`s that would generate the same name here can no longer rely
@@ -198,7 +203,31 @@ export function emitStatement(statement: Stmt | Node | undefined, scope: EmitSco
       return value === undefined ? ['return;'] : [`return ${emitExpression(value as Node, scope)};`];
     }
 
+    // `final (a, b) = value;` (ADR-0069): the value, then each variable the pattern binds.
+    case 'logic.PatternDecl': {
+      const name = `$p_${String(idOf(node) ?? 'x').replace(/[^a-zA-Z0-9]/g, '')}`;
+      const compiled = compilePattern(node['pattern'] as Node, name, scope);
+      if (compiled === undefined) return [];
+      return [`const ${name} = ${emitExpression(node['value'] as Node, scope)};`, ...compiled.binds.map((b) => `const ${identifierOf(b.name)} = ${b.expr};`)];
+    }
+
     case 'logic.If': {
+      // `if (value case pattern when guard) then else otherwise` (ADR-0069): labelled, so the `else` runs when the pattern or the guard fails.
+      const matchTest = node['test'] as Node;
+      if (kindOf(matchTest) === 'logic.PatternMatch') {
+        const label = `$if_${String(idOf(node) ?? 'x').replace(/[^a-zA-Z0-9]/g, '')}`;
+        const compiled = compilePattern(matchTest['pattern'] as Node, '$s', scope);
+        if (compiled === undefined) return [];
+        const inner = scopeWithNames(scope, compiled.binds.map((b) => b.name));
+        const guard = matchTest['guard'] === undefined ? undefined : emitExpression(matchTest['guard'] as Node, inner);
+        const out = [`${label}: {`, `  const $s = ${emitExpression(matchTest['subject'] as Node, scope)};`, `  if (${compiled.test}) {`];
+        for (const bind of compiled.binds) out.push(`    const ${identifierOf(bind.name)} = ${bind.expr};`);
+        out.push(guard === undefined ? '    {' : `    if (${guard}) {`);
+        out.push(...indent(indent(indent(emitStatement(node['then'] as Node, inner)))), `      break ${label};`, '    }', '  }');
+        if (node['otherwise'] !== undefined) out.push(...indent(emitStatement(node['otherwise'] as Node, scope)));
+        out.push('}');
+        return out;
+      }
       const lines = [`if (${emitExpression(node['test'] as Node, scope)}) {`];
       lines.push(...indent(emitStatement(node['then'] as Node, scope)));
       const otherwise = node['otherwise'];
@@ -231,7 +260,8 @@ export function emitStatement(statement: Stmt | Node | undefined, scope: EmitSco
       if (iterable !== undefined) {
         const variable = identifierOf(String(node['loopVariable'] ?? '_'));
         const lines = [`for (const ${variable} of ${emitExpression(iterable as Node, scope)}) {`];
-        lines.push(...indent(emitStatement(node['body'] as Node, scope)));
+        // The hidden variable of `for (final (a, b) in xs)` is read by name from the destructuring at the top of the body.
+        lines.push(...indent(emitStatement(node['body'] as Node, scopeWithNames(scope, [String(node['loopVariable'] ?? '_')]))));
         lines.push('}');
         return lines;
       }
@@ -600,4 +630,18 @@ function destinationOf(transition: Node, scope: EmitScope): string | undefined {
     return `{ kind: 'component', component: ${JSON.stringify(screenKeyFor(component, transition, scope))} }`;
   }
   return undefined;
+}
+
+/** The names a pattern binds. */
+function patternVariableNames(pattern: Node): string[] {
+  const names: string[] = [];
+  const walk = (node: unknown): void => {
+    if (Array.isArray(node)) return node.forEach(walk);
+    if (node === null || typeof node !== 'object') return;
+    const record = node as Node;
+    if (record['kind'] === 'logic.Pattern' && record['variant'] === 'bind') names.push(String((record['decl'] as Node)['name']));
+    for (const value of Object.values(record)) walk(value);
+  };
+  walk(pattern);
+  return names;
 }

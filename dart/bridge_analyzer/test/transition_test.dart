@@ -578,10 +578,10 @@ class _HomeState extends State<Home> {
 
     test('an argument with no UIR representation is omitted and reported, never serialized as source',
         () async {
-      // A record literal has no `logic.*` node. Rather than carry `(1, 2)` as a Dart source string a
+      // A symbol literal has no `logic.*` node. Rather than carry `#sym` as a Dart source string a
       // generator could not pass to anything, the argument is dropped and the reason is reported.
       final Extracted app = await extractNav(
-        screen('Navigator.push(context, MaterialPageRoute(builder: (BuildContext c) => Detail(data: (1, 2))));'),
+        screen('Navigator.push(context, MaterialPageRoute(builder: (BuildContext c) => Detail(data: #sym)));'),
       );
 
       // The push still produces a transition; the unrepresentable argument is simply not on it.

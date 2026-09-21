@@ -137,3 +137,27 @@ export function dartDoubleTryParse(source: string): number | null {
   if (text === 'NaN') return Number.NaN;
   return null;
 }
+
+/** `a == b` on two records: the same fields, each equal (`==`, or its own `$eq`). */
+export function dartRecordEquals(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (a === null || b === null || typeof a !== 'object' || typeof b !== 'object') return false;
+  const left = a as Record<string, unknown>;
+  const right = b as Record<string, unknown>;
+  const keys = Object.keys(left);
+  if (keys.length !== Object.keys(right).length) return false;
+  return keys.every((key) => {
+    if (!(key in right)) return false;
+    const x = left[key];
+    const y = right[key];
+    const eq = (x as { $eq?: (o: unknown) => boolean } | null)?.$eq;
+    return x === y || (typeof eq === 'function' ? eq.call(x, y) : dartRecordEquals(x, y));
+  });
+}
+
+/** Whether `value` is a record with exactly the fields `names` (`$1`, `$2`, … and named ones). */
+export function dartIsRecord(value: unknown, names: readonly string[]): boolean {
+  if (typeof value !== 'object' || value === null || Array.isArray(value) || value instanceof Map || value instanceof Set) return false;
+  const keys = Object.keys(value);
+  return keys.length === names.length && names.every((name) => keys.includes(name));
+}

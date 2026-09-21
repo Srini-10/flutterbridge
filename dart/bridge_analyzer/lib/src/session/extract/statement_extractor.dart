@@ -12,6 +12,7 @@ library;
 
 import 'package:analyzer/dart/ast/ast.dart';
 import 'package:analyzer/dart/element/element.dart';
+import 'package:analyzer/dart/element/type.dart';
 import 'package:bridge_analyzer/src/diagnostics/codes.dart';
 import 'package:bridge_analyzer/src/model/raw_node.dart';
 import 'package:bridge_analyzer/src/model/source_span.dart';
@@ -218,6 +219,52 @@ final class StatementExtractor implements StatementExtractorRef {
         // `a`, the identical growing-scope pattern [_declarationList] documents.
         final (List<RawNode> nodes, _) = _declarationList(node.variables.variables, node.variables, scope);
         return _asStatement(nodes, out.span(node));
+
+      // `if (value case pattern when guard) …` (ADR-0069): the test is the match; its variables are in scope in the `then` branch.
+      case IfStatement() when node.caseClause != null:
+        final GuardedPattern guarded = node.caseClause!.guardedPattern;
+        final List<Binding> binds = <Binding>[];
+        final RawNode? lowered = expressions.patternOf(guarded.pattern, scope, binds);
+        if (lowered != null) {
+          final Scope thenScope = binds.isEmpty ? scope : scope.child(binds);
+          return RawNode(
+            kind: 'logic.If',
+            span: out.span(node),
+            fields: <String, RawValue>{
+              'test': RawChild(
+                RawNode(
+                  kind: 'logic.PatternMatch',
+                  span: out.span(node.caseClause!),
+                  fields: <String, RawValue>{
+                    'subject': RawChild(expressions.extract(node.expression, scope)),
+                    'pattern': RawChild(lowered),
+                    if (guarded.whenClause case final WhenClause clause) 'guard': RawChild(expressions.extract(clause.expression, thenScope)),
+                    'type': const RawMap(<String, RawValue>{'name': RawLiteral('bool'), 'library': RawLiteral('dart:core')}),
+                  },
+                ),
+              ),
+              'then': RawChild(extract(node.thenStatement, thenScope)),
+              if (node.elseStatement != null) 'otherwise': RawChild(extract(node.elseStatement!, scope)),
+            },
+          );
+        }
+        return out.opaqueStmt(node, 'pattern in an `if`');
+
+      // `final (a, b) = value;` (ADR-0069).
+      case PatternVariableDeclarationStatement():
+        final List<Binding> declared = <Binding>[];
+        final RawNode? pattern = expressions.patternOf(node.declaration.pattern, scope, declared);
+        if (pattern == null) {
+          return out.opaqueStmt(node, 'pattern declaration');
+        }
+        return RawNode(
+          kind: 'logic.PatternDecl',
+          span: out.span(node),
+          fields: <String, RawValue>{
+            'pattern': RawChild(pattern),
+            'value': RawChild(expressions.extract(node.declaration.expression, scope)),
+          },
+        );
 
       case IfStatement():
         return RawNode(
@@ -493,6 +540,64 @@ final class StatementExtractor implements StatementExtractorRef {
           },
         );
 
+      // `for (final (a, b) in pairs)` (ADR-0069): the loop variable is a hidden one, destructured first thing in the body.
+      case ForEachPartsWithPattern():
+        final List<Binding> declared = <Binding>[];
+        final RawNode? pattern = expressions.patternOf(parts.pattern, scope, declared);
+        if (pattern == null) {
+          return out.opaqueStmt(node, 'pattern in a `for`');
+        }
+        const String hidden = r'$each';
+        final DartType? itemType = parts.iterable.staticType is InterfaceType
+            ? (parts.iterable.staticType! as InterfaceType).typeArguments.firstOrNull
+            : null;
+        return RawNode(
+          kind: 'logic.For',
+          span: out.span(node),
+          fields: <String, RawValue>{
+            'loopVariable': const RawLiteral(hidden),
+            'loopDecl': RawChild(
+              RawNode(
+                kind: 'logic.VarDecl',
+                span: out.span(node),
+                fields: <String, RawValue>{
+                  'name': const RawLiteral(hidden),
+                  'type': out.typeRef(itemType, at: node),
+                  'isFinal': const RawLiteral(true),
+                },
+              ),
+            ),
+            'iterable': RawChild(expressions.extract(parts.iterable, scope)),
+            'body': RawChild(
+              RawNode(
+                kind: 'logic.Block',
+                span: out.span(node.body),
+                fields: <String, RawValue>{
+                  'statements': RawList(<RawValue>[
+                    RawChild(
+                      RawNode(
+                        kind: 'logic.PatternDecl',
+                        span: out.span(parts),
+                        fields: <String, RawValue>{
+                          'pattern': RawChild(pattern),
+                          'value': RawChild(
+                            RawNode(
+                              kind: 'logic.Ref',
+                              span: out.span(parts),
+                              fields: <String, RawValue>{'name': const RawLiteral(hidden), 'type': out.typeRef(itemType, at: node)},
+                            ),
+                          ),
+                        },
+                      ),
+                    ),
+                    RawChild(extract(node.body, declared.isEmpty ? scope : scope.child(declared))),
+                  ]),
+                },
+              ),
+            ),
+          },
+        );
+
       // `for (var i = 0; i < n; i++)` and `for (var i = 0, j = 10; i < j; i++, j--)`
       case ForPartsWithDeclarations():
         final List<VariableDeclaration> declared = parts.variables.variables;
@@ -595,6 +700,11 @@ final class StatementExtractor implements StatementExtractorRef {
 
   /// The scope after [statement] — which differs from the scope before it only if it declared a name.
   Scope _declaring(Statement statement, Scope scope) {
+    if (statement is PatternVariableDeclarationStatement) {
+      final List<Binding> declared = <Binding>[];
+      expressions.patternOf(statement.declaration.pattern, scope, declared);
+      return declared.isEmpty ? scope : scope.child(declared);
+    }
     if (statement is! VariableDeclarationStatement) {
       return scope;
     }

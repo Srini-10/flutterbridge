@@ -704,4 +704,4 @@ export {
   isDartError,
   isDartException,
 } from './internal/core/dart_exceptions.js';
-export { dartAs, dartConstToken, dartDoubleParse, dartDoubleTryParse, dartIntParse, dartIntTryParse, dartEntry, dartHash, dartHashAll, dartThrow, unawaited } from './internal/core/dart_core.js';
+export { dartAs, dartConstToken, dartIsRecord, dartRecordEquals, dartDoubleParse, dartDoubleTryParse, dartIntParse, dartIntTryParse, dartEntry, dartHash, dartHashAll, dartThrow, unawaited } from './internal/core/dart_core.js';

@@ -1,0 +1,12 @@
+{
+  "Recs": [
+    [
+      "> 3 n3 4 user4 1 x true false true 2 null true",
+      "> two+ 1 2 2 | one 7 | none",
+      "> ok 5 ann | no | no",
+      "> empty | one 9 | ends 1 3 | map 3 | rec 12 | xy 34 | other | ends 1 4 | other | flag | other",
+      "> one 5 other",
+      "> a=1,b=2"
+    ]
+  ]
+}
