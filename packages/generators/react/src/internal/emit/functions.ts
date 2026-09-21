@@ -136,6 +136,7 @@ export function reachableFunctions(
   for (const node of nodes as unknown as Node[]) {
     if (kindOf(node) === 'ui.Component') {
       directFunctionRefs(node['render'], lookup, found, classes);
+      directFunctionRefs(node['prelude'], lookup, found, classes);
       directFunctionRefs(node['params'], lookup, found, classes);
     } else if (kindOf(node) === 'sig.Action') {
       directFunctionRefs(node['body'], lookup, found, classes);
@@ -295,6 +296,7 @@ function reachableMembers(
   for (const node of nodes as unknown as Node[]) {
     if (kindOf(node) === 'ui.Component') {
       directMemberRefs(node['render'], getterOwnerOf, methodOwnerOf, foundGetters, foundMethods);
+      directMemberRefs(node['prelude'], getterOwnerOf, methodOwnerOf, foundGetters, foundMethods);
     } else if (kindOf(node) === 'sig.Action') {
       directMemberRefs(node['body'], getterOwnerOf, methodOwnerOf, foundGetters, foundMethods);
     }

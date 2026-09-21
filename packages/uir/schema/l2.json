@@ -563,6 +563,9 @@
           "$ref": "#/$defs/UiText"
         },
         {
+          "$ref": "#/$defs/UiNodes"
+        },
+        {
           "$ref": "#/$defs/UiList"
         },
         {
@@ -631,6 +634,14 @@
               },
               "description": "The lifecycle effects (`sig.Effect`) this component owns — `initState`, `didUpdateWidget`, `didChangeDependencies`, `dispose` — in declaration order (ADR-0052).\n\nA `sig.Effect` names no component of its own, so before this field a generator could not tell which component an effect belonged to and its body was silently absent from the output. Absent means the component has no lifecycle method with anything in it."
             },
+            "prelude": {
+              "type": "array",
+              "items": {
+                "$ref": "l1.json#/$defs/Stmt",
+                "description": "A statement."
+              },
+              "description": "Statements a statement-bodied `build` runs before it returns the tree (M12, ADR-0062): locals, loops, `if`s, calls. Absent for a build that is just `return <tree>`. Locals declared here are real variables; the tree refers to them by `logic.Ref` `target`, and each is one object however often the tree reads it."
+            },
             "render": {
               "$ref": "l2.json#/$defs/UiNode",
               "description": "The render tree."
@@ -638,6 +649,34 @@
             "semantics": {
               "$ref": "#/$defs/SemanticsInfo",
               "description": "Semantics for the component root, if any."
+            }
+          }
+        }
+      ]
+    },
+    "UiNodes": {
+      "description": "Widgets held in a value (M12, ADR-0062): `...rows`, a `List<Widget>` local, a `Widget` parameter used as a child, a C-style collection-for. The generator renders the value as children, where it is.",
+      "x-uir-kind": "ui.Nodes",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "value"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "ui.Nodes",
+              "description": "Discriminant."
+            },
+            "value": {
+              "$ref": "l2.json#/$defs/Binding",
+              "description": "The widget, or list of widgets."
             }
           }
         }

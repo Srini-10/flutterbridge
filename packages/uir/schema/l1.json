@@ -1929,6 +1929,9 @@
           "$ref": "#/$defs/ForElement"
         },
         {
+          "$ref": "#/$defs/WidgetExpr"
+        },
+        {
           "$ref": "#/$defs/OpaqueExpr"
         }
       ]
@@ -2460,6 +2463,39 @@
                 "description": "An update expression."
               },
               "description": "C-style: the update expressions, in order."
+            }
+          }
+        }
+      ]
+    },
+    "WidgetExpr": {
+      "description": "A widget as a value inside logic code (M12, ADR-0062): `children.add(Padding(child: w))` in a statement-bodied `build`. `tree` is the same `ui.*` tree a render position holds; the generator emits it where the expression is.",
+      "x-uir-kind": "logic.WidgetExpr",
+      "allOf": [
+        {
+          "$ref": "shared.json#/$defs/UirNodeBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "tree",
+            "type"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "logic.WidgetExpr",
+              "description": "Discriminant."
+            },
+            "tree": {
+              "$ref": "l2.json#/$defs/UiNode",
+              "description": "The widget's tree."
+            },
+            "type": {
+              "$ref": "shared.json#/$defs/TypeRef",
+              "description": "Resolved type (a `Widget`)."
             }
           }
         }

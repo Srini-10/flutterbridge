@@ -14,7 +14,7 @@ import { createHash } from 'node:crypto';
 export const UIR_VERSION = '1.15.0' as const;
 
 /** A hash of the schema sources this module was generated from. */
-export const UIR_SCHEMA_HASH = 'b614400e2a714d2b' as const;
+export const UIR_SCHEMA_HASH = 'c09a36a8090b0e0c' as const;
 
 /** Node kind -> the fields of that node which hold `NodeId` references. */
 export const UIR_REFERENCE_FIELDS: Readonly<Record<string, readonly string[]>> = {
@@ -82,6 +82,7 @@ export const UIR_REFERENCE_FIELDS: Readonly<Record<string, readonly string[]>> =
   'ui.Cond': ['id'],
   'ui.Element': ['id'],
   'ui.List': ['id'],
+  'ui.Nodes': ['id'],
   'ui.Opaque': ['id'],
   'ui.OverrideRef': ['id'],
   'ui.SlotRef': ['id'],
@@ -89,6 +90,7 @@ export const UIR_REFERENCE_FIELDS: Readonly<Record<string, readonly string[]>> =
   'logic.Unary': ['id'],
   'logic.VarDecl': ['id'],
   'logic.While': ['id'],
+  'logic.WidgetExpr': ['id'],
 };
 
 /** Raised when JSON does not conform to the schema. Deserialization validates; it never guesses. */
@@ -1178,6 +1180,8 @@ export interface Component {
   readonly name: string;
   /// Constructor parameters, in order.
   readonly params?: readonly ParamDecl[];
+  /// Statements a statement-bodied `build` runs before it returns the tree (M12, ADR-0062): locals, loops, `if`s, calls. Absent for a build that is just `return <tree>`. Locals declared here are real variables; the tree refers to them by `logic.Ref` `target`, and each is one object however often the tree reads it.
+  readonly prelude?: readonly Stmt[];
   /// The render tree.
   readonly render: UiNode;
   /// Semantics for the component root, if any.
@@ -2392,6 +2396,22 @@ export interface UiList {
   readonly template: UiNode;
 }
 
+/// Widgets held in a value (M12, ADR-0062): `...rows`, a `List<Widget>` local, a `Widget` parameter used as a child, a C-style collection-for. The generator renders the value as children, where it is.
+export interface UiNodes {
+  /// The override key, when the node is addressable by a human.
+  readonly anchor?: Anchor;
+  /// Plugin extension data, namespaced `x-<plugin>`. Core passes round-trip it untouched (Spec §2.6).
+  readonly ext?: Readonly<Record<string, unknown>>;
+  /// The node's stable, content-addressed identity.
+  readonly id: NodeId;
+  /// Discriminant.
+  readonly kind: 'ui.Nodes';
+  /// Where the node came from.
+  readonly span: SourceSpan;
+  /// The widget, or list of widgets.
+  readonly value: Binding;
+}
+
 /// A widget the extractor cannot model. Preserved with its source and reason (INV-4); routed to the override system.
 export interface UiOpaque {
   /// The override key, when the node is addressable by a human.
@@ -2528,6 +2548,24 @@ export interface While {
   readonly test: Expr;
 }
 
+/// A widget as a value inside logic code (M12, ADR-0062): `children.add(Padding(child: w))` in a statement-bodied `build`. `tree` is the same `ui.*` tree a render position holds; the generator emits it where the expression is.
+export interface WidgetExpr {
+  /// The override key, when the node is addressable by a human.
+  readonly anchor?: Anchor;
+  /// Plugin extension data, namespaced `x-<plugin>`. Core passes round-trip it untouched (Spec §2.6).
+  readonly ext?: Readonly<Record<string, unknown>>;
+  /// The node's stable, content-addressed identity.
+  readonly id: NodeId;
+  /// Discriminant.
+  readonly kind: 'logic.WidgetExpr';
+  /// Where the node came from.
+  readonly span: SourceSpan;
+  /// The widget's tree.
+  readonly tree: UiNode;
+  /// Resolved type (a `Widget`).
+  readonly type: TypeRef;
+}
+
 /// How a prop gets its value.
 export type Binding =
   | ConstBinding
@@ -2575,6 +2613,7 @@ export type Expr =
   | ThrowExpr
   | TypeCheck
   | Unary
+  | WidgetExpr
 ;
 
 /// Any statement.
@@ -2601,6 +2640,7 @@ export type UiNode =
   | UiCond
   | UiElement
   | UiList
+  | UiNodes
   | UiOpaque
   | UiOverrideRef
   | UiSlotRef
@@ -3343,6 +3383,7 @@ export function parseComponent(value: unknown, path = 'Component'): Component {
     ...(own(o, 'localSignals') === undefined || own(o, 'localSignals') === null ? {} : { localSignals: asList(own(o, 'localSignals'), `${path}.localSignals`, (v, p) => parseNodeId(v, p)) }),
     name: asString(req(o, 'name', path), `${path}.name`),
     ...(own(o, 'params') === undefined || own(o, 'params') === null ? {} : { params: asList(own(o, 'params'), `${path}.params`, (v, p) => parseParamDecl(v, p)) }),
+    ...(own(o, 'prelude') === undefined || own(o, 'prelude') === null ? {} : { prelude: asList(own(o, 'prelude'), `${path}.prelude`, (v, p) => parseStmt(v, p)) }),
     render: parseUiNode(req(o, 'render', path), `${path}.render`),
     ...(own(o, 'semantics') === undefined || own(o, 'semantics') === null ? {} : { semantics: parseSemanticsInfo(own(o, 'semantics'), `${path}.semantics`) }),
     span: parseSourceSpan(req(o, 'span', path), `${path}.span`),
@@ -5180,6 +5221,37 @@ export function copyWithUiList(node: UiList, patch: Partial<UiList>): UiList {
   return { ...node, ...patch };
 }
 
+/** Parses a {@link UiNodes}, validating as it goes. Throws {@link UirParseError} on bad input. */
+export function parseUiNodes(value: unknown, path = 'UiNodes'): UiNodes {
+  const o = asObject(value, path);
+  const kind = asString(req(o, 'kind', path), `${path}.kind`);
+  if (kind !== 'ui.Nodes') throw new UirParseError(`${path}.kind`, `expected "ui.Nodes", got "${kind}"`);
+
+  return {
+    ...(own(o, 'anchor') === undefined || own(o, 'anchor') === null ? {} : { anchor: parseAnchor(own(o, 'anchor'), `${path}.anchor`) }),
+    ...(own(o, 'ext') === undefined || own(o, 'ext') === null ? {} : { ext: asMap(own(o, 'ext'), `${path}.ext`, (v) => v) }),
+    id: parseNodeId(req(o, 'id', path), `${path}.id`),
+    kind: 'ui.Nodes',
+    span: parseSourceSpan(req(o, 'span', path), `${path}.span`),
+    value: parseBinding(req(o, 'value', path), `${path}.value`),
+  };
+}
+
+/** Serializes a {@link UiNodes} to canonical JSON. */
+export function serializeUiNodes(node: UiNodes): Record<string, unknown> {
+  return canonicalJson(node) as Record<string, unknown>;
+}
+
+/** Structural equality. List order is significant: UIR children are ordered (Spec §2.3). */
+export function equalsUiNodes(a: UiNodes, b: UiNodes): boolean {
+  return deepEquals(canonicalJson(a), canonicalJson(b));
+}
+
+/** Returns a copy of [node] with [patch] applied. The original is never mutated. */
+export function copyWithUiNodes(node: UiNodes, patch: Partial<UiNodes>): UiNodes {
+  return { ...node, ...patch };
+}
+
 /** Parses a {@link UiOpaque}, validating as it goes. Throws {@link UirParseError} on bad input. */
 export function parseUiOpaque(value: unknown, path = 'UiOpaque'): UiOpaque {
   const o = asObject(value, path);
@@ -5408,6 +5480,38 @@ export function copyWithWhile(node: While, patch: Partial<While>): While {
   return { ...node, ...patch };
 }
 
+/** Parses a {@link WidgetExpr}, validating as it goes. Throws {@link UirParseError} on bad input. */
+export function parseWidgetExpr(value: unknown, path = 'WidgetExpr'): WidgetExpr {
+  const o = asObject(value, path);
+  const kind = asString(req(o, 'kind', path), `${path}.kind`);
+  if (kind !== 'logic.WidgetExpr') throw new UirParseError(`${path}.kind`, `expected "logic.WidgetExpr", got "${kind}"`);
+
+  return {
+    ...(own(o, 'anchor') === undefined || own(o, 'anchor') === null ? {} : { anchor: parseAnchor(own(o, 'anchor'), `${path}.anchor`) }),
+    ...(own(o, 'ext') === undefined || own(o, 'ext') === null ? {} : { ext: asMap(own(o, 'ext'), `${path}.ext`, (v) => v) }),
+    id: parseNodeId(req(o, 'id', path), `${path}.id`),
+    kind: 'logic.WidgetExpr',
+    span: parseSourceSpan(req(o, 'span', path), `${path}.span`),
+    tree: parseUiNode(req(o, 'tree', path), `${path}.tree`),
+    type: parseTypeRef(req(o, 'type', path), `${path}.type`),
+  };
+}
+
+/** Serializes a {@link WidgetExpr} to canonical JSON. */
+export function serializeWidgetExpr(node: WidgetExpr): Record<string, unknown> {
+  return canonicalJson(node) as Record<string, unknown>;
+}
+
+/** Structural equality. List order is significant: UIR children are ordered (Spec §2.3). */
+export function equalsWidgetExpr(a: WidgetExpr, b: WidgetExpr): boolean {
+  return deepEquals(canonicalJson(a), canonicalJson(b));
+}
+
+/** Returns a copy of [node] with [patch] applied. The original is never mutated. */
+export function copyWithWidgetExpr(node: WidgetExpr, patch: Partial<WidgetExpr>): WidgetExpr {
+  return { ...node, ...patch };
+}
+
 /** Parses any {@link Binding}, dispatching on `kind`. */
 export function parseBinding(value: unknown, path = 'Binding'): Binding {
   const o = asObject(value, path);
@@ -5575,6 +5679,8 @@ export function parseExpr(value: unknown, path = 'Expr'): Expr {
       return parseTypeCheck(o, path);
     case 'logic.Unary':
       return parseUnary(o, path);
+    case 'logic.WidgetExpr':
+      return parseWidgetExpr(o, path);
     default:
       throw new UirParseError(`${path}.kind`, `unknown Expr kind "${kind}"`);
   }
@@ -5614,6 +5720,7 @@ export interface ExprVisitor<R> {
   visitThrowExpr(node: ThrowExpr): R;
   visitTypeCheck(node: TypeCheck): R;
   visitUnary(node: Unary): R;
+  visitWidgetExpr(node: WidgetExpr): R;
 }
 
 /** Dispatches [node] to [visitor]. */
@@ -5673,6 +5780,8 @@ export function acceptExpr<R>(node: Expr, visitor: ExprVisitor<R>): R {
       return visitor.visitTypeCheck(node as TypeCheck);
     case 'logic.Unary':
       return visitor.visitUnary(node as Unary);
+    case 'logic.WidgetExpr':
+      return visitor.visitWidgetExpr(node as WidgetExpr);
     default:
       throw new UirParseError('Expr', 
         `unknown kind "${(node as { kind: string }).kind}"`,
@@ -5792,6 +5901,8 @@ export function parseUiNode(value: unknown, path = 'UiNode'): UiNode {
       return parseUiElement(o, path);
     case 'ui.List':
       return parseUiList(o, path);
+    case 'ui.Nodes':
+      return parseUiNodes(o, path);
     case 'ui.Opaque':
       return parseUiOpaque(o, path);
     case 'ui.OverrideRef':
@@ -5816,6 +5927,7 @@ export interface UiNodeVisitor<R> {
   visitUiCond(node: UiCond): R;
   visitUiElement(node: UiElement): R;
   visitUiList(node: UiList): R;
+  visitUiNodes(node: UiNodes): R;
   visitUiOpaque(node: UiOpaque): R;
   visitUiOverrideRef(node: UiOverrideRef): R;
   visitUiSlotRef(node: UiSlotRef): R;
@@ -5833,6 +5945,8 @@ export function acceptUiNode<R>(node: UiNode, visitor: UiNodeVisitor<R>): R {
       return visitor.visitUiElement(node as UiElement);
     case 'ui.List':
       return visitor.visitUiList(node as UiList);
+    case 'ui.Nodes':
+      return visitor.visitUiNodes(node as UiNodes);
     case 'ui.Opaque':
       return visitor.visitUiOpaque(node as UiOpaque);
     case 'ui.OverrideRef':
@@ -5849,7 +5963,7 @@ export function acceptUiNode<R>(node: UiNode, visitor: UiNodeVisitor<R>): R {
 }
 
 /** Any UIR node. */
-export type AnyUirNode = Action | Assign | Await | Binary | Block | Break | Call | Cast | ClassDecl | Component | Conditional | ConstBinding | Continue | Derived | Effect | Endpoint | EnumDecl | ExprBinding | ExprStmt | FieldDecl | For | ForElement | FunctionDecl | If | IfElement | Intrinsic | Lambda | Let | ListLit | Lit | MapLit | MethodCall | Navigate | New | NullCheck | OpaqueDecl | OpaqueExpr | OpaqueStmt | ParamBinding | PropertyAccess | Ref | Rethrow | Return | Route | RouteTransition | Sequence | Signal | SignalBinding | SourceFile | Spread | Store | StoreInstance | StringInterp | Switch | Throw | ThrowExpr | Token | TryCatch | TypeAliasDecl | TypeCheck | UiAsync | UiCond | UiElement | UiList | UiOpaque | UiOverrideRef | UiSlotRef | UiText | Unary | VarDecl | While;
+export type AnyUirNode = Action | Assign | Await | Binary | Block | Break | Call | Cast | ClassDecl | Component | Conditional | ConstBinding | Continue | Derived | Effect | Endpoint | EnumDecl | ExprBinding | ExprStmt | FieldDecl | For | ForElement | FunctionDecl | If | IfElement | Intrinsic | Lambda | Let | ListLit | Lit | MapLit | MethodCall | Navigate | New | NullCheck | OpaqueDecl | OpaqueExpr | OpaqueStmt | ParamBinding | PropertyAccess | Ref | Rethrow | Return | Route | RouteTransition | Sequence | Signal | SignalBinding | SourceFile | Spread | Store | StoreInstance | StringInterp | Switch | Throw | ThrowExpr | Token | TryCatch | TypeAliasDecl | TypeCheck | UiAsync | UiCond | UiElement | UiList | UiNodes | UiOpaque | UiOverrideRef | UiSlotRef | UiText | Unary | VarDecl | While | WidgetExpr;
 
 /** Parses any UIR node, dispatching on `kind` across every node kind in the schema. */
 export function parseUirNode(value: unknown, path = 'UirNode'): AnyUirNode {
@@ -5984,6 +6098,8 @@ export function parseUirNode(value: unknown, path = 'UirNode'): AnyUirNode {
       return parseUiElement(o, path);
     case 'ui.List':
       return parseUiList(o, path);
+    case 'ui.Nodes':
+      return parseUiNodes(o, path);
     case 'ui.Opaque':
       return parseUiOpaque(o, path);
     case 'ui.OverrideRef':
@@ -5998,6 +6114,8 @@ export function parseUirNode(value: unknown, path = 'UirNode'): AnyUirNode {
       return parseVarDecl(o, path);
     case 'logic.While':
       return parseWhile(o, path);
+    case 'logic.WidgetExpr':
+      return parseWidgetExpr(o, path);
     default:
       throw new UirParseError(`${path}.kind`, `unknown UIR node kind "${kind}"`);
   }

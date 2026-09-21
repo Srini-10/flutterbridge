@@ -827,16 +827,18 @@ import 'package:flutter/material.dart';
 
 class Screen extends StatelessWidget {
   const Screen({super.key});
-  Widget _helper() => const Text('x');
   @override
-  Widget build(BuildContext context) => _helper();
+  Widget build(BuildContext context) => Other.make();
+}
+class Other {
+  static Widget make() => const Text('x');
 }
 ''');
 
       final Map<String, dynamic> opaque = app.only('ui.Opaque');
       expect(
         opaque['dartSource'],
-        '_helper()',
+        'Other.make()',
         reason: 'nothing is dropped: the source survives, so an override can supply the mapping',
       );
       expect(app.errors, isEmpty, reason: 'an unknown widget is a warning, not an error');
@@ -1755,7 +1757,7 @@ class W extends StatelessWidget {
     });
 
     group('the side-effect boundary refuses honestly rather than dropping anything (Phase 7)', () {
-      test('a bare statement before the return stays opaque', () async {
+      test('a bare statement before the return is the component prelude (ADR-0062)', () async {
         final Extracted app = await extract('''
 import 'package:flutter/material.dart';
 void logSomething() {}
@@ -1768,17 +1770,14 @@ class W extends StatelessWidget {
   }
 }
 ''');
-        final Map<String, dynamic> render = app.only('ui.Component')['render'] as Map<String, dynamic>;
-        expect(render['kind'], 'ui.Opaque');
-        expect(render['reason'], 'build body with statements');
-        expect(
-          render['dartSource'],
-          contains('logSomething()'),
-          reason: 'the call is preserved verbatim, not silently dropped (INV-4)',
-        );
+        final Map<String, dynamic> component = app.only('ui.Component');
+        expect((component['render'] as Map<String, dynamic>)['kind'], 'ui.Text');
+        final List<dynamic> prelude = component['prelude'] as List<dynamic>;
+        expect(prelude, hasLength(1), reason: 'the call is kept as a statement, not dropped');
+        expect((prelude.single as Map<String, dynamic>)['kind'], 'logic.ExprStmt');
       });
 
-      test('mutating a local (`x++`) stays opaque', () async {
+      test('mutating a local (`x++`) is a prelude with a real variable', () async {
         final Extracted app = await extract(r'''
 import 'package:flutter/material.dart';
 class W extends StatelessWidget {
@@ -1791,11 +1790,12 @@ class W extends StatelessWidget {
   }
 }
 ''');
-        final Map<String, dynamic> render = app.only('ui.Component')['render'] as Map<String, dynamic>;
-        expect(render['kind'], 'ui.Opaque');
+        final Map<String, dynamic> component = app.only('ui.Component');
+        expect((component['render'] as Map<String, dynamic>)['kind'], 'ui.Text');
+        expect(component['prelude'], hasLength(2));
       });
 
-      test('a side effect inside a non-returning if stays opaque', () async {
+      test('a side effect inside a non-returning if is a prelude statement', () async {
         final Extracted app = await extract('''
 import 'package:flutter/material.dart';
 class W extends StatelessWidget {
@@ -1811,12 +1811,9 @@ class W extends StatelessWidget {
   }
 }
 ''');
-        final Map<String, dynamic> render = app.only('ui.Component')['render'] as Map<String, dynamic>;
-        expect(
-          render['kind'],
-          'ui.Opaque',
-          reason: 'an if whose branch does not return is not the proven-safe grammar — refuse, do not guess',
-        );
+        final Map<String, dynamic> component = app.only('ui.Component');
+        expect((component['render'] as Map<String, dynamic>)['kind'], 'ui.Text');
+        expect(((component['prelude'] as List<dynamic>).single as Map<String, dynamic>)['kind'], 'logic.If');
       });
 
       test('an unused local stays opaque rather than silently dropping its initializer', () async {
@@ -1863,7 +1860,7 @@ class W extends StatelessWidget {
         expect(render['kind'], 'ui.Opaque');
       });
 
-      test('a multi-variable declaration statement stays opaque', () async {
+      test('a multi-variable declaration statement is a prelude', () async {
         final Extracted app = await extract(r'''
 import 'package:flutter/material.dart';
 class W extends StatelessWidget {
@@ -1875,8 +1872,9 @@ class W extends StatelessWidget {
   }
 }
 ''');
-        final Map<String, dynamic> render = app.only('ui.Component')['render'] as Map<String, dynamic>;
-        expect(render['kind'], 'ui.Opaque');
+        final Map<String, dynamic> component = app.only('ui.Component');
+        expect((component['render'] as Map<String, dynamic>)['kind'], 'ui.Text');
+        expect(component['prelude'], isNotEmpty);
       });
     });
   });
@@ -10065,7 +10063,7 @@ class W extends StatelessWidget {
       expect((target['receiver'] as Map<String, dynamic>)['name'], 'this');
     });
 
-    test('a build-method local holding an object the build mutates is refused (BRG1313); a list only read is not', () async {
+    test('a build-method local holding an object the build mutates is a real variable in the prelude (ADR-0062); a list only read is substituted', () async {
       final Extracted mutated = await extract(r'''
 import 'package:flutter/material.dart';
 class Counter { int n = 0; void tick() { n++; } }
@@ -10079,7 +10077,8 @@ class W extends StatelessWidget {
   }
 }
 ''');
-      expect(codesOf(mutated), contains('BRG1313'));
+      expect(codesOf(mutated), isNot(contains('BRG1313')), reason: 'one object, mutated in place, read by the tree');
+      expect(mutated.only('ui.Component')['prelude'], hasLength(2));
       final Extracted readOnly = await extract(r'''
 import 'package:flutter/material.dart';
 class W extends StatelessWidget {
@@ -10262,6 +10261,137 @@ String f(int n) => 'a $n, '
           .join();
       expect(text, 'a #, b #', reason: 'the two literals are one string; the interpolations keep their places');
       expect(nodesOfKind(nodes, 'logic.OpaqueExpr'), isEmpty);
+    });
+  });
+
+  group('widget-returning helpers are inlined (M12, ADR-0062)', () {
+    Future<List<Map<String, dynamic>>> nodesFor(String members, {String extraTop = ''}) async {
+      final Extracted e = await extract('''
+import 'package:flutter/material.dart';
+$extraTop
+class W extends StatelessWidget {
+  const W({super.key, this.x = 'field'});
+  final String x;
+  $members
+}
+''');
+      return e.nodes;
+    }
+
+    Iterable<Map<String, dynamic>> kinds(Object? node, String kind) sync* {
+      if (node is Map<String, dynamic>) {
+        if (node['kind'] == kind) {
+          yield node;
+        }
+        for (final Object? v in node.values) {
+          yield* kinds(v, kind);
+        }
+      } else if (node is List) {
+        for (final Object? v in node) {
+          yield* kinds(v, kind);
+        }
+      }
+    }
+
+    test('a helper with an expression body, a named and a defaulted argument, is inlined; locals and a return too', () async {
+      final List<Map<String, dynamic>> nodes = await nodesFor(r'''
+  Widget _a(String t, {int n = 3}) => Text('$t $n');
+  Widget _b(String t) { final u = t + '!'; return Text(u); }
+  Widget _t(String t) => Text(t);
+  @override
+  Widget build(BuildContext context) => Column(children: [_a('p'), _a('q', n: 4), _b('r'), for (final t in ['s']) _t(t)]);
+''');
+      expect(kinds(nodes, 'ui.Opaque'), isEmpty);
+      expect(kinds(nodes, 'ui.Text'), hasLength(4), reason: 'four calls, four inlined `Text`s — including one whose argument is named like the parameter');
+    });
+
+    test('a recursive helper, an async or generic one, a static one, and a helper whose free name a build local would capture stay opaque', () async {
+      final List<Map<String, dynamic>> recursive = await nodesFor('''
+  Widget _r(int n) => n == 0 ? const Text('a') : _r(n - 1);
+  @override
+  Widget build(BuildContext context) => Column(children: [_r(2)]);
+''');
+      expect(kinds(recursive, 'ui.Opaque'), hasLength(1), reason: 'inlined once; the recursive call is not inlined again');
+
+      final List<Map<String, dynamic>> generic = await nodesFor(r'''
+  Widget _g<T>(T v) => Text('$v');
+  @override
+  Widget build(BuildContext context) => Column(children: [_g<int>(1)]);
+''');
+      expect(kinds(generic, 'ui.Opaque'), hasLength(1));
+
+      final List<Map<String, dynamic>> capture = await nodesFor('''
+  Widget _c() => Text(x);
+  @override
+  Widget build(BuildContext context) {
+    final String x = 'local';
+    return Column(children: [_c(), Text(x)]);
+  }
+''');
+      expect(kinds(capture, 'ui.Opaque'), hasLength(1), reason: 'the helper reads the field `x`; inlining would read the local');
+
+      final List<Map<String, dynamic>> other = await nodesFor('''
+  @override
+  Widget build(BuildContext context) => Column(children: [Other.make(1)]);
+''', extraTop: r"class Other { static Widget make(int n) => Text('$n'); }");
+      expect(kinds(other, 'ui.Opaque'), hasLength(1));
+    });
+  });
+
+  group('a build with statements (M12, ADR-0062)', () {
+    Iterable<Map<String, dynamic>> kinds(Object? node, String kind) sync* {
+      if (node is Map<String, dynamic>) {
+        if (node['kind'] == kind) {
+          yield node;
+        }
+        for (final Object? v in node.values) {
+          yield* kinds(v, kind);
+        }
+      } else if (node is List) {
+        for (final Object? v in node) {
+          yield* kinds(v, kind);
+        }
+      }
+    }
+
+    test('statements before the return become the component prelude; widgets in them are values; a spread of a local is ui.Nodes', () async {
+      final Extracted e = await extract(r'''
+import 'package:flutter/material.dart';
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) {
+    final rows = <Widget>[];
+    for (var i = 0; i < 3; i++) {
+      rows.add(Text('$i'));
+    }
+    return Column(children: [...rows, for (var j = 0; j < 2; j++) Text('$j')]);
+  }
+}
+''');
+      final Map<String, dynamic> component = e.only('ui.Component');
+      final List<dynamic> prelude = component['prelude'] as List<dynamic>;
+      expect(prelude.map((dynamic s) => (s as Map<String, dynamic>)['kind']), <String>['logic.VarDecl', 'logic.For']);
+      expect(kinds(prelude, 'logic.WidgetExpr'), hasLength(1), reason: '`rows.add(Text(..))` holds a widget value');
+      expect(kinds(component['render'], 'ui.Nodes'), hasLength(2), reason: 'the spread and the C-style for');
+      expect(kinds(e.nodes, 'ui.Opaque'), isEmpty);
+      expect(e.result.diagnostics.map((Diagnostic d) => d.code.id), isNot(contains('BRG1313')), reason: 'a mutated build local is a real variable in the prelude, not a substitution');
+    });
+
+    test('a build with an early return keeps the structured path; a build of plain locals is unchanged (no prelude)', () async {
+      final Extracted e = await extract(r'''
+import 'package:flutter/material.dart';
+class W extends StatelessWidget {
+  const W({super.key, this.n = 1});
+  final int n;
+  @override
+  Widget build(BuildContext context) {
+    final label = 'n=$n';
+    return Text(label);
+  }
+}
+''');
+      expect(e.only('ui.Component').containsKey('prelude'), isFalse);
     });
   });
 }

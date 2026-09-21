@@ -140,19 +140,24 @@ final class WidgetExtractor {
         return _list(node, _mapToList(node)!, scope, index: index, slot: slot);
 
       case MethodInvocation():
-        // A call that returns a widget — a `_buildHeader()` helper, or a widget-returning method.
-        // Faithfully an expression that yields a subtree, and there is no `ui.*` node for that, so it
+        // A call that returns a widget — a `_buildHeader()` helper, or a widget-returning method. A helper declared in this file whose
+        // body is an expression (or locals and a return) is inlined at the call (M12, ADR-0062); anything else has no `ui.*` node and
         // is opaque *at the UI level* while remaining fully modelled as an expression inside.
+        if (_inlineHelper(node, scope, index: index, slot: slot) case final RawNode inlined) {
+          return inlined;
+        }
         return out.opaqueUi(node, 'widget returned by a call', type: node.staticType);
 
       // A build-method local holding a widget (M8-B) — `final child = Text('A'); return child;`. The
       // render tree has nowhere to declare `child`, so its own initializer is extracted again here,
       // in its place, rather than the reference being left opaque.
       case SimpleIdentifier() when scope.lookup(node.name)?.inlineValue != null:
-        return extract(scope.lookup(node.name)!.inlineValue!, scope, index: index, slot: slot);
+        final Binding inlined = scope.lookup(node.name)!;
+        return extract(inlined.inlineValue!, inlined.inlineScope ?? scope, index: index, slot: slot);
 
+      // A widget or a list of widgets held in a value — a `Widget` parameter, a `List<Widget>` local (M12, ADR-0062).
       case SimpleIdentifier() || PrefixedIdentifier() || PropertyAccess():
-        return out.opaqueUi(node, 'widget held in a variable', type: node.staticType);
+        return _nodes(node, scope, index: index, slot: slot);
 
       case Expression():
         out.report(
@@ -163,6 +168,191 @@ final class WidgetExtractor {
         );
         return out.opaqueUi(node, 'unrecognised widget expression', type: node.staticType);
     }
+  }
+
+  // ── widgets as values ─────────────────────────────────────────────────────────────────────────
+
+  /// `ui.Nodes`: [node] is a value holding a widget or a list of widgets, rendered where it is.
+  RawNode _nodes(Expression node, Scope scope, {int? index, String? slot}) => RawNode(
+    kind: 'ui.Nodes',
+    span: out.span(node),
+    anchorSegment: _segment('nodes', index, slot),
+    fields: <String, RawValue>{'value': RawChild(bindings.extract(node, scope))},
+  );
+
+  /// A collection element the tree has no node for (a C-style `for`): evaluated as a list whose elements are widget values.
+  RawNode _elementNodes(CollectionElement element, Scope scope, {int? index, String? slot}) {
+    final bool was = expressions.widgetValues;
+    expressions.widgetValues = true;
+    final RawNode list = expressions.collectionElementList(element, scope);
+    expressions.widgetValues = was;
+    return RawNode(
+      kind: 'ui.Nodes',
+      span: out.span(element),
+      anchorSegment: _segment('nodes', index, slot),
+      fields: <String, RawValue>{
+        'value': RawChild(
+          RawNode(kind: 'bind.Expr', span: out.span(element), fields: <String, RawValue>{'expr': RawChild(list)}),
+        ),
+      },
+    );
+  }
+
+  /// [node] as a `logic.WidgetExpr` — its `ui.*` tree, wrapped so it can sit in an expression — when it is a widget; null when it is not.
+  RawNode? widgetValueOf(Expression node, Scope scope) {
+    final DartType? type = node.staticType;
+    if (type == null || !registry.recogniseWidget(context, type).isWidget) {
+      return null;
+    }
+    // A widget-typed conditional (`c ? A() : B()`) stays an ordinary conditional of widget values.
+    if (node is ConditionalExpression) {
+      return null;
+    }
+    return RawNode(
+      kind: 'logic.WidgetExpr',
+      span: out.span(node),
+      fields: <String, RawValue>{
+        // Each widget value is its own place (its own anchor): two `Text`s built in one statement-bodied `build` are not the same one.
+        'tree': RawChild(extract(node, scope, slot: 'value${node.offset}')),
+        'type': out.typeRef(type, at: node),
+      },
+    );
+  }
+
+  // ── widget-returning helpers ──────────────────────────────────────────────────────────────────
+
+  /// The declaration of the function or method [element] names, when it is written in this file.
+  AstNode? _declarationOf(ExecutableElement element) {
+    final Element target = element.baseElement;
+    AstNode? found;
+    for (final CompilationUnitMember member in context.unit.declarations) {
+      if (member is FunctionDeclaration && member.declaredFragment?.element == target) {
+        found = member;
+      } else if (member is ClassDeclaration) {
+        for (final ClassMember m in member.body.members) {
+          if (m is MethodDeclaration && m.declaredFragment?.element == target) {
+            found = m;
+          }
+        }
+      }
+    }
+    return found;
+  }
+
+  /// Inlines a call to a widget-returning helper: `_buildHeader(title, onTap: f)` extracts the helper's returned tree with each
+  /// parameter bound to the argument written at the call. An argument is substituted where the parameter is read, evaluated in
+  /// the *caller's* scope (hygiene), which is exactly what `build` may do: Flutter requires it to be free of observable effects.
+  ///
+  /// Refused (null — the caller keeps it opaque) for anything that is not that simple: a helper in another file or class, `async`, a
+  /// generic one, a recursive one, an omitted parameter with no default, a body with statements beyond `final` locals and one return, a
+  /// helper whose free names would be captured by a build local of the same name.
+  RawNode? _inlineHelper(MethodInvocation node, Scope scope, {int? index, String? slot}) {
+    final Element? element = node.methodName.element;
+    if (element is! ExecutableElement || (element is! MethodElement && element is! TopLevelFunctionElement)) {
+      return null;
+    }
+    if (element is MethodElement && (element.isStatic || node.realTarget != null && node.realTarget is! ThisExpression)) {
+      return null;
+    }
+    final AstNode? declaration = _declarationOf(element);
+    final FormalParameterList? parameters = switch (declaration) {
+      final MethodDeclaration d => d.parameters,
+      final FunctionDeclaration d => d.functionExpression.parameters,
+      _ => null,
+    };
+    final FunctionBody? body = switch (declaration) {
+      final MethodDeclaration d => d.body,
+      final FunctionDeclaration d => d.functionExpression.body,
+      _ => null,
+    };
+    if (declaration == null || body == null || body.isAsynchronous || body.isGenerator) {
+      return null;
+    }
+    final bool generic = switch (declaration) {
+      final MethodDeclaration d => d.typeParameters != null,
+      final FunctionDeclaration d => d.functionExpression.typeParameters != null,
+      _ => true,
+    };
+    if (generic || out.inlining.contains(element.baseElement)) {
+      return null;
+    }
+
+    // Bind each parameter to its argument (or its default), in the caller's scope.
+    final Map<String, Expression> named = <String, Expression>{
+      for (final Argument a in node.argumentList.arguments)
+        if (a is NamedArgument) a.name.lexeme: a.argumentExpression,
+    };
+    final List<Expression> positional = <Expression>[
+      for (final Argument a in node.argumentList.arguments)
+        if (a is Expression) a,
+    ];
+    final List<Binding> bindings = <Binding>[];
+    int next = 0;
+    for (final FormalParameter parameter in parameters?.parameters ?? const <FormalParameter>[]) {
+      final String? name = parameter.name?.lexeme;
+      if (name == null || parameter is FieldFormalParameter || parameter is SuperFormalParameter) {
+        return null;
+      }
+      final Expression? argument = parameter.isNamed
+          ? named[name]
+          : (next < positional.length ? positional[next++] : null);
+      final Expression? value = argument ?? parameter.defaultClause?.value;
+      if (value == null) {
+        return null;
+      }
+      bindings.add(Binding(name: name, binds: Binds.local, inlineValue: value, inlineScope: scope));
+    }
+
+    // The helper's own free names must not be captured by a build local of the same name.
+    final Set<String> buildLocals = <String>{
+      for (final String candidate in _identifiersIn(body))
+        if (scope.lookup(candidate)?.inlineValue != null && !bindings.any((Binding b) => b.name == candidate)) candidate,
+    };
+    if (buildLocals.isNotEmpty) {
+      return null;
+    }
+
+    Scope inner = scope.child(bindings);
+    Expression? returned;
+    switch (body) {
+      case ExpressionFunctionBody():
+        returned = body.expression;
+      case BlockFunctionBody():
+        final List<Statement> statements = body.block.statements;
+        for (int i = 0; i < statements.length; i++) {
+          final Statement statement = statements[i];
+          if (i == statements.length - 1 && statement is ReturnStatement) {
+            returned = statement.expression;
+          } else if (statement is VariableDeclarationStatement &&
+              statement.variables.variables.length == 1 &&
+              statement.variables.variables.single.initializer != null) {
+            final VariableDeclaration variable = statement.variables.variables.single;
+            inner = inner.withBinding(
+              Binding(name: variable.name.lexeme, binds: Binds.local, inlineValue: variable.initializer, inlineScope: inner),
+            );
+          } else {
+            return null;
+          }
+        }
+      default:
+        return null;
+    }
+    if (returned == null) {
+      return null;
+    }
+    out.inlining.add(element.baseElement);
+    try {
+      return extract(returned, inner, index: index, slot: slot);
+    } finally {
+      out.inlining.remove(element.baseElement);
+    }
+  }
+
+  /// Every simple identifier written in [node].
+  static Set<String> _identifiersIn(AstNode node) {
+    final Set<String> names = <String>{};
+    node.accept(_IdentifierCollector(names));
+    return names;
   }
 
   // ── elements ──────────────────────────────────────────────────────────────────────────────────
@@ -687,7 +877,7 @@ final class WidgetExtractor {
     if (node is! ListLiteral) {
       // `children: someList` — a whole list from elsewhere. No `ui.*` node holds "the children are
       // whatever that is", so it is one opaque child rather than an invented list.
-      return <RawValue>[RawChild(out.opaqueUi(node, 'children from an expression'))];
+      return <RawValue>[RawChild(_nodes(node, scope, index: 0))];
     }
 
     final List<RawValue> children = <RawValue>[];
@@ -764,7 +954,7 @@ final class WidgetExtractor {
             },
           );
         }
-        return out.opaqueUi(element, 'for-element');
+        return _elementNodes(element, scope, index: index, slot: slot);
 
       // `...items.map((i) => Tile(i))`
       case SpreadElement():
@@ -772,7 +962,7 @@ final class WidgetExtractor {
         if (mapped != null) {
           return _list(element.expression, mapped, scope, index: index);
         }
-        return out.opaqueUi(element.expression, 'spread');
+        return _nodes(element.expression, scope, index: index, slot: slot);
 
       case CollectionElement():
         return out.opaqueUi(element, 'collection element');
@@ -905,6 +1095,19 @@ class _IndexedCollections extends RecursiveAstVisitor<void> {
     if (node.name == indexName) {
       everyUseIsAnIndex = false;
     }
+    super.visitSimpleIdentifier(node);
+  }
+}
+
+/// Collects the simple identifiers of a subtree.
+final class _IdentifierCollector extends RecursiveAstVisitor<void> {
+  _IdentifierCollector(this.names);
+
+  final Set<String> names;
+
+  @override
+  void visitSimpleIdentifier(SimpleIdentifier node) {
+    names.add(node.name);
     super.visitSimpleIdentifier(node);
   }
 }

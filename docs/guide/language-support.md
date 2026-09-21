@@ -70,6 +70,12 @@ collection `...`/`if`/`for` in lists, sets and maps, adjacent strings, and check
 `FormatException`, `StateError`, `ArgumentError`, `RangeError`, `UnsupportedError`, `UnimplementedError`, `Exception`, project exception
 classes; typed `on T catch` clauses dispatch on type, an unmatched exception propagates ([ADR-0061](../adr/0061-exceptions.md)).
 
+## Widget helpers and statement-bodied builds — ADR-0062
+
+Widget-returning helpers in the same file are inlined; a `build` with loops, `if`s, calls and mutated locals runs them as a prelude;
+widgets can be held in locals and lists (`ReactNode`), spread (`...rows`) and passed as `Widget`/`List<Widget>` props
+([ADR-0062](../adr/0062-widget-helpers-and-statement-builds.md)).
+
 ## Not supported (refused, by name)
 
 Everything not listed. The census of two real applications (see the final audit report) found the blockers in practice are: freezed

@@ -57,6 +57,17 @@ final class StatementExtractor implements StatementExtractorRef {
   }
 
   @override
+  (List<RawValue>, Scope) statementsThrough(List<Statement> statements, Scope scope) {
+    Scope current = scope;
+    final List<RawValue> out = <RawValue>[];
+    for (final Statement statement in statements) {
+      out.addAll(_statement(statement, current));
+      current = _declaring(statement, current);
+    }
+    return (out, current);
+  }
+
+  @override
   FunctionExpression? unwrapStateBatch(MethodInvocation node) =>
       registry.unwrapStateBatch(node);
 

@@ -31,7 +31,7 @@ const String uirVersion = '1.15.0';
 /// A hash of the schema sources this library was generated from.
 ///
 /// Stamped into every emitted manifest: a UIR document always says which schema produced it.
-const String uirSchemaHash = 'b614400e2a714d2b';
+const String uirSchemaHash = 'c09a36a8090b0e0c';
 
 /// Node kind -> the fields of that node which hold `NodeId` references.
 ///
@@ -102,6 +102,7 @@ const Map<String, List<String>> uirReferenceFields = <String, List<String>>{
   'ui.Cond': <String>['id'],
   'ui.Element': <String>['id'],
   'ui.List': <String>['id'],
+  'ui.Nodes': <String>['id'],
   'ui.Opaque': <String>['id'],
   'ui.OverrideRef': <String>['id'],
   'ui.SlotRef': <String>['id'],
@@ -109,6 +110,7 @@ const Map<String, List<String>> uirReferenceFields = <String, List<String>>{
   'logic.Unary': <String>['id'],
   'logic.VarDecl': <String>['id'],
   'logic.While': <String>['id'],
+  'logic.WidgetExpr': <String>['id'],
 };
 
 /// Thrown when JSON does not conform to the schema.
@@ -930,6 +932,8 @@ sealed class Expr extends UirNode {
         return TypeCheck.fromJson(json, path);
       case 'logic.Unary':
         return Unary.fromJson(json, path);
+      case 'logic.WidgetExpr':
+        return WidgetExpr.fromJson(json, path);
       default:
         throw UirParseError('$path.kind', 'unknown Expr kind "$kind"');
     }
@@ -1004,6 +1008,8 @@ sealed class UiNode extends UirNode {
         return UiElement.fromJson(json, path);
       case 'ui.List':
         return UiList.fromJson(json, path);
+      case 'ui.Nodes':
+        return UiNodes.fromJson(json, path);
       case 'ui.Opaque':
         return UiOpaque.fromJson(json, path);
       case 'ui.OverrideRef':
@@ -3517,6 +3523,7 @@ final class Component extends UirNode {
     this.ext,
     this.localSignals,
     this.params,
+    this.prelude,
     this.semantics,
   });
 
@@ -3535,6 +3542,7 @@ final class Component extends UirNode {
       localSignals: json['localSignals'] == null ? null : _asList<NodeId>(json['localSignals'], '$path.localSignals', _asString),
       name: _asString(_req(json, 'name', path), '$path.name'),
       params: json['params'] == null ? null : _asList<ParamDecl>(json['params'], '$path.params', ParamDecl.fromJson),
+      prelude: json['prelude'] == null ? null : _asList<Stmt>(json['prelude'], '$path.prelude', Stmt.fromJson),
       render: UiNode.fromJson(_req(json, 'render', path), '$path.render'),
       semantics: json['semantics'] == null ? null : SemanticsInfo.fromJson(json['semantics'], '$path.semantics'),
       span: SourceSpan.fromJson(_req(json, 'span', path), '$path.span'),
@@ -3564,6 +3572,9 @@ final class Component extends UirNode {
   /// Constructor parameters, in order.
   final List<ParamDecl>? params;
 
+  /// Statements a statement-bodied `build` runs before it returns the tree (M12, ADR-0062): locals, loops, `if`s, calls. Absent for a build that is just `return <tree>`. Locals declared here are real variables; the tree refers to them by `logic.Ref` `target`, and each is one object however often the tree reads it.
+  final List<Stmt>? prelude;
+
   /// The render tree.
   final UiNode render;
 
@@ -3588,6 +3599,7 @@ final class Component extends UirNode {
     'localSignals': localSignals,
     'name': name,
     'params': params?.map((ParamDecl v) => v.toJson()).toList(),
+    'prelude': prelude?.map((Stmt v) => v.toJson()).toList(),
     'render': render.toJson(),
     'semantics': semantics?.toJson(),
     'span': span.toJson(),
@@ -3605,6 +3617,7 @@ final class Component extends UirNode {
     List<NodeId>? localSignals,
     String? name,
     List<ParamDecl>? params,
+    List<Stmt>? prelude,
     UiNode? render,
     SemanticsInfo? semantics,
     SourceSpan? span,
@@ -3617,6 +3630,7 @@ final class Component extends UirNode {
       localSignals: localSignals ?? this.localSignals,
       name: name ?? this.name,
       params: params ?? this.params,
+      prelude: prelude ?? this.prelude,
       render: render ?? this.render,
       semantics: semantics ?? this.semantics,
       span: span ?? this.span,
@@ -3634,6 +3648,7 @@ final class Component extends UirNode {
         _equality.equals(other.localSignals, localSignals) &&
         _equality.equals(other.name, name) &&
         _equality.equals(other.params, params) &&
+        _equality.equals(other.prelude, prelude) &&
         _equality.equals(other.render, render) &&
         _equality.equals(other.semantics, semantics) &&
         _equality.equals(other.span, span);
@@ -3649,6 +3664,7 @@ final class Component extends UirNode {
     _equality.hash(localSignals),
     _equality.hash(name),
     _equality.hash(params),
+    _equality.hash(prelude),
     _equality.hash(render),
     _equality.hash(semantics),
     _equality.hash(span),
@@ -10665,6 +10681,109 @@ final class UiList extends UiNode {
   ]);
 }
 
+/// Widgets held in a value (M12, ADR-0062): `...rows`, a `List<Widget>` local, a `Widget` parameter used as a child, a C-style collection-for. The generator renders the value as children, where it is.
+@immutable
+final class UiNodes extends UiNode {
+  /// Creates a [UiNodes].
+  const UiNodes({
+    required this.id,
+    required this.span,
+    required this.value,
+    this.anchor,
+    this.ext,
+  });
+
+  /// Parses a [UiNodes] from JSON, validating as it goes.
+  factory UiNodes.fromJson(Object? value, [String path = 'UiNodes']) {
+    final Map<String, Object?> json = _asObject(value, path);
+    final String kind = _asString(_req(json, 'kind', path), '$path.kind');
+    if (kind != 'ui.Nodes') {
+      throw UirParseError('$path.kind', 'expected "ui.Nodes", got "$kind"');
+    }
+    return UiNodes(
+      anchor: json['anchor'] == null ? null : _asString(json['anchor'], '$path.anchor'),
+      ext: json['ext'] == null ? null : _asMap<Object?>(json['ext'], '$path.ext', (Object? v, String p) => v),
+      id: _asString(_req(json, 'id', path), '$path.id'),
+      span: SourceSpan.fromJson(_req(json, 'span', path), '$path.span'),
+      value: Binding.fromJson(_req(json, 'value', path), '$path.value'),
+    );
+  }
+
+  /// The override key, when the node is addressable by a human.
+  final Anchor? anchor;
+
+  /// Plugin extension data, namespaced `x-<plugin>`. Core passes round-trip it untouched (Spec §2.6).
+  final Map<String, Object?>? ext;
+
+  /// The node's stable, content-addressed identity.
+  final NodeId id;
+
+  /// Where the node came from.
+  final SourceSpan span;
+
+  /// The widget, or list of widgets.
+  final Binding value;
+
+  /// The node's discriminant.
+  @override
+  String get kind => 'ui.Nodes';
+
+  /// Serializes to canonical JSON: keys sorted, nulls omitted.
+  @override
+  Map<String, Object?> toJson() => canonicalJson(<String, Object?>{
+    'anchor': anchor,
+    'ext': ext,
+    'id': id,
+    'kind': 'ui.Nodes',
+    'span': span.toJson(),
+    'value': value.toJson(),
+  })! as Map<String, Object?>;
+
+  /// Returns a copy with the given fields replaced. The original is never mutated.
+  ///
+  /// An omitted argument keeps its current value; `copyWith` cannot set a field back to
+  /// null. Construct a new node when that is what you mean.
+  UiNodes copyWith({
+    Anchor? anchor,
+    Map<String, Object?>? ext,
+    NodeId? id,
+    SourceSpan? span,
+    Binding? value,
+  }) {
+    return UiNodes(
+      anchor: anchor ?? this.anchor,
+      ext: ext ?? this.ext,
+      id: id ?? this.id,
+      span: span ?? this.span,
+      value: value ?? this.value,
+    );
+  }
+
+  @override
+  R accept<R>(UiNodeVisitor<R> visitor) => visitor.visitUiNodes(this);
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is UiNodes &&
+        _equality.equals(other.anchor, anchor) &&
+        _equality.equals(other.ext, ext) &&
+        _equality.equals(other.id, id) &&
+        _equality.equals(other.span, span) &&
+        _equality.equals(other.value, value);
+  }
+
+  @override
+  int get hashCode => Object.hashAll(<Object?>[
+    'UiNodes',
+    _equality.hash(anchor),
+    _equality.hash(ext),
+    _equality.hash(id),
+    _equality.hash(span),
+    _equality.hash(value),
+  ]);
+}
+
 /// A widget the extractor cannot model. Preserved with its source and reason (INV-4); routed to the override system.
 @immutable
 final class UiOpaque extends UiNode {
@@ -11498,6 +11617,119 @@ final class While extends Stmt {
   ]);
 }
 
+/// A widget as a value inside logic code (M12, ADR-0062): `children.add(Padding(child: w))` in a statement-bodied `build`. `tree` is the same `ui.*` tree a render position holds; the generator emits it where the expression is.
+@immutable
+final class WidgetExpr extends Expr {
+  /// Creates a [WidgetExpr].
+  const WidgetExpr({
+    required this.id,
+    required this.span,
+    required this.tree,
+    required this.type,
+    this.anchor,
+    this.ext,
+  });
+
+  /// Parses a [WidgetExpr] from JSON, validating as it goes.
+  factory WidgetExpr.fromJson(Object? value, [String path = 'WidgetExpr']) {
+    final Map<String, Object?> json = _asObject(value, path);
+    final String kind = _asString(_req(json, 'kind', path), '$path.kind');
+    if (kind != 'logic.WidgetExpr') {
+      throw UirParseError('$path.kind', 'expected "logic.WidgetExpr", got "$kind"');
+    }
+    return WidgetExpr(
+      anchor: json['anchor'] == null ? null : _asString(json['anchor'], '$path.anchor'),
+      ext: json['ext'] == null ? null : _asMap<Object?>(json['ext'], '$path.ext', (Object? v, String p) => v),
+      id: _asString(_req(json, 'id', path), '$path.id'),
+      span: SourceSpan.fromJson(_req(json, 'span', path), '$path.span'),
+      tree: UiNode.fromJson(_req(json, 'tree', path), '$path.tree'),
+      type: TypeRef.fromJson(_req(json, 'type', path), '$path.type'),
+    );
+  }
+
+  /// The override key, when the node is addressable by a human.
+  final Anchor? anchor;
+
+  /// Plugin extension data, namespaced `x-<plugin>`. Core passes round-trip it untouched (Spec §2.6).
+  final Map<String, Object?>? ext;
+
+  /// The node's stable, content-addressed identity.
+  final NodeId id;
+
+  /// Where the node came from.
+  final SourceSpan span;
+
+  /// The widget's tree.
+  final UiNode tree;
+
+  /// Resolved type (a `Widget`).
+  final TypeRef type;
+
+  /// The node's discriminant.
+  @override
+  String get kind => 'logic.WidgetExpr';
+
+  /// Serializes to canonical JSON: keys sorted, nulls omitted.
+  @override
+  Map<String, Object?> toJson() => canonicalJson(<String, Object?>{
+    'anchor': anchor,
+    'ext': ext,
+    'id': id,
+    'kind': 'logic.WidgetExpr',
+    'span': span.toJson(),
+    'tree': tree.toJson(),
+    'type': type.toJson(),
+  })! as Map<String, Object?>;
+
+  /// Returns a copy with the given fields replaced. The original is never mutated.
+  ///
+  /// An omitted argument keeps its current value; `copyWith` cannot set a field back to
+  /// null. Construct a new node when that is what you mean.
+  WidgetExpr copyWith({
+    Anchor? anchor,
+    Map<String, Object?>? ext,
+    NodeId? id,
+    SourceSpan? span,
+    UiNode? tree,
+    TypeRef? type,
+  }) {
+    return WidgetExpr(
+      anchor: anchor ?? this.anchor,
+      ext: ext ?? this.ext,
+      id: id ?? this.id,
+      span: span ?? this.span,
+      tree: tree ?? this.tree,
+      type: type ?? this.type,
+    );
+  }
+
+  @override
+  R accept<R>(ExprVisitor<R> visitor) => visitor.visitWidgetExpr(this);
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is WidgetExpr &&
+        _equality.equals(other.anchor, anchor) &&
+        _equality.equals(other.ext, ext) &&
+        _equality.equals(other.id, id) &&
+        _equality.equals(other.span, span) &&
+        _equality.equals(other.tree, tree) &&
+        _equality.equals(other.type, type);
+  }
+
+  @override
+  int get hashCode => Object.hashAll(<Object?>[
+    'WidgetExpr',
+    _equality.hash(anchor),
+    _equality.hash(ext),
+    _equality.hash(id),
+    _equality.hash(span),
+    _equality.hash(tree),
+    _equality.hash(type),
+  ]);
+}
+
 /// Visitor over [Binding].
 ///
 /// Exhaustive by construction: adding a variant to the schema breaks every implementation at
@@ -11625,6 +11857,9 @@ abstract interface class ExprVisitor<R> {
 
   /// Visits a [Unary].
   R visitUnary(Unary node);
+
+  /// Visits a [WidgetExpr].
+  R visitWidgetExpr(WidgetExpr node);
 }
 
 /// Visitor over [Stmt].
@@ -11691,6 +11926,9 @@ abstract interface class UiNodeVisitor<R> {
 
   /// Visits a [UiList].
   R visitUiList(UiList node);
+
+  /// Visits a [UiNodes].
+  R visitUiNodes(UiNodes node);
 
   /// Visits a [UiOpaque].
   R visitUiOpaque(UiOpaque node);
@@ -11841,6 +12079,8 @@ UirNode uirNodeFromJson(Object? value, [String path = 'UirNode']) {
       return UiElement.fromJson(json, path);
     case 'ui.List':
       return UiList.fromJson(json, path);
+    case 'ui.Nodes':
+      return UiNodes.fromJson(json, path);
     case 'ui.Opaque':
       return UiOpaque.fromJson(json, path);
     case 'ui.OverrideRef':
@@ -11855,6 +12095,8 @@ UirNode uirNodeFromJson(Object? value, [String path = 'UirNode']) {
       return VarDecl.fromJson(json, path);
     case 'logic.While':
       return While.fromJson(json, path);
+    case 'logic.WidgetExpr':
+      return WidgetExpr.fromJson(json, path);
     default:
       throw UirParseError('$path.kind', 'unknown UIR node kind "$kind"');
   }

@@ -1127,7 +1127,7 @@ function collectionPieces(elements: readonly Node[], scope: EmitScope, entry: (n
         const update = asArray(element['update']).map((u) => emitExpression(u, inner)).join(', ');
         const body = collectionPieces([element['body'] as Node], inner, entry).join(', ');
         const isAsync = containsAwait(element);
-        const run = `${isAsync ? 'async ' : ''}() => { const $r: unknown[] = []; for (let ${identifierOf(name)}${initValue}; ${test}; ${update}) { $r.push(${body}); } return $r; }`;
+        const run = `${isAsync ? 'async ' : ''}() => { const $r: any[] = []; for (let ${identifierOf(name)}${initValue}; ${test}; ${update}) { $r.push(${body}); } return $r; }`;
         out.push(isAsync ? `...(await (${run})())` : `...(${run})()`);
         break;
       }
@@ -2494,6 +2494,21 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
       }
 
       return `(${params}) => ${emitExpression(node['body'] as Node, inner)}`;
+    }
+
+    // A widget as a value (M12, ADR-0062): its tree, rendered where the expression is.
+    case 'logic.WidgetExpr': {
+      if (scope.renderWidget === undefined) {
+        scope.report(
+          GeneratorDiagnosticCode.UnsupportedExpression,
+          'error',
+          'a widget used as a value reached the expression emitter before the widget emitter was wired in. That is a defect in this ' +
+            'package, not in the program.',
+          idOf(node),
+        );
+        return REFUSED;
+      }
+      return scope.renderWidget(node['tree'] as Node, 0, scope);
     }
 
     // `throw` in expression position (`x ?? throw E()`, `=> throw E()`, a switch arm): a call whose type is `never`.

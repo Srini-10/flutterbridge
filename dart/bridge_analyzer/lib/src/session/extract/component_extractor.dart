@@ -22,6 +22,7 @@ import 'package:bridge_analyzer/src/diagnostics/codes.dart';
 import 'package:bridge_analyzer/src/model/raw_node.dart';
 import 'package:bridge_analyzer/src/session/adapters/adapter_context.dart';
 import 'package:bridge_analyzer/src/session/adapters/adapter_registry.dart';
+import 'package:bridge_analyzer/src/session/extract/expression_extractor.dart';
 import 'package:bridge_analyzer/src/session/extract/raw_node_emitter.dart';
 import 'package:bridge_analyzer/src/session/extract/scope.dart';
 import 'package:bridge_analyzer/src/session/extract/signal_extractor.dart';
@@ -193,10 +194,22 @@ final class ComponentExtractor {
     final Scope renderScope = Scope.forWidgetTree(buildScope, owner: symbol, body: build.body);
 
     final Expression? rendered = _returnedWidget(build.body);
-    final RawNode render = rendered != null
-        ? widgets.extract(rendered, renderScope)
-        : _structuredBody(build.body, renderScope) ??
-              out.opaqueUi(build.body, 'build body with statements');
+    List<RawValue>? prelude;
+    final RawNode render;
+    if (rendered != null) {
+      render = widgets.extract(rendered, renderScope);
+    } else if (_preludeShape(build.body) case final _PreludeShape shape) {
+      // Statements, then `return <tree>` (M12, ADR-0062): the statements are extracted as statements, the tree in the scope they leave.
+      final ExpressionExtractor expressions = signals.expressions;
+      final bool was = expressions.widgetValues;
+      expressions.widgetValues = true;
+      final (List<RawValue> statements, Scope after) = expressions.statements.statementsThrough(shape.before, renderScope);
+      expressions.widgetValues = was;
+      prelude = statements;
+      render = widgets.extract(shape.returned, after);
+    } else {
+      render = _structuredBody(build.body, renderScope) ?? out.opaqueUi(build.body, 'build body with statements');
+    }
 
     out.emit(
       RawNode(
@@ -210,6 +223,7 @@ final class ComponentExtractor {
           if (classState.signals.isNotEmpty)
             'localSignals': RawList(classState.signals.map(RawRef.new).toList()),
           if (classState.effects.isNotEmpty) 'effects': RawList(classState.effects.map(RawRef.new).toList()),
+          if (prelude != null && prelude.isNotEmpty) 'prelude': RawList(prelude),
           'render': RawChild(render),
         },
       ),
@@ -242,6 +256,46 @@ final class ComponentExtractor {
       'receives its props by name, so it would be silently absent from the generated component.',
       constructor,
     );
+  }
+
+  /// A build body that is statements followed by one `return <widget>` — and that `_structuredBody` cannot hold: a statement other
+  /// than a plain `final x = expr;`, or a local the build mutates (M12, ADR-0062). Null for anything else, including a body with an
+  /// early return (the structured path owns those).
+  _PreludeShape? _preludeShape(FunctionBody body) {
+    if (body is! BlockFunctionBody) {
+      return null;
+    }
+    final List<Statement> statements = body.block.statements;
+    if (statements.length < 2 || statements.last is! ReturnStatement) {
+      return null;
+    }
+    final Expression? returned = (statements.last as ReturnStatement).expression;
+    if (returned == null) {
+      return null;
+    }
+    final List<Statement> before = statements.sublist(0, statements.length - 1);
+    final _ReturnFinder finder = _ReturnFinder();
+    for (final Statement statement in before) {
+      statement.accept(finder);
+    }
+    if (finder.found) {
+      return null;
+    }
+    bool simple = true;
+    for (final Statement statement in before) {
+      if (statement is! VariableDeclarationStatement ||
+          statement.variables.variables.length != 1 ||
+          statement.variables.variables.single.initializer == null) {
+        simple = false;
+        break;
+      }
+      final Element? element = statement.variables.variables.single.declaredFragment?.element;
+      if (element != null && _isMutatedIn(statements, element)) {
+        simple = false;
+        break;
+      }
+    }
+    return simple ? null : _PreludeShape(before, returned);
   }
 
   /// The `build` method, if the class has one.
@@ -490,5 +544,28 @@ final class _MutationFinder extends RecursiveAstVisitor<void> {
       mutated = true;
     }
     super.visitAssignmentExpression(node);
+  }
+}
+
+/// The statements before a `build`'s final `return`, and the returned widget.
+final class _PreludeShape {
+  const _PreludeShape(this.before, this.returned);
+
+  final List<Statement> before;
+  final Expression returned;
+}
+
+/// Finds a `return` inside a statement — one that is not inside a nested function expression.
+final class _ReturnFinder extends RecursiveAstVisitor<void> {
+  bool found = false;
+
+  @override
+  void visitReturnStatement(ReturnStatement node) {
+    found = true;
+  }
+
+  @override
+  void visitFunctionExpression(FunctionExpression node) {
+    // A closure's own returns are its own.
   }
 }

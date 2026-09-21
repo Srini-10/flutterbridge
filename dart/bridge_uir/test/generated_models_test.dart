@@ -312,6 +312,8 @@ final class _KindVisitor implements UiNodeVisitor<String> {
   @override
   String visitUiList(UiList node) => node.kind;
   @override
+  String visitUiNodes(UiNodes node) => node.kind;
+  @override
   String visitUiOpaque(UiOpaque node) => node.kind;
   @override
   String visitUiOverrideRef(UiOverrideRef node) => node.kind;

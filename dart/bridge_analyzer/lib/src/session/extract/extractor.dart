@@ -135,7 +135,9 @@ final class Extractor {
     transitions.widgets = widgets;
     // A recognized `SnackBar`'s own `content:` argument (ADR-0030) needs the same widget-tree extractor,
     // for the same reason and wired the same way.
-    expressions.presentedContentOf = widgets.extract;
+    expressions
+      ..presentedContentOf = widgets.extract
+      ..widgetValueOf = widgets.widgetValueOf;
     final SignalExtractor signals = SignalExtractor(out, expressions, adapters);
     final ComponentExtractor components = ComponentExtractor(
       out,

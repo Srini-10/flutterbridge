@@ -1,0 +1,36 @@
+{
+  "Rows": [
+    [
+      "> many 3",
+      "> row 0",
+      "> row 1",
+      "> row 2",
+      "> tail 0",
+      "> tail 1"
+    ]
+  ],
+  "Toggle": [
+    [
+      "> n=0",
+      "> small"
+    ],
+    [
+      "> n=1",
+      "> item 0",
+      "> small"
+    ],
+    [
+      "> n=2",
+      "> item 0",
+      "> item 1",
+      "> small"
+    ],
+    [
+      "> n=3",
+      "> item 0",
+      "> item 1",
+      "> item 2",
+      "> big"
+    ]
+  ]
+}

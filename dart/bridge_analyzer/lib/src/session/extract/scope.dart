@@ -52,7 +52,7 @@ enum Binds {
 @immutable
 final class Binding {
   /// Creates a binding of [name].
-  const Binding({required this.name, required this.binds, this.symbol, this.inlineValue});
+  const Binding({required this.name, required this.binds, this.symbol, this.inlineValue, this.inlineScope});
 
   /// The name as written.
   final String name;
@@ -81,6 +81,10 @@ final class Binding {
   /// expressions more than once (or reordering them relative to a later branch) does not change what the
   /// program renders. `null` for every other binding kind — nothing else needs this.
   final Expression? inlineValue;
+
+  /// The scope [inlineValue] is evaluated in, when it is not the scope the name is read in: an argument inlined into a widget-returning
+  /// helper (M12) is written in the *caller*, so its own names must not resolve against the helper's parameters.
+  final Scope? inlineScope;
 }
 
 /// Every ordinary local declaration's ordinal, within one owning body (ADR-28).

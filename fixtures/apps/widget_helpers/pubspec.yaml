@@ -1,0 +1,21 @@
+name: widget_helpers
+description: >-
+  M12 (ADR-0062): widget-returning helper methods and functions are inlined at the call — arguments (positional, named, defaulted)
+  evaluated in the caller, locals and a return, a helper in a for-element, a helper calling a helper, and a State helper with a
+  callback. Run by Flutter and as the generated component, compared.
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

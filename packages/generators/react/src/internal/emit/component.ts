@@ -173,7 +173,15 @@ export function emitComponent(component: Node, module: ModuleBuilder, scope: Emi
       module.line('return null;');
       return;
     }
-    const body = emitUiNode(tree as Node, module, inner, 0);
+    // A statement-bodied `build` (ADR-0062): its statements run first, in the render scope, and the tree reads what they declared.
+    const prelude = Array.isArray(component['prelude']) ? (component['prelude'] as Node[]) : [];
+    let renderScope = inner;
+    if (prelude.length > 0) {
+      const declared = localBindingsIn(prelude);
+      renderScope = { ...inner, localName: (id) => declared.get(id) ?? inner.localName(id) };
+      for (const line of emitStatements(prelude, renderScope)) module.line(line);
+    }
+    const body = emitUiNode(tree as Node, module, renderScope, 0);
     if (dialogHosts.length === 0) {
       module.line(`return ${body};`);
     } else {
@@ -324,11 +332,16 @@ function needsRouter(node: Node, scope: EmitScope): boolean {
  * (ADR-0026) — both need "walk the render tree, then walk every referenced action's body too," and
  * only the predicate differs.
  */
+/** What a component's render position holds: its tree, and the statements a statement-bodied `build` runs before it (ADR-0062). */
+export function renderRoot(component: Node): unknown {
+  return component['prelude'] === undefined ? component['render'] : [component['prelude'], component['render']];
+}
+
 function componentReaches(component: Node, scope: EmitScope, matches: (node: Node) => boolean): boolean {
   if (containsNode(component, matches)) return true;
   const effects = effectsOf(component, scope);
   if (effects.some((effect) => containsNode(effect, matches))) return true;
-  for (const id of referencedActions([component['render'], ...effects], scope)) {
+  for (const id of referencedActions([renderRoot(component), ...effects], scope)) {
     const action = scope.node(id) as unknown as Node | undefined;
     if (action !== undefined && containsNode(action, matches)) return true;
   }
@@ -375,7 +388,7 @@ function collectNodes(component: Node, scope: EmitScope, matches: (node: Node) =
   collectInto(component, matches, found);
   const effects = effectsOf(component, scope);
   for (const effect of effects) collectInto(effect, matches, found);
-  for (const id of referencedActions([component['render'], ...effects], scope)) {
+  for (const id of referencedActions([renderRoot(component), ...effects], scope)) {
     const action = scope.node(id) as unknown as Node | undefined;
     if (action !== undefined) collectInto(action, matches, found);
   }
@@ -547,7 +560,7 @@ interface StoreConsumption {
  * @returns the outer (handler-safe) scope and the render-position subscriptions, see {@link StoreConsumption}.
  */
 function declareStoreConsumption(component: Node, module: ModuleBuilder, scope: EmitScope): StoreConsumption {
-  const memberIds = referencedStoreMembers(component['render'], scope);
+  const memberIds = referencedStoreMembers(renderRoot(component), scope);
   if (memberIds.length === 0) return { outer: scope, subscriptions: new Map() };
 
   // Grouped by store, and the stores themselves ordered by their own exported name — deterministic
@@ -773,7 +786,7 @@ function declareStoreInstanceReads(
     }
     for (const child of Object.values(node)) visit(child);
   };
-  visit(component['render']);
+  visit(renderRoot(component));
   // Sorted by node id — deterministic regardless of the order the render tree happened to be walked in.
   found.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 
@@ -831,7 +844,7 @@ function declareLocalActions(
 ): Map<NodeId, string> {
   const names = new Map<NodeId, string>();
   // An action a lifecycle body calls (`initState() { _load(); }`) is reached exactly as one the tree calls is.
-  const referenced = referencedActions([component['render'], ...effects], scope).filter((id) => !scope.isStoreOwned(id));
+  const referenced = referencedActions([renderRoot(component), ...effects], scope).filter((id) => !scope.isStoreOwned(id));
   if (referenced.length === 0) return names;
 
   // Named from the id, and sorted by it, so two runs emit the same names in the same order. A lifted action
@@ -1190,6 +1203,10 @@ export function emitUiNode(node: Node, module: ModuleBuilder, scope: EmitScope, 
       const Text = useRuntime(module, 'Text');
       return `<${Text}>{${value}}</${Text}>`;
     }
+
+    // Widgets held in a value (ADR-0062): a `List<Widget>` local, a `Widget` parameter, a spread — React renders the value.
+    case 'ui.Nodes':
+      return emitBinding(node['value'] as Node, scope);
 
     case 'ui.Element':
       return emitElement(node, module, scope, depth);

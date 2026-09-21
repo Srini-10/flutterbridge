@@ -17,6 +17,8 @@
 ///   its own source text, never nothing.
 library;
 
+import 'dart:collection';
+
 import 'package:analyzer/dart/ast/ast.dart';
 import 'package:analyzer/dart/element/element.dart';
 import 'package:analyzer/dart/element/nullability_suffix.dart';
@@ -68,6 +70,9 @@ final class RawNodeEmitter {
 
   /// The classes some class in the program extends or mixes in (`inheritance.dart`): each is emitted as a class.
   final Set<String> inheritedClasses;
+
+  /// The functions being inlined into a render tree right now (M12, ADR-0062): a helper that reaches itself is not inlined again.
+  final Set<Element> inlining = HashSet<Element>.identity();
 
   /// The line map, for turning offsets into spans.
   final LineInfo lineInfo;

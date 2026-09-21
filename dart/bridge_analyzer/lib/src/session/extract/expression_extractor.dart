@@ -144,6 +144,11 @@ final class ExpressionExtractor {
     if (_bound[node] case final RawNode bound) {
       return bound;
     }
+    if (widgetValues && (node is InstanceCreationExpression || node is MethodInvocation || node is ConditionalExpression)) {
+      if (widgetValueOf?.call(node, scope) case final RawNode widget) {
+        return widget;
+      }
+    }
     // `a?.b.c`, `a?[i].c`, `f()?.x.y()`: a null-aware link anywhere down the chain short-circuits the whole chain.
     if (_nullShortLink(node) case final Expression link) {
       return _nullShort(node, link, scope);
@@ -971,6 +976,14 @@ final class ExpressionExtractor {
   /// gets, exactly as it did before this decision.
   WidgetContentHook? presentedContentOf;
 
+  /// Extracts a widget-typed expression as a `logic.WidgetExpr`, or returns null when it is not a widget (M12, ADR-0062). Set by the
+  /// orchestrator; consulted only while `widgetValues` is on.
+  RawNode? Function(Expression node, Scope scope)? widgetValueOf;
+
+  /// While a statement-bodied `build` is extracted, a widget in an expression position (`children.add(Text('x'))`) is a value: a
+  /// `logic.WidgetExpr` holding its `ui.*` tree, rather than a `logic.New` of a class that has no emitted counterpart.
+  bool widgetValues = false;
+
   /// The direct `SnackBar(...)` literal currently recognized as a `ScaffoldMessenger.showSnackBar`
   /// argument, if any (ADR-0030 §7) — identity-tracked (never by spelling) so only *this* exact AST node,
   /// reached from *this* exact recognized call, has its own `content:` argument redirected through
@@ -1259,7 +1272,7 @@ final class ExpressionExtractor {
     // A build-method local (M8-B): the render tree has no `logic.VarDecl` to point a `target` at, so the
     // value is carried by re-extracting the local's own initializer here instead of naming it.
     if (binding?.inlineValue case final Expression initializer) {
-      return extract(initializer, scope);
+      return extract(initializer, binding!.inlineScope ?? scope);
     }
     final String? target = staticTarget ?? binding?.symbol;
     return RawNode(
@@ -2665,6 +2678,17 @@ final class ExpressionExtractor {
     );
   }
 
+  /// A list literal holding just [element] (M12, ADR-0062): how a widget children position evaluates a collection element it has no
+  /// node for.
+  RawNode collectionElementList(CollectionElement element, Scope scope) => RawNode(
+    kind: 'logic.ListLit',
+    span: out.span(element),
+    fields: <String, RawValue>{
+      'elements': RawList(<RawValue>[RawChild(_collectionElement(element, scope))]),
+      'type': const RawMap(<String, RawValue>{'name': RawLiteral('List<Widget>'), 'library': RawLiteral('dart:core')}),
+    },
+  );
+
   /// One element of a collection literal: an expression, `...spread`, `if (c) e else f`, `for (x in xs) e`, or (in a map) a
   /// `key: value` entry, which is a one-entry `logic.MapLit`. Inside a *widget* list the widget extractor has its own
   /// nodes (`ui.Cond`, `ui.List`) for these.
@@ -2848,6 +2872,9 @@ final class ExpressionExtractor {
 abstract interface class StatementExtractorRef {
   /// A block's statements, in order. Order is semantic and is never sorted.
   List<RawValue> statementsOf(Block node, Scope scope);
+
+  /// [statements] in order, and the scope after the last one — what a `return` that follows them sees (M12, ADR-0062).
+  (List<RawValue>, Scope) statementsThrough(List<Statement> statements, Scope scope);
 
   /// The closure a framework state-batching call wraps, if [node] is one.
   FunctionExpression? unwrapStateBatch(MethodInvocation node);

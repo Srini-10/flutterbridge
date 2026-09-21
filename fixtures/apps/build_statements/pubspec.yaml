@@ -1,0 +1,21 @@
+name: build_statements
+description: >-
+  M12 (ADR-0062): a `build` with statements — a widget list built in a loop and held in a local, an `if` adding to it, a local
+  computed from it, spreads of the local, a widget-valued local, a C-style collection-for, a State whose statements read state. Run
+  by Flutter and as the generated component, compared.
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

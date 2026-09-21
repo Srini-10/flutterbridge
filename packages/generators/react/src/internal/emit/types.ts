@@ -113,6 +113,11 @@ export function typeTextOf(
   const fn = functionTypeText(name, use, classOf);
   if (fn !== undefined) return nullable ? `(${fn}) | null` : fn;
 
+  // A `Widget` is a React node here (ADR-0062): a widget built in a statement-bodied `build` and held in a local or a list.
+  if (name === 'Widget' && (library === undefined || String(library).startsWith('package:flutter/'))) {
+    return nullable ? "import('react').ReactNode | null" : "import('react').ReactNode";
+  }
+
   const base = PRIMITIVES[name] ?? 'unknown';
   // Dart's nullable `int?` is `number | null`, not `number | undefined`: Dart has one absent value and it is
   // `null`, and a Dart `null` crossing into JavaScript is still `null`.
