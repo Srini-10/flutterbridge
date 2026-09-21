@@ -149,6 +149,23 @@ describe('M8-V — numeric method recognition', () => {
     expect(abs.source).toContain('Math.abs(props.n)');
   });
 
+  it('a method named like an Object.prototype member never crashes the generator (robustness): it lowers or is refused, on every SDK receiver', () => {
+    const receivers: [string, Record<string, unknown>][] = [
+      ['int', DART_CORE_INT],
+      ['double', DART_CORE_DOUBLE],
+      ['String', DART_CORE_STRING],
+      ['Duration', DART_CORE_DURATION],
+      ['List', { library: 'dart:core', name: 'List<int>' }],
+      ['Set', { library: 'dart:core', name: 'Set<int>' }],
+      ['Map', { library: 'dart:core', name: 'Map<String, int>' }],
+    ];
+    for (const [label, type] of receivers) {
+      for (const method of ['toString', 'constructor', 'valueOf', 'hasOwnProperty', 'toLocaleString', '__proto__']) {
+        expect(() => build('n', type, (r) => methodCall('m1', method, r, [], DART_CORE_STRING)), `${label}.${method}`).not.toThrow();
+      }
+    }
+  });
+
   it('a receiver with no resolved type is untouched — falls through to the ordinary, unchanged lowering', () => {
     const receiver = { id: 'r1', kind: 'logic.Ref', span, name: 'x' };
     const nodes: AnyUirNode[] = [

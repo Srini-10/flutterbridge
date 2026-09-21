@@ -228,6 +228,7 @@ final class ComponentExtractor {
       storeScope: 'component',
       enclosing: enclosing,
       renderMethod: build,
+      derivedFinals: state != null,
     );
 
     // Parameters go **inside** the class's own field bindings, so they win.
@@ -238,8 +239,12 @@ final class ComponentExtractor {
     //
     // Inside a State, `widget.title` reaches the widget's parameters; binding `widget` is what makes
     // that resolve rather than becoming a read of an unknown name.
+    //
+    // **Only for a widget that builds itself.** In a `State`, a bare `api` is the *State's* field and the widget's is `widget.api` — the two may
+    // share a name (`late final Api api = widget.api ?? Api();`), and letting the widget's parameters shadow the State's fields turned every bare
+    // read into a read of the wrong one (found by a real repository: `api.item()` called the prop, not the State's field).
     final Scope withParams = classState.scope.child(<Binding>[
-      ...paramBindings,
+      if (state == null) ...paramBindings,
       if (state != null) const Binding(name: 'widget', binds: Binds.parameter),
     ]);
 

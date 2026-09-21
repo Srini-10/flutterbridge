@@ -1,0 +1,21 @@
+name: dio_client
+description: >-
+  M14 (ADR-0075): package:dio — a repository over Dio (base options, get/post with query parameters and a body, typed DioException handling, a switch on
+  DioExceptionType) — run by Flutter with a canned HttpClientAdapter and as the generated component with a canned fetch; compared.
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  dio: ^5.4.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

@@ -2,7 +2,7 @@
 // real `tsc --strict`, and each scenario's generated component, mounted in jsdom (real `react-dom`, the real runtime kit), shows
 // after every scripted step what Flutter showed (`expected.json`, recorded by `flutter test`). Used by every fixture added in M12.
 
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -43,6 +43,36 @@ export function defineOracleSuite(options: OracleOptions): void {
   const expected = JSON.parse(readFileSync(join(dir, 'expected.json'), 'utf8')) as Record<string, string[][]>;
   const golden = readFileSync(join(repo, 'fixtures', 'uir', `${options.fixture}.ndjson`), 'utf8');
 
+  // A fixture with `test/responses.json` is a program that talks HTTP: the generated component gets a canned `fetch` answering from the same file the Flutter
+  // oracle's canned `HttpClientAdapter` reads, and echoing each request (method, path, query, headers, body) exactly as that adapter does.
+  const responsesPath = join(dir, 'responses.json');
+  const canned = existsSync(responsesPath) ? (JSON.parse(readFileSync(responsesPath, 'utf8')) as Record<string, { status?: number; body?: unknown; error?: string }>) : undefined;
+  const realFetch = globalThis.fetch;
+  if (canned !== undefined) {
+    globalThis.fetch = (async (input: unknown, init?: { method?: string; headers?: HeadersInit; body?: string }) => {
+      const url = new URL(String(input));
+      const method = init?.method ?? 'GET';
+      const path = url.pathname.replace(/^\/v1/, '');
+      const route = canned[`${method} ${path}`];
+      if (route === undefined) throw new Error(`no canned response for ${method} ${path}`);
+      if (route.error === 'connection') throw new TypeError('canned connection failure');
+      const headers = new Headers(init?.headers);
+      const echo = {
+        method,
+        path,
+        query: Object.fromEntries(url.searchParams.entries()),
+        xApp: headers.get('x-app'),
+        xReason: headers.get('x-reason'),
+        contentType: (headers.get('content-type') ?? '').split(';')[0] || null,
+        body: init?.body === undefined ? null : JSON.parse(init.body),
+      };
+      return new Response(JSON.stringify({ ...(route.body as object), echo }), {
+        status: route.status ?? 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }) as typeof fetch;
+  }
+
   let generated: { reported: { severity: string; message: string }[]; files: readonly { path: string; contents: string }[] };
   let runner: Harness;
 
@@ -56,7 +86,10 @@ export function defineOracleSuite(options: OracleOptions): void {
       { layout: options.layout === true, providers: options.providers === true },
     );
   }, 180_000);
-  afterAll(cleanupBuildProofTemporaries);
+  afterAll(() => {
+    globalThis.fetch = realFetch;
+    cleanupBuildProofTemporaries();
+  });
 
   describe(`${options.fixture}: the generated project`, () => {
     it('has no generator error, and real tsc --strict accepts it', () => {
@@ -82,7 +115,12 @@ export function defineOracleSuite(options: OracleOptions): void {
           for (const [i, label] of steps.entries()) {
             if (label === '@wait') await mounted.wait(options.waitMs ?? 60);
             else if (label.startsWith('@')) await mounted.input(label);
-            else mounted.click(label);
+            else {
+              mounted.click(label);
+              // `tester.pump()` runs the microtasks a tap scheduled (an `await`ed future that has already completed, a caught error); a synchronous
+              // `act` does not, so let them run before comparing.
+              await mounted.wait(0);
+            }
             const step = i + 1;
             if (deviating.includes(step)) expect(mounted.texts(), `${name} #${step} deviates`).not.toEqual(trace[step]);
             else expect(mounted.texts(), `${name} after ${label} (#${step})`).toEqual(trace[step]);

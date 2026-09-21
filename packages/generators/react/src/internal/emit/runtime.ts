@@ -24,6 +24,7 @@
 // and the map entry now carries enough for the generator to *verify* the pairing rather than assume it.
 
 import type { ModuleBuilder } from './module.js';
+import { kitPackageClass } from './package_kit.js';
 
 /**
  * The runtime kit generated applications import from.
@@ -105,5 +106,6 @@ export function isKitProvided(type: Node | undefined): boolean {
   if (typeof library !== 'string') return false;
   if (library.startsWith('package:flutter/')) return true;
   const name = type?.['name'];
+  if (kitPackageClass(library, name) !== undefined) return true;
   return typeof name === 'string' && SDK_VALUE_TYPES.has(`${library}#${name}`);
 }

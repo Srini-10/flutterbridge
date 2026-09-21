@@ -29,3 +29,15 @@ are implemented and applied in order to every edit; an edit a formatter rejects 
 `fixtures/apps/widget_props` and `fixtures/apps/formatters` compared with `flutter test` (a header, two lists, nullable widget, conditional/spread/for elements that grow; formatters alone, combined, rejected edits,
 emoji), a Chromium check in production and development with no React warning; analyzer test that pins the name-preserving extraction (a mutant that restores the old inference is killed); five formatter mutants and
 three widget-prop mutants killed.
+
+## Also fixed in this change (each found by generating a repository over Dio, and each a defect in a very common Flutter shape)
+
+- **`setState(() => x = 1);` followed by more statements dropped everything after it.** A spliced batch with an *arrow* body became `return (x = 1)`; the statements after it were unreachable in the
+  output (block-bodied `setState` was unaffected). It is now an expression statement.
+- **A State field named like the widget's parameter read the parameter.** `late final Api api = widget.api ?? Api();` — a bare `api` in a `State` is the State's field; the widget's parameters
+  shadowed it. They no longer do (they are reached through `widget.`).
+- **`final`/`late final` State fields were unresolved** (`BRG3006`): `final int base = 10;`, `final Service s = Service();`, `late final String label = 'L${widget.title}';`. They are per-instance cells now;
+  a `late final` initializer reads the widget's props.
+- **`() async { … }` closures lost `async`**, so an `await` inside was a syntax error; **`Future<T>`** is `Promise<T>` in types (an async callback's result was `unknown`).
+- **A generator crash**: a method named like an `Object.prototype` member (`map.toString()`) indexed a table with it and threw. Lookups now use own keys.
+- **`dynamic` receivers**: `x['k']` on a decoded JSON value resolves the operator at run time (`Map` or `List`), and `.toString()` on `dynamic`/`Object` prints Dart's text.

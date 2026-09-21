@@ -100,6 +100,7 @@ final class SignalExtractor {
     required String storeScope,
     required Scope enclosing,
     MethodDeclaration? renderMethod,
+    bool derivedFinals = false,
   }) {
     final List<String> signals = <String>[];
     final List<String> derived = <String>[];
@@ -167,7 +168,13 @@ final class SignalExtractor {
         // (a parent's signal) is told of an in-place change by the runtime's ownership registry. It used to become a
         // signal whenever a mutating call named it (`items.add(…)`), created empty and never read.
         final bool constructorFilled = member.fields.isFinal && variable.initializer == null;
+        // [derivedFinals]: in a `State`, a `final`/`late final` field with an initializer is a value the instance computes once —
+        // `final Service api = Service();`, `late final String label = 'L${widget.title}';` — and it has to live somewhere per instance. A
+        // per-instance cell (a signal nothing writes) is that somewhere; treating it as "a constant of the object" left every read unresolved
+        // (`BRG3006`), on one of the commonest shapes a State has.
+        final bool derivedFinal = derivedFinals && member.fields.isFinal && variable.initializer != null;
         final bool reactive = registry.isStateHolder(fieldType) ||
+            derivedFinal ||
             (!constructorFilled &&
                 (!member.fields.isFinal ||
                     mutated.names.contains(name) ||

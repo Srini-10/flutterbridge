@@ -1,0 +1,3 @@
+{
+  "ShapesHost": ["step", "step", "run", "@wait", "fail", "@wait", "step"]
+}

@@ -1046,7 +1046,22 @@ final class ExpressionExtractor {
   /// `=> e` and `{ return e; }` are the same function. Turning the arrow into a `Return` here is not
   /// *normalization* in the pipeline sense — nothing semantic changes — it is refusing to make every
   /// downstream consumer handle two spellings of one thing.
-  List<RawValue> bodyOf(FunctionBody body, Scope scope) {
+  ///
+  /// [discard]: the value of an arrow body is *not returned* — it is a batch spliced into a statement list (`setState(() => x = 1); more();`), where
+  /// a `Return` would end the enclosing function and drop everything after it (found by a real repository: the statements after an arrow-bodied
+  /// `setState` were unreachable in the output).
+  List<RawValue> bodyOf(FunctionBody body, Scope scope, {bool discard = false}) {
+    if (discard && body is ExpressionFunctionBody) {
+      return <RawValue>[
+        RawChild(
+          RawNode(
+            kind: 'logic.ExprStmt',
+            span: out.span(body),
+            fields: <String, RawValue>{'expr': RawChild(extract(body.expression, scope))},
+          ),
+        ),
+      ];
+    }
     switch (body) {
       case ExpressionFunctionBody():
         // `() => setState(() { … })` — the arrow form of a state batch. Spliced open exactly as the

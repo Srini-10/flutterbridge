@@ -451,6 +451,19 @@ export {
   TextInputFormatter,
   applyFormatters,
 } from './internal/widgets/formatters.js';
+export {
+  BaseOptions,
+  Dio,
+  DioException,
+  DioExceptionType,
+  LogInterceptor,
+  Options,
+  Response,
+  dioFromJson,
+  dioToJson,
+  type CallInit,
+  type DioExceptionTypeName,
+} from './internal/net/dio.js';
 export { widgetNodes } from './internal/widgets/keyed.js';
 export { LayoutBuilder, type LayoutBuilderProps, type LayoutConstraints } from './internal/widgets/layout_builder.js';
 export {
@@ -528,7 +541,7 @@ export { delay } from './internal/async/delay.js';
 //
 // Dart prints `1.0` where JavaScript prints `1`. The generator calls this on a string-interpolated value whose
 // static Dart type is `double`; see the file for why the runtime cannot decide that on its own.
-export { dartDebugPrint, dartToString, doubleToString, type PrintShape } from './internal/format/dart_string.js';
+export { dartDebugPrint, dartToString, dartToStringDynamic, doubleToString, type PrintShape } from './internal/format/dart_string.js';
 
 // ── M11 (ADR-0050): Dart `int` semantics ──────────────────────────────────────────────────────────
 //
@@ -727,4 +740,4 @@ export {
   isDartError,
   isDartException,
 } from './internal/core/dart_exceptions.js';
-export { dartAs, dartConstToken, dartIsRecord, dartRecordEquals, dartDoubleParse, dartDoubleTryParse, dartIntParse, dartIntTryParse, dartEntry, dartHash, dartHashAll, dartThrow, unawaited } from './internal/core/dart_core.js';
+export { dartAs, dartConstToken, dartIndex, dartIsRecord, dartRecordEquals, dartDoubleParse, dartDoubleTryParse, dartIntParse, dartIntTryParse, dartEntry, dartHash, dartHashAll, dartThrow, unawaited } from './internal/core/dart_core.js';

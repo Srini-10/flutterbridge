@@ -1,0 +1,20 @@
+name: state_shapes
+description: >-
+  M14 (ADR-0074): the shapes a State takes in real code — final and late final fields computed from the widget, a State field named like the widget's,
+  an arrow-bodied setState followed by more statements, an async closure passed to a helper. Compared with Flutter.
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

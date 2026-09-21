@@ -8,6 +8,7 @@ import type { NodeId } from '@bridge/uir';
 
 import { GeneratorDiagnosticCode } from '../diagnostics/codes.js';
 import { typeArgumentsOf } from './collections.js';
+import { kitPackageClass } from './package_kit.js';
 
 /** A `TypeRef`, loosely typed: nested values are not `AnyUirNode`. */
 type Node = Record<string, unknown>;
@@ -112,6 +113,14 @@ export function typeTextOf(
   // package URI, never `dart:core`, confirmed directly against real Continuum evidence (no such class
   // exists there, but the check does not rely on that — it is sound regardless).
   const library = type?.['library'];
+  // A class of a package the kit mirrors (`Dio`, `Response<T>`, `DioException`): the runtime's own class, with its type arguments (ADR-0075).
+  const kitName = kitPackageClass(library, name);
+  if (use !== undefined && kitName !== undefined) {
+    const base = use(kitName);
+    const arguments_ = typeArgumentsOf(name).map((argument) => typeTextOf({ name: argument, nullable: argument.endsWith('?') }, use, classOf));
+    const applied = arguments_.length === 0 ? base : `${base}<${arguments_.join(', ')}>`;
+    return nullable ? `${applied} | null` : applied;
+  }
   if (use !== undefined && typeof library === 'string' && SDK_VALUE_TYPE_NAMES.has(`${library}#${name}`)) {
     const base = use(SDK_VALUE_TYPE_NAMES.get(`${library}#${name}`) as string);
     return nullable ? `${base} | null` : base;
@@ -131,6 +140,14 @@ export function typeTextOf(
   // parameters only: an optional or named parameter list is left `unknown` rather than approximated.
   const fn = functionTypeText(name, use, classOf);
   if (fn !== undefined) return nullable ? `(${fn}) | null` : fn;
+
+  // `Future<T>` is a `Promise<T>` and `FutureOr<T>` is `T | Promise<T>` (an async callback's result was `unknown`, and awaiting it gave `unknown`).
+  const future = /^(Future|FutureOr)<(.*)>$/s.exec(name);
+  if (future !== null && (library === undefined || library === 'dart:async')) {
+    const inner = typeTextOf({ name: future[2] as string, nullable: (future[2] as string).endsWith('?') }, use, classOf);
+    const text = future[1] === 'Future' ? `Promise<${inner}>` : `(${inner} | Promise<${inner}>)`;
+    return nullable ? `${text} | null` : text;
+  }
 
   // A `Widget` is a React node here (ADR-0062): a widget built in a statement-bodied `build` and held in a local or a list.
   if (name === 'Widget' && (library === undefined || String(library).startsWith('package:flutter/'))) {

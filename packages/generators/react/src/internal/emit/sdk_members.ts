@@ -69,7 +69,7 @@ export function lowerStringMethod(
   argTexts: readonly string[],
   deps: SdkDeps,
 ): string | undefined {
-  const row = STRING_METHODS[method];
+  const row = Object.hasOwn(STRING_METHODS, method) ? STRING_METHODS[method] : undefined;
   if (row === undefined || !row.arity.includes(argTexts.length)) return undefined;
   if (PATTERN_FIRST.has(method) && argNodes[0] !== undefined && deps.typeOf(argNodes[0]) !== 'String') return undefined;
   if (method === 'replaceAll' || method === 'replaceFirst') {

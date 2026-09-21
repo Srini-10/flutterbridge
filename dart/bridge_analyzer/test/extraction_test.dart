@@ -10664,4 +10664,69 @@ class Home extends StatelessWidget {
       expect(kinds(props['header'], 'logic.WidgetExpr'), hasLength(1));
     });
   });
+
+  group('the shapes a State takes (M14, ADR-0074)', () {
+    Iterable<Map<String, dynamic>> kinds(Object? node, String kind) sync* {
+      if (node is Map<String, dynamic>) {
+        if (node['kind'] == kind) {
+          yield node;
+        }
+        for (final Object? v in node.values) {
+          yield* kinds(v, kind);
+        }
+      } else if (node is List) {
+        for (final Object? v in node) {
+          yield* kinds(v, kind);
+        }
+      }
+    }
+
+    const String source = r'''
+import 'package:flutter/material.dart';
+class Service { const Service(this.name); final String name; String hello() => name; }
+class Home extends StatefulWidget {
+  const Home({super.key, required this.title});
+  final String title;
+  @override
+  State<Home> createState() => _HomeState();
+}
+class _HomeState extends State<Home> {
+  final int base = 10;
+  late final Service derived = Service(widget.title);
+  String title = 'state';
+  int steps = 0;
+  int seen = 0;
+  void go() {
+    setState(() => steps = steps + 1);
+    seen = steps;
+  }
+  @override
+  Widget build(BuildContext context) => Text('$base ${derived.hello()} $title ${widget.title}');
+}
+''';
+
+    test('final and late final fields with an initializer are per-instance cells (signals), read through the widget where they say so', () async {
+      final Extracted e = await extract(source);
+      final List<Map<String, dynamic>> initials = kinds(e.nodes, 'sig.Signal').where((Map<String, dynamic> s) => s.containsKey('initial')).toList();
+      // base, derived, title, steps, seen — the finals are cells like the rest.
+      expect(initials, hasLength(5));
+      final Map<String, dynamic> derived = initials.firstWhere((Map<String, dynamic> s) => kinds(s['initial'], 'logic.Ref').any((Map<String, dynamic> r) => r['name'] == 'title'));
+      expect(derived['scope'], 'component');
+    });
+
+    test("a bare name is the State's field even when the widget has a parameter of the same name", () async {
+      final Extracted e = await extract(source);
+      final Map<String, dynamic> text = kinds(e.nodes, 'ui.Text').single;
+      final List<Map<String, dynamic>> titles = kinds(text, 'logic.Ref').where((Map<String, dynamic> r) => r['name'] == 'title').toList();
+      // Two reads named `title`: the State's own field (a signal — it has a target) and `widget.title` (a parameter — it has none).
+      expect(titles, hasLength(2));
+      expect(titles.where((Map<String, dynamic> r) => r.containsKey('target')), hasLength(1), reason: "the bare `title` is the State's signal");
+    });
+
+    test('an arrow-bodied setState followed by statements does not become a return (the statements after it must run)', () async {
+      final Extracted e = await extract(source);
+      final Map<String, dynamic> go = kinds(e.nodes, 'sig.Action').firstWhere((Map<String, dynamic> a) => a['isAsync'] != true && kinds(a, 'logic.Assign').length >= 2);
+      expect(kinds(go['body'], 'logic.Return'), isEmpty, reason: 'a spliced batch discards the value of its arrow');
+    });
+  });
 }

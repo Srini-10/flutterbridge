@@ -52,6 +52,7 @@ import {
 } from './sdk_members.js';
 import { functionFailures } from './failures.js';
 import { packageRefusal, unsupportedPackageOf, type PackageModel } from './packages.js';
+import { kitPackageClass } from './package_kit.js';
 import { typeTextOf } from './types.js';
 import { OWNER_LABEL, missingCapabilityOf, opaqueDetailOf, opaqueReasonSuffix } from './unsupported.js';
 
@@ -969,8 +970,14 @@ export function catchTypeTest(
     const className = generalClassName(classId, scope);
     return { test: `${scope.module.use(RUNTIME, 'dartIs')}(${operand}, ${className})`, typeText: className };
   }
-  if ((library === 'dart:core' || library === 'dart:async') && SDK_EXCEPTIONS[name] !== undefined) {
+  if ((library === 'dart:core' || library === 'dart:async') && Object.hasOwn(SDK_EXCEPTIONS, name) && SDK_EXCEPTIONS[name] !== undefined) {
     const cls = scope.module.use(RUNTIME, SDK_EXCEPTIONS[name]!);
+    return { test: `(${operand} instanceof ${cls})`, typeText: cls };
+  }
+  // A class of a package the kit mirrors (`on DioException catch`): an instance test against the runtime's class (ADR-0075).
+  const kitCatch = kitPackageClass(library, name);
+  if (kitCatch !== undefined) {
+    const cls = scope.module.use(RUNTIME, kitCatch);
     return { test: `(${operand} instanceof ${cls})`, typeText: cls };
   }
   if (library === 'dart:core' && name === 'Exception') return { test: `${scope.module.use(RUNTIME, 'isDartException')}(${operand})`, typeText: scope.module.use(RUNTIME, 'DartException') };
@@ -1656,9 +1663,9 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
             declaration['isFinal'] === true || declaration['isConst'] === true
               ? `\`${fieldName}\` is a top-level \`final\`/\`const\` (a module-level constant), but its initializer could not be lowered — ` +
                 'the diagnostic on the initializer says why.' +
-                (unsupportedPackageOf((declaration['type'] as Node | undefined)?.['library']) === undefined
+                (unsupportedPackageOf((declaration['type'] as Node | undefined)?.['library'], (declaration['type'] as Node | undefined)?.['name']) === undefined
                   ? ''
-                  : ` ${packageRefusal(unsupportedPackageOf((declaration['type'] as Node | undefined)?.['library']) as PackageModel)}`)
+                  : ` ${packageRefusal(unsupportedPackageOf((declaration['type'] as Node | undefined)?.['library'], (declaration['type'] as Node | undefined)?.['name']) as PackageModel)}`)
               : `\`${fieldName}\` is a mutable top-level variable, which is refused rather than emitted: it would be state shared by ` +
                 'every request in a server process (INV-19). Make it `final`/`const`, or hold the state in a component or a store. ' +
                 `Owner: ${OWNER_LABEL['generator']}.`,
@@ -1745,7 +1752,7 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
         return REFUSED;
       }
 
-      const packageModel = unsupportedPackageOf((node['type'] as Node | undefined)?.['library']) ?? unsupportedPackageOf(node['library']);
+      const packageModel = unsupportedPackageOf((node['type'] as Node | undefined)?.['library'], (node['type'] as Node | undefined)?.['name']) ?? unsupportedPackageOf(node['library'], node['name']);
       scope.report(
         GeneratorDiagnosticCode.UnresolvedReference,
         'error',
@@ -1999,7 +2006,7 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
       const receiverNode = node['receiver'] as Node | undefined;
       if (sdkTypeOf(receiverNode?.['type'] as Node | undefined) === 'Duration') {
         const property = String(node['property'] ?? '');
-        const getter = DURATION_GETTERS[property];
+        const getter = Object.hasOwn(DURATION_GETTERS, property) ? DURATION_GETTERS[property] : undefined;
         const receiver = emitExpression(receiverNode, scope);
         if (receiver === REFUSED) return REFUSED;
         if (getter !== undefined) return getter(`${receiver}.inMilliseconds`);
@@ -2086,9 +2093,9 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
             `model for. FlutterBridge does not yet lower a project-defined or external-package class's own ` +
             `fields, getters or methods — this refuses reading a member of \`${receiverTypeName}\`, not ` +
             `carrying a \`${receiverTypeName}\` value, which is unaffected. Owner: ${OWNER_LABEL['generator']}.` +
-            (unsupportedPackageOf(receiverTypeForMember?.['library']) === undefined
+            (unsupportedPackageOf(receiverTypeForMember?.['library'], receiverTypeForMember?.['name']) === undefined
               ? ''
-              : ` ${packageRefusal(unsupportedPackageOf(receiverTypeForMember?.['library']) as PackageModel)}`),
+              : ` ${packageRefusal(unsupportedPackageOf(receiverTypeForMember?.['library'], receiverTypeForMember?.['name']) as PackageModel)}`),
           idOf(node),
         );
         return REFUSED;
@@ -2177,6 +2184,25 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
       }
 
       const receiver = emitExpression(node['receiver'] as Node, scope);
+      // A method of a package class the kit mirrors (`dio.get(path, queryParameters: …)`): positional arguments, then the named ones as one options
+      // object — the kit's convention, which its class declares (ADR-0075).
+      const kitReceiver = kitPackageClass((node['receiver'] as Node | undefined)?.['type'] !== undefined ? ((node['receiver'] as Node)['type'] as Node)['library'] : undefined, ((node['receiver'] as Node | undefined)?.['type'] as Node | undefined)?.['name']);
+      if (kitReceiver !== undefined && node['target'] === undefined && receiver !== REFUSED) {
+        const positional = asArray(node['args']).map((argument) => emitExpression(argument, scope));
+        const named = (node['namedArgs'] ?? {}) as Record<string, Node>;
+        const members = Object.keys(named).sort().map((key) => `${identifierOf(key)}: ${emitExpression(named[key] as Node, scope)}`);
+        if (positional.includes(REFUSED) || members.some((m) => m.endsWith(REFUSED))) return REFUSED;
+        const object = members.length === 0 ? [] : [`{ ${members.join(', ')} }`];
+        // The type argument Dart inferred (`get<Map<String, dynamic>>` → `Future<Response<Map<String, dynamic>>>`) is the response's data type.
+        const resultName = String((node['type'] as Node | undefined)?.['name'] ?? '');
+        const responseOf = /^Future<Response<(.*)>>$/s.exec(resultName);
+        const typeArgument =
+          responseOf === null
+            ? ''
+            : `<${typeTextOf({ name: responseOf[1] as string, nullable: (responseOf[1] as string).endsWith('?') }, (rt) => scope.module.use(RUNTIME, rt))}>`;
+        // A property name may be a reserved word (`delete`); the runtime class spells it as Dart does.
+        return `${receiver}.${String(node['method'] ?? '')}${typeArgument}(${[...positional, ...object].join(', ')})`;
+      }
       refuseNamedArgs(node, scope);
       const method = String(node['method'] ?? '');
 
@@ -2190,8 +2216,20 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
       if (method === '[]') {
         const args = asArray(node['args']);
         if (args.length === 1) {
+          // On a `dynamic` receiver the operator is the *runtime* type's — a decoded JSON value is a `Map` or a `List` — so it is resolved at runtime.
+          const receiverType = (node['receiver'] as Node | undefined)?.['type'] as Node | undefined;
+          const staticName = String(receiverType?.['name'] ?? '').replace(/\?$/, '');
+          if (staticName === 'dynamic') {
+            return `${scope.module.use(RUNTIME, 'dartIndex')}(${receiver}, ${emitExpression(args[0] as Node, scope)})`;
+          }
           return `${receiver}[${emitExpression(args[0] as Node, scope)}]`;
         }
+      }
+
+      // `x.toString()` on a `dynamic`/`Object` receiver: Dart's text for what it holds (a `Map` prints as `{a: 1}`), with `null` printing `null`.
+      if (node['target'] === undefined && receiver !== REFUSED && method === 'toString' && asArray(node['args']).length === 0) {
+        const staticType = String(((node['receiver'] as Node | undefined)?.['type'] as Node | undefined)?.['name'] ?? '').replace(/\?$/, '');
+        if (staticType === 'dynamic' || staticType === 'Object') return `${scope.module.use(RUNTIME, 'dartToStringDynamic')}(${receiver})`;
       }
 
       // A `String` method (ADR-0054), by the receiver's resolved type; `f.call(x)` on a function value; and a `Future`'s
@@ -2260,7 +2298,7 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
         const rounding: Record<string, string> = {
           round: 'numRound', floor: 'numFloor', ceil: 'numCeil', truncate: 'numTruncate', toInt: 'numTruncate',
         };
-        const roundingHelper = rounding[method];
+        const roundingHelper = Object.hasOwn(rounding, method) ? rounding[method] : undefined;
         if (roundingHelper !== undefined && rawArgs.length === 0) return `${scope.module.use(RUNTIME, roundingHelper)}(${receiver})`;
 
         // `abs()` is `Math.abs` on the same IEEE-754 value; `clamp(lower, upper)` orders by `compareTo` (see `numClamp`).
@@ -2501,7 +2539,7 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
         (constructedType?.['library'] === 'dart:core' || constructedType?.['library'] === 'dart:async') &&
         (constructorName === undefined || constructorName === '' || constructorName === null)
       ) {
-        const cls = typeName === 'Exception' ? 'DartException' : SDK_EXCEPTIONS[typeName];
+        const cls = typeName === 'Exception' ? 'DartException' : Object.hasOwn(SDK_EXCEPTIONS, typeName) ? SDK_EXCEPTIONS[typeName] : undefined;
         if (cls !== undefined && Object.keys((node['namedArgs'] ?? {}) as Record<string, unknown>).length === 0) {
           const emitted = asArray(node['args']).map((a) => emitExpression(a, scope));
           if (emitted.includes(REFUSED)) return REFUSED;
@@ -2512,7 +2550,7 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
       // `DateTime.now()`, `Timer.periodic(d, f)`, `Future.value(x)`, `DeepCollectionEquality()`: a runtime value class.
       {
         const key = `${typeName.split('<')[0]}.${typeof constructorName === 'string' ? constructorName : ''}`;
-        const row = SDK_VALUE_CONSTRUCTIONS[key];
+        const row = Object.hasOwn(SDK_VALUE_CONSTRUCTIONS, key) ? SDK_VALUE_CONSTRUCTIONS[key] : undefined;
         const library = String(constructedType?.['library'] ?? '');
         // `Future.delayed(d, computation)`: the delay, then the computation's result.
         if (typeName.startsWith('Future') && constructorName === 'delayed' && library === 'dart:async' && asArray(node['args']).length === 2) {
@@ -2534,7 +2572,7 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
       // `List.from(xs)`, `List.generate(n, f)`, `Map.fromEntries(es)`, `MapEntry(k, v)` …: a `dart:core` collection constructor.
       if (constructedType?.['library'] === 'dart:core' || typeName === 'MapEntry') {
         const key = `${typeName.split('<')[0]}.${typeof constructorName === 'string' ? constructorName : ''}`;
-        const row = SDK_COLLECTION_CONSTRUCTORS[key];
+        const row = Object.hasOwn(SDK_COLLECTION_CONSTRUCTORS, key) ? SDK_COLLECTION_CONSTRUCTORS[key] : undefined;
         if (row !== undefined) {
           const named = Object.keys((node['namedArgs'] ?? {}) as Record<string, unknown>).filter((n) => n !== 'growable');
           const positional = asArray(node['args']);
@@ -2886,10 +2924,11 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
         // different program from the one Dart described — the same failure class M11-D's own `BRG3019`
         // catches for two sibling declarations, extended here to a declaration-vs-parameter collision.
         const lines = lowerStatements(body, inner, reservedNames);
-        return `(${params}) => {\n${lines.map((line) => `  ${line}`).join('\n')}\n}`;
+        // `() async { … }` is an async function (a closure whose body awaits was emitted as a plain arrow — a syntax error at best).
+        return `${node['isAsync'] === true ? 'async ' : ''}(${params}) => {\n${lines.map((line) => `  ${line}`).join('\n')}\n}`;
       }
 
-      return `(${params}) => ${emitExpression(node['body'] as Node, inner)}`;
+      return `${node['isAsync'] === true ? 'async ' : ''}(${params}) => ${emitExpression(node['body'] as Node, inner)}`;
     }
 
     // A `switch` expression (ADR-0065): an immediately-invoked function testing each arm in order; no arm matching throws, as Dart's

@@ -27,6 +27,11 @@ export interface PackageModel {
   readonly browser: string;
   /** What a program can do today. */
   readonly workaround?: string;
+  /**
+   * Set when the package *has* an adapter (`package_kit.ts`) and only these classes do not: a use of anything else in the package is supported, so
+   * only these names are refused (`dio`: interceptors, `FormData`, `CancelToken`, …).
+   */
+  readonly onlyClasses?: readonly string[];
 }
 
 const STATE = 'hold the state in a `State` class, or pass it through constructor parameters and callbacks';
@@ -43,10 +48,24 @@ export const UNSUPPORTED_PACKAGES: readonly PackageModel[] = [
   },
   {
     packages: ['dio'],
-    label: 'dio',
+    label: 'dio (beyond the fetch-backed subset)',
     status: 'not-implemented',
-    capability: 'an HTTP client: requests, interceptors, cancellation, `DioException`',
-    browser: '`fetch` (with `AbortController`), the interceptors as a wrapper',
+    capability: 'interceptors, `FormData`/`MultipartFile` uploads, `CancelToken`, download, custom adapters — `Dio`, `BaseOptions`, `Options`, `Response` and `DioException` are supported (ADR-0075)',
+    browser: '`fetch` with a wrapper for interceptors, `FormData`, and an `AbortController` for cancellation',
+    onlyClasses: [
+      'Interceptor',
+      'InterceptorsWrapper',
+      'QueuedInterceptor',
+      'QueuedInterceptorsWrapper',
+      'FormData',
+      'MultipartFile',
+      'CancelToken',
+      'HttpClientAdapter',
+      'ResponseType',
+      'Transformer',
+      'DioMixin',
+      'ProgressCallback',
+    ],
   },
   {
     packages: ['http'],
@@ -126,10 +145,18 @@ export function packageNameOf(library: unknown): string | undefined {
   return library.slice('package:'.length).split('/')[0];
 }
 
-/** The unsupported-package entry for a library URI, if it is one. */
-export function unsupportedPackageOf(library: unknown): PackageModel | undefined {
+/**
+ * The unsupported-package entry for a library URI (and, for a package with an adapter, the class name), if it is one.
+ *
+ * A package with an adapter is unsupported only for the classes its entry lists, so a `dio` `Response` is fine and a `dio` `CancelToken` is refused.
+ */
+export function unsupportedPackageOf(library: unknown, className?: unknown): PackageModel | undefined {
   const name = packageNameOf(library);
-  return name === undefined ? undefined : UNSUPPORTED_PACKAGES.find((entry) => entry.packages.includes(name));
+  if (name === undefined) return undefined;
+  const entry = UNSUPPORTED_PACKAGES.find((candidate) => candidate.packages.includes(name));
+  if (entry?.onlyClasses === undefined) return entry;
+  const bare = typeof className === 'string' ? className.replace(/\?$/, '').split('<')[0] : undefined;
+  return bare !== undefined && entry.onlyClasses.includes(bare) ? entry : undefined;
 }
 
 /** The sentence a refusal of one use carries: which package, what it is for, and whether a browser equivalent exists. */
@@ -158,7 +185,7 @@ export function unsupportedPackagesIn(nodes: readonly unknown[]): { model: Packa
     }
     if (value === null || typeof value !== 'object') return;
     const record = value as Node;
-    const model = unsupportedPackageOf(record['library']);
+    const model = unsupportedPackageOf(record['library'], record['name']);
     if (model !== undefined) counts.set(model, (counts.get(model) ?? 0) + 1);
     for (const inner of Object.values(record)) walk(inner);
   };

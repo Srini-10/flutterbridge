@@ -87,7 +87,7 @@ final class StatementExtractor implements StatementExtractorRef {
       if (expression is MethodInvocation) {
         final FunctionExpression? batched = registry.unwrapStateBatch(expression);
         if (batched != null) {
-          return expressions.bodyOf(batched.body, scope);
+          return expressions.bodyOf(batched.body, scope, discard: true);
         }
         // A **change notification** is erased outright — the one case where a statement expands to
         // nothing. ADR-4/ADR-20: *a signal write IS the notification*, so `notifyListeners()` announces
@@ -136,7 +136,7 @@ final class StatementExtractor implements StatementExtractorRef {
               kind: 'logic.Block',
               span: out.span(node),
               fields: <String, RawValue>{
-                'statements': RawList(expressions.bodyOf(batched.body, scope)),
+                'statements': RawList(expressions.bodyOf(batched.body, scope, discard: true)),
               },
             );
           }

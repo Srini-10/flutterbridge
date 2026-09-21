@@ -655,6 +655,7 @@ function declareLocalSignals(
 
   const signalFn = useRuntime(module, 'signal');
   const useState = module.use('react', 'useState');
+  const propNames = new Set(asArray(component['params']).map((p) => String((p as Node)['name'] ?? '')));
   for (const id of ids) {
     const node = scope.node(id) as unknown as Node | undefined;
     if (node === undefined) {
@@ -669,7 +670,13 @@ function declareLocalSignals(
     const local = identifierOf(nameOfSignal(node, id, scope));
     signals.set(id, local);
     // An absent initialiser is Dart's `null` (`int? _n;`), not JavaScript's `undefined` — `'$_n'` prints `null` in Dart.
-    const initial = node['initial'] === undefined ? 'null' : emitExpression(node['initial'] as Node, scope);
+    // A State's `late final X x = widget.x ?? …` reads the widget's props; they are `props.x` here as they are in the tree.
+    const initialScope: EmitScope = {
+      ...scope,
+      paramInScope: (paramName) =>
+        propNames.has(paramName) ? `props.${identifierOf(paramName)}` : scope.paramInScope(paramName),
+    };
+    const initial = node['initial'] === undefined ? 'null' : emitExpression(node['initial'] as Node, initialScope);
     const typeArgument = signalTypeArgumentOf(node['type'] as Node | undefined, (name) => useRuntimeType(module, name));
     module.line(`const [${local}] = ${useState}(() => ${signalFn}${typeArgument === undefined ? '' : `<${typeArgument}>`}(${initial}));`);
   }

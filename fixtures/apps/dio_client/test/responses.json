@@ -1,0 +1,8 @@
+{
+  "GET /items/1": { "status": 200, "body": { "id": "1" } },
+  "GET /items/404": { "status": 404, "body": { "error": "not found" } },
+  "GET /items/500": { "status": 500, "body": { "error": "boom" } },
+  "GET /items/down": { "error": "connection" },
+  "POST /items": { "status": 201, "body": { "id": "new" } },
+  "DELETE /items/9": { "status": 200, "body": { "deleted": true } }
+}

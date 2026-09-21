@@ -16,7 +16,6 @@ describe('package recognition', () => {
     for (const library of [
       'package:flutter_riverpod/src/consumer.dart',
       'package:riverpod/src/framework.dart',
-      'package:dio/src/dio.dart',
       'package:just_audio/just_audio.dart',
       'package:record/record.dart',
       'package:file_picker_platform_interface/x.dart',
@@ -24,6 +23,11 @@ describe('package recognition', () => {
     ]) {
       expect(unsupportedPackageOf(library), library).toBeDefined();
     }
+    // `dio` has an adapter (ADR-0075): its supported classes are not refused, and the ones it lacks are, by name.
+    expect(unsupportedPackageOf('package:dio/src/dio.dart', 'Dio')).toBeUndefined();
+    expect(unsupportedPackageOf('package:dio/src/response.dart', 'Response<Map<String, dynamic>>')).toBeUndefined();
+    expect(unsupportedPackageOf('package:dio/src/cancel_token.dart', 'CancelToken')).toBeDefined();
+    expect(unsupportedPackageOf('package:dio/src/form_data.dart', 'FormData')).toBeDefined();
     for (const library of ['package:flutter/src/widgets/text.dart', 'package:go_router/go_router.dart', 'package:collection/collection.dart', 'package:gap/gap.dart', 'package:app/main.dart']) {
       expect(unsupportedPackageOf(library), library).toBeUndefined();
     }
@@ -32,9 +36,9 @@ describe('package recognition', () => {
 
 describe('the two refusals are different promises', () => {
   it('a package with a browser equivalent says the mapping is not built yet', () => {
-    const text = packageRefusal(unsupportedPackageOf('package:dio/src/dio.dart')!);
+    const text = packageRefusal(unsupportedPackageOf('package:file_picker/file_picker.dart')!);
     expect(text).toContain('A browser equivalent exists');
-    expect(text).toContain('fetch');
+    expect(text).toContain('<input type="file">');
     expect(text).toContain('not built yet');
     expect(text).not.toContain('no browser equivalent');
   });
@@ -49,12 +53,12 @@ describe('the two refusals are different promises', () => {
 describe('the per-package summary', () => {
   it('counts typed references by package, across nested nodes, sorted', () => {
     const nodes = [
-      { kind: 'a', type: { library: 'package:dio/src/dio.dart', name: 'Dio' }, inner: [{ type: { library: 'package:dio/src/response.dart' } }] },
+      { kind: 'a', type: { library: 'package:dio/src/cancel_token.dart', name: 'CancelToken' }, inner: [{ type: { library: 'package:dio/src/dio.dart', name: 'Dio' } }, { type: { library: 'package:dio/src/form_data.dart', name: 'FormData' } }] },
       { kind: 'b', type: { library: 'package:flutter_riverpod/src/x.dart' } },
       { kind: 'c', type: { library: 'package:go_router/go_router.dart' } },
     ];
     const found = unsupportedPackagesIn(nodes).map((entry) => [entry.model.label, entry.references]);
-    expect(found).toEqual([['dio', 2], ['Riverpod', 1]]);
+    expect(found).toEqual([['dio (beyond the fetch-backed subset)', 2], ['Riverpod', 1]]);
   });
 
   it('reports nothing for a program that uses only supported packages', () => {

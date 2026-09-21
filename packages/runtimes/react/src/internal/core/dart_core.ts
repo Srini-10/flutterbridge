@@ -161,3 +161,20 @@ export function dartIsRecord(value: unknown, names: readonly string[]): boolean 
   const keys = Object.keys(value);
   return keys.length === names.length && names.every((name) => keys.includes(name));
 }
+
+/**
+ * `value[key]` where the static type is `dynamic` (a decoded JSON value, a `dynamic` field): the operator that runs is the runtime type's. A `Map` answers
+ * with its entry (`null` when absent), a `List` with its element (a `RangeError` outside it, as Dart's), and `null` has no `[]` — Dart's `NoSuchMethodError`.
+ */
+export function dartIndex(value: unknown, key: unknown): unknown {
+  if (value instanceof Map) return value.get(key) ?? null;
+  if (Array.isArray(value)) {
+    if (typeof key !== 'number' || !Number.isInteger(key) || key < 0 || key >= value.length) {
+      throw new RangeError(`RangeError (index): Invalid value: ${String(key)} is not a valid index for a list of length ${String(value.length)}`);
+    }
+    return value[key];
+  }
+  if (value === null || value === undefined) throw new TypeError("NoSuchMethodError: the method '[]' was called on null.");
+  if (typeof value === 'string' && typeof key === 'number') return value[key];
+  return (value as Record<string, unknown>)[String(key)];
+}

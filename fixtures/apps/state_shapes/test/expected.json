@@ -1,0 +1,28 @@
+{
+  "ShapesHost": [
+    [
+      "> base=10 hi const hi made hi Home LHome state-title/Home steps=0 seen=0 log=idle"
+    ],
+    [
+      "> base=10 hi const hi made hi Home LHome state-title!/Home steps=1 seen=0 log=idle"
+    ],
+    [
+      "> base=10 hi const hi made hi Home LHome state-title!!/Home steps=2 seen=0 log=idle"
+    ],
+    [
+      "> base=10 hi const hi made hi Home LHome state-title!!/Home steps=2 seen=2 log=loading"
+    ],
+    [
+      "> base=10 hi const hi made hi Home LHome state-title!!/Home steps=2 seen=2 log=done hi Home"
+    ],
+    [
+      "> base=10 hi const hi made hi Home LHome state-title!!/Home steps=2 seen=2 log=failed"
+    ],
+    [
+      "> base=10 hi const hi made hi Home LHome state-title!!/Home steps=2 seen=2 log=failed"
+    ],
+    [
+      "> base=10 hi const hi made hi Home LHome state-title!!!/Home steps=3 seen=2 log=failed"
+    ]
+  ]
+}

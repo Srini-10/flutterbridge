@@ -1,0 +1,28 @@
+{
+  "Loader": [
+    [
+      "> idle"
+    ],
+    [
+      "> item 1 GET true 2 bridge"
+    ],
+    [
+      "> created 201"
+    ],
+    [
+      "> server 404"
+    ],
+    [
+      "> server 500"
+    ],
+    [
+      "> unreachable"
+    ],
+    [
+      "> removed"
+    ],
+    [
+      "> item 1 GET true 2 bridge"
+    ]
+  ]
+}

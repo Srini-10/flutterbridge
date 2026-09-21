@@ -202,7 +202,7 @@ export function lowerCollectionMethod(node: Node, deps: CollectionDeps): string 
     const separator = args.length === 0 ? "''" : deps.emit(args[0] as Node);
     return `${receiver}.join(${separator})`;
   }
-  if (effective === 'List' && LIST_NATIVE[method]?.includes(args.length) === true) {
+  if (effective === 'List' && (Object.hasOwn(LIST_NATIVE, method) ? LIST_NATIVE[method] : undefined)?.includes(args.length) === true) {
     const receiver = deps.emit(receiverNode);
     const emitted = args.map((a) => deps.emit(a));
     if (receiver === deps.refused || emitted.includes(deps.refused)) return deps.refused;
@@ -210,7 +210,7 @@ export function lowerCollectionMethod(node: Node, deps: CollectionDeps): string 
   }
 
   // `firstWhere(test, orElse: () => x)` and its siblings.
-  const searchHelper = SEARCH[method];
+  const searchHelper = Object.hasOwn(SEARCH, method) ? SEARCH[method] : undefined;
   if (searchHelper !== undefined && kind !== 'Map') {
     const namedArgs = (node['namedArgs'] ?? {}) as Record<string, Node>;
     const named = Object.keys(namedArgs);
@@ -222,9 +222,10 @@ export function lowerCollectionMethod(node: Node, deps: CollectionDeps): string 
   }
 
   // A `Set` is not an array: a read-only iterable operation on one runs over its elements.
-  const setAsIterable = effective === 'Set' && SET[method] === undefined && LIST[method] !== undefined && !LIST[method]!.mutates;
+  const setAsIterable = effective === 'Set' && !Object.hasOwn(SET, method) && Object.hasOwn(LIST, method) && !LIST[method]!.mutates;
   const table = setAsIterable ? LIST : effective === 'Map' ? MAP : effective === 'Set' ? SET : LIST;
-  const entry = table[method];
+  // Own keys only: `toString`, `constructor` and the rest of `Object.prototype` are not rows (indexing them crashed the generator on `map.toString()`).
+  const entry = Object.hasOwn(table, method) ? table[method] : undefined;
   if (entry === undefined || !entry.arity.includes(args.length)) return undefined;
   if (kind === 'Iterable' && entry.mutates) return undefined;
 

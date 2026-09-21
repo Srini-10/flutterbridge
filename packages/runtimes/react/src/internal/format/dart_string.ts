@@ -69,3 +69,17 @@ export function dartDebugPrint(message?: string | null, wrapWidth?: number): voi
   // eslint-disable-next-line no-console -- printing to the console is this function's whole job.
   console.debug(message === null || message === undefined ? 'null' : message);
 }
+
+/**
+ * `toString()` of a value whose static type is `dynamic` or `Object`: Dart's own text for what it holds at run time. `null` is `null`, a collection prints as
+ * Dart prints it (`[1, 2]`, `{a: 1}`, `{x, y}`), and any other object as its `toString()`. **A number is printed as the integer it looks like when it is one**: a
+ * JavaScript number does not remember whether Dart held the `int` `3` or the `double` `3.0`, so a `dynamic` double with a whole value prints without `.0`.
+ */
+export function dartToStringDynamic(value: unknown): string {
+  if (value === null || value === undefined) return 'null';
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) return `[${value.map(dartToStringDynamic).join(', ')}]`;
+  if (value instanceof Set) return `{${[...value].map(dartToStringDynamic).join(', ')}}`;
+  if (value instanceof Map) return `{${[...value.entries()].map(([k, v]) => `${dartToStringDynamic(k)}: ${dartToStringDynamic(v)}`).join(', ')}}`;
+  return String(value);
+}
