@@ -113,6 +113,24 @@ such collections. A `num`, enum, class or `dynamic` element is refused. `debugPr
 go_router `goNamed`/`pushNamed`/`pushReplacementNamed` resolve against the routes' `name:` (nested routes at their joined path); so do `go('/x')`/`Navigator.pushNamed('/x')` — a
 departure to a route is now lowered at all (`logic.Navigate.route`).
 
+## Widget parameters, text formatters, State shapes — ADR-0074
+
+A widget or list of widgets passed to a **project** widget stays a named parameter (`Bar(header: …, actions: […])`): it was silently dropped before. `List<Widget>` renders as positionally-keyed
+children. `TextField`/`TextFormField` take `inputFormatters` (`FilteringTextInputFormatter.digitsOnly`, `LengthLimitingTextInputFormatter`); `allow`/`deny` (a `RegExp`) and `autovalidateMode` are refused.
+In a `State`: `final`/`late final` fields (including `late final X x = widget.x ?? …`) are per-instance cells, a State field named like the widget's parameter is the State's, an arrow-bodied `setState` followed by
+statements runs them all, `() async { … }` closures are async, `Future<T>` is `Promise<T>`, `dynamic[…]` and `dynamic.toString()` resolve at run time.
+
+## `package:dio` — the first library adapter — ADR-0075
+
+`Dio`, `BaseOptions`, `Options`, `Response<T>`, `DioException`, `DioExceptionType`, `get/post/put/patch/delete/request`, base URL joining, query parameters, headers, JSON bodies and replies, typed `on DioException catch` and a `switch` on the type —
+each outcome compared with real dio against a real server, and a repository over Dio compared step by step in Flutter and the generated component. Differences: `fetch` cannot separate connect from receive time; CORS applies; `sendTimeout` is not enforced.
+Refused by name: interceptors other than `LogInterceptor`, `FormData`/`MultipartFile`, `CancelToken`, `HttpClientAdapter`, download/progress.
+
+## Colours, `Object` overrides, prototype-named identifiers — ADR-0076
+
+`c.withValues(alpha: a)`, `c.withOpacity(a)`, `c.withAlpha(n)` of a constant colour are constants (alpha computed as Flutter does). A class overriding `toString`/`==`/`hashCode`/`call`/`noSuchMethod` is a class
+(`'$box'` and equality honour the override). Identifiers named like `Object.prototype` members work; a class member named `constructor` is refused by name.
+
 ## Compatibility contract
 
 Every construct is in exactly one of three classes. Nothing is in a fourth ("works, mostly").
@@ -134,12 +152,15 @@ Everything listed above. Each has a fixture in `fixtures/apps/` whose scenarios 
 | `int.parse` / integers | Beyond 2^53 it is refused or throws, never rounds (ADR-0050). |
 | Gestures ([ADR-0070](../adr/0070-gestures.md)) | Ancestor scrollers do not delay `onTapDown`; no ink ripple; the innermost detector with a callback takes the press (Flutter runs one arena per recogniser kind); hover callbacks are not suppressed after a key press. |
 | `LayoutBuilder` ([ADR-0071](../adr/0071-layout-builder.md)) | Runs after layout (not on the server); `maxWidth` is the width of the nearest ancestor whose width does not depend on its content, `maxHeight` is read structurally (scroll view / column main axis → `Infinity`, explicit height → bounded); minimum sizes are not stated (refused). |
+| Appearance parameters | `Text.style`/`textAlign`/`maxLines`/`overflow`, `Icon.color`, `Divider.color`, `InkWell.borderRadius`, `ListView.physics`, `Container.clipBehavior`, `Image.errorBuilder`, … are **dropped with a warning** (`BRG3001`, per use): the runtime has no typography/decoration model for them. Behaviour-bearing parameters are refused instead (`BRG3017`). |
+| Text formatters ([ADR-0074](../adr/0074-widget-parameters-and-input-formatters.md)) | The caret is the browser's; formatters see the text, not Flutter's `TextEditingValue` (selection, composing range). |
+| `dio` ([ADR-0075](../adr/0075-dio-adapter.md)) | `fetch`: connect and receive time are not separated, `sendTimeout` is not enforced, CORS applies; a `dynamic` number that is whole prints without `.0`. |
 | `go`/`goNamed` ([ADR-0072](../adr/0072-route-names.md)) | Lowered as a push (go_router's `go` replaces the stack); the URL is not updated; `pathParameters`/`queryParameters`/`extra` are not carried (the edge is refused with a warning). |
 | The incremental analyzer | A class newly extended from another file is not re-extracted until its own file changes; a clean run is exact (ADR-0059). |
 
 ### EXPLICITLY REFUSED (a diagnostic names it)
 
-Packages ([ADR-0073](../adr/0073-package-adapters-and-boundaries.md)) — **not implemented yet** (a browser equivalent exists): Riverpod (`ref`, providers, notifiers, `ConsumerWidget`), `dio`/`http` (→ `fetch`),
+Packages ([ADR-0073](../adr/0073-package-adapters-and-boundaries.md)) — **not implemented yet** (a browser equivalent exists): Riverpod (`ref`, providers, notifiers, `ConsumerWidget`), `http` and the parts of `dio` beyond ADR-0075 (→ `fetch`),
 audio playback and recording, file picking, `shared_preferences`, Supabase, `url_launcher`; **no browser equivalent**: `path_provider`, on-device databases, permissions and native services.
 `Theme.extension` design-system context extensions (`context.colors`; `context` as a value is refused as a `BuildContext`), pan/drag/scale/secondary/long-press-sub-event gestures (`BRG3017`, "not built yet") and force press (`BRG3017`, "no browser equivalent"),
 `BoxConstraints` minimum-size and tightness members (`BRG3013`, no browser equivalent), slivers, `CustomPainter`, drag-to-reorder, `GlobalKey`, static/operator extension members,

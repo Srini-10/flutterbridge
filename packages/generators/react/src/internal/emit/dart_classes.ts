@@ -268,6 +268,17 @@ function emitClassSourceInner(source: Node, className: string, ctx: ClassEmitCon
     );
     return undefined;
   }
+  // A class body cannot declare a member named `constructor` (a syntax error in JavaScript and TypeScript): named, not emitted broken.
+  for (const member of [...asArray(decl['fields']), ...asArray(decl['methods'])]) {
+    if (member['name'] === 'constructor' && member['isStatic'] !== true) {
+      ctx.report(
+        `\`${className}\` declares a member named \`constructor\`, which a JavaScript class cannot (it is the name of the constructor itself). ` +
+          'Rename the member.',
+        id,
+      );
+      return undefined;
+    }
+  }
   // A mixin's members are added to the class (ADR-0059): the class's own take precedence, and a later mixin's over an earlier one's.
   const applied = mixinsOf(decl, ctx);
   if (applied === undefined) {

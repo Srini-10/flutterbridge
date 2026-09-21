@@ -45,3 +45,14 @@ describe('gesture and constraint refusals', () => {
     expect(say('`BoxConstraints.isTight` has no browser equivalent')).toBe(true);
   });
 });
+
+// M14 (ADR-0076): a member named `constructor` cannot be declared by a JavaScript class; the generator names it rather than emitting a syntax error.
+describe('a class member named `constructor`', () => {
+  const golden = readFileSync(fileURLToPath(new URL('../../../../fixtures/uir/constructor_member_refusal.ndjson', import.meta.url)), 'utf8');
+  it('is refused by name, and nothing is emitted', () => {
+    const { context, reported } = harness(compiledFrom(golden));
+    const { files } = reactGenerator.generate(context);
+    expect(reported.some((d) => d.severity === 'error' && d.message.includes('declares a member named `constructor`'))).toBe(true);
+    expect(files).toEqual([]);
+  });
+});

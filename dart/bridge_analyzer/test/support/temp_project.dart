@@ -301,6 +301,9 @@ class Color {
                 (b & 0xff)) &
             0xFFFFFFFF;
   final int value;
+  Color withOpacity(double opacity) => Color(value);
+  Color withAlpha(int a) => Color(value);
+  Color withValues({double? alpha, double? red, double? green, double? blue}) => Color(value);
 }
 
 /// Only `fromSeed` is modelled: it is the constructor that makes N10 derive the Material role set, and the

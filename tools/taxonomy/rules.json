@@ -1,0 +1,221 @@
+{
+  "$comment": "Root-cause rules for the generator/normalizer taxonomy (docs/m14/). First match wins. `category`: A = documented-supported contract, compiler bug; B = browser-compatible construct not implemented; C = library adapter (browser equivalent exists); D = no browser equivalent / intentional refusal. `layer`: the first compiler layer where the construct stops being representable.",
+  "rules": [
+    {
+      "id": "normalize-widget-list",
+      "match": "BRG2110",
+      "category": "A",
+      "layer": "normalizer",
+      "cause": "a list of widgets left in props (N8)",
+      "adr": "0074"
+    },
+    {
+      "id": "normalize-route-forwarded-param",
+      "match": "BRG2305",
+      "category": "B",
+      "layer": "normalizer",
+      "cause": "a screen's own constructor parameter forwarded across a route boundary (N11 multi-hop provenance)",
+      "adr": "0025"
+    },
+    {
+      "id": "normalize-route-live-object",
+      "match": "BRG2301",
+      "category": "D",
+      "layer": "normalizer",
+      "cause": "a live object passed across a route boundary (a URL carries an identifier, not an object graph)",
+      "adr": "0025"
+    },
+    {
+      "id": "riverpod-ref",
+      "match": "BRG3006\\] `(ref|state)` is not declared|Riverpod",
+      "category": "C",
+      "layer": "analyzer (no model of ConsumerWidget/ref)",
+      "cause": "Riverpod: ref.watch/read/listen, providers, notifiers",
+      "adr": "0073"
+    },
+    {
+      "id": "riverpod-provider-initializer",
+      "match": "top-level `final`/`const` .*initializer could not be lowered|initializer of `[A-Za-z]*Provider`",
+      "category": "C",
+      "layer": "generator",
+      "cause": "a top-level provider whose initializer builds a package object",
+      "adr": "0073"
+    },
+    {
+      "id": "theme-material-role",
+      "match": "BRG3010",
+      "category": "B",
+      "layer": "analyzer (token extraction)",
+      "cause": "a theme built by a helper/ColorScheme from computed values: no token for the Material role a widget paints",
+      "adr": "0073"
+    },
+    {
+      "id": "theme-extension-context",
+      "match": "BuildContext|`context` is not declared",
+      "category": "B",
+      "layer": "analyzer/generator (no theme-extension model)",
+      "cause": "Theme.of(context)/extension<T>() and design-system extensions on BuildContext",
+      "adr": "0073"
+    },
+    {
+      "id": "package-named-args",
+      "match": "passes Dart named arguments",
+      "category": "C",
+      "layer": "generator (no callee signature for a package/SDK function)",
+      "cause": "named arguments to a package/SDK callee the kit does not mirror (Supabase, showModalBottomSheet, Color ops, \u2026)",
+      "adr": "0073"
+    },
+    {
+      "id": "package-class-emission",
+      "match": "is one of this application's own classes, and this generator does not emit class declarations",
+      "category": "C",
+      "layer": "generator",
+      "cause": "construction of a class that depends on an unsupported package",
+      "adr": "0055"
+    },
+    {
+      "id": "project-class-extends-package",
+      "match": "extends a class this generator does not emit",
+      "category": "C",
+      "layer": "generator",
+      "cause": "a project class extending a package class (StateNotifier, Notifier, \u2026)",
+      "adr": "0073"
+    },
+    {
+      "id": "package-member",
+      "match": "reads a member of|calls a member of",
+      "category": "C",
+      "layer": "generator",
+      "cause": "member of a package class with no runtime model (dio beyond the subset, audio, Supabase, \u2026)",
+      "adr": "0073"
+    },
+    {
+      "id": "opaque-expression",
+      "match": "BRG3004",
+      "category": "B",
+      "layer": "analyzer",
+      "cause": "an expression the analyzer preserved verbatim (opaque)",
+      "adr": "0058"
+    },
+    {
+      "id": "unmapped-widget",
+      "match": "BRG3001\\] `[A-Za-z]+` is not a Flutter widget",
+      "category": "B",
+      "layer": "generator (widget map)",
+      "cause": "a widget with no runtime mapping",
+      "adr": "0062"
+    },
+    {
+      "id": "top-level-function-cascade",
+      "match": "project-defined top-level function",
+      "category": "C",
+      "layer": "generator (cascade)",
+      "cause": "a top-level function whose body contains any construct above",
+      "adr": "0066"
+    },
+    {
+      "id": "top-level-variable",
+      "match": "top-level `final`|top-level variable|static field",
+      "category": "C",
+      "layer": "generator (cascade)",
+      "cause": "a top-level/static variable whose initializer contains any construct above",
+      "adr": "0073"
+    },
+    {
+      "id": "catch-type",
+      "match": "catch clause names a type",
+      "category": "B",
+      "layer": "generator",
+      "cause": "a typed catch on a type that cannot be tested at runtime",
+      "adr": "0061"
+    },
+    {
+      "id": "interpolation",
+      "match": "Interpolating a",
+      "category": "B",
+      "layer": "generator",
+      "cause": "interpolating a value whose Dart text cannot be reproduced from its static type (num, enum, class, dynamic elements)",
+      "adr": "0073"
+    },
+    {
+      "id": "colour-unresolved",
+      "match": "BRG3014",
+      "category": "B",
+      "layer": "analyzer (colour hoisting)",
+      "cause": "a colour computed at runtime",
+      "adr": "0076"
+    },
+    {
+      "id": "component-collision",
+      "match": "BRG3009",
+      "category": "B",
+      "layer": "generator",
+      "cause": "two project widgets of the same name in different libraries (monorepo) emit to one file: refused; needs unique component file/export naming",
+      "adr": "0047"
+    },
+    {
+      "id": "navigation-inline",
+      "match": "BRG3008|constructs its destination inline",
+      "category": "B",
+      "layer": "analyzer/generator",
+      "cause": "a navigation that constructs its destination inline",
+      "adr": "0072"
+    },
+    {
+      "id": "unresolved-reference",
+      "match": "BRG3006",
+      "category": "C",
+      "layer": "generator",
+      "cause": "a name with no declaration in the program (usually a package or a private symbol from a construct above)",
+      "adr": "0073"
+    },
+    {
+      "id": "unsupported-expression",
+      "match": "BRG3002",
+      "category": "B",
+      "layer": "generator",
+      "cause": "an expression form with no lowering",
+      "adr": "0058"
+    },
+    {
+      "id": "unsupported-capability",
+      "match": "BRG3013",
+      "category": "B",
+      "layer": "generator",
+      "cause": "a construct the generator names as unsupported",
+      "adr": "0073"
+    },
+    {
+      "id": "globalkey",
+      "match": "BRG3015",
+      "category": "D",
+      "layer": "generator",
+      "cause": "a GlobalKey: a handle on a live widget State, no UIR construct",
+      "adr": "0058"
+    },
+    {
+      "id": "app-root-parameter",
+      "match": "BRG3016",
+      "category": "B",
+      "layer": "generator (app root)",
+      "cause": "a MaterialApp parameter with no equivalent (builder, onUnknownRoute, localization, \u2026)",
+      "adr": "0029"
+    },
+    {
+      "id": "unsupported-parameter",
+      "match": "BRG3017",
+      "category": "B",
+      "layer": "generator (widget map)",
+      "cause": "a widget parameter the runtime cannot honour (refused by name)",
+      "adr": "0070"
+    },
+    {
+      "id": "other",
+      "match": ".",
+      "category": "?",
+      "layer": "?",
+      "cause": "unclassified \u2014 needs a rule",
+      "adr": ""
+    }
+  ]
+}

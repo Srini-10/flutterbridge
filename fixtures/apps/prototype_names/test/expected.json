@@ -1,0 +1,13 @@
+{
+  "NamesHost": [
+    [
+      "> C 3 1 h 1 2 3 false constructor Box(4,p) 8 true L3 a-2 pie {constructor: 1, toString: 2, __proto__: 3} [1, 2]"
+    ],
+    [
+      "> C 3 2 hx 11 2 3 true valueOf Box(5,q) 10 false L3 a-2 pie {constructor: 11, toString: 2, __proto__: 3, valueOf: 7} [1, 2]"
+    ],
+    [
+      "> C 3 3 hxx 21 2 3 true valueOf Box(6,q) 12 false L3 a-2 pie {constructor: 21, toString: 2, __proto__: 3, valueOf: 7} [1, 2]"
+    ]
+  ]
+}

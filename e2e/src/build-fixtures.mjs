@@ -71,6 +71,8 @@ export const APPS = [
   { name: 'interaction', source: 'fixtures/apps/interaction_e2e' },
   // M13 (ADR-0072): go_router navigation by route name (goNamed, pushNamed, pushReplacementNamed) in a real browser.
   { name: 'named-routes', source: 'fixtures/apps/named_routes' },
+  // M14 (ADR-0075): a repository over `dio`, running on the browser's real `fetch` against network routes the test fulfils.
+  { name: 'dio-client', source: 'fixtures/apps/dio_client' },
 ];
 
 const run = (program, args, cwd, env = {}) =>

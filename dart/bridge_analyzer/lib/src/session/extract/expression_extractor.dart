@@ -1667,13 +1667,56 @@ final class ExpressionExtractor {
   String? _constantColourToken(Expression node) {
     final DartObject? value = node.computeConstantValue()?.value;
     if (value == null) {
-      return null;
+      return _derivedColourToken(node);
     }
     final int? argb = packedArgbOf(value);
     if (argb == null) {
       return null;
     }
     return hoistColour(argbHex(argb), node);
+  }
+
+  /// A colour derived from a constant one by changing only its alpha — `AdminTokens.gold.withValues(alpha: 0.14)`, `c.withOpacity(0.4)`,
+  /// `c.withAlpha(90)` — is itself a constant, though not a *constant expression* (it is a method call). Computed here exactly as Flutter computes it
+  /// (`alpha = (opacity * 255).round()`, checked against `Color.toARGB32()` for a range of values), so it hoists into a token like any other colour.
+  /// `withValues` with any channel but `alpha` is not derived: only what is reproduced exactly is.
+  String? _derivedColourToken(Expression node) {
+    if (node is! MethodInvocation) {
+      return null;
+    }
+    final String method = node.methodName.name;
+    final String? library = node.methodName.element?.library?.identifier;
+    if ((library == null || !(library.startsWith('package:flutter/') || library == 'dart:ui')) ||
+        !const <String>{'withOpacity', 'withValues', 'withAlpha'}.contains(method)) {
+      return null;
+    }
+    final Expression? receiver = node.realTarget;
+    final DartObject? base = receiver?.computeConstantValue()?.value;
+    final int? argb = base == null ? null : packedArgbOf(base);
+    if (receiver == null || argb == null) {
+      return null;
+    }
+    final List<Argument> arguments = node.argumentList.arguments;
+    if (arguments.length != 1) {
+      return null;
+    }
+    final Argument argument = arguments.single;
+    if (method == 'withValues' && !(argument is NamedArgument && argument.name.lexeme == 'alpha')) {
+      return null;
+    }
+    if (method != 'withValues' && argument is NamedArgument) {
+      return null;
+    }
+    final DartObject? given = argument.argumentExpression.computeConstantValue()?.value;
+    final num? amount = given?.toDoubleValue() ?? given?.toIntValue();
+    if (amount == null) {
+      return null;
+    }
+    final int alpha = method == 'withAlpha' ? amount.toInt() : (amount.toDouble() * 255).round();
+    if (alpha < 0 || alpha > 255) {
+      return null;
+    }
+    return hoistColour(argbHex((alpha << 24) | (argb & 0x00FFFFFF)), node);
   }
 
   /// The Material role a `…colorScheme.<role>` chain names, or `null`.

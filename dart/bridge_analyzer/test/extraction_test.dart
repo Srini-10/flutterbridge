@@ -10729,4 +10729,108 @@ class _HomeState extends State<Home> {
       expect(kinds(go['body'], 'logic.Return'), isEmpty, reason: 'a spliced batch discards the value of its arrow');
     });
   });
+
+  group('a colour derived from a constant one (M14, ADR-0076)', () {
+    Iterable<Map<String, dynamic>> kinds(Object? node, String kind) sync* {
+      if (node is Map<String, dynamic>) {
+        if (node['kind'] == kind) {
+          yield node;
+        }
+        for (final Object? v in node.values) {
+          yield* kinds(v, kind);
+        }
+      } else if (node is List) {
+        for (final Object? v in node) {
+          yield* kinds(v, kind);
+        }
+      }
+    }
+
+    test('withValues(alpha:), withOpacity and withAlpha of a constant colour are constants, with the alpha Flutter computes', () async {
+      final Extracted e = await extract('''
+import 'package:flutter/material.dart';
+class Tokens { static const Color base = Color(0xFF3366CC); }
+class Home extends StatelessWidget {
+  const Home({super.key});
+  @override
+  Widget build(BuildContext context) => Column(children: [
+    Container(color: Tokens.base.withValues(alpha: 0.14)),
+    Container(color: Tokens.base.withOpacity(0.5)),
+    Container(color: Tokens.base.withAlpha(100)),
+  ]);
+}
+''');
+      final String tokens = kinds(e.nodes, 'app.Token').map(jsonEncode).join(' ').toUpperCase();
+      // Flutter's `toARGB32()`: 0.14 → 0x24, 0.5 → 0x80 (127.5 rounds up), 100 → 0x64.
+      expect(tokens, contains('#243366CC'));
+      expect(tokens, contains('#803366CC'));
+      expect(tokens, contains('#643366CC'));
+    });
+
+    test('a channel other than alpha is not derived (it is not reproduced exactly, so it is not guessed)', () async {
+      final Extracted e = await extract('''
+import 'package:flutter/material.dart';
+class Home extends StatelessWidget {
+  const Home({super.key});
+  @override
+  Widget build(BuildContext context) => Container(color: const Color(0xFF3366CC).withValues(red: 0.5));
+}
+''');
+      // Only the base colour is a token; nothing was derived from it (alpha 0.5 would be `#803366CC`).
+      final String tokens = kinds(e.nodes, 'app.Token').map(jsonEncode).join(' ').toUpperCase();
+      expect(tokens, contains('#FF3366CC'));
+      expect(tokens, isNot(contains('#803366CC')));
+    });
+  });
+
+  group('a class that overrides what Object dispatches on is a class (M14, ADR-0076)', () {
+    Iterable<Map<String, dynamic>> kinds(Object? node, String kind) sync* {
+      if (node is Map<String, dynamic>) {
+        if (node['kind'] == kind) {
+          yield node;
+        }
+        for (final Object? v in node.values) {
+          yield* kinds(v, kind);
+        }
+      } else if (node is List) {
+        for (final Object? v in node) {
+          yield* kinds(v, kind);
+        }
+      }
+    }
+
+    Future<Map<String, dynamic>> classOf(String members) async {
+      final Extracted e = await extract('''
+import 'package:flutter/material.dart';
+class Box {
+  Box(this.n);
+  final int n;
+  $members
+}
+class Home extends StatelessWidget {
+  const Home({super.key});
+  @override
+  Widget build(BuildContext context) => Text('\${Box(1)}');
+}
+''');
+      return kinds(e.nodes, 'logic.ClassDecl').firstWhere((Map<String, dynamic> c) => c['name'] == 'Box');
+    }
+
+    test('toString, ==, hashCode, call and noSuchMethod each make a plain record a general class (it has constructors)', () async {
+      for (final String member in <String>[
+        "@override String toString() => 'b';",
+        '@override bool operator ==(Object o) => o is Box && o.n == n;',
+        '@override int get hashCode => n;',
+        'int call() => n;',
+        '@override dynamic noSuchMethod(Invocation i) => 1;',
+      ]) {
+        expect((await classOf(member)).containsKey('constructors'), isTrue, reason: member);
+      }
+    });
+
+    test('an ordinary method does not', () async {
+      final Map<String, dynamic> box = await classOf('int twice() => n * 2;');
+      expect(box.containsKey('constructors'), isFalse);
+    });
+  });
 }

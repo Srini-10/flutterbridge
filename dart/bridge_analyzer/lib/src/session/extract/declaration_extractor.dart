@@ -327,6 +327,16 @@ final class DeclarationExtractor {
     if (node.declaredFragment?.element case final ClassElement element when inherited.contains(classKey(element))) {
       return true;
     }
+    // A class that overrides what `Object` dispatches on — `toString` (string interpolation), `==`/`hashCode` (equality, collections), `call`,
+    // `noSuchMethod` — has behaviour a plain structural record cannot carry: `'$box'` printed `[object Object]` and `a == b` was identity (found by a
+    // fixture that names members like Object.prototype's). It is a class.
+    for (final ClassMember member in node.body.members) {
+      if (member is MethodDeclaration &&
+          !member.isStatic &&
+          const <String>{'toString', 'hashCode', '==', 'call', 'noSuchMethod'}.contains(member.name.lexeme)) {
+        return true;
+      }
+    }
     final List<RawValue>? structural = _constructibleConstructors(node, owner: owner);
     if (structural == null || structural.isEmpty) {
       return true;

@@ -2178,6 +2178,15 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
       // A `List`/`Set`/`Map`/`Iterable` receiver goes to the exact-Dart collection lowering (ADR-0051) *before*
       // anything else touches it — including the subscript fast path below, which emitted `map['a']` for a `Map` and
       // so read `undefined` where Dart reads the value.
+      if (node['target'] === undefined && node['method'] === 'toString' && asArray(node['args']).length === 0) {
+        // `list.toString()` / `map.toString()` print what interpolation does (ADR-0073) — for element types whose Dart text is reproducible.
+        const collectionType = sdkTypeOf((node['receiver'] as Node | undefined)?.['type'] as Node | undefined);
+        const shape = collectionType === undefined ? undefined : printShapeOf(collectionType);
+        if (shape !== undefined && SDK_COLLECTIONS.has(collectionType!.split('<')[0] as string)) {
+          const receiverText = emitExpression(node['receiver'] as Node, scope);
+          return receiverText === REFUSED ? REFUSED : `${scope.module.use(RUNTIME, 'dartToString')}(${receiverText}, ${shape})`;
+        }
+      }
       if (node['target'] === undefined) {
         const collection = lowerCollectionMethod(node, collectionDeps(scope));
         if (collection !== undefined) return collection;

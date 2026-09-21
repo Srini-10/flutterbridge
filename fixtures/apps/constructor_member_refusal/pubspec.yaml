@@ -1,0 +1,15 @@
+name: constructor_member_refusal
+description: >-
+  M14 (ADR-0076): a Dart class with a member named `constructor` — which a JavaScript class cannot declare — is refused by name, not emitted as a syntax error.
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

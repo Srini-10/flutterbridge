@@ -29,7 +29,7 @@ usually a package object); a **mutable** one is refused by design (state shared 
 
 ## What is *not* done (and is not claimed)
 
-Riverpod providers and `ref`; `dio`; audio playback and recording; file picking; Supabase; `path_provider`; the theme-extension model. Each is refused by name; none is emitted approximately.
+Riverpod providers and `ref`; `dio` beyond the subset ADR-0075 adds; audio playback and recording; file picking; Supabase; `path_provider`; the theme-extension model. Each is refused by name; none is emitted approximately.
 Riverpod is the largest: in the two applications it accounts for ~480 (`ref`) + ~480 (provider initializers) of 4 444 generator errors, and it gates most of the rest (a `ConsumerWidget` is not a component here).
 
 ## Evidence
