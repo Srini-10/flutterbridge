@@ -14,13 +14,13 @@
 // a human still sees what is happening — a progress line on stdout would corrupt the document that the same
 // run is meant to produce.
 
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 
 import { PluginHost, Program, WidgetRegistry } from '@bridge/compiler';
 
 import { bold, dim, green, json, red, yellow } from '../render.js';
-import { CliError, normalize } from '../document.js';
+import { CliError, manifestPathFor, normalize } from '../document.js';
 import type { AnyUirNode } from '@bridge/uir';
 
 import type { Args } from '../args.js';
@@ -91,12 +91,18 @@ export async function build(from: string, args: Args): Promise<{ output: string;
 
   mkdirSync(work, { recursive: true });
   const normalized = join(work, 'normalized.ndjson');
-  writeFileSync(normalized, result.program.toNdjson());
+  if (blocking.length > 0) {
+    // A document the normalizer refused is not a normalized document. Leaving a stale one on disk lets `bridge generate` — which prefers it — generate from it.
+    rmSync(normalized, { force: true });
+    rmSync(manifestPathFor(normalized), { force: true });
+  } else {
+    writeFileSync(normalized, result.program.toNdjson());
+  }
   // With its manifest, so the document `generate` prefers is as checkable as the one the analyzer
   // wrote. Without this, tampering with `uir.manifest.json` and running `generate` read a normalized
   // document nothing had vouched for — the loader's refusals held on one file in `.bridge/` and not
   // the other.
-  writeManifest(normalized, result.program.nodes, result.diagnostics.length);
+  if (blocking.length === 0) writeManifest(normalized, result.program.nodes, result.diagnostics.length);
 
   stages.push({
     name: 'normalize',

@@ -474,7 +474,20 @@ export async function generate(from: string, args: Args): Promise<{ output: stri
   // The same `normalize` helper `build` and the inspection commands use — one pipeline, so `bridge
   // generate` and `bridge build` cannot come to different conclusions about the same document.
   const widgets = WidgetRegistry.from(host.plugins);
-  const program = input === raw ? normalize(loaded, widgets).program : loaded;
+  //
+  // **A refused program is not generated.** `normalize` returns the program *and* its diagnostics; taking only `.program` let a program the normalizer had
+  // refused (BRG2110, BRG2305, …) go on to the generator, which then reported a different — and misleading — set of errors, or none. `bridge build` always
+  // stopped there; `bridge generate` did not, so the two came to different conclusions about the same document.
+  const reported: Diagnostic[] = [];
+  let program = loaded;
+  if (input === raw) {
+    const normalized = normalize(loaded, widgets);
+    reported.push(...normalized.diagnostics);
+    program = normalized.program;
+    if (normalized.diagnostics.some((d) => d.severity === 'error')) {
+      return summarise(project, reported, [], at(project, project.config.out), args);
+    }
+  }
   const nodes = program.nodes;
   const generator = host.plugins.map((plugin) => plugin.generator).find((g) => g !== undefined);
   if (generator === undefined) {
@@ -485,7 +498,6 @@ export async function generate(from: string, args: Args): Promise<{ output: stri
     );
   }
 
-  const reported: Diagnostic[] = [];
   const context: GeneratorContext = {
     program: programOf(nodes),
     widgets: host.plugins.find((plugin) => plugin.widgets !== undefined)?.widgets ?? {
