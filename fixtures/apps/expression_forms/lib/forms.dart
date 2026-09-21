@@ -129,3 +129,6 @@ String castDto(Object? v) {
     return 'not dto';
   }
 }
+
+/// `round` (half away from zero), `floor`, `ceil` and `truncate`/`toInt` of one double.
+String roundings(double v) => '${v.round()}/${v.floor()}/${v.ceil()}/${v.truncate()}/${v.toInt()}';

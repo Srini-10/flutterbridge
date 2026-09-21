@@ -1,0 +1,271 @@
+{
+  "TapOnly": [
+    [
+      "> taps=0"
+    ],
+    [
+      "> taps=1"
+    ],
+    [
+      "> taps=2"
+    ],
+    [
+      "> taps=2"
+    ],
+    [
+      "> taps=2"
+    ],
+    [
+      "> taps=3"
+    ],
+    [
+      "> taps=3"
+    ],
+    [
+      "> taps=3"
+    ]
+  ],
+  "Phases": [
+    [
+      ">  inside=true"
+    ],
+    [
+      "> down,up,tap inside=true"
+    ],
+    [
+      "> down,up,tap,down inside=true"
+    ],
+    [
+      "> down,up,tap,down inside=true"
+    ],
+    [
+      "> down,up,tap,down inside=true"
+    ],
+    [
+      "> down,up,tap,down,up,tap inside=true"
+    ],
+    [
+      "> down,up,tap,down,up,tap,down inside=true"
+    ],
+    [
+      "> down,up,tap,down,up,tap,down,cancel inside=true"
+    ],
+    [
+      "> down,up,tap,down,up,tap,down,cancel,down inside=true"
+    ],
+    [
+      "> down,up,tap,down,up,tap,down,cancel,down inside=true"
+    ],
+    [
+      "> down,up,tap,down,up,tap,down,cancel,down,cancel inside=true"
+    ]
+  ],
+  "Doubles": [
+    [
+      "> "
+    ],
+    [
+      "> "
+    ],
+    [
+      "> tap"
+    ],
+    [
+      "> tap,double"
+    ],
+    [
+      "> tap,double"
+    ],
+    [
+      "> tap,double"
+    ],
+    [
+      "> tap,double"
+    ],
+    [
+      "> tap,double,double"
+    ],
+    [
+      "> tap,double,double"
+    ],
+    [
+      "> tap,double,double"
+    ],
+    [
+      "> tap,double,double,tap"
+    ],
+    [
+      "> tap,double,double,tap"
+    ],
+    [
+      "> tap,double,double,tap,tap"
+    ]
+  ],
+  "Longs": [
+    [
+      "> "
+    ],
+    [
+      "> down,tap"
+    ],
+    [
+      "> down,tap,down,cancel,long"
+    ],
+    [
+      "> down,tap,down,cancel,long"
+    ],
+    [
+      "> down,tap,down,cancel,long"
+    ],
+    [
+      "> down,tap,down,cancel,long,down"
+    ],
+    [
+      "> down,tap,down,cancel,long,down,tap"
+    ],
+    [
+      "> down,tap,down,cancel,long,down,tap"
+    ]
+  ],
+  "Inks": [
+    [
+      ">  enabled=true"
+    ],
+    [
+      "> tap enabled=true"
+    ],
+    [
+      "> tap,long enabled=true"
+    ],
+    [
+      "> tap,long enabled=false"
+    ],
+    [
+      "> tap,long enabled=false"
+    ],
+    [
+      "> tap,long enabled=false"
+    ],
+    [
+      "> tap,long enabled=true"
+    ],
+    [
+      "> tap,long,tap enabled=true"
+    ]
+  ],
+  "Hovers": [
+    [
+      "> "
+    ],
+    [
+      "> in"
+    ],
+    [
+      "> in,tap"
+    ],
+    [
+      "> in,tap,out"
+    ],
+    [
+      "> in,tap,out,in"
+    ],
+    [
+      "> in,tap,out,in,out"
+    ]
+  ],
+  "Focuses": [
+    [
+      "> "
+    ],
+    [
+      "> tap"
+    ],
+    [
+      "> tap,focus"
+    ],
+    [
+      "> tap,focus,tap"
+    ],
+    [
+      "> tap,focus,tap,tap"
+    ],
+    [
+      "> tap,focus,tap,tap,tap"
+    ]
+  ],
+  "Full": [
+    [
+      "> "
+    ],
+    [
+      "> "
+    ],
+    [
+      "> down,up,tap"
+    ],
+    [
+      "> down,up,tap,double"
+    ],
+    [
+      "> down,up,tap,double"
+    ],
+    [
+      "> down,up,tap,double,down,cancel,long"
+    ],
+    [
+      "> down,up,tap,double,down,cancel,long"
+    ],
+    [
+      "> down,up,tap,double,down,cancel,long"
+    ],
+    [
+      "> down,up,tap,double,down,cancel,long"
+    ],
+    [
+      "> down,up,tap,double,down,cancel,long"
+    ],
+    [
+      "> down,up,tap,double,down,cancel,long"
+    ],
+    [
+      "> down,up,tap,double,down,cancel,long"
+    ],
+    [
+      "> down,up,tap,double,down,cancel,long"
+    ],
+    [
+      "> down,up,tap,double,down,cancel,long,double"
+    ],
+    [
+      "> down,up,tap,double,down,cancel,long,double"
+    ],
+    [
+      "> down,up,tap,double,down,cancel,long,double"
+    ],
+    [
+      "> down,up,tap,double,down,cancel,long,double,down"
+    ],
+    [
+      "> down,up,tap,double,down,cancel,long,double,down"
+    ],
+    [
+      "> down,up,tap,double,down,cancel,long,double,down,up,tap"
+    ]
+  ],
+  "Nested": [
+    [
+      "> "
+    ],
+    [
+      "> inner"
+    ]
+  ],
+  "Inert": [
+    [
+      "> taps=0"
+    ],
+    [
+      "> taps=1"
+    ]
+  ]
+}

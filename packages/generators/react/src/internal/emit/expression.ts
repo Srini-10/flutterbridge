@@ -617,6 +617,9 @@ function isUnmodelledMemberReceiver(type: Node | undefined): boolean {
   return text === 'unknown' || text === 'unknown | null';
 }
 
+/** The `BoxConstraints` members a `LayoutBuilder` builder can read (the runtime's `LayoutConstraints`). */
+const BOX_CONSTRAINT_MEMBERS: ReadonlySet<string> = new Set(['maxWidth', 'maxHeight', 'hasBoundedWidth', 'hasBoundedHeight']);
+
 /**
  * `dart:core Duration`'s own getters this generator lowers (M8-V), and how — arithmetic on the runtime
  * kit's own `Duration.inMilliseconds` (M7-L, the one field the kit's own `Duration` class exposes).
@@ -2000,6 +2003,26 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
         return `${identifierOf(String(receiverNode['name']))}.${identifierOf(String(node['property'] ?? ''))}`;
       }
 
+      // `constraints.maxWidth` in a `LayoutBuilder` builder (ADR-0071): the four members a browser can state are the runtime's
+      // own `LayoutConstraints`; the rest have no browser equivalent and are refused by name, not read as a guess.
+      if (
+        receiverNode?.['type'] !== undefined &&
+        (receiverNode['type'] as Node)['library'] === 'package:flutter/src/rendering/box.dart' &&
+        String((receiverNode['type'] as Node)['name'] ?? '').replace(/\?$/, '') === 'BoxConstraints'
+      ) {
+        const property = String(node['property'] ?? '');
+        if (BOX_CONSTRAINT_MEMBERS.has(property)) return `${emitExpression(receiverNode, scope)}.${property}`;
+        scope.report(
+          GeneratorDiagnosticCode.UnsupportedCapability,
+          'error',
+          `\`BoxConstraints.${property}\` has no browser equivalent: a laid-out box does not say whether its parent *forced* a ` +
+            'size or merely allowed one, so the minimum sizes and the tight/normalized queries cannot be recovered. ' +
+            `A builder can read ${[...BOX_CONSTRAINT_MEMBERS].join(', ')}. Owner: the constraint model (ADR-0071).`,
+          idOf(node),
+        );
+        return REFUSED;
+      }
+
       // M9-J: a property read with no resolved `target` (so not a recognized store member, per the check
       // above), off a receiver that is itself a bare parameter read (`isParameterReceiver` — the only
       // shape whose emitted type is actually `typeTextOf`'s own `unknown`, never a local's tsc-inferred
@@ -2188,12 +2211,30 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
           return `${receiver}.toFixed(${arg})`;
         }
 
+        // `round`/`floor`/`ceil`/`truncate`/`toInt` (ADR-0070): Dart's rounding is half away from zero and every one throws
+        // for NaN and the infinities, which `Math.round` and friends do not; checked against real Dart's answers.
+        const rounding: Record<string, string> = {
+          round: 'numRound', floor: 'numFloor', ceil: 'numCeil', truncate: 'numTruncate', toInt: 'numTruncate',
+        };
+        const roundingHelper = rounding[method];
+        if (roundingHelper !== undefined && rawArgs.length === 0) return `${scope.module.use(RUNTIME, roundingHelper)}(${receiver})`;
+
+        // `abs()` is `Math.abs` on the same IEEE-754 value; `clamp(lower, upper)` orders by `compareTo` (see `numClamp`).
+        if (method === 'abs' && rawArgs.length === 0) return `Math.abs(${receiver})`;
+        if (method === 'clamp' && rawArgs.length === 2) {
+          const lower = emitExpression(rawArgs[0] as Node, scope);
+          const upper = emitExpression(rawArgs[1] as Node, scope);
+          if (lower === REFUSED || upper === REFUSED) return REFUSED;
+          return `${scope.module.use(RUNTIME, 'numClamp')}(${receiver}, ${lower}, ${upper})`;
+        }
+
         scope.report(
           GeneratorDiagnosticCode.UnsupportedExpression,
           'error',
           `\`${receiverType}.${method}\` has no lowering. This generator supports \`toDouble\`, ` +
-            `\`toStringAsFixed\`, and \`remainder\` on a \`dart:core\` numeric value (M8-V) — the methods ` +
-            `real evidence has needed so far. A different one needs its own evidence before it can be added.`,
+            `\`toStringAsFixed\`, \`remainder\`, \`round\`, \`floor\`, \`ceil\`, \`truncate\`, \`toInt\`, \`abs\` and ` +
+            `\`clamp\` on a \`dart:core\` numeric value — the methods real evidence has needed so far. A different one ` +
+            `needs its own evidence before it can be added.`,
           idOf(node),
         );
         return REFUSED;

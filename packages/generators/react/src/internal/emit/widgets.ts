@@ -239,6 +239,56 @@ export const WIDGET_MAP: Readonly<Record<string, WidgetMapping>> = {
     slots: { child: 'child', icon: 'icon', label: 'label' },
   },
 
+  // ── M13 (ADR-0070): the tap-family gesture model ──
+  //
+  // Only the callbacks the runtime models are forwarded; every other gesture parameter is refused by name in
+  // `UNSUPPORTED_PARAMETERS`, because a `GestureDetector(onPanUpdate: …)` that rendered and never delivered is the
+  // silent loss this table exists to prevent.
+  GestureDetector: {
+    component: 'GestureDetector',
+    props: {
+      onTap: 'onTap',
+      onDoubleTap: 'onDoubleTap',
+      onLongPress: 'onLongPress',
+      onTapDown: 'onTapDown',
+      onTapUp: 'onTapUp',
+      onTapCancel: 'onTapCancel',
+    },
+    slots: { child: 'child' },
+  },
+  InkWell: {
+    component: 'InkWell',
+    props: {
+      onTap: 'onTap',
+      onDoubleTap: 'onDoubleTap',
+      onLongPress: 'onLongPress',
+      onTapDown: 'onTapDown',
+      onTapUp: 'onTapUp',
+      onTapCancel: 'onTapCancel',
+      onHover: 'onHover',
+      onFocusChange: 'onFocusChange',
+    },
+    slots: { child: 'child' },
+  },
+
+  InkResponse: {
+    component: 'InkWell',
+    props: {
+      onTap: 'onTap',
+      onDoubleTap: 'onDoubleTap',
+      onLongPress: 'onLongPress',
+      onTapDown: 'onTapDown',
+      onTapUp: 'onTapUp',
+      onTapCancel: 'onTapCancel',
+      onHover: 'onHover',
+      onFocusChange: 'onFocusChange',
+    },
+    slots: { child: 'child' },
+  },
+
+  // ── M13 (ADR-0071): the builder that reads its own constraints ──
+  LayoutBuilder: { component: 'LayoutBuilder', props: { builder: 'builder' } },
+
   // ── M4-A: flex children ──
   Expanded: { component: 'Expanded', props: { flex: 'flex' }, slots: { child: 'child' } },
   Flexible: {
@@ -860,6 +910,7 @@ export const WIDGET_MAP: Readonly<Record<string, WidgetMapping>> = {
  * `IntrinsicWidth()`, so dropping the parameter would render a box the author did not write.
  */
 export const UNSUPPORTED_PARAMETERS: Readonly<Record<string, string>> = {
+  ...gestureRefusals(),
   'IntrinsicWidth.stepWidth':
     'it rounds the intrinsic width up to a multiple, and CSS has no expression that rounds a computed ' +
     'layout value. Owner: the runtime kit.',
@@ -908,4 +959,78 @@ export function mappingOf(name: string): WidgetMapping | undefined {
  */
 export function supportedWidgetNames(): readonly string[] {
   return Object.keys(WIDGET_MAP).sort();
+}
+
+/**
+ * The gesture callbacks the runtime's tap-family model (ADR-0070) does not deliver, refused by name.
+ *
+ * Two different reasons, kept apart because they are different promises: a recogniser that is *not built yet* (pan, drag,
+ * scale, the long-press sub-events, the double-tap and secondary-button variants) and one with *no browser equivalent*
+ * (force press — no pointer event carries a pressure threshold the way `ForcePressGestureRecognizer` does).
+ */
+function gestureRefusals(): Record<string, string> {
+  const notYet = (what: string): string =>
+    `${what} is a gesture recogniser the runtime has not built yet; only the tap family (tap, double tap, long press, ` +
+    'tap down/up/cancel) is delivered, and a callback accepted and never invoked is worse than one refused. Owner: the runtime kit.';
+  const refusals: Record<string, string> = {};
+  const detector = (names: readonly string[], why: (name: string) => string): void => {
+    for (const name of names) refusals[`GestureDetector.${name}`] = why(name);
+  };
+  detector(
+    [
+      'onDoubleTapDown',
+      'onDoubleTapCancel',
+      'onLongPressDown',
+      'onLongPressCancel',
+      'onLongPressStart',
+      'onLongPressMoveUpdate',
+      'onLongPressUp',
+      'onLongPressEnd',
+      'onSecondaryTap',
+      'onSecondaryTapDown',
+      'onSecondaryTapUp',
+      'onSecondaryTapCancel',
+      'onSecondaryLongPress',
+      'onTertiaryTapDown',
+      'onTertiaryTapUp',
+      'onTertiaryTapCancel',
+      'onVerticalDragDown',
+      'onVerticalDragStart',
+      'onVerticalDragUpdate',
+      'onVerticalDragEnd',
+      'onVerticalDragCancel',
+      'onHorizontalDragDown',
+      'onHorizontalDragStart',
+      'onHorizontalDragUpdate',
+      'onHorizontalDragEnd',
+      'onHorizontalDragCancel',
+      'onPanDown',
+      'onPanStart',
+      'onPanUpdate',
+      'onPanEnd',
+      'onPanCancel',
+      'onScaleStart',
+      'onScaleUpdate',
+      'onScaleEnd',
+    ],
+    (name) => `\`${name}\`: ${notYet('it')}`,
+  );
+  detector(
+    ['onForcePressStart', 'onForcePressPeak', 'onForcePressUpdate', 'onForcePressEnd'],
+    (name) =>
+      `\`${name}\`: force press has no browser equivalent — pointer events carry a pressure value, not Flutter's ` +
+      'pressed-past-a-threshold recogniser, and inventing the threshold would deliver a different gesture.',
+  );
+  for (const widget of ['InkWell', 'InkResponse']) {
+    for (const name of ['onSecondaryTap', 'onSecondaryTapUp', 'onSecondaryTapDown', 'onSecondaryTapCancel', 'onHighlightChanged']) {
+      refusals[`${widget}.${name}`] = `\`${name}\`: ${notYet('it')}`;
+    }
+    refusals[`${widget}.focusNode`] =
+      'a `FocusNode` is an imperative handle on a live focus (`requestFocus`, `hasFocus`), the same gap `GlobalKey` names: ' +
+      'UIR has no construct for a handle on a mounted element. Owner: the UIR schema.';
+    refusals[`${widget}.statesController`] =
+      'a `MaterialStatesController` is an imperative handle on a live widget state, the same gap `GlobalKey` names. ' +
+      'Owner: the UIR schema.';
+  }
+  return refusals;
 }

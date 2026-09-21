@@ -863,7 +863,7 @@ function declareLocalActions(
     const actionParams = declared
       .map(
         (param) =>
-          `${identifierOf(String(param['name'] ?? '_'))}: ${typeTextOf(param['type'] as Node | undefined)}`,
+          `${identifierOf(String(param['name'] ?? '_'))}: ${typeTextOf(param['type'] as Node | undefined, (rt) => useRuntimeType(module, rt))}`,
       )
       .join(', ');
 

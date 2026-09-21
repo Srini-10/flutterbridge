@@ -114,6 +114,63 @@ export function numTruncDiv(a: number, b: number): number {
   return checked(Math.trunc(quotient), '~/');
 }
 
+function finite(value: number, operation: string): number {
+  if (!Number.isFinite(value)) {
+    throw new RuntimeError(
+      RuntimeDiagnosticCode.InvalidIntegerOperand,
+      `\`${operation}\` of a non-finite value (${String(value)}) — Dart throws an UnsupportedError.`,
+    );
+  }
+  return value;
+}
+
+/** Dart's `num.round()`: to the nearest `int`, halves **away from zero** (JavaScript's `Math.round` rounds them up). */
+export function numRound(value: number): number {
+  const x = finite(value, 'round');
+  return checked(x < 0 ? -Math.round(-x) : Math.round(x), 'round');
+}
+
+/** Dart's `num.floor()`: the greatest `int` not above the value; throws for a non-finite one. */
+export function numFloor(value: number): number {
+  return checked(Math.floor(finite(value, 'floor')), 'floor');
+}
+
+/** Dart's `num.ceil()`: the least `int` not below the value; throws for a non-finite one. */
+export function numCeil(value: number): number {
+  return checked(Math.ceil(finite(value, 'ceil')), 'ceil');
+}
+
+/** Dart's `num.truncate()` and `num.toInt()`: toward zero; throws for a non-finite value. */
+export function numTruncate(value: number): number {
+  return checked(Math.trunc(finite(value, 'truncate')), 'truncate');
+}
+
+/** Dart's `num.compareTo` for doubles: a total order in which `-0.0 < 0.0` and NaN is greater than everything. */
+function compareTotal(a: number, b: number): number {
+  if (Number.isNaN(a)) return Number.isNaN(b) ? 0 : 1;
+  if (Number.isNaN(b)) return -1;
+  if (a < b) return -1;
+  if (a > b) return 1;
+  if (a === 0 && b === 0) return Object.is(a, -0) ? (Object.is(b, -0) ? 0 : -1) : Object.is(b, -0) ? 1 : 0;
+  return 0;
+}
+
+/**
+ * Dart's `num.clamp(lower, upper)`, which orders with `compareTo`: it throws when `lower` is above `upper`, and a NaN
+ * receiver is above every limit, so it clamps to `upper`; `-0.0` is below `0.0`.
+ */
+export function numClamp(value: number, lower: number, upper: number): number {
+  if (compareTotal(lower, upper) > 0) {
+    throw new RuntimeError(
+      RuntimeDiagnosticCode.InvalidIntegerOperand,
+      `\`clamp\` with bounds ${String(lower)}..${String(upper)} — Dart throws an ArgumentError.`,
+    );
+  }
+  if (compareTotal(value, lower) < 0) return lower;
+  if (compareTotal(value, upper) > 0) return upper;
+  return value;
+}
+
 function wrap(value: bigint, operation: string): number {
   const wrapped = BigInt.asIntN(64, value);
   const number = Number(wrapped);

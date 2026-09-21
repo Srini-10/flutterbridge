@@ -92,6 +92,11 @@ class Row extends Widget {
   final List<Widget> children;
 }
 
+class LayoutBuilder extends Widget {
+  const LayoutBuilder({required this.builder, super.key});
+  final Widget Function(BuildContext context, BoxConstraints constraints) builder;
+}
+
 class Padding extends Widget {
   const Padding({required this.child, this.padding, super.key});
   final Widget child;

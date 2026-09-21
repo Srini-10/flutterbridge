@@ -1,0 +1,65 @@
+{
+  "Widths": [
+    [
+      "> w=300.0 h=80.0"
+    ],
+    [
+      "> w=500.0 h=80.0"
+    ],
+    [
+      "> w=700.0 h=80.0"
+    ],
+    [
+      "> w=300.0 h=80.0"
+    ]
+  ],
+  "Responsive": [
+    [
+      "> narrow layout",
+      "> one column"
+    ],
+    [
+      "> wide layout",
+      "> two columns"
+    ],
+    [
+      "> narrow layout",
+      "> one column"
+    ],
+    [
+      "> wide layout",
+      "> two columns"
+    ]
+  ],
+  "NestedBuilders": [
+    [
+      "> outer=400.0",
+      "> inner=350.0"
+    ],
+    [
+      "> outer=200.0",
+      "> inner=150.0"
+    ],
+    [
+      "> outer=400.0",
+      "> inner=350.0"
+    ]
+  ],
+  "Ratios": [
+    [
+      "> half=200.0 wide=true boundedH=true boundedW=true"
+    ],
+    [
+      "> half=125.0 wide=false boundedH=true boundedW=true"
+    ],
+    [
+      "> half=200.0 wide=true boundedH=true boundedW=true"
+    ]
+  ],
+  "Unbounded": [
+    [
+      "> free h=Infinity bounded=false",
+      "> fixed h=60.0 bounded=true"
+    ]
+  ]
+}

@@ -14,6 +14,7 @@ import {
   targetOfType,
   type ClassEmitContext,
 } from './dart_classes.js';
+import { isAppRoot } from './app_root.js';
 import { emitExpression, isEligibleStructuralField, localBindingsIn, type EmitScope } from './expression.js';
 import { fileNameOf, identifierOf, ModuleBuilder } from './module.js';
 import { useRuntime, useRuntimeType } from './runtime.js';
@@ -138,6 +139,9 @@ export function reachableFunctions(
   const classes = { general, found: classesOut, staticOwner };
   for (const node of nodes as unknown as Node[]) {
     if (kindOf(node) === 'ui.Component') {
+      // An application root emits no file: everything it carries (`routerConfig: router`, `theme:`) was consumed by an earlier
+      // stage, so what it references is not reached *from it*.
+      if (isAppRoot(node)) continue;
       directFunctionRefs(node['render'], lookup, found, classes);
       directFunctionRefs(node['prelude'], lookup, found, classes);
       directFunctionRefs(node['params'], lookup, found, classes);

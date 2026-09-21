@@ -84,12 +84,24 @@ constructor, a value computed from a parameter, and a named constructor of a sta
 ## Dart 3 patterns — ADR-0065
 
 Switch expressions and pattern cases: constant, wildcard, variable, object (with fields), `||`, `&&`, relational, `?`/`!`/`as` patterns and
-`when` guards ([ADR-0065](../adr/0065-dart3-patterns.md)). List, map and record patterns, and an or-pattern that binds, are refused whole.
+`when` guards ([ADR-0065](../adr/0065-dart3-patterns.md)). List, map and record patterns are held too ([ADR-0069](../adr/0069-records-and-destructuring.md)); an or-pattern that binds is refused whole.
 
 ## Time, async, parsing, named functions — ADR-0066
 
 `DateTime`, `Timer`, `Future.value/delayed/microtask/wait`, `int`/`double` `parse`/`tryParse`, `DeepCollectionEquality`; async top-level functions; named
 parameters on top-level functions ([ADR-0066](../adr/0066-sdk-time-async-named-functions.md)). Difference: no microseconds.
+
+## Extensions, records, patterns — ADR-0068, ADR-0069
+
+Extension members (instance methods, getters, setters, generic and nullable receivers, uses inside the extension) are functions with a `$this` parameter; records are objects
+(`$1`, `$2`, …, named fields) with field-wise `==`; list, map and record patterns work in declarations, `if`-case, `for`-in and switches. Static and operator extension members and extension types are refused.
+
+## Gestures and constraints — ADR-0070, ADR-0071
+
+`GestureDetector` and `InkWell`: `onTap`, `onDoubleTap`, `onLongPress`, `onTapDown`, `onTapUp`, `onTapCancel` (with `TapDownDetails`/`TapUpDetails`), and, for `InkWell`,
+`onHover`, `onFocusChange`, the disabled state and Enter/Space activation, with Flutter's arena timing (100 ms press deadline, 300 ms double-tap window, 500 ms long press) measured
+against `flutter test`. `LayoutBuilder` with `maxWidth`, `maxHeight`, `hasBoundedWidth`, `hasBoundedHeight`, rebuilt on resize. `num.round/floor/ceil/truncate/toInt/abs/clamp` are
+checked against real Dart.
 
 ## Compatibility contract
 
@@ -110,13 +122,15 @@ Everything listed above. Each has a fixture in `fixtures/apps/` whose scenarios 
 | Errors thrown by runtime helpers (`list.first` on `[]`, `reduce` on `[]`) | `BRG4014` errors, not `StateError` — an `on StateError` does not catch them. |
 | A mixin's `super` | Reaches the class's superclass (exact when the mixin sits directly above it). |
 | `int.parse` / integers | Beyond 2^53 it is refused or throws, never rounds (ADR-0050). |
+| Gestures ([ADR-0070](../adr/0070-gestures.md)) | Ancestor scrollers do not delay `onTapDown`; no ink ripple; the innermost detector with a callback takes the press (Flutter runs one arena per recogniser kind); hover callbacks are not suppressed after a key press. |
+| `LayoutBuilder` ([ADR-0071](../adr/0071-layout-builder.md)) | Runs after layout (not on the server); wrapper fills its parent; `maxHeight` is `Infinity` when the parent's height depends on its content; minimum sizes are not stated (refused). |
 | The incremental analyzer | A class newly extended from another file is not re-extracted until its own file changes; a clean run is exact (ADR-0059). |
 
 ### EXPLICITLY REFUSED (a diagnostic names it)
 
 Riverpod (`ref`, `Provider`, `ConsumerWidget`, `state`), `dio`, audio/recording/file-picker plugins, `supabase`, `Theme.extension`
-design-system context extensions, `InkWell`/gestures (`BRG3013` "gesture model"), `LayoutBuilder`/constraints (`BRG3013` "constraint model"),
-slivers, `CustomPainter`, drag-to-reorder, `GlobalKey`, records and list/map/record patterns, extension methods (`BRG1302` `extension`),
+design-system context extensions, pan/drag/scale/secondary/long-press-sub-event gestures (`BRG3017`, "not built yet") and force press (`BRG3017`, "no browser equivalent"),
+`BoxConstraints` minimum-size and tightness members (`BRG3013`, no browser equivalent), slivers, `CustomPainter`, drag-to-reorder, `GlobalKey`, static/operator extension members,
 local function declarations, `yield`, route *names* (`goNamed`), a route held in a variable, custom `RenderObjectWidget`/`InheritedWidget`
 (declared as opaque components), a named generative constructor of a stateful widget, a redirecting widget constructor, mutable statics and
 top-level variables (state shared across requests, INV-19), `on` clauses naming a type that cannot be tested at runtime.

@@ -124,9 +124,18 @@ describe('M8-V — numeric method recognition', () => {
   });
 
   it('an unrecognized numeric method on a real dart:core int receiver is honestly refused, not silently passed through', () => {
-    const { reported, source } = build('n', DART_CORE_INT, (r) => methodCall('m1', 'ceil', r, [], DART_CORE_INT));
-    expect(reported.some((d) => d.severity === 'error' && d.message.includes('int.ceil'))).toBe(true);
-    expect(source).not.toContain('.ceil(');
+    const { reported, source } = build('n', DART_CORE_INT, (r) => methodCall('m1', 'gcd', r, [lit('a1', 4, DART_CORE_INT)], DART_CORE_INT));
+    expect(reported.some((d) => d.severity === 'error' && d.message.includes('int.gcd'))).toBe(true);
+    expect(source).not.toContain('.gcd(');
+  });
+
+  it('`ceil`/`round`/`floor`/`truncate` lower to the runtime helpers checked against real Dart (ADR-0071), never to Math.*', () => {
+    for (const [method, helper] of [['ceil', 'numCeil'], ['round', 'numRound'], ['floor', 'numFloor'], ['truncate', 'numTruncate'], ['toInt', 'numTruncate']] as const) {
+      const { reported, source } = build('n', DART_CORE_DOUBLE, (r) => methodCall('m1', method, r, [], DART_CORE_INT));
+      expect(reported.filter((d) => d.severity === 'error'), method).toEqual([]);
+      expect(source, method).toContain(`${helper}(props.n)`);
+      expect(source, method).not.toContain(`Math.${method}(`);
+    }
   });
 
   it('a receiver with no resolved type is untouched — falls through to the ordinary, unchanged lowering', () => {

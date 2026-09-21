@@ -28,6 +28,8 @@ export interface OracleOptions {
   readonly extraComponents?: readonly string[];
   /** Milliseconds a `@wait` step lets pass. */
   readonly waitMs?: number;
+  /** Installs the jsdom layout shim and `ResizeObserver` (for components that measure). */
+  readonly layout?: boolean;
   /** Steps whose output is asserted to DIFFER from Flutter's (a documented deviation), by scenario, 1-based. */
   readonly deviations?: Readonly<Record<string, readonly number[]>>;
 }
@@ -49,6 +51,7 @@ export function defineOracleSuite(options: OracleOptions): void {
     runner = await loadGenerated(
       files,
       [...Object.keys(scripts), ...(options.extraComponents ?? [])].map((name) => [kebab(name), name] as const),
+      { layout: options.layout === true },
     );
   }, 180_000);
   afterAll(cleanupBuildProofTemporaries);
@@ -70,6 +73,7 @@ export function defineOracleSuite(options: OracleOptions): void {
           const deviating = options.deviations?.[name] ?? [];
           for (const [i, label] of steps.entries()) {
             if (label === '@wait') await mounted.wait(options.waitMs ?? 60);
+            else if (label.startsWith('@')) await mounted.input(label);
             else mounted.click(label);
             const step = i + 1;
             if (deviating.includes(step)) expect(mounted.texts(), `${name} #${step} deviates`).not.toEqual(trace[step]);
@@ -78,7 +82,7 @@ export function defineOracleSuite(options: OracleOptions): void {
         } finally {
           mounted.unmount();
         }
-      });
+      }, 30_000);
     }
   });
 }

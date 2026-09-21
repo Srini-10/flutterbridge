@@ -253,14 +253,11 @@ export const MISSING_CAPABILITIES: Readonly<Record<string, MissingCapability>> =
   },
   ClipOval: { capability: 'an oval clip', owner: 'runtime', workaround: 'a `CircleAvatar` clips to a circle' },
 
-  // ── Interaction: no gesture model yet ──
+  // ── Interaction: gestures beyond the tap family ──
   //
   // The *input* half of this section is gone. M4-F implemented it after the analyzer proved the pipeline
   // already carried controllers, callbacks and disposal; what remains here is the gesture model, which is a
   // different capability and still missing.
-  GestureDetector: { capability: 'the gesture model', owner: 'runtime' },
-  InkWell: { capability: 'the gesture model, plus Material ink ripples', owner: 'runtime' },
-  InkResponse: { capability: 'the gesture model, plus Material ink ripples', owner: 'runtime' },
   Dismissible: { capability: 'the gesture model, plus a dismiss animation', owner: 'runtime' },
   Draggable: { capability: 'the gesture model, plus drag-and-drop', owner: 'runtime' },
   // Both were "controlled inputs" until M4-F built those. What each still needs is now different, and
@@ -343,10 +340,6 @@ export const MISSING_CAPABILITIES: Readonly<Record<string, MissingCapability>> =
   showSnackBar: { capability: OVERLAY_MESSENGER, owner: 'adr' },
 
   // ── Layout that needs measurement ──
-  LayoutBuilder: {
-    capability: "the constraint model's measuring half — a builder that reads its own constraints",
-    owner: 'runtime',
-  },
   // `IntrinsicHeight`, `IntrinsicWidth` and `OverflowBox` were here until M4-G, grouped with `FittedBox`
   // under one sentence — "the constraint model's measuring half". That grouping was wrong, and correcting it
   // is worth more than the three mappings it unblocked:

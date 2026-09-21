@@ -50,6 +50,10 @@ const SDK_VALUE_TYPE_NAMES: ReadonlyMap<string, string> = new Map([
   // Runtime classes with Dart's member names (M12, ADR-0066).
   ['dart:core#DateTime', 'DartDateTime'],
   ['dart:async#Timer', 'DartTimer'],
+  // The tap details a gesture callback receives, and the `Offset` they carry (ADR-0070): read as `d.localPosition.dx`.
+  ['package:flutter/src/gestures/tap.dart#TapDownDetails', 'TapDownDetails'],
+  ['package:flutter/src/gestures/tap.dart#TapUpDetails', 'TapUpDetails'],
+  ['dart:ui#Offset', 'Offset'],
 ]);
 
 /**

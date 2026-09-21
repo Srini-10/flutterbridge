@@ -1,0 +1,16 @@
+name: gesture_refusals
+description: >-
+  M13 (ADR-0070, ADR-0071): what the gesture and constraint models refuse, by name — gestures that are not built, a force press that has no
+  browser equivalent, and the BoxConstraints members a browser cannot state.
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

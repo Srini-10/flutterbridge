@@ -67,6 +67,8 @@ export const APPS = [
   // M11 (ADR-0050–0053): collections mutated in place and shared by prop, initState/dispose, constructor defaults and
   // checked integers, on one page, in a real browser — production and development (StrictMode's replay).
   { name: 'state-semantics', source: 'fixtures/apps/state_semantics_e2e' },
+  // M13 (ADR-0070, ADR-0071): gestures and constraints on one page, driven with a real mouse, keyboard and viewport.
+  { name: 'interaction', source: 'fixtures/apps/interaction_e2e' },
 ];
 
 const run = (program, args, cwd, env = {}) =>
@@ -179,7 +181,10 @@ export function bundleReport(dir) {
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  // `BUILD_ONLY=interaction` rebuilds one application while iterating; unset, every application is built.
+  const only = process.env['BUILD_ONLY'];
   for (const app of APPS) {
+    if (only !== undefined && only !== app.name) continue;
     console.log(`building ${app.name}…`);
     const { dir, timings } = buildApp(app);
     const dev = copyForDev(app.name);

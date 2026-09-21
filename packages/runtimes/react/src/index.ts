@@ -445,6 +445,17 @@ export {
 } from './internal/widgets/text.js';
 
 export { ElevatedButton, type ElevatedButtonProps } from './internal/widgets/button.js';
+export { LayoutBuilder, type LayoutBuilderProps, type LayoutConstraints } from './internal/widgets/layout_builder.js';
+export {
+  GestureDetector,
+  InkWell,
+  TapDownDetails,
+  TapRecognizer,
+  TapUpDetails,
+  type GestureCallbacks,
+  type GestureDetectorProps,
+  type InkWellProps,
+} from './internal/widgets/gesture.js';
 
 // ── M4-I: the `gap` package ───────────────────────────────────────────────────────────────────────
 //
@@ -528,8 +539,13 @@ export {
   intTruncDiv,
   intUshr,
   intXor,
+  numCeil,
+  numClamp,
+  numFloor,
   numMod,
+  numRound,
   numTruncDiv,
+  numTruncate,
 } from './internal/num/dart_int.js';
 
 // ── M11 (ADR-0051): Dart `List` / `Set` / `Map` operations ────────────────────────────────────────

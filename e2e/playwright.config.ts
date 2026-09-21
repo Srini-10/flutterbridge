@@ -27,6 +27,8 @@
 // generated application.
 //
 // `state-semantics.spec.ts` gets its own pair (3321/3322): `state_semantics_e2e` (M11) is a sixth.
+//
+// `interaction.spec.ts` gets its own pair (3323/3324): `interaction_e2e` (M13) is a seventh.
 
 import { defineConfig, devices } from '@playwright/test';
 
@@ -111,6 +113,16 @@ export default defineConfig({
       name: 'state-semantics-development',
       use: { ...devices['Desktop Chrome'], baseURL: 'http://127.0.0.1:3322' },
       testMatch: /state-semantics\.dev-only\.spec/,
+    },
+    {
+      name: 'interaction-production',
+      use: { ...devices['Desktop Chrome'], baseURL: 'http://127.0.0.1:3323' },
+      testMatch: /interaction\.spec/,
+    },
+    {
+      name: 'interaction-development',
+      use: { ...devices['Desktop Chrome'], baseURL: 'http://127.0.0.1:3324' },
+      testMatch: /interaction\.dev-only\.spec/,
     },
   ],
 
@@ -220,6 +232,24 @@ export default defineConfig({
       command: 'npx next dev --port 3322',
       cwd: './.fixtures/state-semantics-dev',
       port: 3322,
+      reuseExistingServer: false,
+      timeout: 120_000,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    },
+    {
+      command: 'npx next start --port 3323',
+      cwd: './.fixtures/interaction/build/bridge',
+      port: 3323,
+      reuseExistingServer: false,
+      timeout: 120_000,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    },
+    {
+      command: 'npx next dev --port 3324',
+      cwd: './.fixtures/interaction-dev',
+      port: 3324,
       reuseExistingServer: false,
       timeout: 120_000,
       stdout: 'pipe',

@@ -10570,4 +10570,41 @@ String f(List<int> xs, Map<String, Object?> m, List<(int, int)> ps) {
       expect(variants, containsAll(<String>['list', 'rest', 'map', 'object', 'bind']));
     });
   });
+
+  group('a widget-returning builder closure (M13, ADR-0071)', () {
+    Iterable<Map<String, dynamic>> kinds(Object? node, String kind) sync* {
+      if (node is Map<String, dynamic>) {
+        if (node['kind'] == kind) {
+          yield node;
+        }
+        for (final Object? v in node.values) {
+          yield* kinds(v, kind);
+        }
+      } else if (node is List) {
+        for (final Object? v in node) {
+          yield* kinds(v, kind);
+        }
+      }
+    }
+
+    test('LayoutBuilder(builder:) keeps its control flow and returns widgets as logic.WidgetExpr', () async {
+      final Extracted e = await extract(r'''
+import 'package:flutter/material.dart';
+class Host extends StatelessWidget {
+  const Host({super.key});
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (BuildContext context, BoxConstraints c) {
+      if (c.maxWidth > 600) { return const Row(children: [Text('wide')]); }
+      return const Text('narrow');
+    },
+  );
+}
+''');
+      expect(kinds(e.nodes, 'logic.WidgetExpr'), hasLength(2), reason: 'each returned widget is a value carrying its ui tree');
+      expect(kinds(e.nodes, 'logic.If'), hasLength(1));
+      // The widgets are not left as constructions of classes with no emitted counterpart.
+      expect(kinds(e.nodes, 'logic.New').where((Map<String, dynamic> n) => n['typeName'] == 'Text'), isEmpty);
+    });
+  });
 }

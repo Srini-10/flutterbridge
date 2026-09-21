@@ -1,0 +1,12 @@
+{
+  "TapOnly": ["@tap:target", "@tap:target", "@down:target", "@wait:50", "@up", "@down:target", "@cancel"],
+  "Phases": ["@tap:pad", "@down:pad", "@wait:50", "@wait:100", "@up", "@down:pad", "@cancel", "@down:pad", "@wait:150", "@cancel"],
+  "Doubles": ["@tap:dbl", "@wait:400", "@double:dbl", "@wait:400", "@tap:dbl", "@wait:250", "@tap:dbl", "@wait:400", "@tap:dbl", "@wait:350", "@tap:dbl", "@wait:400"],
+  "Longs": ["@tap:lng", "@long:lng", "@wait:50", "@down:lng", "@wait:200", "@up", "@wait:50"],
+  "Inks": ["@tap:ink", "@long:ink", "Toggle", "@tap:ink", "@long:ink", "Toggle", "@tap:ink"],
+  "Hovers": ["@hover:hov", "@tap:hov", "@unhover", "@hover:hov", "@unhover"],
+  "Focuses": ["@tap:foc", "@key:tab", "@key:enter", "@key:space", "@key:enter"],
+  "Full": ["@tap:full", "@wait:400", "@double:full", "@wait:400", "@long:full", "@wait:400", "@down:full", "@wait:50", "@cancel", "@wait:400", "@tap:full", "@wait:100", "@tap:full", "@wait:400", "@down:full", "@wait:100", "@up", "@wait:400"],
+  "Nested": ["@tap:inn"],
+  "Inert": ["@tap:bare"]
+}

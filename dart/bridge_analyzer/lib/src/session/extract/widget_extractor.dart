@@ -206,6 +206,15 @@ final class WidgetExtractor {
     fields: <String, RawValue>{'value': RawChild(bindings.extract(node, scope))},
   );
 
+  /// Whether [value] is a closure written at the call site whose result is a widget.
+  bool _isWidgetBuilder(Expression value) {
+    if (value is! FunctionExpression) {
+      return false;
+    }
+    final DartType? type = value.staticType;
+    return type is FunctionType && registry.recogniseWidget(context, type.returnType).isWidget;
+  }
+
   /// A widget-typed `switch` expression as `ui.Nodes`: each arm's value is a `logic.WidgetExpr`.
   RawNode _switchNodes(SwitchExpression node, Scope scope, {int? index, String? slot}) {
     final bool was = expressions.widgetValues;
@@ -546,6 +555,15 @@ final class WidgetExtractor {
           // a subtree, and it still belongs in `slots`: putting it in `props` as an expression would
           // hide a whole branch of the UI from every later pass.
           slots[label] = RawChild(extract(value, scope, slot: label));
+        case _ when _isWidgetBuilder(value):
+          // A closure that returns a widget — `LayoutBuilder(builder: (context, constraints) => …)` — is code that yields UI,
+          // so the widgets in its body are values (`logic.WidgetExpr`), not constructions of classes with no emitted form
+          // (ADR-0071). The generator decides whether the receiving widget can run such a closure; one that cannot refuses it
+          // by name.
+          final bool was = expressions.widgetValues;
+          expressions.widgetValues = true;
+          props[label] = RawChild(bindings.extract(value, scope));
+          expressions.widgetValues = was;
         case _:
           props[label] = RawChild(bindings.extract(value, scope));
       }
