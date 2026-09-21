@@ -11,14 +11,13 @@
     }
   ],
   "normalizerErrors": 23,
-  "generatorErrors": 5452,
-  "uniqueRootCauses": 23,
+  "generatorErrors": 5451,
+  "uniqueRootCauses": 26,
   "occurrencesByCategory": {
     "C": 3829,
-    "B": 1544,
-    "A": 57,
-    "?": 44,
-    "D": 1
+    "B": 1614,
+    "D": 26,
+    "?": 5
   },
   "rootCauses": [
     {
@@ -56,9 +55,8 @@
       "layer": "analyzer (token extraction)",
       "cause": "a theme built by a helper/ColorScheme from computed values: no token for the Material role a widget paints",
       "adr": "0073",
-      "count": 485,
+      "count": 484,
       "codes": [
-        "BRG3005",
         "BRG3010"
       ],
       "sample": "`Scaffold` paints the Material role `surface`, and this program's theme defines no token for it. INV-20 (ADR-13) requires every colour a mapped widget paints to resolve to an app.Token, so there is no default to fall bac"
@@ -213,9 +211,9 @@
     {
       "stage": "generate",
       "root": "component-collision",
-      "category": "A",
+      "category": "B",
       "layer": "generator",
-      "cause": "two components of the same name in one program",
+      "cause": "two project widgets of the same name in different libraries (monorepo) emit to one file: refused; needs unique component file/export naming",
       "adr": "0047",
       "count": 57,
       "codes": [
@@ -235,23 +233,6 @@
         "BRG3002"
       ],
       "sample": "`List.cast` has no lowering yet. A Dart `List` is not a JavaScript one, and this generator emits calls into exact-Dart runtime helpers rather than the same-named method (ADR-0051). Supported on a `List`: `add`, `addAll`,"
-    },
-    {
-      "stage": "generate",
-      "root": "other",
-      "category": "?",
-      "layer": "?",
-      "cause": "unclassified — needs a rule",
-      "adr": "",
-      "count": 44,
-      "codes": [
-        "BRG3001",
-        "BRG3012",
-        "BRG3015",
-        "BRG3016",
-        "BRG3017"
-      ],
-      "sample": "`AssetImage`'s asset key is not a constant, so it cannot go in the manifest."
     },
     {
       "stage": "generate",
@@ -280,6 +261,19 @@
       "sample": "`Container.color` is a colour the analyzer could not resolve to an app.Token. Every constant colour is hoisted into the palette and every `colorScheme.<role>` read names one already, so this is a colour computed at run t"
     },
     {
+      "stage": "generate",
+      "root": "globalkey",
+      "category": "D",
+      "layer": "generator",
+      "cause": "a GlobalKey: a handle on a live widget State, no UIR construct",
+      "adr": "0058",
+      "count": 25,
+      "codes": [
+        "BRG3015"
+      ],
+      "sample": "a `GlobalKey` is a handle on a live widget's State, and UIR has no construct that denotes one — it is not a value, a signal, a route or a component. That gap belongs to the schema. A `Form` in this kit validates every re"
+    },
+    {
       "stage": "normalize",
       "root": "normalize-route-forwarded-param",
       "category": "B",
@@ -304,6 +298,46 @@
         "BRG3008"
       ],
       "sample": "this navigation constructs its destination inline (`Navigator.push(MaterialPageRoute(...))`), so it names no route and has no path (Spec v2.4 §A17). The edge is in the nav graph and **nothing performs it** — no `logic.Na"
+    },
+    {
+      "stage": "generate",
+      "root": "unsupported-parameter",
+      "category": "B",
+      "layer": "generator (widget map)",
+      "cause": "a widget parameter the runtime cannot honour (refused by name)",
+      "adr": "0070",
+      "count": 9,
+      "codes": [
+        "BRG3017"
+      ],
+      "sample": "`AnimatedContainer` renders, but not with `decoration` set: Flutter lerps a whole BoxDecoration — border, radius, shadows and gradient together — and CSS interpolates each of those separately with different rules, so som"
+    },
+    {
+      "stage": "generate",
+      "root": "other",
+      "category": "?",
+      "layer": "?",
+      "cause": "unclassified — needs a rule",
+      "adr": "",
+      "count": 5,
+      "codes": [
+        "BRG3001",
+        "BRG3012"
+      ],
+      "sample": "`AssetImage`'s asset key is not a constant, so it cannot go in the manifest."
+    },
+    {
+      "stage": "generate",
+      "root": "app-root-parameter",
+      "category": "B",
+      "layer": "generator (app root)",
+      "cause": "a MaterialApp parameter with no equivalent (builder, onUnknownRoute, localization, …)",
+      "adr": "0029",
+      "count": 5,
+      "codes": [
+        "BRG3016"
+      ],
+      "sample": "`MaterialApp.builder` has no equivalent in the emitted project. Missing capability: a root builder — a widget wrapping every route, below the navigator. Owner: the generator (it would become a nested layout in `app/layou"
     },
     {
       "stage": "normalize",

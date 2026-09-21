@@ -127,3 +127,47 @@ compiler for a stated subset that refuses the rest; it is not universally Flutte
 `just ci` exit 0 (1 663 TypeScript tests, 652 Dart tests, lint, codegen drift, dependency rules); `just release-check` exit 0; `just e2e` **90 tests** in Chromium (66 before this phase + 24 new: interaction
 17, named routes 6 — production and development) all pass; `just determinism` byte-identical across every run. `git diff --check` clean. `fixtures/apps/hello_bridge/analysis_options.yaml` (the user's change)
 is untouched and unstaged.
+
+
+---
+
+# Phase 4 — final generator burn-down (baseline `6767464`)
+
+Commits `b713a96`, `80d3152`, `fa8b325` and this report; ADR-0074…0076; taxonomy in `docs/m14/`.
+
+## A correction to phase 3's numbers
+
+Phase 3 counted `bridge generate` errors. `bridge generate` ignores the normalizer's errors; `bridge build` does not, and **never reached the generator on either application** (A: 1 normalizer error, B: 58). Both are counted now
+(`tools/taxonomy`). The phase-3 conclusion (Level 1) stands; its figures understated the distance.
+
+## Real applications (read-only copies), `bridge build`
+
+| | A (240 files) | B (21 packages, 127 routes) |
+| --- | --- | --- |
+| Analyzer errors | 0 | 0 |
+| Normalizer errors, start of phase → now | 1 → **0** (`BRG2110`) | 58 → **23** (`BRG2110` ×35 fixed; `BRG2305` ×22, `BRG2301` ×1 remain) |
+| Generator errors, start of phase → now | 523 → **536** | 4 444 → **5 451** (past the normalizer's 23) |
+| `tsc` / `next build` / Chromium | not reached (a program with a generator error emits nothing) | not reached |
+
+The generator counts **rose**, and that is a correction, not a regression: a project widget silently dropped every widget and list of widgets it was given (`Bar(actions: […])` emitted `<Bar />`), so the code inside was never reached; it is reached now and its
+own refusals are counted. 20 / 26 unique root causes (`docs/m14/taxonomy-*.md`): Riverpod (A ~110, B ~1 570 + a cascade), the theme built by a helper (A ~90, B ~770), package calls with named arguments (A 64, B ~450), 57 same-named widgets in B, route-parameter forwarding (B 22).
+
+## What phase 4 built and fixed
+
+| ADR | Change | Evidence |
+| --- | --- | --- |
+| 0074 | **Widgets and widget lists passed to a project widget were silently dropped** — fixed; `BRG2110` no longer fires on lists of values; widget lists render as keyed children (the oracle harness now fails a scenario that logs a React key warning); `TextInputFormatter`s (were dropped with a warning); `TextFormField` forwards every parameter it has | 2 oracle fixtures, Chromium (dev, no key warning), 8 mutants |
+| 0074 | **State shapes**: `setState(() => x = 1);` followed by statements ran none of them; a State field named like the widget's parameter read the parameter; `final`/`late final` State fields were unresolved; `async` closures lost `async`; `Future<T>`; `dynamic[…]`, `dynamic.toString()`; a generator crash on `map.toString()` | oracle fixture `state_shapes` + 3 analyzer tests + 4 mutants |
+| 0075 | **`package:dio` on `fetch`** — the first library adapter; 17 outcomes checked against real dio talking to a real server; a repository over Dio compared in Flutter and the generated component; Chromium against real network routes (200, 201, 404, 500, refused connection) | 19 runtime tests, oracle, 6 E2E, 13 mutants |
+| 0076 | Constant colours derived by alpha (`withValues(alpha:)`, `withOpacity`, `withAlpha`) are tokens; a class overriding `toString`/`==`/… is a class (`'$box'` printed `[object Object]`); identifiers named like `Object.prototype` members (a table lookup crashed the generator); `constructor` members refused by name | oracle fixture, robustness test, 5 mutants |
+| — | Incremental analyzer matrix: 16 cross-file mutations (mixin, extension, inheritance in/out, generic bound, constant, enum, re-export, widget constructor / kind, part file, route tables, imports) — incremental ≡ clean for every one (no stale result found); the matrix fails when dependency fingerprints are ignored | `incremental_matrix_test.dart` |
+
+## Not done (honestly, and why: `docs/m14/README.md`)
+
+Riverpod; the theme-extension model and interprocedural theme extraction; audio, recording, file-picking, Supabase adapters; route parameters; same-named widgets across packages; drag/pan/scale gestures; `BoxConstraints` minimum sizes. **No real application reaches `tsc`, `next build` or Chromium.**
+Level 1. FlutterBridge remains a compiler for a stated subset that refuses the rest; it is not universally Flutter-compatible.
+
+## Gates on the final tree
+
+`just ci` exit 0 (1 694 TypeScript tests, 676 Dart tests, lint, codegen drift, dependency rules); `just release-check` exit 0; `just e2e` **98 tests** in Chromium (production and development) pass; `just determinism` byte-identical across every run.
+`fixtures/apps/hello_bridge/analysis_options.yaml` (the user's change) is untouched and unstaged.
