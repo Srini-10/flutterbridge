@@ -99,6 +99,7 @@ class Login extends StatelessWidget {
 ''';
 
 void main() {
+  routerShapesTests();
   group('the registry', () {
     test('dispatches in (priority, name) order, whatever order it was given', () {
       final AdapterRegistry a = AdapterRegistry(<PackageAdapter>[
@@ -445,4 +446,47 @@ final class _Rival implements RouteAdapter {
   @override
   List<RouteDeclaration> routesOf(AdapterContext context, InstanceCreationExpression node) =>
       const <RouteDeclaration>[];
+}
+
+void routerShapesTests() {
+  group('go_router shapes found in real apps (M12, ADR-0064)', () {
+    test('a pageBuilder that wraps the page in a helper or a transition page, and a StatefulShellRoute with branches', () async {
+      final Routed app = await route('''
+import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
+class Home extends StatelessWidget { const Home({super.key}); @override Widget build(BuildContext c) => const Text('h'); }
+class Tab1 extends StatelessWidget { const Tab1({super.key}); @override Widget build(BuildContext c) => const Text('1'); }
+class Tab2 extends StatelessWidget { const Tab2({super.key}); @override Widget build(BuildContext c) => const Text('2'); }
+class Login extends StatelessWidget { const Login({super.key}); @override Widget build(BuildContext c) => const Text('l'); }
+Object fade(GoRouterState s, Widget page) => page;
+final router = GoRouter(routes: [
+  GoRoute(path: '/', pageBuilder: (_, state) => fade(state, const Home())),
+  GoRoute(path: '/login', pageBuilder: (_, state) => CustomTransitionPage(child: const Login())),
+  StatefulShellRoute.indexedStack(
+    builder: (c, s, shell) => const Home(),
+    branches: [
+      StatefulShellBranch(routes: [GoRoute(path: '/one', builder: (_, __) => const Tab1())]),
+      StatefulShellBranch(routes: [GoRoute(path: '/two', builder: (_, __) => const Tab2())]),
+    ],
+  ),
+]);
+''');
+      expect(app.paths, <String>['/', '/login', '/one', '/two']);
+    });
+
+    test('the same path declared twice in one file is two routes, not a duplicate-symbol error', () async {
+      final Routed app = await route('''
+import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
+class A extends StatelessWidget { const A({super.key}); @override Widget build(BuildContext c) => const Text('a'); }
+class B extends StatelessWidget { const B({super.key}); @override Widget build(BuildContext c) => const Text('b'); }
+final router = GoRouter(routes: [
+  GoRoute(path: '/x', builder: (_, __) => const A()),
+  GoRoute(path: '/x', builder: (_, __) => const B()),
+]);
+''');
+      expect(app.errors, isEmpty);
+      expect(app.routes, hasLength(2));
+    });
+  });
 }

@@ -121,7 +121,7 @@ final class GraphValidator {
   /// constructed some other way — which is exactly the thing the builder exists to prevent.
   void _checkRequiredSpans(List<uir.UirNode> nodes) {
     void walk(Map<String, Object?> json) {
-      if (json.containsKey('id') && !json.containsKey('span')) {
+      if (json['kind'] is String && json['id'] is String && !json.containsKey('span')) {
         context.diagnostics.add(
           Diagnostic(
             code: Codes.invalidNode,
@@ -142,7 +142,7 @@ final class GraphValidator {
   /// Calls [visit] for every embedded node inside [value].
   static void _forEachNode(Object? value, void Function(Map<String, Object?>) visit) {
     if (value is Map<String, Object?>) {
-      if (value.containsKey('kind') && value.containsKey('id')) {
+      if (value['kind'] is String && value['id'] is String) {
         visit(value);
       } else {
         for (final Object? nested in value.values) {

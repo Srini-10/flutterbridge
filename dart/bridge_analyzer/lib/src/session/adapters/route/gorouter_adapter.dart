@@ -63,7 +63,7 @@ final class GoRouterAdapter implements RouteAdapter, TransitionAdapter {
   Set<String> get packages => const <String>{'package:go_router/'};
 
   @override
-  Set<String> get symbols => const <String>{'GoRouter', 'GoRoute', 'ShellRoute'};
+  Set<String> get symbols => const <String>{'GoRouter', 'GoRoute', 'ShellRoute', 'StatefulShellRoute', 'StatefulShellBranch'};
 
   @override
   Set<String> get annotations => const <String>{};
@@ -125,7 +125,10 @@ final class GoRouterAdapter implements RouteAdapter, TransitionAdapter {
     }
 
     final bool isRoute = AdapterContext.isA(element.staticType, 'GoRoute', package: _package);
-    final bool isShell = AdapterContext.isA(element.staticType, 'ShellRoute', package: _package);
+    final bool isShell =
+        AdapterContext.isA(element.staticType, 'ShellRoute', package: _package) ||
+        AdapterContext.isA(element.staticType, 'StatefulShellRoute', package: _package) ||
+        AdapterContext.isA(element.staticType, 'StatefulShellBranch', package: _package);
     if (!isRoute && !isShell) {
       return null;
     }
@@ -138,7 +141,9 @@ final class GoRouterAdapter implements RouteAdapter, TransitionAdapter {
     final Expression? builder =
         mapping.argumentFor('builder', element.argumentList) ??
         mapping.argumentFor('pageBuilder', element.argumentList);
-    final Expression? children = mapping.argumentFor('routes', element.argumentList);
+    // A `StatefulShellRoute` keeps its routes in `branches: [StatefulShellBranch(routes: [...])]`; a branch is a shell of its own.
+    final Expression? children =
+        mapping.argumentFor('routes', element.argumentList) ?? mapping.argumentFor('branches', element.argumentList);
     final bool hasRedirect = mapping.argumentFor('redirect', element.argumentList) != null;
 
     // A ShellRoute has no path of its own: it wraps its children in a layout. Its children still have

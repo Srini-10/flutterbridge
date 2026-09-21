@@ -88,6 +88,13 @@ final class RouteExtractor {
     registry.routesOf(context, node).forEach(_emit);
   }
 
+  final Map<String, int> _pathCounts = <String, int>{};
+
+  String _uniquePath(String path) {
+    final int n = _pathCounts.update(path, (int c) => c + 1, ifAbsent: () => 1);
+    return n == 1 ? path : '$path#$n';
+  }
+
   void _emit(RouteDeclaration route) {
     final Expression? component = route.component;
 
@@ -115,7 +122,9 @@ final class RouteExtractor {
           RawNode(
             kind: 'app.Route',
             span: out.span(route.at),
-            symbol: out.symbols.route(route.path),
+            // The same path declared again in one file (a role-specific branch, a second shell) is a second route: the first keeps the
+            // path's symbol — a navigation to the path resolves to it — and each later one is numbered, in source order.
+            symbol: out.symbols.route(_uniquePath(route.path)),
             fields: <String, RawValue>{
               'path': RawLiteral(route.path),
               'component': RawRef(target),
@@ -188,19 +197,39 @@ final class RouteExtractor {
   ///
   /// A builder is `(context, state) => Screen()`, or a block body that returns one; for
   /// `MaterialApp(home:)` it is the widget itself.
-  static Expression? _widgetOf(Expression node) {
-    if (node is InstanceCreationExpression) {
-      return node;
-    }
-    if (node is! FunctionExpression) {
+  Expression? _widgetOf(Expression node) {
+    final Expression? returned = switch (node) {
+      FunctionExpression(:final ExpressionFunctionBody body) => body.expression,
+      FunctionExpression(:final BlockFunctionBody body) => _returned(body.block),
+      FunctionExpression() => null,
+      _ => node,
+    };
+    if (returned == null) {
       return null;
     }
-    return switch (node.body) {
-      final ExpressionFunctionBody body => body.expression,
-      final BlockFunctionBody body => _returned(body.block),
+    // `pageBuilder: (_, state) => _fadePage(state, const Page())`, `MaterialPage(child: X())`, `CustomTransitionPage(child: X())`: the
+    // route's page is the one widget-typed argument of the call that builds the transition page.
+    if (returned is InstanceCreationExpression && _isWidget(returned)) {
+      return returned;
+    }
+    final NodeList<Argument>? arguments = switch (returned) {
+      InstanceCreationExpression() => returned.argumentList.arguments,
+      MethodInvocation() => returned.argumentList.arguments,
       _ => null,
     };
+    if (arguments == null) {
+      return returned;
+    }
+    final List<Expression> widgets = <Expression>[
+      for (final Argument a in arguments)
+        if (a is Expression && a is InstanceCreationExpression && _isWidget(a)) a,
+      for (final Argument a in arguments)
+        if (a is NamedArgument && a.argumentExpression is InstanceCreationExpression && _isWidget(a.argumentExpression)) a.argumentExpression,
+    ];
+    return widgets.length == 1 ? widgets.single : returned;
   }
+
+  bool _isWidget(Expression node) => registry.recogniseWidget(context, node.staticType).isWidget;
 
   static Expression? _returned(Block block) {
     for (final Statement statement in block.statements.reversed) {

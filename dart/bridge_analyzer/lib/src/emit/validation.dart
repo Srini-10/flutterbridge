@@ -289,7 +289,7 @@ final class EmitValidator {
 
   static void _forEachNode(Object? value, void Function(Map<String, Object?>) visit) {
     if (value is Map<String, Object?>) {
-      if (value.containsKey('kind') && value.containsKey('id')) {
+      if (value['kind'] is String && value['id'] is String) {
         visit(value);
       } else {
         for (final Object? nested in value.values) {

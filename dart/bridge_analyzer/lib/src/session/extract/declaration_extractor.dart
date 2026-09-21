@@ -107,6 +107,9 @@ final class DeclarationExtractor {
     final bool isComponent = components.isComponent(node);
     final bool isStore = signals.isStore(node);
 
+    if (!isComponent && components.isOtherWidget(node)) {
+      components.extractOpaque(node);
+    }
     if (isComponent) {
       components.extract(node, state: state, enclosing: scope);
       if (state != null) {

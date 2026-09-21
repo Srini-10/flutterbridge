@@ -796,6 +796,28 @@ class ShellRoute extends RouteBase {
   final List<RouteBase> routes;
 }
 
+class StatefulShellBranch {
+  const StatefulShellBranch({this.routes = const <RouteBase>[]});
+  final List<RouteBase> routes;
+}
+
+class StatefulNavigationShell extends StatelessWidget {
+  const StatefulNavigationShell({super.key});
+  @override
+  Widget build(BuildContext context) => const SizedBox();
+}
+
+class StatefulShellRoute extends RouteBase {
+  const StatefulShellRoute.indexedStack({this.builder, this.branches = const <StatefulShellBranch>[]});
+  final Widget Function(BuildContext, GoRouterState, StatefulNavigationShell)? builder;
+  final List<StatefulShellBranch> branches;
+}
+
+class CustomTransitionPage {
+  const CustomTransitionPage({required this.child});
+  final Widget child;
+}
+
 class GoRouter {
   const GoRouter({this.routes = const <RouteBase>[], this.initialLocation});
   final List<RouteBase> routes;

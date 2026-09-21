@@ -10429,4 +10429,21 @@ class W extends StatelessWidget {
       expect(e.only('ui.Component').containsKey('prelude'), isFalse);
     });
   });
+
+  group('named arguments called `id` and `kind` (M12)', () {
+    test('a construction with arguments named like node fields is not mistaken for a node (BRG1204)', () async {
+      final Extracted e = await extract('''
+import 'package:flutter/material.dart';
+class Rec { const Rec({required this.id, required this.kind}); final int id; final String kind; }
+Rec make() => Rec(id: 1, kind: 'a');
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => Text(make().kind);
+}
+''');
+      expect(e.result.diagnostics.map((Diagnostic d) => d.code.id), isNot(contains('BRG1204')));
+      expect(e.nodes, isNotEmpty);
+    });
+  });
 }

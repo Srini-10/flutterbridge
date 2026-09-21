@@ -22,6 +22,7 @@ import 'package:bridge_analyzer/src/diagnostics/codes.dart';
 import 'package:bridge_analyzer/src/model/raw_node.dart';
 import 'package:bridge_analyzer/src/session/adapters/adapter_context.dart';
 import 'package:bridge_analyzer/src/session/adapters/adapter_registry.dart';
+import 'package:bridge_analyzer/src/session/adapters/adapter_result.dart';
 import 'package:bridge_analyzer/src/session/extract/expression_extractor.dart';
 import 'package:bridge_analyzer/src/session/extract/raw_node_emitter.dart';
 import 'package:bridge_analyzer/src/session/extract/scope.dart';
@@ -66,6 +67,39 @@ final class ComponentExtractor {
   bool isComponent(ClassDeclaration node) => registry
       .recogniseWidget(context, node.declaredFragment?.element.thisType)
       .isComponentBase;
+
+  /// Whether [node] is a widget that is not a stateless/stateful component — a `RenderObjectWidget`, an `InheritedWidget` (M12).
+  bool isOtherWidget(ClassDeclaration node) {
+    if (node.abstractKeyword != null || node.sealedKeyword != null) {
+      return false;
+    }
+    final WidgetRecognition recognition = registry.recogniseWidget(context, node.declaredFragment?.element.thisType);
+    return recognition.isWidget && !recognition.isComponentBase;
+  }
+
+  /// Declares [node] as a component with an opaque render: other classes name it (a `comp:` symbol), so it must exist, and the generator
+  /// refuses each use by name.
+  void extractOpaque(ClassDeclaration node) {
+    final String name = node.namePart.typeName.lexeme;
+    out.report(
+      Codes.unknownWidget,
+      'The widget `$name` is not a stateless or stateful component (a custom render object or an inherited widget): it cannot be '
+      'lowered, and is preserved as an opaque component.',
+      node,
+    );
+    out.emit(
+      RawNode(
+        kind: 'ui.Component',
+        span: out.span(node),
+        symbol: out.symbols.component(name),
+        anchorSegment: name,
+        fields: <String, RawValue>{
+          'name': RawLiteral(name),
+          'render': RawChild(out.opaqueUi(node, 'widget without a build method')),
+        },
+      ),
+    );
+  }
 
   /// Whether [node] is the `State` half of a `StatefulWidget` — and if so, of which widget.
   String? stateOf(ClassDeclaration node) =>
@@ -387,7 +421,8 @@ final class ComponentExtractor {
         constructor.redirectedConstructor != null;
     // An initializer-list value that reads a constructor parameter is computed per construction; only constants become defaults.
     final bool computesFromParams = constructor.initializers.any(
-      (ConstructorInitializer i) => i is ConstructorFieldInitializer && _mentionsAny(i.expression, paramNames),
+      (ConstructorInitializer i) =>
+          constructor.name == null && i is ConstructorFieldInitializer && _mentionsAny(i.expression, paramNames),
     );
     // A named or factory constructor is its own component (`_variants`) — for a stateless widget.
     final bool variantUnsupported = constructor.name != null && (stateful && constructor.factoryKeyword == null);
