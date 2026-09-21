@@ -1,0 +1,21 @@
+name: sdk_collections
+description: >-
+  M12 (ADR-0060): the List/Set/Map surface real code uses — firstWhere/lastWhere/singleWhere with orElse, fold, reduce, expand, every,
+  indexWhere, takeWhile/skipWhile, followedBy, toSet, elementAt, single/firstOrNull/lastOrNull, Set algebra, Map forEach/update/
+  removeWhere/map, List.from/generate/filled, Map.from/fromEntries, MapEntry. Run by Flutter and as the generated component, compared.
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

@@ -22,6 +22,7 @@ class Reading extends StatelessWidget {
         Text('> ${k.floor} ${k.pass} ${k.top} ${k.span.toStringAsFixed(2)}'),
         Text('> ${k.label()} ${k.name} ${k.index} $k ${MatchKind.values.length}'),
         Text('> ${MatchKind.words.passes(0.7)} ${MatchKind.loose.passes(0.1)} ${Mode.fast} ${Mode.slow.name}'),
+        Text('> ${Level.fromTag('h').name} ${Level.fromTag('zz').name} ${Level.count()} ${Unit.magic()}'),
         Text('> ${Planet.earth.gravity.toStringAsFixed(2)} ${Planet.values.map((Planet p) => p.name).join(",")}'),
       ],
     );

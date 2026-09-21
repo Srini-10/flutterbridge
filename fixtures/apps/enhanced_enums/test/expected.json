@@ -4,6 +4,7 @@
       "> 0.3 0.5 0.8 0.50",
       "> Tune tune 1 MatchKind.tune 3",
       "> true false Mode.fast slow",
+      "> high low 2 42",
       "> 9.80 mercury,earth"
     ]
   ],

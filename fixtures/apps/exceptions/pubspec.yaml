@@ -1,0 +1,21 @@
+name: exceptions
+description: >-
+  M12 (ADR-0061): the exception classes real code throws and catches (FormatException, StateError, ArgumentError, Exception, Error, a
+  project exception), typed catch clauses dispatched on type, an unmatched exception propagating, finally. Run by Flutter and as the
+  generated component, compared.
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

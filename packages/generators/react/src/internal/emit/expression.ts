@@ -915,6 +915,47 @@ function sdkTypeTest(name: string, library: unknown, operand: string, scope: Emi
 }
 
 
+/** The runtime class of each `dart:core`/`dart:async` exception (M12), keyed by Dart type name. */
+const SDK_EXCEPTIONS: Readonly<Record<string, string>> = {
+  FormatException: 'DartFormatException',
+  StateError: 'DartStateError',
+  ArgumentError: 'DartArgumentError',
+  RangeError: 'DartRangeError',
+  UnsupportedError: 'DartUnsupportedError',
+  UnimplementedError: 'DartUnimplementedError',
+  TimeoutException: 'DartTimeoutException',
+};
+
+/**
+ * `operand is T` as runtime text, for the types a `catch` clause can name: a project class, an SDK exception, `Exception`, `Error`,
+ * and what `sdkTypeTest` covers. `catchAll` for `Object`/`dynamic` (no test); `undefined` when the type cannot be told at runtime.
+ */
+export function catchTypeTest(
+  type: Node | undefined,
+  operand: string,
+  scope: EmitScope,
+): { readonly test: string; readonly typeText: string } | 'catchAll' | undefined {
+  const name = String(type?.['name'] ?? '').replace(/\?$/, '');
+  const library = type?.['library'];
+  if (type === undefined || name === 'Object' || name === 'dynamic' || name === '') return 'catchAll';
+  const classId = generalClassOf(type, scope);
+  if (classId !== undefined) {
+    const className = generalClassName(classId, scope);
+    return { test: `${scope.module.use(RUNTIME, 'dartIs')}(${operand}, ${className})`, typeText: className };
+  }
+  if ((library === 'dart:core' || library === 'dart:async') && SDK_EXCEPTIONS[name] !== undefined) {
+    const cls = scope.module.use(RUNTIME, SDK_EXCEPTIONS[name]!);
+    return { test: `(${operand} instanceof ${cls})`, typeText: cls };
+  }
+  if (library === 'dart:core' && name === 'Exception') return { test: `${scope.module.use(RUNTIME, 'isDartException')}(${operand})`, typeText: scope.module.use(RUNTIME, 'DartException') };
+  if (library === 'dart:core' && name === 'Error') return { test: `${scope.module.use(RUNTIME, 'isDartError')}(${operand})`, typeText: 'unknown' };
+  const test = sdkTypeTest(name + (type['nullable'] === true ? '?' : ''), library, operand, scope);
+  if (test !== undefined) {
+    return { test, typeText: typeTextOf(type, (rt) => scope.module.use(RUNTIME, rt)) };
+  }
+  return undefined;
+}
+
 /**
  * The signal a general-class object lives in, when `node` is rooted at one and we are in a callback (M12): `_c.tick()` and
  * `_c.value = 1` change what `_c` holds without assigning it, so the signal must be told (`touch`). In the render tree the read is
@@ -1096,6 +1137,25 @@ function collectionPieces(elements: readonly Node[], scope: EmitScope, entry: (n
   }
   return out;
 }
+
+/**
+ * Constructors of the `dart:core` collection types and `MapEntry`, keyed `Type.constructor` (the unnamed one is `Type.`): each is a
+ * runtime helper with Dart's meaning. `growable:` is accepted and ignored — a fixed-length list is a growable one here, which only
+ * differs where Dart would throw.
+ */
+const SDK_COLLECTION_CONSTRUCTORS: Readonly<Record<string, { readonly helper: string; readonly arity: number }>> = {
+  'List.from': { helper: 'listFrom', arity: 1 },
+  'List.of': { helper: 'listFrom', arity: 1 },
+  'List.unmodifiable': { helper: 'listFrom', arity: 1 },
+  'List.generate': { helper: 'listGenerate', arity: 2 },
+  'List.filled': { helper: 'listFilled', arity: 2 },
+  'Set.from': { helper: 'setFrom', arity: 1 },
+  'Set.of': { helper: 'setFrom', arity: 1 },
+  'Map.from': { helper: 'mapFrom', arity: 1 },
+  'Map.of': { helper: 'mapFrom', arity: 1 },
+  'Map.fromEntries': { helper: 'mapFromEntries', arity: 1 },
+  'MapEntry.': { helper: 'mapEntry', arity: 2 },
+};
 
 /**
  * The `dart:` top-level functions and static members this generator lowers, by `library#name` — what the analyzer resolved,
@@ -2077,6 +2137,34 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
 
       const constructorName = node['constructorName'];
       const kitProvided = isKitProvided(node['type'] as Node | undefined);
+
+      // `FormatException('x')`, `StateError('x')`, `Exception('x')`: the runtime's exception classes, which print as Dart's do.
+      if (
+        (constructedType?.['library'] === 'dart:core' || constructedType?.['library'] === 'dart:async') &&
+        (constructorName === undefined || constructorName === '' || constructorName === null)
+      ) {
+        const cls = typeName === 'Exception' ? 'DartException' : SDK_EXCEPTIONS[typeName];
+        if (cls !== undefined && Object.keys((node['namedArgs'] ?? {}) as Record<string, unknown>).length === 0) {
+          const emitted = asArray(node['args']).map((a) => emitExpression(a, scope));
+          if (emitted.includes(REFUSED)) return REFUSED;
+          return `new ${scope.module.use(RUNTIME, cls)}(${emitted.join(', ')})`;
+        }
+      }
+
+      // `List.from(xs)`, `List.generate(n, f)`, `Map.fromEntries(es)`, `MapEntry(k, v)` …: a `dart:core` collection constructor.
+      if (constructedType?.['library'] === 'dart:core' || typeName === 'MapEntry') {
+        const key = `${typeName.split('<')[0]}.${typeof constructorName === 'string' ? constructorName : ''}`;
+        const row = SDK_COLLECTION_CONSTRUCTORS[key];
+        if (row !== undefined) {
+          const named = Object.keys((node['namedArgs'] ?? {}) as Record<string, unknown>).filter((n) => n !== 'growable');
+          const positional = asArray(node['args']);
+          if (named.length === 0 && positional.length === row.arity) {
+            const emitted = positional.map((a) => emitExpression(a, scope));
+            if (emitted.includes(REFUSED)) return REFUSED;
+            return `${scope.module.use(RUNTIME, row.helper)}(${emitted.join(', ')})`;
+          }
+        }
+      }
 
       // A general project class (M12): `Class.$new(…)`, or `Class.$named(…)`, arguments ordered by the constructor's signature.
       {

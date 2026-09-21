@@ -26,8 +26,10 @@ import 'package:bridge_analyzer/src/session/adapters/adapter_context.dart';
 import 'package:bridge_analyzer/src/session/adapters/adapter_registry.dart';
 import 'package:bridge_analyzer/src/session/adapters/adapter_result.dart';
 import 'package:bridge_analyzer/src/session/colour_constants.dart';
+import 'package:bridge_analyzer/src/session/extract/inheritance.dart';
 import 'package:bridge_analyzer/src/session/extract/raw_node_emitter.dart';
 import 'package:bridge_analyzer/src/session/extract/scope.dart';
+import 'package:bridge_analyzer/src/session/extract/signal_extractor.dart';
 import 'package:bridge_analyzer/src/session/extract/symbol_table.dart';
 
 /// Extracts expressions.
@@ -222,7 +224,12 @@ final class ExpressionExtractor {
           // name resolves `node.element` to that local/parameter instead (Dart's own scoping, not
           // reproduced here), so `_internalMemberTarget` correctly returns null for it and this falls
           // through to `binding?.symbol` below, unchanged.
-          staticTarget: _topLevelTarget(node.element) ?? _internalMemberTarget(node.element),
+          // A bare `values` or constant inside the enum's own body (`static X f(..) => values.firstWhere(..)`).
+          staticTarget:
+              _enumConstantTarget(node.element) ??
+              _enumValuesTarget(node.element) ??
+              _topLevelTarget(node.element) ??
+              _internalMemberTarget(node.element),
           element: node.element,
         );
 
@@ -1900,7 +1907,8 @@ final class ExpressionExtractor {
     if (unwrapped is FieldElement &&
         unwrapped.isStatic &&
         !unwrapped.isEnumConstant &&
-        unwrapped.enclosingElement is ClassElement) {
+        unwrapped.enclosingElement is ClassElement &&
+        unwrapped.enclosingElement is! EnumElement) {
       final String? name = unwrapped.name;
       final String? owner = unwrapped.enclosingElement.name;
       if (name == null || owner == null) {
@@ -1985,6 +1993,21 @@ final class ExpressionExtractor {
     final String? name = element.name;
     if (ownerName == null || library == null || name == null) {
       return null;
+    }
+    // Only what store extraction declares can be a target (a reference to anything else is BRG1201): a lifecycle method is an
+    // `sig.Effect`, not an action, a static is not the instance's, and a `final` field the class never reassigns is not state.
+    if (element is MethodElement && (registry.lifecycleMethods[name] != null || element.isStatic)) {
+      return null;
+    }
+    if (element is GetterElement && element.isOriginVariable) {
+      final PropertyInducingElement variable = element.variable;
+      if (variable is FieldElement &&
+          (variable.isStatic ||
+              variable.isFinal &&
+                  !registry.isStateHolder(variable.type) &&
+                  !SignalExtractor.isReactiveFinalType(variable.type))) {
+        return null;
+      }
     }
     if (element is MethodElement) {
       return Symbols.actionIn(
@@ -2157,6 +2180,12 @@ final class ExpressionExtractor {
     return null;
   }
 
+  /// Whether the generator emits [owner] as a real class: an enhanced enum, or a class another class inherits from or that
+  /// applies a mixin (ADR-0056, ADR-0059).
+  bool _ownerIsEmittedAsClass(InstanceElement owner) =>
+      owner is EnumElement && isEnhancedEnum(owner) ||
+      owner is ClassElement && (out.inheritedClasses.contains(classKey(owner)) || owner.mixins.isNotEmpty);
+
   /// The `logic.FunctionDecl` [element] resolves to, when it is a project-defined class's own STATIC
   /// method (M11-A, ADR-0045) — the static-namespace sibling of [_instanceMemberTarget]: identical owner-
   /// qualified symbol reconstruction (`Symbols.functionIn(library, name, owner: ownerName, ...)`, the
@@ -2202,7 +2231,9 @@ final class ExpressionExtractor {
     // instance method — reused, never re-derived, here (found live: a first cut of this function forgot
     // the return-type half, reproducing the exact `unknown`-return silent-wrong-code shape ADR-0042
     // already closed once for instance methods — see `_isEligibleMethodShape`'s own doc comment).
-    if (!_isEligibleMethodShape(element)) {
+    // The shape gate protects the *bounded helper* path (ADR-0042). A class the generator emits as a class — an enhanced enum, or a
+    // class another class inherits from — has its static method emitted as a real one, typed as declared (M12).
+    if (!_ownerIsEmittedAsClass(owner) && !_isEligibleMethodShape(element)) {
       return null;
     }
     final String? ownerName = owner.name;

@@ -59,7 +59,7 @@ function directFunctionRefs(
   value: unknown,
   lookup: (id: NodeId) => Node | undefined,
   found: Set<NodeId>,
-  classes?: { readonly general: ReadonlyMap<NodeId, Node>; readonly found: Set<NodeId> },
+  classes?: { readonly general: ReadonlyMap<NodeId, Node>; readonly found: Set<NodeId>; readonly staticOwner: ReadonlyMap<NodeId, NodeId> },
 ): void {
   if (Array.isArray(value)) {
     for (const item of value) directFunctionRefs(item, lookup, found, classes);
@@ -74,6 +74,11 @@ function directFunctionRefs(
   }
   if (classes !== undefined && node['kind'] === undefined && typeof node['target'] === 'string' && typeof node['name'] === 'string') {
     if (classes.general.has(node['target'] as NodeId)) classes.found.add(node['target'] as NodeId);
+  }
+  // A `static` method of a general class or enum: reaching it reaches its owner, which is what declares it.
+  if (classes !== undefined && kindOf(node) === 'logic.Ref' && typeof node['target'] === 'string') {
+    const owner = classes.staticOwner.get(node['target'] as NodeId);
+    if (owner !== undefined) classes.found.add(owner);
   }
   if (kindOf(node) === 'logic.Ref' && typeof node['target'] === 'string') {
     const target = node['target'] as NodeId;
@@ -121,7 +126,13 @@ export function reachableFunctions(
   const statics = staticFieldsOf(nodes);
   const lookup = (id: NodeId): Node | undefined => (scope.node(id) as unknown as Node | undefined) ?? statics.get(id)?.field;
   const found = new Set<NodeId>();
-  const classes = { general, found: classesOut };
+  const staticOwner = new Map<NodeId, NodeId>();
+  for (const [classId, decl] of general) {
+    for (const method of Array.isArray(decl['methods']) ? (decl['methods'] as Node[]) : []) {
+      if (method['isStatic'] === true && typeof method['id'] === 'string') staticOwner.set(method['id'] as NodeId, classId);
+    }
+  }
+  const classes = { general, found: classesOut, staticOwner };
   for (const node of nodes as unknown as Node[]) {
     if (kindOf(node) === 'ui.Component') {
       directFunctionRefs(node['render'], lookup, found, classes);

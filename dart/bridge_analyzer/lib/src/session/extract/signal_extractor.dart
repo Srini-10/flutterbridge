@@ -443,6 +443,10 @@ final class SignalExtractor {
 
   /// Whether [type] is an instance of a project class with a mutable field (M12) — `final Counter _c = Counter(10);` never
   /// re-assigns `_c`, but `_c.tick()` changes what it holds, so the field is state even though it is `final`.
+  /// Whether a `final` field of [type] is state anyway: a collection, or an object with mutable fields.
+  static bool isReactiveFinalType(DartType? type) =>
+      type != null && (type.isDartCoreList || type.isDartCoreSet || type.isDartCoreMap) || _isMutableObject(type);
+
   static bool _isMutableObject(DartType? type) {
     final Element? owner = type is InterfaceType ? type.element : null;
     if (owner is! ClassElement || owner.library.isInSdk) {

@@ -100,6 +100,7 @@ final class Extractor {
       registry: adapters,
       localPackageNames: localPackageNames,
       extractedDependencyFiles: extractedDependencyFiles,
+      inheritedClasses: inheritedClasses,
     );
 
     final ExpressionExtractor expressions = ExpressionExtractor(out, adapters);

@@ -1,0 +1,10 @@
+{
+  "Catches": [
+    [
+      "> format bad | state state | app 7 | other plain",
+      "> error Invalid argument(s): arg | exception Exception: ex | error Unsupported operation: nope | none",
+      "> inner bad | outer AppError(7) | fine",
+      "> finally,caught Bad state: state | ok,finally | int 5 | error"
+    ]
+  ]
+}

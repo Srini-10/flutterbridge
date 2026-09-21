@@ -41,6 +41,7 @@ final class RawNodeEmitter {
     required this.registry,
     this.localPackageNames = const <String>{},
     this.extractedDependencyFiles = const <String>{},
+    this.inheritedClasses = const <String>{},
     String? symbolPath,
   }) : symbols = Symbols(symbolPath ?? path);
 
@@ -64,6 +65,9 @@ final class RawNodeEmitter {
   /// package's own files, and a reference into the excluded remainder must stay honestly unresolved
   /// (`Symbols.pathOf`) rather than promise a declaration this program never emitted.
   final Set<String> extractedDependencyFiles;
+
+  /// The classes some class in the program extends or mixes in (`inheritance.dart`): each is emitted as a class.
+  final Set<String> inheritedClasses;
 
   /// The line map, for turning offsets into spans.
   final LineInfo lineInfo;

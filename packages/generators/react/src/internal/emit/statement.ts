@@ -10,7 +10,7 @@
 import type { Stmt } from '@bridge/uir';
 
 import { GeneratorDiagnosticCode } from '../diagnostics/codes.js';
-import { emitExpression, markValueUnused, setStatementLowering, type EmitScope } from './expression.js';
+import { catchTypeTest, emitExpression, markValueUnused, setStatementLowering, type EmitScope } from './expression.js';
 import { identifierOf } from './module.js';
 import { routeNameOf, screenKeyFor } from './routes.js';
 import { opaqueDetailOf, opaqueReasonSuffix } from './unsupported.js';
@@ -267,43 +267,67 @@ export function emitStatement(statement: Stmt | Node | undefined, scope: EmitSco
       const lines = ['try {'];
       lines.push(...indent(emitStatement(node['body'] as Node, scope)));
       const clauses = asArray(node['catches']);
-      if (clauses.length === 0) {
-        lines.push('} catch {');
-      } else {
-        // Dart dispatches catch clauses on the exception's *type*; JavaScript has one catch block. One clause
-        // lowers exactly; several would need a type test per clause, and Dart's type test is not `instanceof`
-        // for every type. Rather than emit a chain that is right for classes and wrong for everything else,
-        // the extra clauses are reported.
-        const first = clauses[0] as Node;
-        // `exceptionDecl` (ADR-28, amended M8-S) is the declaration-tier identity a `logic.Ref` inside the
-        // catch body resolves against via `localName` (populated by `localBindingsIn`, which walks this
-        // whole body generically — no change needed there). The emitted identifier here MUST be computed
-        // from the same `.name` that declaration carries, or a read that resolves to it would bind to a
-        // different identifier than the one this line actually declares. `exceptionName` is the fallback
-        // for a document without one (no exception parameter at all is the only remaining case, since the
-        // analyzer now always emits both together).
-        const exceptionDecl = first['exceptionDecl'] as Node | undefined;
-        const exceptionName =
-          exceptionDecl !== undefined ? String(exceptionDecl['name'] ?? 'error') : String(first['exceptionName'] ?? 'error');
-        const binding = identifierOf(exceptionName);
-        lines.push(`} catch (${binding}) {`);
+      const bindingOf = (clause: Node): string => {
+        // `exceptionDecl` (ADR-28, amended M8-S) is the declaration-tier identity a `logic.Ref` inside the catch body resolves
+        // against via `localName` (populated by `localBindingsIn`, which walks this whole body generically). The emitted identifier
+        // MUST be computed from the same `.name` that declaration carries, or a read that resolves to it would bind to a different
+        // identifier than the one this line actually declares.
+        const decl = clause['exceptionDecl'] as Node | undefined;
+        return identifierOf(decl !== undefined ? String(decl['name'] ?? 'error') : String(clause['exceptionName'] ?? 'error'));
+      };
+      const withCatch = (binding: string, clause: Node): string[] => {
         // `rethrow` in the body throws this binding again.
         const outerCatch = scope.catchBinding;
         scope.catchBinding = binding;
         try {
-          lines.push(...indent(emitStatement(first['body'] as Node, scope)));
+          return emitStatement(clause['body'] as Node, scope);
         } finally {
           scope.catchBinding = outerCatch;
         }
-        if (clauses.length > 1) {
+      };
+      if (clauses.length === 0) {
+        // `try { … } finally { … }`: no catch at all — the exception keeps propagating, as in Dart. (A bare `catch {}` swallowed it.)
+        if (node['finallyBlock'] === undefined) lines.push('} catch {');
+      } else {
+        // Dart dispatches catch clauses on the exception's *type*; JavaScript has one catch block, so the clauses become a chain of
+        // runtime type tests inside it (`dartIs` for a project class, `instanceof` for an SDK exception, `sdkTypeTest` for the
+        // rest), and an exception no clause names is thrown again. A clause with no `on` (or `on Object`) catches everything.
+        const tests = clauses.map((clause) => catchTypeTest(clause['exceptionType'] as Node | undefined, '$err', scope));
+        if (tests.some((test) => test === undefined)) {
           scope.report(
             GeneratorDiagnosticCode.UnsupportedStatement,
             'error',
-            `this try/catch has ${clauses.length} typed catch clauses. Dart dispatches them on the ` +
-              `exception's type; JavaScript has one catch block, and Dart's type test is not \`instanceof\` ` +
-              `for every type. Only the first clause is lowered — the rest need an override.`,
+            'this catch clause names a type that cannot be told at runtime here (only a project class, an SDK exception such as ' +
+              '`FormatException`/`StateError`/`Exception`/`Error`, `int`, `double`, `num`, `String`, `bool`, `List`, `Map`, `Set` or `Object` can).',
             idOf(node),
           );
+        }
+        const typed = tests.some((test) => test !== 'catchAll' && test !== undefined);
+        if (!typed) {
+          const first = clauses[0] as Node;
+          const binding = bindingOf(first);
+          lines.push(`} catch (${binding}) {`);
+          lines.push(...indent(withCatch(binding, first)));
+        } else {
+          lines.push('} catch ($err) {');
+          let closed = false;
+          clauses.forEach((clause, index) => {
+            const test = tests[index];
+            const binding = bindingOf(clause);
+            const head = index === 0 ? 'if' : '} else if';
+            if (test === 'catchAll' || test === undefined) {
+              lines.push(index === 0 ? '{' : '} else {');
+              lines.push(`  const ${binding} = $err;`);
+              lines.push(...indent(withCatch(binding, clause)));
+              closed = true;
+              return;
+            }
+            lines.push(`${head} (${test.test}) {`);
+            lines.push(`  const ${binding} = $err as ${test.typeText};`);
+            lines.push(...indent(withCatch(binding, clause)));
+          });
+          if (!closed) lines.push('} else {', '  throw $err;', '}');
+          else lines.push('}');
         }
       }
       const finallyBlock = node['finallyBlock'];

@@ -36,3 +36,26 @@ enum Planet {
 
   double get gravity => 6.67300E-11 * mass / (radius * radius);
 }
+
+/// A bare `values` and a bare constant inside the enum's own static method.
+enum Level {
+  low('l'),
+  high('h');
+
+  const Level(this.tag);
+  final String tag;
+
+  static Level fromTag(String t) => values.firstWhere((Level e) => e.tag == t, orElse: () => low);
+
+  static int count() => values.length;
+}
+
+/// Only its static method is used: reaching the method reaches the enum.
+enum Unit {
+  one(1);
+
+  const Unit(this.n);
+  final int n;
+
+  static int magic() => one.n + 41;
+}

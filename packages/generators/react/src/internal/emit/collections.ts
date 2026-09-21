@@ -71,17 +71,37 @@ const LIST: Readonly<Record<string, Row>> = {
   where: row('listWhere', false, 1),
   map: row('listMap', false, 1),
   any: row('listAny', false, 1),
+  every: row('listEvery', false, 1),
+  fold: row('listFold', false, 2),
+  reduce: row('listReduce', false, 1),
+  expand: row('listExpand', false, 1),
+  indexWhere: row('listIndexWhere', false, 1, 2),
+  takeWhile: row('listTakeWhile', false, 1),
+  skipWhile: row('listSkipWhile', false, 1),
+  followedBy: row('listFollowedBy', false, 1),
+  toSet: row('listToSet', false, 0),
+  elementAt: row('listElementAt', false, 1),
+};
+
+/** Methods with an `orElse:` named argument: the test is positional, the fallback a function. */
+const SEARCH: Readonly<Record<string, string>> = {
+  firstWhere: 'listFirstWhere',
+  lastWhere: 'listLastWhere',
+  singleWhere: 'listSingleWhere',
 };
 
 /** Same-meaning JavaScript methods, passed through: (name → accepted argument counts). */
 const LIST_NATIVE: Readonly<Record<string, readonly number[]>> = {
   indexOf: [1],
   lastIndexOf: [1],
-  every: [1],
   forEach: [1],
 };
 
 const SET: Readonly<Record<string, Row>> = {
+  union: row('setUnion', false, 1),
+  intersection: row('setIntersection', false, 1),
+  difference: row('setDifference', false, 1),
+  containsAll: row('setContainsAll', false, 1),
   add: row('setAdd', true, 1),
   remove: row('setRemove', true, 1),
   addAll: row('setAddAll', true, 1),
@@ -97,6 +117,10 @@ const MAP: Readonly<Record<string, Row>> = {
   clear: row('mapClear', true, 0),
   containsKey: row('mapContainsKey', false, 1),
   containsValue: row('mapContainsValue', false, 1),
+  forEach: row('mapForEach', false, 1),
+  update: row('mapUpdate', true, 2, 3),
+  removeWhere: row('mapRemoveWhere', true, 1),
+  map: row('mapMap', false, 1),
 };
 
 /** The element types `List.sort()` orders without a comparator: Dart's `compareTo` exists and JavaScript agrees. */
@@ -185,7 +209,21 @@ export function lowerCollectionMethod(node: Node, deps: CollectionDeps): string 
     return `${receiver}.${method}(${emitted.join(', ')})`;
   }
 
-  const table = effective === 'Map' ? MAP : effective === 'Set' ? SET : LIST;
+  // `firstWhere(test, orElse: () => x)` and its siblings.
+  const searchHelper = SEARCH[method];
+  if (searchHelper !== undefined && kind !== 'Map') {
+    const namedArgs = (node['namedArgs'] ?? {}) as Record<string, Node>;
+    const named = Object.keys(namedArgs);
+    if (args.length !== 1 || named.some((name) => name !== 'orElse')) return undefined;
+    const receiver = deps.emit(receiverNode);
+    const emitted = [args[0] as Node, ...(namedArgs['orElse'] === undefined ? [] : [namedArgs['orElse']])].map((a) => deps.emit(a));
+    if (receiver === deps.refused || emitted.includes(deps.refused)) return deps.refused;
+    return `${deps.use(searchHelper)}(${[receiver, ...emitted].join(', ')})`;
+  }
+
+  // A `Set` is not an array: a read-only iterable operation on one runs over its elements.
+  const setAsIterable = effective === 'Set' && SET[method] === undefined && LIST[method] !== undefined && !LIST[method]!.mutates;
+  const table = setAsIterable ? LIST : effective === 'Map' ? MAP : effective === 'Set' ? SET : LIST;
   const entry = table[method];
   if (entry === undefined || !entry.arity.includes(args.length)) return undefined;
   if (kind === 'Iterable' && entry.mutates) return undefined;
@@ -196,10 +234,13 @@ export function lowerCollectionMethod(node: Node, deps: CollectionDeps): string 
     if (element === undefined || !ORDERED.has(element)) return undefined;
   }
 
+  // `map.update(key, f, ifAbsent: () => v)`.
+  const ifAbsent = effective === 'Map' && method === 'update' ? ((node['namedArgs'] ?? {}) as Record<string, Node>)['ifAbsent'] : undefined;
   const receiver = deps.emit(receiverNode);
-  const emitted = args.map((a) => deps.emit(a));
+  const emitted = [...args, ...(ifAbsent === undefined ? [] : [ifAbsent])].map((a) => deps.emit(a));
   if (receiver === deps.refused || emitted.includes(deps.refused)) return deps.refused;
-  const call = `${deps.use(entry.helper)}(${[receiver, ...emitted].join(', ')})`;
+  const receiverText = setAsIterable ? `Array.from(${receiver})` : receiver;
+  const call = `${deps.use(entry.helper)}(${[receiverText, ...emitted].join(', ')})`;
   return call;
 }
 
@@ -244,6 +285,9 @@ export function lowerCollectionProperty(node: Node, deps: CollectionDeps): strin
     case 'first': return `${deps.use('listFirst')}(${receiver})`;
     case 'last': return `${deps.use('listLast')}(${receiver})`;
     case 'reversed': return `${deps.use('listReversed')}(${receiver})`;
+    case 'single': return `${deps.use('listSingle')}(${receiver})`;
+    case 'firstOrNull': return `${deps.use('listFirstOrNull')}(${receiver})`;
+    case 'lastOrNull': return `${deps.use('listLastOrNull')}(${receiver})`;
     default: return undefined;
   }
 }

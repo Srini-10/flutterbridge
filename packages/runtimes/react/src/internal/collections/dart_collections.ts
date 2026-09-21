@@ -214,6 +214,233 @@ export function listAny<T>(list: readonly T[], test: (value: T) => boolean): boo
   return list.some((value) => test(value));
 }
 
+// ── List: search, fold and combine (read-only) ────────────────────────────────────────────────────
+
+/** `list.firstWhere(test, orElse:)`: the first match; `orElse()` when there is none; otherwise Dart throws a `StateError`. */
+export function listFirstWhere<T>(list: Iterable<T>, test: (value: T) => boolean, orElse?: () => T): T {
+  for (const value of list) if (test(value)) return value;
+  if (orElse !== undefined && orElse !== null) return orElse();
+  return fail('firstWhere', 'no element matches (Dart: StateError "No element").');
+}
+
+/** `list.lastWhere(test, orElse:)`. */
+export function listLastWhere<T>(list: Iterable<T>, test: (value: T) => boolean, orElse?: () => T): T {
+  const items = Array.from(list);
+  for (let i = items.length - 1; i >= 0; i--) if (test(items[i] as T)) return items[i] as T;
+  if (orElse !== undefined && orElse !== null) return orElse();
+  return fail('lastWhere', 'no element matches (Dart: StateError "No element").');
+}
+
+/** `list.singleWhere(test, orElse:)`: the one match; more than one is a `StateError`. */
+export function listSingleWhere<T>(list: Iterable<T>, test: (value: T) => boolean, orElse?: () => T): T {
+  let found: { value: T } | undefined;
+  for (const value of list) {
+    if (!test(value)) continue;
+    if (found !== undefined) return fail('singleWhere', 'more than one element matches (Dart: StateError "Too many elements").');
+    found = { value };
+  }
+  if (found !== undefined) return found.value;
+  if (orElse !== undefined && orElse !== null) return orElse();
+  return fail('singleWhere', 'no element matches (Dart: StateError "No element").');
+}
+
+/** `list.fold(initial, combine)`. */
+export function listFold<T, R>(list: Iterable<T>, initial: R, combine: (previous: R, element: T) => R): R {
+  let value = initial;
+  for (const element of list) value = combine(value, element);
+  return value;
+}
+
+/** `list.reduce(combine)`: an empty list is a `StateError`. */
+export function listReduce<T>(list: Iterable<T>, combine: (previous: T, element: T) => T): T {
+  const items = Array.from(list);
+  if (items.length === 0) return fail('reduce', 'the collection is empty (Dart: StateError "No element").');
+  let value = items[0] as T;
+  for (let i = 1; i < items.length; i++) value = combine(value, items[i] as T);
+  return value;
+}
+
+/** `list.expand(f)`. */
+export function listExpand<T, R>(list: Iterable<T>, transform: (value: T) => Iterable<R>): R[] {
+  const out: R[] = [];
+  for (const value of list) out.push(...transform(value));
+  return out;
+}
+
+/** `list.indexWhere(test, start)`: -1 when there is none. */
+export function listIndexWhere<T>(list: readonly T[], test: (value: T) => boolean, start = 0): number {
+  for (let i = start; i < list.length; i++) if (test(list[i] as T)) return i;
+  return -1;
+}
+
+/** `list.takeWhile(test)`. */
+export function listTakeWhile<T>(list: Iterable<T>, test: (value: T) => boolean): T[] {
+  const out: T[] = [];
+  for (const value of list) {
+    if (!test(value)) break;
+    out.push(value);
+  }
+  return out;
+}
+
+/** `list.skipWhile(test)`. */
+export function listSkipWhile<T>(list: Iterable<T>, test: (value: T) => boolean): T[] {
+  const out: T[] = [];
+  let skipping = true;
+  for (const value of list) {
+    if (skipping && test(value)) continue;
+    skipping = false;
+    out.push(value);
+  }
+  return out;
+}
+
+/** `list.followedBy(other)`. */
+export function listFollowedBy<T>(list: Iterable<T>, other: Iterable<T>): T[] {
+  return [...list, ...other];
+}
+
+/** `list.toSet()`. */
+export function listToSet<T>(list: Iterable<T>): Set<T> {
+  return new Set(list);
+}
+
+/** `list.elementAt(index)`. */
+export function listElementAt<T>(list: readonly T[], index: number): T {
+  rangeCheck('elementAt', index, list.length);
+  return list[index] as T;
+}
+
+/** `list.every(test)`. */
+export function listEvery<T>(list: Iterable<T>, test: (value: T) => boolean): boolean {
+  for (const value of list) if (!test(value)) return false;
+  return true;
+}
+
+/** `list.single`: a list of exactly one element. */
+export function listSingle<T>(list: readonly T[]): T {
+  if (list.length !== 1) return fail('single', list.length === 0 ? 'the collection is empty (Dart: StateError).' : 'more than one element (Dart: StateError).');
+  return list[0] as T;
+}
+
+/** `list.firstOrNull`. */
+export function listFirstOrNull<T>(list: readonly T[]): T | null {
+  return list.length === 0 ? null : (list[0] as T);
+}
+
+/** `list.lastOrNull`. */
+export function listLastOrNull<T>(list: readonly T[]): T | null {
+  return list.length === 0 ? null : (list[list.length - 1] as T);
+}
+
+/** `List.from(iterable)` / `List.of` / `Iterable.toList`: a new growable list. */
+export function listFrom<T>(source: Iterable<T>): T[] {
+  return Array.from(source);
+}
+
+/** `List.generate(count, f)`. */
+export function listGenerate<T>(count: number, generator: (index: number) => T): T[] {
+  if (count < 0) return fail('List.generate', 'the length is negative (Dart: RangeError).');
+  return Array.from({ length: count }, (_, index) => generator(index));
+}
+
+/** `List.filled(count, value)`. */
+export function listFilled<T>(count: number, value: T): T[] {
+  if (count < 0) return fail('List.filled', 'the length is negative (Dart: RangeError).');
+  return Array.from({ length: count }, () => value);
+}
+
+// ── Set: algebra (read-only) ──────────────────────────────────────────────────────────────────────
+
+/** `a.union(b)`. */
+export function setUnion<T>(a: ReadonlySet<T>, b: Iterable<T>): Set<T> {
+  return new Set([...a, ...b]);
+}
+
+/** `a.intersection(b)`. */
+export function setIntersection<T>(a: ReadonlySet<T>, b: ReadonlySet<unknown>): Set<T> {
+  return new Set(Array.from(a).filter((value) => b.has(value)));
+}
+
+/** `a.difference(b)`. */
+export function setDifference<T>(a: ReadonlySet<T>, b: ReadonlySet<unknown>): Set<T> {
+  return new Set(Array.from(a).filter((value) => !b.has(value)));
+}
+
+/** `a.containsAll(b)`. */
+export function setContainsAll<T>(a: ReadonlySet<T>, b: Iterable<unknown>): boolean {
+  for (const value of b) if (!a.has(value as T)) return false;
+  return true;
+}
+
+/** `Set.from(iterable)` / `Set.of`. */
+export function setFrom<T>(source: Iterable<T>): Set<T> {
+  return new Set(source);
+}
+
+// ── Map ───────────────────────────────────────────────────────────────────────────────────────────
+
+/** `map.forEach((key, value) { … })`. */
+export function mapForEach<K, V>(map: ReadonlyMap<K, V>, action: (key: K, value: V) => void): void {
+  for (const [key, value] of Array.from(map)) action(key, value);
+}
+
+/** `map.update(key, update, ifAbsent:)`. */
+export function mapUpdate<K, V>(map: Map<K, V>, key: K, update: (value: V) => V, ifAbsent?: () => V): V {
+  if (map.has(key)) {
+    const next = update(map.get(key) as V);
+    map.set(key, next);
+    inheritOwners(next, map);
+    notifyMutation(map);
+    return next;
+  }
+  if (ifAbsent === undefined || ifAbsent === null) return fail('update', `the key is absent and no ifAbsent was given (Dart: ArgumentError).`);
+  const created = ifAbsent();
+  map.set(key, created);
+  inheritOwners(created, map);
+  notifyMutation(map);
+  return created;
+}
+
+/** `map.removeWhere((key, value) => …)`. */
+export function mapRemoveWhere<K, V>(map: Map<K, V>, test: (key: K, value: V) => boolean): void {
+  let changed = false;
+  for (const [key, value] of Array.from(map)) {
+    if (test(key, value)) {
+      map.delete(key);
+      changed = true;
+    }
+  }
+  if (changed) notifyMutation(map);
+}
+
+/** `map.map((key, value) => MapEntry(k, v))`: entries are `{ key, value }`. */
+export function mapMap<K, V, K2, V2>(map: ReadonlyMap<K, V>, transform: (key: K, value: V) => { readonly key: K2; readonly value: V2 }): Map<K2, V2> {
+  const out = new Map<K2, V2>();
+  for (const [key, value] of map) {
+    const entry = transform(key, value);
+    out.set(entry.key, entry.value);
+  }
+  return out;
+}
+
+/** `Map.from(other)` / `Map.of`. */
+export function mapFrom<K, V>(source: ReadonlyMap<K, V>): Map<K, V> {
+  return new Map(source);
+}
+
+/** `Map.fromEntries(entries)`: entries are `{ key, value }`. */
+export function mapFromEntries<K, V>(entries: Iterable<{ readonly key: K; readonly value: V }>): Map<K, V> {
+  const out = new Map<K, V>();
+  for (const entry of entries) out.set(entry.key, entry.value);
+  return out;
+}
+
+/** `MapEntry(key, value)`. */
+export function mapEntry<K, V>(key: K, value: V): { readonly key: K; readonly value: V } {
+  return { key, value };
+}
+
 // ── Set ───────────────────────────────────────────────────────────────────────────────────────────
 
 /** `set.add(value)`: whether it was new — JavaScript's `add` returns the set. */

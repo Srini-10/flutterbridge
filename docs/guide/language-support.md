@@ -62,6 +62,14 @@ are module-level constants; a mutable static or top-level variable is refused (i
 `throw`/`rethrow` in expressions, constructor and generic-function tear-offs, cascades, `?.` on any receiver (whole-chain null-shorting),
 collection `...`/`if`/`for` in lists, sets and maps, adjacent strings, and checked `as` casts ([ADR-0058](../adr/0058-expression-forms.md)).
 
+## SDK collections and exceptions — ADR-0060, ADR-0061
+
+`List`/`Set`/`Map` methods beyond ADR-0051: `firstWhere`/`lastWhere`/`singleWhere` (`orElse:`), `fold`, `reduce`, `expand`, `every`,
+`indexWhere`, `takeWhile`/`skipWhile`, `followedBy`, `toSet`, `elementAt`, `single`, `firstOrNull`/`lastOrNull`, Set algebra, `Map.forEach`/
+`update`/`removeWhere`/`map`; constructors `List.from/generate/filled/of`, `Set.from`, `Map.from/fromEntries`, `MapEntry` ([ADR-0060](../adr/0060-sdk-collections-and-enum-statics.md)).
+`FormatException`, `StateError`, `ArgumentError`, `RangeError`, `UnsupportedError`, `UnimplementedError`, `Exception`, project exception
+classes; typed `on T catch` clauses dispatch on type, an unmatched exception propagates ([ADR-0061](../adr/0061-exceptions.md)).
+
 ## Not supported (refused, by name)
 
 Everything not listed. The census of two real applications (see the final audit report) found the blockers in practice are: freezed
