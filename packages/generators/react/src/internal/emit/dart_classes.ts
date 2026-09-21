@@ -32,6 +32,7 @@
 // operator calls it. `x is T` is `dartIs(x, T)`: each class carries `static $isA(type)`, which walks its superclass, interfaces
 // and mixins lazily — at call time, so two classes that reference each other never see an unevaluated class at module load.
 
+import { typeParamScope } from './types.js';
 import type { NodeId } from '@bridge/uir';
 
 type Node = Record<string, unknown>;
@@ -212,7 +213,7 @@ function paramList(params: readonly Node[], ctx: ClassEmitContext): string {
       if (param['defaultValue'] !== undefined) return `${name}: ${type} = ${ctx.expr(param['defaultValue'] as Node, params)}`;
       if (required) return `${name}: ${type}`;
       // Optional with no default: Dart's absent value is `null`.
-      return `${name}: ${type} = null as ${type}`;
+      return `${name}: ${type} = null as unknown as ${type}`;
     })
     .join(', ');
 }
@@ -244,6 +245,16 @@ function mixinsOf(decl: Node, ctx: ClassEmitContext, seen: Set<NodeId> = new Set
  * @returns the lines, or `undefined` after reporting why the class has no lowering.
  */
 export function emitClassSource(source: Node, className: string, ctx: ClassEmitContext): string[] | undefined {
+  const params = Array.isArray(source['typeParameters']) ? (source['typeParameters'] as string[]) : [];
+  for (const p of params) typeParamScope.add(p);
+  try {
+    return emitClassSourceInner(source, className, ctx);
+  } finally {
+    for (const p of params) typeParamScope.delete(p);
+  }
+}
+
+function emitClassSourceInner(source: Node, className: string, ctx: ClassEmitContext): string[] | undefined {
   if (kindOf(source) === 'logic.EnumDecl') return emitEnumSource(source, className, ctx);
   let decl = source;
   const id = decl['id'] as NodeId;
@@ -284,6 +295,18 @@ export function emitClassSource(source: Node, className: string, ctx: ClassEmitC
       mixedMethods.push(method);
     }
   }
+  // Abstract mixin members nothing provides.
+  const inherited = (name: string): boolean => (superId === undefined ? false : findMember(superId, name, ctx.general) !== undefined);
+  const abstractFromMixins: Node[] = [];
+  for (const mixin of applied) {
+    for (const method of asArray(mixin['methods'])) {
+      if (method['isAbstract'] !== true || method['isStatic'] === true) continue;
+      const key = `${String(method['name'])}:${method['isSetter'] === true ? 's' : 'g'}`;
+      if (own.has(key) || inherited(String(method['name'])) || ownFields.has(String(method['name']))) continue;
+      if (abstractFromMixins.some((m) => m['name'] === method['name'])) continue;
+      abstractFromMixins.push(method);
+    }
+  }
   if (mixedFields.length > 0 || mixedMethods.length > 0) {
     decl = {
       ...decl,
@@ -293,16 +316,30 @@ export function emitClassSource(source: Node, className: string, ctx: ClassEmitC
   }
 
   const typeParams = Array.isArray(decl['typeParameters']) ? (decl['typeParameters'] as string[]) : [];
-  const generics = typeParams.length === 0 ? '' : `<${typeParams.join(', ')}>`;
+  // A bare use of a generic class (`$DtoCopyWith`, no arguments) must still be a valid TypeScript type: the parameters default.
+  const generics = typeParams.length === 0 ? '' : `<${typeParams.map((p) => `${p} = unknown`).join(', ')}>`;
+  const genericsUse = typeParams.length === 0 ? '' : `<${typeParams.join(', ')}>`;
   const superName = superId === undefined ? undefined : ctx.nameOf(superId);
   const superText = decl['superclass'] === undefined ? '' : ` extends ${superName ?? 'unknown'}${superTypeArguments(decl['superclass'] as Node, ctx)}`;
   const isAbstract = decl['isAbstract'] === true;
   const lines: string[] = [];
+  // A class's own type parameter (`$Res`) is a TypeScript type parameter of the emitted class, not `unknown`.
+  const typeOf = (type: Node | undefined): string => (typeParams.includes(String(type?.['name'])) ? String(type?.['name']) : ctx.typeText(type));
+  // An abstract member a mixin declares that nothing in the class, its other mixins or its superclasses implements is *declared*, so the
+  // class's type has it (`String get name;`) — with no runtime member to shadow one a subclass or a superclass provides.
+  for (const member of abstractFromMixins) {
+    const returnType = typeOf(member['returnType'] as Node | undefined);
+    lines.push(
+      member['isGetter'] === true
+        ? `declare ${ctx.identifier(String(member['name']))}: ${returnType};`
+        : `declare ${ctx.identifier(String(member['name']))}: (${paramList(asArray(member['params']), ctx).replace(/ = [^,]+/g, '')}) => ${returnType};`,
+    );
+  }
 
   // ── fields ─────────────────────────────────────────────────────────────────────────────────────
   const fields = asArray(decl['fields']).filter((f) => f['isStatic'] !== true);
   for (const field of fields) {
-    lines.push(`${ctx.identifier(String(field['name']))}!: ${ctx.typeText(field['type'] as Node | undefined)};`);
+    lines.push(`${ctx.identifier(String(field['name']))}!: ${typeOf(field['type'] as Node | undefined)};`);
   }
 
   // ── type identity: `x is Foo` ──────────────────────────────────────────────────────────────────
@@ -314,7 +351,7 @@ export function emitClassSource(source: Node, className: string, ctx: ClassEmitC
 
   // ── declaration initializers ───────────────────────────────────────────────────────────────────
   const initialized = fields.filter((f) => f['initializer'] !== undefined);
-  lines.push(`$fields_${className}(): void {`);
+  lines.push(`static $fields_${className}${generics}(this: ${className}${genericsUse}): void {`);
   for (const field of initialized) {
     lines.push(`  this.${ctx.identifier(String(field['name']))} = ${ctx.expr(field['initializer'] as Node, [])};`);
   }
@@ -356,11 +393,11 @@ export function emitClassSource(source: Node, className: string, ctx: ClassEmitC
           up = upId === undefined ? undefined : ctx.general.get(upId);
         }
         const call = `${ctx.nameOf(targetId) ?? 'undefined'}.${ctorFactoryName(redirect['constructorName'] as string | undefined, String((targetDecl as Node)['name']))}(${forwarded.join(', ')})`;
-        body.push(extendsThis || targetId === id ? `return ${call};` : `return ${call} as unknown as ${className}${generics};`);
+        body.push(extendsThis || targetId === id ? `return ${call};` : `return ${call} as unknown as ${className}${genericsUse};`);
       } else {
         body.push(...ctx.body(asArray(ctor['body']), params));
       }
-      lines.push(`static ${ctorFactoryName(name, className)}${generics}(${plist}): ${className}${generics} {`, ...indent(body), '}');
+      lines.push(`static ${ctorFactoryName(name, className)}${generics}(${plist}): ${className}${genericsUse} {`, ...indent(body), '}');
       continue;
     }
 
@@ -382,9 +419,9 @@ export function emitClassSource(source: Node, className: string, ctx: ClassEmitC
         ctx.report(`\`${className}\` redirects with \`${passed.unknown}\`, which the target constructor does not take.`, id);
         return undefined;
       }
-      init.push(`this.${initName(className, redirectsTo['constructorName'] as string | undefined)}(${passed.join(', ')});`);
+      init.push(`${className}.${initName(className, redirectsTo['constructorName'] as string | undefined)}.call(${['this', ...passed].join(', ')});`);
     } else {
-      init.push(`this.$fields_${className}();`);
+      init.push(`${className}.$fields_${className}.call(this);`);
       for (const param of params) {
         if (typeof param['initializesField'] === 'string') {
           const field = ctx.identifier(param['initializesField']);
@@ -418,17 +455,17 @@ export function emitClassSource(source: Node, className: string, ctx: ClassEmitC
           ctx.report(`\`${className}\` passes \`${passed.unknown}\` to its superclass constructor, which does not take it.`, id);
           return undefined;
         }
-        init.push(`super.${initName(String(superDecl['name']), superName2)}(${passed.join(', ')});`);
+        init.push(`${ctx.nameOf(superId as NodeId) ?? String(superDecl['name'])}.${initName(String(superDecl['name']), superName2)}.call(${['this', ...passed].join(', ')});`);
       }
     }
     init.push(...ctx.body(asArray(ctor['body']), params));
 
-    lines.push(`${initName(className, name)}(${plist}): void {`, ...indent(init), '}');
+    lines.push(`static ${initName(className, name)}${generics}(${['this: ' + className + genericsUse, plist].filter((x) => x !== '').join(', ')}): void {`, ...indent(init), '}');
     if (!isAbstract) {
       lines.push(
-        `static ${ctorFactoryName(name, className)}${generics}(${plist}): ${className}${generics} {`,
-        `  const $self = new ${className}${generics}();`,
-        `  $self.${initName(className, name)}(${passing});`,
+        `static ${ctorFactoryName(name, className)}${generics}(${plist}): ${className}${genericsUse} {`,
+        `  const $self = new ${className}${genericsUse}();`,
+        `  ${className}.${initName(className, name)}.call(${['$self', passing].filter((x) => x !== '').join(', ')});`,
         '  return $self;',
         '}',
       );
@@ -440,7 +477,10 @@ export function emitClassSource(source: Node, className: string, ctx: ClassEmitC
     const raw = String(method['name']);
     const params = asArray(method['params']);
     const isStatic = method['isStatic'] === true;
-    const returnType = ctx.typeText(method['returnType'] as Node | undefined);
+    // A generic method's own type parameters are TypeScript type parameters for its signature and body.
+    const methodTypeParams = Array.isArray(method['typeParameters']) ? (method['typeParameters'] as string[]) : [];
+    for (const tp of methodTypeParams) typeParamScope.add(tp);
+    const returnType = typeOf(method['returnType'] as Node | undefined);
     const isAsync = method['isAsync'] === true;
     const returns = isAsync ? `Promise<${returnType}>` : returnType;
     const staticPrefix = isStatic ? 'static ' : '';
@@ -461,6 +501,7 @@ export function emitClassSource(source: Node, className: string, ctx: ClassEmitC
     } else {
       lines.push(`${staticPrefix}${isAsync ? 'async ' : ''}${ctx.identifier(raw)}${methodGenerics(method)}(${paramList(params, ctx)}): ${returns} {`, ...indent(bodyLines), '}');
     }
+    for (const tp of methodTypeParams) typeParamScope.delete(tp);
   }
 
   return [
@@ -470,8 +511,9 @@ export function emitClassSource(source: Node, className: string, ctx: ClassEmitC
   ];
 }
 
-function methodGenerics(_method: Node): string {
-  return '';
+function methodGenerics(method: Node): string {
+  const names = Array.isArray(method['typeParameters']) ? (method['typeParameters'] as string[]) : [];
+  return names.length === 0 ? '' : `<${names.join(', ')}>`;
 }
 
 function superTypeArguments(_superclass: Node, _ctx: ClassEmitContext): string {
@@ -514,7 +556,7 @@ function emitEnumSource(decl: Node, className: string, ctx: ClassEmitContext): s
       init.push(`this.${ctx.identifier(String(entry['field']))} = ${ctx.expr(entry['value'] as Node, params)};`);
     }
     init.push(...ctx.body(asArray(ctor['body']), params));
-    lines.push(`${initName(className, ctor['name'] as string | undefined)}(${paramList(params, ctx)}): void {`, ...indent(init), '}');
+    lines.push(`static ${initName(className, ctor['name'] as string | undefined)}(${['this: ' + className, paramList(params, ctx)].filter((x) => x !== '').join(', ')}): void {`, ...indent(init), '}');
   }
 
   let hasToString = false;
@@ -556,7 +598,7 @@ function emitEnumSource(decl: Node, className: string, ctx: ClassEmitContext): s
       `  const $self = new ${className}();`,
       `  $self.name = '${name}';`,
       `  $self.index = ${index};`,
-      `  $self.${initName(className, constant['constructorName'] as string | undefined)}(${text});`,
+      `  ${className}.${initName(className, constant['constructorName'] as string | undefined)}.call(${['$self', text].filter((x) => x !== '').join(', ')});`,
       '  return $self;',
       '})();',
     );

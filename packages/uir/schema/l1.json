@@ -1767,6 +1767,13 @@
             "isAbstract": {
               "type": "boolean",
               "description": "Whether the member has no body (`abstract` or an interface's). Present only when true (M12)."
+            },
+            "typeParameters": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "The names of a generic function's or method's own type parameters (`T identity<T>(T v)`)."
             }
           }
         }

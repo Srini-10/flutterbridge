@@ -390,6 +390,23 @@ final class ExpressionExtractor {
           },
         );
 
+      // `x.copyWith(a: 1)` where `copyWith` is a getter returning an object with a `call` method (freezed): a call of `call` on that
+      // object — a method call, which carries the method's signature like any other (M12, ADR-0067).
+      case FunctionExpressionInvocation() when node.element is MethodElement && node.element!.name == 'call':
+        final MethodElement callMethod = node.element! as MethodElement;
+        final DartType? receiverType = node.function.staticType;
+        return RawNode(
+          kind: 'logic.MethodCall',
+          span: out.span(node),
+          fields: <String, RawValue>{
+            'receiver': RawChild(extract(node.function, scope)),
+            'method': const RawLiteral('call'),
+            if (_externalMethodTarget(receiverType, callMethod) case final String symbol) 'target': RawRef(symbol),
+            ..._arguments(node.argumentList, scope),
+            'type': out.typeRef(node.staticType, at: node),
+          },
+        );
+
       case FunctionExpressionInvocation():
         return RawNode(
           kind: 'logic.Call',

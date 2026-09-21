@@ -68,6 +68,9 @@ const SDK_VALUE_TYPE_NAMES: ReadonlyMap<string, string> = new Map([
  * @returns the type text. `unknown` for anything not primitive, not kit-provided, and not an emitted
  *   project class.
  */
+/** The type parameters of the generic class being emitted (`$Res`): a type naming one is that TypeScript type parameter, not `unknown`. */
+export const typeParamScope = new Set<string>();
+
 export function typeTextOf(
   type: Node | undefined,
   use?: (name: string) => string,
@@ -75,12 +78,16 @@ export function typeTextOf(
 ): string {
   const declared = typeof type?.['name'] === 'string' ? type['name'] : 'unknown';
   const nullable = type?.['nullable'] === true;
+  const bare = declared.endsWith('?') ? declared.slice(0, -1) : declared;
+  if (typeParamScope.has(bare)) return nullable ? `${bare} | null` : bare;
 
   const target = type?.['target'];
   if (classOf !== undefined && typeof target === 'string') {
     const resolved = classOf(target as NodeId);
     if (resolved !== undefined) {
-      return nullable ? `${resolved} | null` : resolved;
+      const typeArguments = Array.isArray(type?.['typeArguments']) ? (type['typeArguments'] as Node[]) : [];
+      const applied = typeArguments.length === 0 ? resolved : `${resolved}<${typeArguments.map((a) => typeTextOf(a, use, classOf)).join(', ')}>`;
+      return nullable ? `${applied} | null` : applied;
     }
   }
 
@@ -161,7 +168,8 @@ function functionTypeText(
   if (returnType.includes('Function') || /[{[]/.test(inner) || inner.includes('Function')) return undefined;
   const params = splitTopLevel(inner).map((p, i) => {
     const typed = typeTextOf({ name: p, nullable: p.endsWith('?') }, use, classOf);
-    return `p${i}: ${typed}`;
+    // A parameter type this generator cannot name is `any`, not `unknown`: a callback `(x: Dto) => …` is assignable to `(p0: any) => …` and not to `(p0: unknown) => …`.
+    return `p${i}: ${typed === 'unknown' ? 'any' : typed}`;
   });
   const result = typeTextOf({ name: returnType, nullable: returnType.endsWith('?') }, use, classOf);
   return `(${params.join(', ')}) => ${result}`;
@@ -263,7 +271,7 @@ export function paramListOf(
       const defaultText = defaultNode !== undefined ? defaultValueOf?.(param) : undefined;
       const defaultClause = defaultText === undefined ? '' : ` = ${defaultText}`;
       const paramType = typeTextOf(param['type'] as Node | undefined, use, classOf);
-      if (namedOptional) return `${name}: ${paramType} = null as ${paramType}`;
+      if (namedOptional) return `${name}: ${paramType} = null as unknown as ${paramType}`;
       return `${name}${optional}: ${paramType}${defaultClause}`;
     })
     .join(', ');

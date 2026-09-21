@@ -598,6 +598,8 @@ final class DeclarationExtractor {
               'params': RawList(_params(member.parameters, scope)),
               'body': RawList(expressions.bodyOf(member.body, inner)),
               if (member.body.isAsynchronous) 'isAsync': const RawLiteral(true),
+              if (member.typeParameters case final TypeParameterList list)
+                'typeParameters': RawList(<RawValue>[for (final TypeParameter p in list.typeParameters) RawLiteral(p.name.lexeme)]),
               if (member.isStatic) 'isStatic': const RawLiteral(true),
               if (member.isGetter) 'isGetter': const RawLiteral(true),
               if (member.isSetter) 'isSetter': const RawLiteral(true),
@@ -656,6 +658,8 @@ final class DeclarationExtractor {
           'params': RawList(_params(function.parameters, scope)),
           'body': RawList(expressions.bodyOf(function.body, inner)),
           if (function.body.isAsynchronous) 'isAsync': const RawLiteral(true),
+          if (function.typeParameters case final TypeParameterList list)
+            'typeParameters': RawList(<RawValue>[for (final TypeParameter p in list.typeParameters) RawLiteral(p.name.lexeme)]),
         },
       ),
     );

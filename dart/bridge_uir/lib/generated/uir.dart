@@ -31,7 +31,7 @@ const String uirVersion = '1.15.0';
 /// A hash of the schema sources this library was generated from.
 ///
 /// Stamped into every emitted manifest: a UIR document always says which schema produced it.
-const String uirSchemaHash = 'ac84dbe2d06a807b';
+const String uirSchemaHash = '965bee89a664a13a';
 
 /// Node kind -> the fields of that node which hold `NodeId` references.
 ///
@@ -2304,6 +2304,7 @@ final class TypeRef {
     this.library,
     this.nullable,
     this.target,
+    this.typeArguments,
   });
 
   /// Parses a [TypeRef] from JSON, validating as it goes.
@@ -2314,6 +2315,7 @@ final class TypeRef {
       name: _asString(_req(json, 'name', path), '$path.name'),
       nullable: json['nullable'] == null ? null : _asBool(json['nullable'], '$path.nullable'),
       target: json['target'] == null ? null : _asString(json['target'], '$path.target'),
+      typeArguments: json['typeArguments'] == null ? null : _asList<TypeRef>(json['typeArguments'], '$path.typeArguments', TypeRef.fromJson),
     );
   }
 
@@ -2329,12 +2331,16 @@ final class TypeRef {
   /// The `logic.ClassDecl` this type refers to, when it is a class this compiler extracted its own declaration for (ADR-0034). Declaration provenance only — identical in kind to `PropertyAccess.target` (ADR-27) and member-read `target` (ADR-0033): it states a resolved fact about identity, never a claim that the generator can construct, or lower a member of, the referenced class. Absent for a primitive, an SDK type, `dynamic`/`Object`, an unresolved external type, or a generic instantiation (ADR-0034 §12).
   final NodeId? target;
 
+  /// The type arguments of a project generic class type that has a `target` (`$DtoCopyWith<Dto>`), so the generator can emit them.
+  final List<TypeRef>? typeArguments;
+
   /// Serializes to canonical JSON: keys sorted, nulls omitted.
   Map<String, Object?> toJson() => canonicalJson(<String, Object?>{
     'library': library,
     'name': name,
     'nullable': nullable,
     'target': target,
+    'typeArguments': typeArguments?.map((TypeRef v) => v.toJson()).toList(),
   })! as Map<String, Object?>;
 
   /// Returns a copy with the given fields replaced. The original is never mutated.
@@ -2346,12 +2352,14 @@ final class TypeRef {
     String? name,
     bool? nullable,
     NodeId? target,
+    List<TypeRef>? typeArguments,
   }) {
     return TypeRef(
       library: library ?? this.library,
       name: name ?? this.name,
       nullable: nullable ?? this.nullable,
       target: target ?? this.target,
+      typeArguments: typeArguments ?? this.typeArguments,
     );
   }
 
@@ -2362,7 +2370,8 @@ final class TypeRef {
         _equality.equals(other.library, library) &&
         _equality.equals(other.name, name) &&
         _equality.equals(other.nullable, nullable) &&
-        _equality.equals(other.target, target);
+        _equality.equals(other.target, target) &&
+        _equality.equals(other.typeArguments, typeArguments);
   }
 
   @override
@@ -2372,6 +2381,7 @@ final class TypeRef {
     _equality.hash(name),
     _equality.hash(nullable),
     _equality.hash(target),
+    _equality.hash(typeArguments),
   ]);
 }
 
@@ -5425,6 +5435,7 @@ final class FunctionDecl extends Decl {
     this.isSetter,
     this.isStatic,
     this.params,
+    this.typeParameters,
   });
 
   /// Parses a [FunctionDecl] from JSON, validating as it goes.
@@ -5449,6 +5460,7 @@ final class FunctionDecl extends Decl {
       params: json['params'] == null ? null : _asList<ParamDecl>(json['params'], '$path.params', ParamDecl.fromJson),
       returnType: TypeRef.fromJson(_req(json, 'returnType', path), '$path.returnType'),
       span: SourceSpan.fromJson(_req(json, 'span', path), '$path.span'),
+      typeParameters: json['typeParameters'] == null ? null : _asList<String>(json['typeParameters'], '$path.typeParameters', _asString),
     );
   }
 
@@ -5494,6 +5506,9 @@ final class FunctionDecl extends Decl {
   /// Where the node came from.
   final SourceSpan span;
 
+  /// The names of a generic function's or method's own type parameters (`T identity<T>(T v)`).
+  final List<String>? typeParameters;
+
   /// The node's discriminant.
   @override
   String get kind => 'logic.FunctionDecl';
@@ -5516,6 +5531,7 @@ final class FunctionDecl extends Decl {
     'params': params?.map((ParamDecl v) => v.toJson()).toList(),
     'returnType': returnType.toJson(),
     'span': span.toJson(),
+    'typeParameters': typeParameters,
   })! as Map<String, Object?>;
 
   /// Returns a copy with the given fields replaced. The original is never mutated.
@@ -5537,6 +5553,7 @@ final class FunctionDecl extends Decl {
     List<ParamDecl>? params,
     TypeRef? returnType,
     SourceSpan? span,
+    List<String>? typeParameters,
   }) {
     return FunctionDecl(
       anchor: anchor ?? this.anchor,
@@ -5553,6 +5570,7 @@ final class FunctionDecl extends Decl {
       params: params ?? this.params,
       returnType: returnType ?? this.returnType,
       span: span ?? this.span,
+      typeParameters: typeParameters ?? this.typeParameters,
     );
   }
 
@@ -5576,7 +5594,8 @@ final class FunctionDecl extends Decl {
         _equality.equals(other.name, name) &&
         _equality.equals(other.params, params) &&
         _equality.equals(other.returnType, returnType) &&
-        _equality.equals(other.span, span);
+        _equality.equals(other.span, span) &&
+        _equality.equals(other.typeParameters, typeParameters);
   }
 
   @override
@@ -5596,6 +5615,7 @@ final class FunctionDecl extends Decl {
     _equality.hash(params),
     _equality.hash(returnType),
     _equality.hash(span),
+    _equality.hash(typeParameters),
   ]);
 }
 

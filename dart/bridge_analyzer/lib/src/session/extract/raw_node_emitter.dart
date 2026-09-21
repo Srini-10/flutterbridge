@@ -143,7 +143,12 @@ final class RawNodeEmitter {
       'name': RawLiteral(type.getDisplayString()),
       if (type.nullabilitySuffix == NullabilitySuffix.question) 'nullable': const RawLiteral(true),
       if (library != null) 'library': RawLiteral(library),
-      if (_classTypeTarget(type, element) case final String symbol) 'target': RawRef(symbol),
+      if (_classTypeTarget(type, element) case final String symbol) ...<String, RawValue>{
+        'target': RawRef(symbol),
+        // `$DtoCopyWith<Dto>`: a project generic type keeps its arguments, so the emitted TypeScript says `$DtoCopyWith<Dto>`.
+        if (type is InterfaceType && type.typeArguments.isNotEmpty)
+          'typeArguments': RawList(<RawValue>[for (final DartType argument in type.typeArguments) typeRef(argument, at: at)]),
+      },
     });
   }
 

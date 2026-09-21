@@ -18,15 +18,28 @@
       "type": "object",
       "description": "A location in a Dart source file.",
       "additionalProperties": false,
-      "required": ["file", "line", "column"],
+      "required": [
+        "file",
+        "line",
+        "column"
+      ],
       "properties": {
         "file": {
           "type": "string",
           "description": "Project-relative path. Never absolute: an absolute path would make output depend on where the project sits on disk."
         },
-        "line": { "type": "integer", "description": "1-based line." },
-        "column": { "type": "integer", "description": "1-based column." },
-        "length": { "type": "integer", "description": "Length in characters. Absent means a point." }
+        "line": {
+          "type": "integer",
+          "description": "1-based line."
+        },
+        "column": {
+          "type": "integer",
+          "description": "1-based column."
+        },
+        "length": {
+          "type": "integer",
+          "description": "Length in characters. Absent means a point."
+        }
       }
     },
     "UirNodeBase": {
@@ -34,16 +47,35 @@
       "x-uir-abstract": true,
       "description": "The fields every UIR node carries (Spec §2.3).\n\nNodes reference this through `allOf`. Children are held in arrays, and **array order is semantic**: it is the order the widgets appear in, and every generator, serializer and equality check preserves it.",
       "additionalProperties": false,
-      "required": ["id", "kind", "span"],
+      "required": [
+        "id",
+        "kind",
+        "span"
+      ],
       "properties": {
-        "id": { "$ref": "shared.json#/$defs/NodeId", "description": "The node's stable, content-addressed identity." },
-        "kind": { "type": "string", "description": "The node's discriminant, e.g. `ui.Element`." },
-        "span": { "$ref": "shared.json#/$defs/SourceSpan", "description": "Where the node came from." },
-        "anchor": { "$ref": "shared.json#/$defs/Anchor", "description": "The override key, when the node is addressable by a human." },
+        "id": {
+          "$ref": "shared.json#/$defs/NodeId",
+          "description": "The node's stable, content-addressed identity."
+        },
+        "kind": {
+          "type": "string",
+          "description": "The node's discriminant, e.g. `ui.Element`."
+        },
+        "span": {
+          "$ref": "shared.json#/$defs/SourceSpan",
+          "description": "Where the node came from."
+        },
+        "anchor": {
+          "$ref": "shared.json#/$defs/Anchor",
+          "description": "The override key, when the node is addressable by a human."
+        },
         "ext": {
           "type": "object",
           "description": "Plugin extension data, namespaced `x-<plugin>`. Core passes round-trip it untouched (Spec §2.6).",
-          "additionalProperties": { "x-uir-json": true, "description": "Arbitrary plugin-owned JSON." }
+          "additionalProperties": {
+            "x-uir-json": true,
+            "description": "Arbitrary plugin-owned JSON."
+          }
         }
       }
     },
@@ -51,14 +83,33 @@
       "type": "object",
       "description": "A resolved Dart type, as the analyzer saw it.",
       "additionalProperties": false,
-      "required": ["name"],
+      "required": [
+        "name"
+      ],
       "properties": {
-        "name": { "type": "string", "description": "The display name, e.g. `List<Item>`." },
-        "nullable": { "type": "boolean", "description": "Whether the type is nullable." },
-        "library": { "type": "string", "description": "The library that declares it, e.g. `package:flutter/material.dart`." },
+        "name": {
+          "type": "string",
+          "description": "The display name, e.g. `List<Item>`."
+        },
+        "nullable": {
+          "type": "boolean",
+          "description": "Whether the type is nullable."
+        },
+        "library": {
+          "type": "string",
+          "description": "The library that declares it, e.g. `package:flutter/material.dart`."
+        },
         "target": {
           "$ref": "shared.json#/$defs/NodeId",
           "description": "The `logic.ClassDecl` this type refers to, when it is a class this compiler extracted its own declaration for (ADR-0034). Declaration provenance only — identical in kind to `PropertyAccess.target` (ADR-27) and member-read `target` (ADR-0033): it states a resolved fact about identity, never a claim that the generator can construct, or lower a member of, the referenced class. Absent for a primitive, an SDK type, `dynamic`/`Object`, an unresolved external type, or a generic instantiation (ADR-0034 §12)."
+        },
+        "typeArguments": {
+          "type": "array",
+          "items": {
+            "$ref": "shared.json#/$defs/TypeRef",
+            "description": "A type argument."
+          },
+          "description": "The type arguments of a project generic class type that has a `target` (`$DtoCopyWith<Dto>`), so the generator can emit them."
         }
       }
     },
@@ -66,11 +117,22 @@
       "type": "object",
       "description": "A reference to a widget class — a framework widget, a package widget, or one the application declares.",
       "additionalProperties": false,
-      "required": ["name"],
+      "required": [
+        "name"
+      ],
       "properties": {
-        "name": { "type": "string", "description": "The class name, e.g. `Scaffold`." },
-        "constructorName": { "type": "string", "description": "The named constructor, e.g. `builder` for `ListView.builder`." },
-        "library": { "type": "string", "description": "The declaring library. Distinguishes a framework widget from a package's, and from the application's own." },
+        "name": {
+          "type": "string",
+          "description": "The class name, e.g. `Scaffold`."
+        },
+        "constructorName": {
+          "type": "string",
+          "description": "The named constructor, e.g. `builder` for `ListView.builder`."
+        },
+        "library": {
+          "type": "string",
+          "description": "The declaring library. Distinguishes a framework widget from a package's, and from the application's own."
+        },
         "userDefined": {
           "type": "boolean",
           "description": "Whether the application declares this widget.\n\nC1 evidence: a user's own screens are what the compiler *generates*, not constructs it must map. Reporting them as unknown constructs was a false positive that would have opened every compatibility report with a lie."

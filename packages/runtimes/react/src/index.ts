@@ -689,7 +689,7 @@ export {
   strSubstring,
 } from './internal/core/dart_string.js';
 
-export { dartIs, touchAfter } from './internal/core/dart_is.js';
+export { dartIs, dartRuntimeType, touchAfter } from './internal/core/dart_is.js';
 export { DartDateTime, DartDeepCollectionEquality, DartTimer } from './internal/core/dart_time.js';
 export {
   DartArgumentError,

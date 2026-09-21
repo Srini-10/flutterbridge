@@ -1,0 +1,23 @@
+{
+  "Dtos": [
+    [
+      "> Dto(name: ada, age: 36) | Dto(name: ada, age: 37) | Dto(name: bob, age: 1) | Dto(name: ada, age: 36)",
+      "> true false true false",
+      "> idle | loading 40 | done ada/37"
+    ]
+  ],
+  "Editor": [
+    [
+      "> x 1 idle"
+    ],
+    [
+      "> x 2 loading 20"
+    ],
+    [
+      "> x 3 loading 30"
+    ],
+    [
+      "> x! 3 done x!/3"
+    ]
+  ]
+}

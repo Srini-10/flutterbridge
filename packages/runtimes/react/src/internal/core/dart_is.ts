@@ -5,7 +5,7 @@
 // by the class graph the Dart source declared, and two classes that reference each other never see an unevaluated one.
 
 /** Whether `value` is an instance of `type` (a class emitted by the generator), or of a subtype of it. */
-export function dartIs(value: unknown, type: unknown): boolean {
+export function dartIs<T>(value: unknown, type: abstract new (...args: never[]) => T): value is T {
   if (value === null || value === undefined || typeof value !== 'object') return false;
   const constructor = (value as { constructor?: { $isA?: (type: unknown) => boolean } }).constructor;
   return typeof constructor?.$isA === 'function' && constructor.$isA(type) === true;
@@ -19,4 +19,9 @@ export function dartIs(value: unknown, type: unknown): boolean {
 export function touchAfter<T>(signal: { touch(): void }, value: T): T {
   signal.touch();
   return value;
+}
+
+/** `x.runtimeType`: the class of the value (`Null` for null) — two values have the same `runtimeType` when their classes are the same. */
+export function dartRuntimeType(value: unknown): unknown {
+  return value === null || value === undefined ? null : (value as object).constructor;
 }

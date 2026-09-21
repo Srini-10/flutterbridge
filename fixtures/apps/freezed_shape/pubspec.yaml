@@ -1,0 +1,21 @@
+name: freezed_shape
+description: >-
+  M12 (ADR-0067): the code shape freezed generates — a mixin with abstract getters and a copyWith getter, a callable copy object, a
+  sentinel default, ==/hashCode/toString through identical/Object.hash/runtimeType, a redirecting const factory to a private
+  implementation, and sealed unions. Written by hand, without the package. Run by Flutter and as the generated component, compared.
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

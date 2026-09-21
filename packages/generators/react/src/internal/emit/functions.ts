@@ -18,7 +18,7 @@ import { emitExpression, isEligibleStructuralField, localBindingsIn, type EmitSc
 import { fileNameOf, identifierOf, ModuleBuilder } from './module.js';
 import { useRuntime, useRuntimeType } from './runtime.js';
 import { emitStatements } from './statement.js';
-import { paramListOf, typeTextOf } from './types.js';
+import { paramListOf, typeParamScope, typeTextOf } from './types.js';
 
 type Node = Record<string, unknown>;
 
@@ -451,6 +451,8 @@ interface PendingModule {
   readonly builder: ModuleBuilder;
   readonly specifier: string;
   readonly lines: string[];
+  /** Constants that construct a project class: emitted after the classes, which a `class` declaration (unlike a `function`) does not hoist. */
+  readonly late: string[];
 }
 
 /**
@@ -607,7 +609,7 @@ export function emitFunctionModules(
           `// Edits are lost on the next build. To change what this file says, change the Flutter source it ` +
           `came from, or attach an override to the anchor of the node that produced it.`,
       );
-      pending = { builder, specifier, lines: [] };
+      pending = { builder, specifier, lines: [], late: [] };
       modules.set(path, pending);
     }
     return pending;
@@ -960,7 +962,9 @@ export function emitFunctionModules(
         for (const request of fieldScratch.usedImports()) fieldPending.builder.use(request.from, request.name, { typeOnly: request.typeOnly });
         const baseName = typeof fn['name'] === 'string' ? fn['name'] : String(id);
         const localFieldName = fieldPending.builder.declare(staticEntry === undefined ? baseName : `${staticEntry.owner}_${baseName}`, id);
-        fieldPending.lines.push(
+        // A constant that constructs a project class must follow the class (a `class` declaration is not hoisted).
+        const constructsClass = /\$new\$|\.\$[A-Za-z_]\w*\$\w/.test(initializer);
+        (constructsClass ? fieldPending.late : fieldPending.lines).push(
           `/** \`${staticEntry === undefined ? baseName : `${staticEntry.owner}.${baseName}`}\`, from ${fieldFile}. An immutable Dart constant, emitted once at module level. */`,
           `export const ${localFieldName}${fieldType === 'unknown' ? '' : `: ${fieldType}`} = ${initializer};`,
           '',
@@ -1043,6 +1047,9 @@ export function emitFunctionModules(
         if (info === undefined) return undefined;
         return info.path === scratch.path ? info.name : scratch.use(info.module, info.name, { typeOnly: true });
       };
+      // A generic function's own type parameters (`T identity<T>(T v)`) are TypeScript type parameters, not `unknown`.
+      const fnTypeParams = Array.isArray(fn['typeParameters']) ? (fn['typeParameters'] as string[]) : [];
+      for (const tp of fnTypeParams) typeParamScope.add(tp);
       const returnType = isSoleExhaustiveSwitch
         ? `: ${typeTextOf(fn['returnType'] as Node | undefined, (name) => useRuntime(scratch, name), classOf)}`
         : '';
@@ -1054,11 +1061,12 @@ export function emitFunctionModules(
         (param) => emitExpression(param['defaultValue'] as Node, fnScope),
       )})${returnType}`;
       const lines = emitStatements(body, fnScope);
+      for (const tp of fnTypeParams) typeParamScope.delete(tp);
 
       if (hadError) continue; // try again next pass — a callee this pass hadn't resolved yet might resolve then
 
       for (const request of scratch.usedImports()) pending.builder.use(request.from, request.name, { typeOnly: request.typeOnly });
-      pending.lines.push(`export ${fn['isAsync'] === true ? 'async ' : ''}function ${localName}${signature} {`, ...lines.map((line: string) => `  ${line}`), '}', '');
+      pending.lines.push(`export ${fn['isAsync'] === true ? 'async ' : ''}function ${localName}${fnTypeParams.length === 0 ? '' : `<${fnTypeParams.join(', ')}>`}${signature} {`, ...lines.map((line: string) => `  ${line}`), '}', '');
 
       functionModules.set(id, { path: pending.builder.path, module: specifier, name: localName });
       remaining.delete(id);
@@ -1140,13 +1148,13 @@ export function emitFunctionModules(
   // Whatever is left after the fixed point stabilizes is genuinely unsupported (or depends, transitively,
   // on something that is) — each already reported its own diagnostic during its last, failed attempt.
   for (const [path, pending] of modules) {
-    if (pending.lines.length === 0) continue;
-    for (const line of pending.lines) pending.builder.line(line);
+    if (pending.lines.length === 0 && pending.late.length === 0) continue;
+    for (const line of [...pending.lines, ...pending.late]) pending.builder.line(line);
     modules.set(path, pending);
   }
 
   const files = [...modules.values()]
-    .filter((m) => m.lines.length > 0)
+    .filter((m) => m.lines.length > 0 || m.late.length > 0)
     .map((m) => ({ path: m.builder.path, contents: m.builder.toSource() }));
 
   return {

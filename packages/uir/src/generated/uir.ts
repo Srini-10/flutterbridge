@@ -14,7 +14,7 @@ import { createHash } from 'node:crypto';
 export const UIR_VERSION = '1.15.0' as const;
 
 /** A hash of the schema sources this module was generated from. */
-export const UIR_SCHEMA_HASH = 'ac84dbe2d06a807b' as const;
+export const UIR_SCHEMA_HASH = '965bee89a664a13a' as const;
 
 /** Node kind -> the fields of that node which hold `NodeId` references. */
 export const UIR_REFERENCE_FIELDS: Readonly<Record<string, readonly string[]>> = {
@@ -958,6 +958,8 @@ export interface TypeRef {
   readonly nullable?: boolean;
   /// The `logic.ClassDecl` this type refers to, when it is a class this compiler extracted its own declaration for (ADR-0034). Declaration provenance only — identical in kind to `PropertyAccess.target` (ADR-27) and member-read `target` (ADR-0033): it states a resolved fact about identity, never a claim that the generator can construct, or lower a member of, the referenced class. Absent for a primitive, an SDK type, `dynamic`/`Object`, an unresolved external type, or a generic instantiation (ADR-0034 §12).
   readonly target?: NodeId;
+  /// The type arguments of a project generic class type that has a `target` (`$DtoCopyWith<Dto>`), so the generator can emit them.
+  readonly typeArguments?: readonly TypeRef[];
 }
 
 /// A reference to a widget class — a framework widget, a package widget, or one the application declares.
@@ -1512,6 +1514,8 @@ export interface FunctionDecl {
   readonly returnType: TypeRef;
   /// Where the node came from.
   readonly span: SourceSpan;
+  /// The names of a generic function's or method's own type parameters (`T identity<T>(T v)`).
+  readonly typeParameters?: readonly string[];
 }
 
 /// An if statement.
@@ -3144,6 +3148,7 @@ export function parseTypeRef(value: unknown, path = 'TypeRef'): TypeRef {
     name: asString(req(o, 'name', path), `${path}.name`),
     ...(own(o, 'nullable') === undefined || own(o, 'nullable') === null ? {} : { nullable: asBool(own(o, 'nullable'), `${path}.nullable`) }),
     ...(own(o, 'target') === undefined || own(o, 'target') === null ? {} : { target: parseNodeId(own(o, 'target'), `${path}.target`) }),
+    ...(own(o, 'typeArguments') === undefined || own(o, 'typeArguments') === null ? {} : { typeArguments: asList(own(o, 'typeArguments'), `${path}.typeArguments`, (v, p) => parseTypeRef(v, p)) }),
   };
 }
 
@@ -3960,6 +3965,7 @@ export function parseFunctionDecl(value: unknown, path = 'FunctionDecl'): Functi
     ...(own(o, 'params') === undefined || own(o, 'params') === null ? {} : { params: asList(own(o, 'params'), `${path}.params`, (v, p) => parseParamDecl(v, p)) }),
     returnType: parseTypeRef(req(o, 'returnType', path), `${path}.returnType`),
     span: parseSourceSpan(req(o, 'span', path), `${path}.span`),
+    ...(own(o, 'typeParameters') === undefined || own(o, 'typeParameters') === null ? {} : { typeParameters: asList(own(o, 'typeParameters'), `${path}.typeParameters`, (v, p) => asString(v, p)) }),
   };
 }
 

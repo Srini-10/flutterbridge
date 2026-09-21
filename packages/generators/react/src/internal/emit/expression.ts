@@ -1781,6 +1781,11 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
     }
 
     case 'logic.PropertyAccess': {
+      // `x.runtimeType`, and the implicit `this.runtimeType`: the value's class (a runtime function, so it works on an `Object`-typed value).
+      if (node['property'] === 'runtimeType' && node['receiver'] !== undefined) {
+        const receiver = emitExpression(node['receiver'] as Node, scope);
+        return receiver === REFUSED ? REFUSED : `${scope.module.use(RUNTIME, 'dartRuntimeType')}(${receiver})`;
+      }
       // A member of a general class (M12): a real property or getter. Nothing to look up — TypeScript's own member access is the
       // lowering — and the M9-J refusal below is for classes this generator has no member model for.
       {
@@ -2369,7 +2374,17 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
           }
           const ordered = generalCallArguments(asArray(ctor['params']) as Node[], node, scope, `\`${String(decl['name'])}\``);
           if (ordered === undefined) return REFUSED;
-          return `${generalClassName(classId, scope)}.${ctorFactoryName(name, String(decl['name']))}(${ordered.join(', ')})`;
+          // The type arguments the construction names (`_$DtoCopyWithImpl<Dto>(…)`), so the value is the right instantiation.
+          const typeArguments = Array.isArray((node['type'] as Node | undefined)?.['typeArguments'])
+            ? (((node['type'] as Node)['typeArguments']) as Node[])
+            : [];
+          const applied =
+            typeArguments.length === 0
+              ? ''
+              : `<${typeArguments
+                  .map((a) => typeTextOf(a, (rt) => scope.module.use(RUNTIME, rt), (t) => (scope.generalClasses.has(t) ? generalClassName(t, scope) : undefined)))
+                  .join(', ')}>`;
+          return `${generalClassName(classId, scope)}.${ctorFactoryName(name, String(decl['name']))}${applied}(${ordered.join(', ')})`;
         }
       }
 
