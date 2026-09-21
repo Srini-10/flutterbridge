@@ -54,6 +54,7 @@ import { behaviourOf, methodOf } from './emit/lifecycle.js';
 /** The lifecycle methods the component emitter lowers (ADR-0052); any other, with behaviour, is refused. */
 const LOWERED_LIFECYCLE: ReadonlySet<string> = new Set(['initState', 'dispose', 'didUpdateWidget']);
 import { OWNER_LABEL } from './emit/unsupported.js';
+import { packageRefusal, unsupportedPackagesIn } from './emit/packages.js';
 import { emitTheme } from './emit/theme.js';
 
 type Node = Record<string, unknown>;
@@ -93,6 +94,17 @@ export function generateProject(context: GeneratorContext): GeneratorOutput {
         `so nothing is emitted.`,
     );
     return { files: [] };
+  }
+
+  // One summary per package the program uses and the generator has no adapter for (ADR-0073). The per-use refusals below say where; this
+  // says what the package is, and whether a browser equivalent exists — the root cause the uses share.
+  for (const { model, references } of unsupportedPackagesIn(context.program.nodes)) {
+    report(
+      GeneratorDiagnosticCode.UnsupportedPackage,
+      'warning',
+      `package \`${model.packages[0] as string}\` (${model.label}) is used in ${references} typed reference(s). ${packageRefusal(model)}` +
+        (model.workaround === undefined ? '' : ` For now: ${model.workaround}.`),
+    );
   }
 
   // A lifecycle method — `initState`, `dispose`, `didUpdateWidget`, `didChangeDependencies` — reaches UIR as a

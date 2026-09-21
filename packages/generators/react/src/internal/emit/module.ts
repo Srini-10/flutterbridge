@@ -74,7 +74,7 @@ const GENERATED_NAMES: ReadonlySet<string> = new Set([
   'useState', 'useRef', 'useEffect', 'useMemo', 'useCallback', 'useContext', 'useReducer',
   'alignItems', 'alignmentStyle', 'alphaBlend', 'aspectRatioStyle', 'batch', 'borderRadiusStyle', 'boxShapeStyle',
   'clipStyle', 'componentDefault', 'constraintStyle', 'controlStyle', 'createRouter', 'createTheme',
-  'createThemeSurface', 'cssColor', 'decorationStyle', 'defineStore', 'delay', 'derived', 'doubleToString',
+  'createThemeSurface', 'cssColor', 'decorationStyle', 'defineStore', 'delay', 'derived', 'dartToString', 'dartDebugPrint', 'doubleToString',
   'edgeInsetsStyle', 'effect', 'elevationOverlay', 'extent', 'flexDirection', 'formatColor', 'fractionStyle',
   'instantiateStore', 'intrinsicStyle', 'isRepresentableAlignment', 'justifyContent', 'mainAxisExtent',
   'mergeStyles', 'objectFit', 'overflowBoxStyle', 'parseColor', 'resolveImage', 'safeAreaStyle', 'shadowStyle',

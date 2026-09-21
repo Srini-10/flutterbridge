@@ -521,7 +521,7 @@ export { delay } from './internal/async/delay.js';
 //
 // Dart prints `1.0` where JavaScript prints `1`. The generator calls this on a string-interpolated value whose
 // static Dart type is `double`; see the file for why the runtime cannot decide that on its own.
-export { doubleToString } from './internal/format/dart_string.js';
+export { dartDebugPrint, dartToString, doubleToString, type PrintShape } from './internal/format/dart_string.js';
 
 // ── M11 (ADR-0050): Dart `int` semantics ──────────────────────────────────────────────────────────
 //

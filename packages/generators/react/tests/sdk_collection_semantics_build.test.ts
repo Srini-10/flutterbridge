@@ -35,19 +35,14 @@ const refuse = () => {
 };
 
 describe('what the collection policy still refuses, and what it now lowers (ADR-0049 D4, superseded for collections by ADR-0051)', () => {
-  it('refuses only the two interpolations; the four collection methods now lower', () => {
+  it('refuses only the `num` interpolation: a `List<int>` now prints as Dart does (ADR-0073), the four collection methods lower', () => {
     const { files, errors } = refuse();
-    expect(errors.map((d) => d.message.split(' ').slice(0, 3).join(' '))).toEqual([
-      'Interpolating a `List`',
-      'Interpolating a `num`',
-    ]);
+    expect(errors.map((d) => d.message.split(' ').slice(0, 3).join(' '))).toEqual(['Interpolating a `num`']);
     expect(files).toEqual([]);
   });
 
-  it('a List or num in an interpolation is refused, with what Dart and JavaScript each print', () => {
+  it('a num in an interpolation is refused, with what Dart prints for an int and a double', () => {
     const messages = refuse().errors.map((d) => d.message);
-    expect(messages.find((m) => m.startsWith('Interpolating a `List`'))).toContain('[1, 2]');
-    expect(messages.find((m) => m.startsWith('Interpolating a `List`'))).toContain('1,2');
     expect(messages.find((m) => m.startsWith('Interpolating a `num`'))).toContain('1.0');
   });
 });

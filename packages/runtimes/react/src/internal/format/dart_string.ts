@@ -26,3 +26,46 @@ export function doubleToString(value: number | null | undefined): string {
   const text = String(value);
   return Number.isInteger(value) && !text.includes('e') ? `${text}.0` : text;
 }
+
+/**
+ * How to print the elements of a collection, decided from its static type at compile time (ADR-0073): `'raw'` for a `String`,
+ * `int` or `bool` (JavaScript's `String(x)` is Dart's), `'double'` for a `double` (`1.0`, not `1`), or a nested collection.
+ * A `num`, an enum, a project class or `dynamic` element has no shape — the generator refuses it.
+ */
+export type PrintShape =
+  | 'raw'
+  | 'double'
+  | readonly ['list', PrintShape]
+  | readonly ['set', PrintShape]
+  | readonly ['map', PrintShape, PrintShape];
+
+/**
+ * Dart's `toString()` of a `List`, `Set` or `Map` (or a scalar), as `'${x}'` prints it: `[1, 2]`, `{a, b}`, `{a: 1}` — elements
+ * unquoted, separated by `", "`, in iteration order, `null` for an absent element.
+ *
+ * @param value - the value, or `null`/`undefined`.
+ * @param shape - what its elements are, from {@link PrintShape}.
+ */
+export function dartToString(value: unknown, shape: PrintShape): string {
+  if (value === null || value === undefined) return 'null';
+  if (shape === 'raw') return String(value);
+  if (shape === 'double') return doubleToString(value as number);
+  const [kind, first, second] = shape as readonly ['list' | 'set' | 'map', PrintShape, PrintShape?];
+  if (kind === 'map') {
+    const parts: string[] = [];
+    for (const [k, v] of value as Map<unknown, unknown>) parts.push(`${dartToString(k, first)}: ${dartToString(v, second as PrintShape)}`);
+    return `{${parts.join(', ')}}`;
+  }
+  const items = Array.from(value as Iterable<unknown>, (item) => dartToString(item, first));
+  return kind === 'set' ? `{${items.join(', ')}}` : `[${items.join(', ')}]`;
+}
+
+/**
+ * Flutter's `debugPrint(message, wrapWidth:)` and Dart's `print`: a line to the developer console. `wrapWidth` throttles line wrapping
+ * on a terminal and means nothing to a console; a `null` message prints `null`, as in Dart.
+ */
+export function dartDebugPrint(message?: string | null, wrapWidth?: number): void {
+  void wrapWidth;
+  // eslint-disable-next-line no-console -- printing to the console is this function's whole job.
+  console.debug(message === null || message === undefined ? 'null' : message);
+}

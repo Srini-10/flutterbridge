@@ -1579,6 +1579,11 @@ final class ExpressionExtractor {
       return null;
     }
     if (library.startsWith('package:')) {
+      // A top-level function or variable of the framework itself (`debugPrint`, a variable of function type in `package:flutter/src/foundation/print.dart`) is external like an
+      // SDK one; a package's own function is not (a project-visible name that merely shares a spelling must not be taken for it).
+      if ((unwrapped is TopLevelFunctionElement || unwrapped is TopLevelVariableElement) && library.startsWith('package:flutter/')) {
+        return library;
+      }
       return unwrapped is TopLevelVariableElement && unwrapped.isConst ? library : null;
     }
     final bool isStaticOrTopLevel = switch (unwrapped) {

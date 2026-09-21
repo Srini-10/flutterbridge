@@ -28,6 +28,7 @@ class Forms extends StatelessWidget {
         Text('> ${castInt(3)} ${castInt('x')} ${castInt(null)} ${castNullable(null)} ${castNullable('s')} ${castNullable(4)} ${castList(<int>[1, 2])} ${castList('no')}'),
         Text('> ${castDto(Dto(3))} ${castDto(null)} ${castDto('s')}'),
         Text('> ${roundings(2.5)} ${roundings(-2.5)} ${roundings(-0.4)} ${roundings(3.7)} ${roundings(-3.7)} ${roundings(0.5)}'),
+        Text('> ${printed()}'),
         Text('> ${(7.5).clamp(0, 5).toDouble()} ${(-3).clamp(0, 5).toInt()} ${(2.5).clamp(0, 5).toDouble()} ${(-4.5).abs()} ${(12).abs()}'),
       ],
     );

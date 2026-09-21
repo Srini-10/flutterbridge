@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 class Dto {
   Dto(this.id, {this.label = 'none'});
 
@@ -132,3 +133,16 @@ String castDto(Object? v) {
 
 /// `round` (half away from zero), `floor`, `ceil` and `truncate`/`toInt` of one double.
 String roundings(double v) => '${v.round()}/${v.floor()}/${v.ceil()}/${v.truncate()}/${v.toInt()}';
+
+/// Collections in interpolation: Dart's own text for lists, sets and maps of strings, ints, bools and doubles, nested and with nulls.
+String printed() {
+  debugPrint('printed');
+  final List<int> ints = <int>[1, 2, 3];
+  final List<double> doubles = <double>[1, 2.5, -0.0];
+  final List<String?> words = <String?>['a', null, 'b c'];
+  final Set<String> tags = <String>{'x', 'y'};
+  final Map<String, int> counts = <String, int>{'a': 1, 'b': 2};
+  final Map<String, List<double>> nested = <String, List<double>>{'k': <double>[1, 2.5]};
+  final List<List<int>> grid = <List<int>>[<int>[1, 2], <int>[]];
+  return '$ints $doubles $words $tags $counts $nested $grid ${<bool>[true, false]} ${<int>[]}';
+}

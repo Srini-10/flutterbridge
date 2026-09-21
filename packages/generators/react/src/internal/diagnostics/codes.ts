@@ -176,6 +176,11 @@ export const GeneratorDiagnosticCode = {
    * between them, `(value) => { const value = true; ... }`, `TS2300: Duplicate identifier 'value'`.
    */
   DuplicateLocalDeclaration: 'BRG3019',
+  /**
+   * The program uses a package the generator has no adapter for (ADR-0073): one summary per package, naming what it is for, whether a
+   * browser equivalent exists (`not implemented yet`) or not (`no browser equivalent`), and where the uses are refused.
+   */
+  UnsupportedPackage: 'BRG3020',
 } as const;
 
 /** A diagnostic code owned by the React generator. */

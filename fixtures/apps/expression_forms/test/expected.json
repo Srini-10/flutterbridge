@@ -11,6 +11,7 @@
       "> int 3 not int not int string null string s not string list 2 not list",
       "> dto 3 dto null not dto",
       "> 3/2/3/2/2 -3/-3/-2/-2/-2 0/-1/0/0/0 4/3/4/3/3 -4/-4/-3/-3/-3 1/0/1/0/0",
+      "> [1, 2, 3] [1.0, 2.5, -0.0] [a, null, b c] {x, y} {a: 1, b: 2} {k: [1.0, 2.5]} [[1, 2], []] [true, false] []",
       "> 5.0 0 2.5 4.5 12"
     ]
   ],

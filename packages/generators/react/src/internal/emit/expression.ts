@@ -30,6 +30,7 @@ import {
   lowerCollectionMethod,
   lowerCollectionProperty,
   lowerIndexWrite,
+  typeArgumentsOf,
   unsupportedCollectionMethod,
   type CollectionDeps,
 } from './collections.js';
@@ -50,6 +51,7 @@ import {
   type SdkDeps,
 } from './sdk_members.js';
 import { functionFailures } from './failures.js';
+import { packageRefusal, unsupportedPackageOf, type PackageModel } from './packages.js';
 import { typeTextOf } from './types.js';
 import { OWNER_LABEL, missingCapabilityOf, opaqueDetailOf, opaqueReasonSuffix } from './unsupported.js';
 
@@ -468,6 +470,23 @@ function isPureChain(node: Node | undefined): boolean {
 /** The generic-free name of a `dart:core` type: `Set<int>` → `Set`, `double?` → `double`. */
 function sdkBaseTypeOf(type: Node | undefined): string | undefined {
   return sdkTypeOf(type)?.split('<')[0];
+}
+
+/**
+ * The runtime `PrintShape` (as source text) for a `dart:core` type name — `List<double>` → `['list', 'double']` — or `undefined`
+ * when Dart's text for one of its elements cannot be reproduced from the static type.
+ */
+function printShapeOf(name: string | undefined): string | undefined {
+  if (name === undefined) return undefined;
+  const bare = name.endsWith('?') ? name.slice(0, -1) : name;
+  const base = bare.split('<')[0] as string;
+  if (base === 'String' || base === 'int' || base === 'bool') return `'raw'`;
+  if (base === 'double') return `'double'`;
+  const args = typeArgumentsOf(bare).map((argument) => printShapeOf(argument));
+  if (args.some((shape) => shape === undefined)) return undefined;
+  if ((base === 'List' || base === 'Set') && args.length === 1) return `['${base.toLowerCase()}', ${args[0] as string}]`;
+  if (base === 'Map' && args.length === 2) return `['map', ${args[0] as string}, ${args[1] as string}]`;
+  return undefined;
 }
 
 /** The `dart:core` collection types whose methods are *not* a JavaScript collection's methods. */
@@ -1368,6 +1387,7 @@ const SDK_COLLECTION_CONSTRUCTORS: Readonly<Record<string, { readonly helper: st
 const SDK_NAMED_PARAMS: Readonly<Record<string, readonly string[]>> = {
   'dart:core#int.parse': ['radix'],
   'dart:core#int.tryParse': ['radix'],
+  'package:flutter/src/foundation/print.dart#debugPrint': ['wrapWidth'],
 };
 
 const SDK_STATICS: Readonly<Record<string, (scope: EmitScope) => string>> = {
@@ -1378,6 +1398,8 @@ const SDK_STATICS: Readonly<Record<string, (scope: EmitScope) => string>> = {
   'dart:core#DateTime.parse': (scope) => `${scope.module.use(RUNTIME, 'DartDateTime')}.parse`,
   'dart:core#DateTime.tryParse': (scope) => `${scope.module.use(RUNTIME, 'DartDateTime')}.tryParse`,
   'dart:async#Future.wait': () => 'Promise.all',
+  // `debugPrint` writes a line to the developer console (`wrapWidth` is a terminal wrapping hint and means nothing to one).
+  'package:flutter/src/foundation/print.dart#debugPrint': (scope) => scope.module.use(RUNTIME, 'dartDebugPrint'),
   // `identical(a, b)` is reference identity for objects and value identity for numbers, `NaN` identical to itself and `0.0` not
   // to `-0.0` — exactly `Object.is`.
   'dart:core#identical': () => 'Object.is',
@@ -1625,10 +1647,18 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
           scope.report(
             GeneratorDiagnosticCode.UnsupportedCapability,
             'error',
-            `\`${fieldName}\` is a project-defined top-level variable this generator could not lower: only a ` +
-              '`final` or `const` one with a lowerable initializer becomes a module-level constant. A mutable ' +
-              'top-level variable would be state shared by every request in a server process (INV-19), so it is refused ' +
-              `rather than emitted. Owner: ${OWNER_LABEL['generator']}.`,
+            // Three distinct causes, kept apart (ADR-0073): a mutable variable (refused by design — state shared by every request in a
+            // server process, INV-19), a `final`/`const` whose initializer builds something the generator cannot (usually a package
+            // object: a Riverpod provider, a `Dio`), and the rest.
+            declaration['isFinal'] === true || declaration['isConst'] === true
+              ? `\`${fieldName}\` is a top-level \`final\`/\`const\` (a module-level constant), but its initializer could not be lowered — ` +
+                'the diagnostic on the initializer says why.' +
+                (unsupportedPackageOf((declaration['type'] as Node | undefined)?.['library']) === undefined
+                  ? ''
+                  : ` ${packageRefusal(unsupportedPackageOf((declaration['type'] as Node | undefined)?.['library']) as PackageModel)}`)
+              : `\`${fieldName}\` is a mutable top-level variable, which is refused rather than emitted: it would be state shared by ` +
+                'every request in a server process (INV-19). Make it `final`/`const`, or hold the state in a component or a store. ' +
+                `Owner: ${OWNER_LABEL['generator']}.`,
             idOf(node),
           );
           return REFUSED;
@@ -1712,12 +1742,20 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
         return REFUSED;
       }
 
+      const packageModel = unsupportedPackageOf((node['type'] as Node | undefined)?.['library']) ?? unsupportedPackageOf(node['library']);
       scope.report(
         GeneratorDiagnosticCode.UnresolvedReference,
         'error',
         typeof name === 'string'
-          ? `\`${name}\` is not declared in this program, so there is nothing to emit for it. It needs an ` +
-            `override, or a pass that models what it means.`
+          ? `\`${name}\` is not declared in this program, so there is nothing to emit for it. ` +
+            (packageModel !== undefined
+              ? packageRefusal(packageModel)
+              : name === 'context' && String((node['type'] as Node | undefined)?.['name'] ?? '') === 'BuildContext'
+                ? 'It is a `BuildContext`, which a generated component does not have: a use of `Theme.of(context)`, ' +
+                  '`MediaQuery.of(context)`, an `InheritedWidget`, or a design-system extension on `BuildContext` ' +
+                  '(`context.colors`, `context.palette`, built on `Theme.of(this).extension<T>()`) needs the theme-extension ' +
+                  'model, which is not built (ADR-0073: not implemented yet — a browser has CSS variables for it).'
+                : 'It needs an override, or a pass that models what it means.')
           : 'a reference names neither a declaration in the program nor a name',
         idOf(node),
       );
@@ -2044,7 +2082,10 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
           `\`${property}\` reads a member of \`${receiverTypeName}\`, a class this generator has no member ` +
             `model for. FlutterBridge does not yet lower a project-defined or external-package class's own ` +
             `fields, getters or methods — this refuses reading a member of \`${receiverTypeName}\`, not ` +
-            `carrying a \`${receiverTypeName}\` value, which is unaffected. Owner: ${OWNER_LABEL['generator']}.`,
+            `carrying a \`${receiverTypeName}\` value, which is unaffected. Owner: ${OWNER_LABEL['generator']}.` +
+            (unsupportedPackageOf(receiverTypeForMember?.['library']) === undefined
+              ? ''
+              : ` ${packageRefusal(unsupportedPackageOf(receiverTypeForMember?.['library']) as PackageModel)}`),
           idOf(node),
         );
         return REFUSED;
@@ -2750,6 +2791,12 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
         const inner = emitExpression(item, scope);
         if (inner !== REFUSED && base === 'double') {
           return `\${${scope.module.use(RUNTIME, 'doubleToString')}(${inner})}`;
+        }
+        // A `List`/`Set`/`Map` whose element types are all `String`/`int`/`bool`/`double` (or such collections) prints exactly
+        // as Dart does, from the static type (ADR-0073); anything else — a `num`, an enum, a class, `dynamic` — has no shape.
+        const shape = base !== undefined && SDK_COLLECTIONS.has(base) ? printShapeOf(sdkTypeOf(item['type'] as Node | undefined)) : undefined;
+        if (inner !== REFUSED && shape !== undefined) {
+          return `\${${scope.module.use(RUNTIME, 'dartToString')}(${inner}, ${shape})}`;
         }
         if (inner !== REFUSED && (base === 'num' || (base !== undefined && SDK_COLLECTIONS.has(base)))) {
           scope.report(
