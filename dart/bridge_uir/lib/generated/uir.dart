@@ -31,7 +31,7 @@ const String uirVersion = '1.15.0';
 /// A hash of the schema sources this library was generated from.
 ///
 /// Stamped into every emitted manifest: a UIR document always says which schema produced it.
-const String uirSchemaHash = '965bee89a664a13a';
+const String uirSchemaHash = '0b10ab32bd8ab149';
 
 /// Node kind -> the fields of that node which hold `NodeId` references.
 ///
@@ -69,7 +69,7 @@ const Map<String, List<String>> uirReferenceFields = <String, List<String>>{
   'logic.ListLit': <String>['id'],
   'logic.Lit': <String>['id'],
   'logic.MapLit': <String>['id'],
-  'logic.MethodCall': <String>['id', 'target'],
+  'logic.MethodCall': <String>['extensionTarget', 'id', 'target'],
   'logic.Navigate': <String>['dismisses', 'id', 'transition'],
   'logic.New': <String>['id'],
   'logic.NullCheck': <String>['id'],
@@ -78,7 +78,7 @@ const Map<String, List<String>> uirReferenceFields = <String, List<String>>{
   'logic.OpaqueStmt': <String>['id'],
   'bind.Param': <String>['id', 'target'],
   'logic.Pattern': <String>['id'],
-  'logic.PropertyAccess': <String>['id', 'target'],
+  'logic.PropertyAccess': <String>['extensionTarget', 'id', 'target'],
   'logic.Ref': <String>['id', 'target'],
   'logic.Rethrow': <String>['id'],
   'logic.Return': <String>['id'],
@@ -5428,6 +5428,7 @@ final class FunctionDecl extends Decl {
     this.anchor,
     this.body,
     this.ext,
+    this.extensionOn,
     this.isAbstract,
     this.isAsync,
     this.isGetter,
@@ -5449,6 +5450,7 @@ final class FunctionDecl extends Decl {
       anchor: json['anchor'] == null ? null : _asString(json['anchor'], '$path.anchor'),
       body: json['body'] == null ? null : _asList<Stmt>(json['body'], '$path.body', Stmt.fromJson),
       ext: json['ext'] == null ? null : _asMap<Object?>(json['ext'], '$path.ext', (Object? v, String p) => v),
+      extensionOn: json['extensionOn'] == null ? null : TypeRef.fromJson(json['extensionOn'], '$path.extensionOn'),
       id: _asString(_req(json, 'id', path), '$path.id'),
       isAbstract: json['isAbstract'] == null ? null : _asBool(json['isAbstract'], '$path.isAbstract'),
       isAsync: json['isAsync'] == null ? null : _asBool(json['isAsync'], '$path.isAsync'),
@@ -5472,6 +5474,9 @@ final class FunctionDecl extends Decl {
 
   /// Plugin extension data, namespaced `x-<plugin>`. Core passes round-trip it untouched (Spec §2.6).
   final Map<String, Object?>? ext;
+
+  /// Set for an extension member (ADR-0068): the type the extension extends. The member takes it as its receiver (`this`); a call site names the member with `extensionTarget`.
+  final TypeRef? extensionOn;
 
   /// The node's stable, content-addressed identity.
   final NodeId id;
@@ -5519,6 +5524,7 @@ final class FunctionDecl extends Decl {
     'anchor': anchor,
     'body': body?.map((Stmt v) => v.toJson()).toList(),
     'ext': ext,
+    'extensionOn': extensionOn?.toJson(),
     'id': id,
     'isAbstract': isAbstract,
     'isAsync': isAsync,
@@ -5542,6 +5548,7 @@ final class FunctionDecl extends Decl {
     Anchor? anchor,
     List<Stmt>? body,
     Map<String, Object?>? ext,
+    TypeRef? extensionOn,
     NodeId? id,
     bool? isAbstract,
     bool? isAsync,
@@ -5559,6 +5566,7 @@ final class FunctionDecl extends Decl {
       anchor: anchor ?? this.anchor,
       body: body ?? this.body,
       ext: ext ?? this.ext,
+      extensionOn: extensionOn ?? this.extensionOn,
       id: id ?? this.id,
       isAbstract: isAbstract ?? this.isAbstract,
       isAsync: isAsync ?? this.isAsync,
@@ -5584,6 +5592,7 @@ final class FunctionDecl extends Decl {
         _equality.equals(other.anchor, anchor) &&
         _equality.equals(other.body, body) &&
         _equality.equals(other.ext, ext) &&
+        _equality.equals(other.extensionOn, extensionOn) &&
         _equality.equals(other.id, id) &&
         _equality.equals(other.isAbstract, isAbstract) &&
         _equality.equals(other.isAsync, isAsync) &&
@@ -5604,6 +5613,7 @@ final class FunctionDecl extends Decl {
     _equality.hash(anchor),
     _equality.hash(body),
     _equality.hash(ext),
+    _equality.hash(extensionOn),
     _equality.hash(id),
     _equality.hash(isAbstract),
     _equality.hash(isAsync),
@@ -6630,6 +6640,7 @@ final class MethodCall extends Expr {
     this.anchor,
     this.args,
     this.ext,
+    this.extensionTarget,
     this.namedArgs,
     this.target,
   });
@@ -6645,6 +6656,7 @@ final class MethodCall extends Expr {
       anchor: json['anchor'] == null ? null : _asString(json['anchor'], '$path.anchor'),
       args: json['args'] == null ? null : _asList<Expr>(json['args'], '$path.args', Expr.fromJson),
       ext: json['ext'] == null ? null : _asMap<Object?>(json['ext'], '$path.ext', (Object? v, String p) => v),
+      extensionTarget: json['extensionTarget'] == null ? null : _asString(json['extensionTarget'], '$path.extensionTarget'),
       id: _asString(_req(json, 'id', path), '$path.id'),
       method: _asString(_req(json, 'method', path), '$path.method'),
       namedArgs: json['namedArgs'] == null ? null : _asMap<Expr>(json['namedArgs'], '$path.namedArgs', Expr.fromJson),
@@ -6663,6 +6675,9 @@ final class MethodCall extends Expr {
 
   /// Plugin extension data, namespaced `x-<plugin>`. Core passes round-trip it untouched (Spec §2.6).
   final Map<String, Object?>? ext;
+
+  /// The extension member (`logic.FunctionDecl` with `extensionOn`) this call or access resolves to (ADR-0068). The receiver is the extension's `this`.
+  final NodeId? extensionTarget;
 
   /// The node's stable, content-addressed identity.
   final NodeId id;
@@ -6695,6 +6710,7 @@ final class MethodCall extends Expr {
     'anchor': anchor,
     'args': args?.map((Expr v) => v.toJson()).toList(),
     'ext': ext,
+    'extensionTarget': extensionTarget,
     'id': id,
     'kind': 'logic.MethodCall',
     'method': method,
@@ -6713,6 +6729,7 @@ final class MethodCall extends Expr {
     Anchor? anchor,
     List<Expr>? args,
     Map<String, Object?>? ext,
+    NodeId? extensionTarget,
     NodeId? id,
     String? method,
     Map<String, Expr>? namedArgs,
@@ -6725,6 +6742,7 @@ final class MethodCall extends Expr {
       anchor: anchor ?? this.anchor,
       args: args ?? this.args,
       ext: ext ?? this.ext,
+      extensionTarget: extensionTarget ?? this.extensionTarget,
       id: id ?? this.id,
       method: method ?? this.method,
       namedArgs: namedArgs ?? this.namedArgs,
@@ -6745,6 +6763,7 @@ final class MethodCall extends Expr {
         _equality.equals(other.anchor, anchor) &&
         _equality.equals(other.args, args) &&
         _equality.equals(other.ext, ext) &&
+        _equality.equals(other.extensionTarget, extensionTarget) &&
         _equality.equals(other.id, id) &&
         _equality.equals(other.method, method) &&
         _equality.equals(other.namedArgs, namedArgs) &&
@@ -6760,6 +6779,7 @@ final class MethodCall extends Expr {
     _equality.hash(anchor),
     _equality.hash(args),
     _equality.hash(ext),
+    _equality.hash(extensionTarget),
     _equality.hash(id),
     _equality.hash(method),
     _equality.hash(namedArgs),
@@ -7853,6 +7873,7 @@ final class PropertyAccess extends Expr {
     required this.type,
     this.anchor,
     this.ext,
+    this.extensionTarget,
     this.target,
   });
 
@@ -7866,6 +7887,7 @@ final class PropertyAccess extends Expr {
     return PropertyAccess(
       anchor: json['anchor'] == null ? null : _asString(json['anchor'], '$path.anchor'),
       ext: json['ext'] == null ? null : _asMap<Object?>(json['ext'], '$path.ext', (Object? v, String p) => v),
+      extensionTarget: json['extensionTarget'] == null ? null : _asString(json['extensionTarget'], '$path.extensionTarget'),
       id: _asString(_req(json, 'id', path), '$path.id'),
       property: _asString(_req(json, 'property', path), '$path.property'),
       receiver: Expr.fromJson(_req(json, 'receiver', path), '$path.receiver'),
@@ -7880,6 +7902,9 @@ final class PropertyAccess extends Expr {
 
   /// Plugin extension data, namespaced `x-<plugin>`. Core passes round-trip it untouched (Spec §2.6).
   final Map<String, Object?>? ext;
+
+  /// The extension member (`logic.FunctionDecl` with `extensionOn`) this call or access resolves to (ADR-0068). The receiver is the extension's `this`.
+  final NodeId? extensionTarget;
 
   /// The node's stable, content-addressed identity.
   final NodeId id;
@@ -7908,6 +7933,7 @@ final class PropertyAccess extends Expr {
   Map<String, Object?> toJson() => canonicalJson(<String, Object?>{
     'anchor': anchor,
     'ext': ext,
+    'extensionTarget': extensionTarget,
     'id': id,
     'kind': 'logic.PropertyAccess',
     'property': property,
@@ -7924,6 +7950,7 @@ final class PropertyAccess extends Expr {
   PropertyAccess copyWith({
     Anchor? anchor,
     Map<String, Object?>? ext,
+    NodeId? extensionTarget,
     NodeId? id,
     String? property,
     Expr? receiver,
@@ -7934,6 +7961,7 @@ final class PropertyAccess extends Expr {
     return PropertyAccess(
       anchor: anchor ?? this.anchor,
       ext: ext ?? this.ext,
+      extensionTarget: extensionTarget ?? this.extensionTarget,
       id: id ?? this.id,
       property: property ?? this.property,
       receiver: receiver ?? this.receiver,
@@ -7952,6 +7980,7 @@ final class PropertyAccess extends Expr {
     return other is PropertyAccess &&
         _equality.equals(other.anchor, anchor) &&
         _equality.equals(other.ext, ext) &&
+        _equality.equals(other.extensionTarget, extensionTarget) &&
         _equality.equals(other.id, id) &&
         _equality.equals(other.property, property) &&
         _equality.equals(other.receiver, receiver) &&
@@ -7965,6 +7994,7 @@ final class PropertyAccess extends Expr {
     'PropertyAccess',
     _equality.hash(anchor),
     _equality.hash(ext),
+    _equality.hash(extensionTarget),
     _equality.hash(id),
     _equality.hash(property),
     _equality.hash(receiver),

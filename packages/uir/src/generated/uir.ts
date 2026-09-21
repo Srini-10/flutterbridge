@@ -14,7 +14,7 @@ import { createHash } from 'node:crypto';
 export const UIR_VERSION = '1.15.0' as const;
 
 /** A hash of the schema sources this module was generated from. */
-export const UIR_SCHEMA_HASH = '965bee89a664a13a' as const;
+export const UIR_SCHEMA_HASH = '0b10ab32bd8ab149' as const;
 
 /** Node kind -> the fields of that node which hold `NodeId` references. */
 export const UIR_REFERENCE_FIELDS: Readonly<Record<string, readonly string[]>> = {
@@ -49,7 +49,7 @@ export const UIR_REFERENCE_FIELDS: Readonly<Record<string, readonly string[]>> =
   'logic.ListLit': ['id'],
   'logic.Lit': ['id'],
   'logic.MapLit': ['id'],
-  'logic.MethodCall': ['id', 'target'],
+  'logic.MethodCall': ['extensionTarget', 'id', 'target'],
   'logic.Navigate': ['dismisses', 'id', 'transition'],
   'logic.New': ['id'],
   'logic.NullCheck': ['id'],
@@ -58,7 +58,7 @@ export const UIR_REFERENCE_FIELDS: Readonly<Record<string, readonly string[]>> =
   'logic.OpaqueStmt': ['id'],
   'bind.Param': ['id', 'target'],
   'logic.Pattern': ['id'],
-  'logic.PropertyAccess': ['id', 'target'],
+  'logic.PropertyAccess': ['extensionTarget', 'id', 'target'],
   'logic.Ref': ['id', 'target'],
   'logic.Rethrow': ['id'],
   'logic.Return': ['id'],
@@ -1490,6 +1490,8 @@ export interface FunctionDecl {
   readonly body?: readonly Stmt[];
   /// Plugin extension data, namespaced `x-<plugin>`. Core passes round-trip it untouched (Spec §2.6).
   readonly ext?: Readonly<Record<string, unknown>>;
+  /// Set for an extension member (ADR-0068): the type the extension extends. The member takes it as its receiver (`this`); a call site names the member with `extensionTarget`.
+  readonly extensionOn?: TypeRef;
   /// The node's stable, content-addressed identity.
   readonly id: NodeId;
   /// Whether the member has no body (`abstract` or an interface's). Present only when true (M12).
@@ -1692,6 +1694,8 @@ export interface MethodCall {
   readonly args?: readonly Expr[];
   /// Plugin extension data, namespaced `x-<plugin>`. Core passes round-trip it untouched (Spec §2.6).
   readonly ext?: Readonly<Record<string, unknown>>;
+  /// The extension member (`logic.FunctionDecl` with `extensionOn`) this call or access resolves to (ADR-0068). The receiver is the extension's `this`.
+  readonly extensionTarget?: NodeId;
   /// The node's stable, content-addressed identity.
   readonly id: NodeId;
   /// Discriminant.
@@ -1910,6 +1914,8 @@ export interface PropertyAccess {
   readonly anchor?: Anchor;
   /// Plugin extension data, namespaced `x-<plugin>`. Core passes round-trip it untouched (Spec §2.6).
   readonly ext?: Readonly<Record<string, unknown>>;
+  /// The extension member (`logic.FunctionDecl` with `extensionOn`) this call or access resolves to (ADR-0068). The receiver is the extension's `this`.
+  readonly extensionTarget?: NodeId;
   /// The node's stable, content-addressed identity.
   readonly id: NodeId;
   /// Discriminant.
@@ -3953,6 +3959,7 @@ export function parseFunctionDecl(value: unknown, path = 'FunctionDecl'): Functi
     ...(own(o, 'anchor') === undefined || own(o, 'anchor') === null ? {} : { anchor: parseAnchor(own(o, 'anchor'), `${path}.anchor`) }),
     ...(own(o, 'body') === undefined || own(o, 'body') === null ? {} : { body: asList(own(o, 'body'), `${path}.body`, (v, p) => parseStmt(v, p)) }),
     ...(own(o, 'ext') === undefined || own(o, 'ext') === null ? {} : { ext: asMap(own(o, 'ext'), `${path}.ext`, (v) => v) }),
+    ...(own(o, 'extensionOn') === undefined || own(o, 'extensionOn') === null ? {} : { extensionOn: parseTypeRef(own(o, 'extensionOn'), `${path}.extensionOn`) }),
     id: parseNodeId(req(o, 'id', path), `${path}.id`),
     ...(own(o, 'isAbstract') === undefined || own(o, 'isAbstract') === null ? {} : { isAbstract: asBool(own(o, 'isAbstract'), `${path}.isAbstract`) }),
     ...(own(o, 'isAsync') === undefined || own(o, 'isAsync') === null ? {} : { isAsync: asBool(own(o, 'isAsync'), `${path}.isAsync`) }),
@@ -4259,6 +4266,7 @@ export function parseMethodCall(value: unknown, path = 'MethodCall'): MethodCall
     ...(own(o, 'anchor') === undefined || own(o, 'anchor') === null ? {} : { anchor: parseAnchor(own(o, 'anchor'), `${path}.anchor`) }),
     ...(own(o, 'args') === undefined || own(o, 'args') === null ? {} : { args: asList(own(o, 'args'), `${path}.args`, (v, p) => parseExpr(v, p)) }),
     ...(own(o, 'ext') === undefined || own(o, 'ext') === null ? {} : { ext: asMap(own(o, 'ext'), `${path}.ext`, (v) => v) }),
+    ...(own(o, 'extensionTarget') === undefined || own(o, 'extensionTarget') === null ? {} : { extensionTarget: parseNodeId(own(o, 'extensionTarget'), `${path}.extensionTarget`) }),
     id: parseNodeId(req(o, 'id', path), `${path}.id`),
     kind: 'logic.MethodCall',
     method: asString(req(o, 'method', path), `${path}.method`),
@@ -4565,6 +4573,7 @@ export function parsePropertyAccess(value: unknown, path = 'PropertyAccess'): Pr
   return {
     ...(own(o, 'anchor') === undefined || own(o, 'anchor') === null ? {} : { anchor: parseAnchor(own(o, 'anchor'), `${path}.anchor`) }),
     ...(own(o, 'ext') === undefined || own(o, 'ext') === null ? {} : { ext: asMap(own(o, 'ext'), `${path}.ext`, (v) => v) }),
+    ...(own(o, 'extensionTarget') === undefined || own(o, 'extensionTarget') === null ? {} : { extensionTarget: parseNodeId(own(o, 'extensionTarget'), `${path}.extensionTarget`) }),
     id: parseNodeId(req(o, 'id', path), `${path}.id`),
     kind: 'logic.PropertyAccess',
     property: asString(req(o, 'property', path), `${path}.property`),

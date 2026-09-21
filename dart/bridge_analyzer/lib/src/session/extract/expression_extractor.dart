@@ -217,6 +217,26 @@ final class ExpressionExtractor {
         if (generalClassBody && scope.lookup(node.name) == null && _isInstanceMember(node.element)) {
           return _implicitThisAccess(node, node.name, node.element, _typeOfIdentifier(node));
         }
+        // A bare use of another member of the same extension (`plus1` inside `describe`): `this.plus1` through the extension.
+        final String? bareExtension = generalClassBody && scope.lookup(node.name) == null ? _extensionTarget(node.element) : null;
+        if (bareExtension case final String extension) {
+          return RawNode(
+            kind: 'logic.PropertyAccess',
+            span: out.span(node),
+            fields: <String, RawValue>{
+              'receiver': RawChild(
+                RawNode(
+                  kind: 'logic.Ref',
+                  span: out.span(node),
+                  fields: <String, RawValue>{'name': const RawLiteral('this'), 'type': out.typeRef(_extensionReceiverType(node.element), at: node)},
+                ),
+              ),
+              'property': RawLiteral(node.name),
+              'extensionTarget': RawRef(extension),
+              'type': out.typeRef(_typeOfIdentifier(node), at: node),
+            },
+          );
+        }
         return _reference(
           node,
           node.name,
@@ -286,6 +306,7 @@ final class ExpressionExtractor {
             // expression, e.g. `this.count`/`foo().count` — see the sibling case below). `node.prefix` is
             // never `this` here (a `ThisExpression` is never parsed as a `PrefixedIdentifier`'s own
             // prefix), so every reach of `_externalFieldTarget` from this case is a genuine external read.
+            if (_extensionTarget(node.identifier.element) case final String extension) 'extensionTarget': RawRef(extension),
             if (_storeMemberTarget(node.prefix.staticType, node.identifier.element) ??
                     _externalFieldTarget(node.prefix.staticType, node.identifier.element) ??
                     _externalGetterTarget(node.prefix.staticType, node.identifier.element)
@@ -703,6 +724,50 @@ final class ExpressionExtractor {
       ),
     ],
   ];
+
+  /// The type an extension member's `this` has (the extension's extended type).
+  static DartType? _extensionReceiverType(Element? element) {
+    final Element? unwrapped = element is GetterElement && element.isOriginVariable ? element.variable : element;
+    final Element? owner = unwrapped?.enclosingElement;
+    return owner is ExtensionElement ? owner.extendedType : null;
+  }
+
+  /// The element a write to [node] resolves to (`x.prop = v` resolves to the setter, not the getter).
+  static Element? _writeElementOf(Expression node) {
+    final AstNode? parent = node.parent;
+    if (parent is AssignmentExpression && parent.leftHandSide == node) {
+      return parent.writeElement;
+    }
+    return switch (node) {
+      PrefixedIdentifier() => node.identifier.element,
+      PropertyAccess() => node.propertyName.element,
+      _ => null,
+    };
+  }
+
+  /// The symbol of the extension member [element] resolves to, or null when it is not one (M12, ADR-0068).
+  String? _extensionTarget(Element? element) {
+    if (element == null) {
+      return null;
+    }
+    final Element unwrapped = element is GetterElement && element.isOriginVariable ? element.variable : element;
+    final Element? owner = unwrapped.enclosingElement;
+    if (owner is! ExtensionElement || (unwrapped is ExecutableElement && unwrapped.isStatic)) {
+      return null;
+    }
+    final String? name = unwrapped.name;
+    if (name == null) {
+      return null;
+    }
+    return Symbols.functionIn(
+      owner.library.identifier,
+      element is SetterElement ? '$name=' : name,
+      owner: extensionOwnerName(owner.name, owner.firstFragment.offset),
+      packageName: out.packageName,
+      localPackages: out.localPackageNames,
+      extractedDependencyFiles: out.extractedDependencyFiles,
+    );
+  }
 
   /// A constructor used as a value, as the lambda that calls it: `Dto.fromJson` is `(json) => Dto.fromJson(json)`. The
   /// parameters are the constructor's own (positional and named, optional or required), so the call sites of the value
@@ -1261,6 +1326,7 @@ final class ExpressionExtractor {
           fields: <String, RawValue>{
             'receiver': RawChild(extract(node.prefix, scope)),
             'property': RawLiteral(node.identifier.name),
+            if (_extensionTarget(_writeElementOf(node)) case final String extension) 'extensionTarget': RawRef(extension),
             'type': out.typeRef(writeType, at: node),
           },
         );
@@ -1271,6 +1337,7 @@ final class ExpressionExtractor {
           fields: <String, RawValue>{
             'receiver': RawChild(extract(node.realTarget, scope)),
             'property': RawLiteral(node.propertyName.name),
+            if (_extensionTarget(_writeElementOf(node)) case final String extension) 'extensionTarget': RawRef(extension),
             'type': out.typeRef(writeType, at: node),
           },
         );
@@ -1663,6 +1730,7 @@ final class ExpressionExtractor {
           // directly — never the broader `_instanceMemberTarget` unguarded, which would reopen exactly
           // the hazard M9-J's own refusal exists to prevent for every member shape ADR-0035 does not
           // explicitly prove safe.
+          if (_extensionTarget(node.propertyName.element) case final String extension) 'extensionTarget': RawRef(extension),
           if (_storeMemberTarget(target.staticType, node.propertyName.element) ??
                   (target is ThisExpression
                       ? _internalMemberTarget(node.propertyName.element)
@@ -1854,6 +1922,30 @@ final class ExpressionExtractor {
       );
     }
 
+    final String? bareCall = target == null && generalClassBody ? _extensionTarget(node.methodName.element) : null;
+    if (bareCall case final String extension) {
+      return RawNode(
+        kind: 'logic.MethodCall',
+        span: out.span(node),
+        fields: <String, RawValue>{
+          'receiver': RawChild(
+            RawNode(
+              kind: 'logic.Ref',
+              span: out.span(node),
+              fields: <String, RawValue>{
+                'name': const RawLiteral('this'),
+                'type': out.typeRef(_extensionReceiverType(node.methodName.element), at: node),
+              },
+            ),
+          ),
+          'method': RawLiteral(node.methodName.name),
+          'extensionTarget': RawRef(extension),
+          ..._arguments(node.argumentList, scope),
+          'type': out.typeRef(node.staticType, at: node),
+        },
+      );
+    }
+
     if (target == null) {
       final DartType? thisType = _thisType(node.methodName.element);
       final String? methodTarget = _externalMethodTarget(thisType, node.methodName.element, awaited: awaited);
@@ -1956,6 +2048,7 @@ final class ExpressionExtractor {
           // `_externalMethodTarget` gate (M10-B) — `_receiverTypeFor` supplies `this`'s own reconstructed
           // type where an ordinary expression would supply its own `staticType`, exactly as the sibling
           // `PropertyAccess` case above already does for fields/getters.
+          if (_extensionTarget(node.methodName.element) case final String extension) 'extensionTarget': RawRef(extension),
           if (_storeMemberTarget(target.staticType, node.methodName.element) ??
                   _externalMethodTarget(
                     _receiverTypeFor(target, node.methodName.element),
@@ -3063,3 +3156,7 @@ typedef ConstructionHook = void Function(InstanceCreationExpression node, Scope 
 /// imports this one (for the leaf expressions inside a widget's own properties), so this extractor
 /// cannot import it back.
 typedef WidgetContentHook = RawNode Function(Expression widget, Scope scope);
+
+/// The owner name an extension's members are keyed by: its name, or — for `extension on T` — a name made of its own offset, which the
+/// declaration and every reference to a member agree on (`fragment.offset`).
+String extensionOwnerName(String? name, int offset) => name ?? 'ext$offset';

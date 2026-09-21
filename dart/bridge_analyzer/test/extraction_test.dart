@@ -893,14 +893,16 @@ class Uses extends Base with Loggable { String get twice => 'x'; }
       expect(applied['target'], mixin['id']);
     });
 
-    test('an extension survives too', () async {
+    test('an extension is modelled (ADR-0068); a static extension member stays opaque, by name', () async {
       final Extracted app = await extract('''
 extension Doubling on int {
   int get twice => this * 2;
+  static int one() => 1;
 }
 ''');
 
-      expect(app.only('logic.OpaqueDecl')['reason'], 'extension');
+      expect(app.only('logic.FunctionDecl')['extensionOn'], isNotNull);
+      expect(app.only('logic.OpaqueDecl')['reason'], 'static extension member');
     });
 
     test('enums, typedefs and functions are modelled, not opaque', () async {
@@ -10490,6 +10492,42 @@ String l(List<int> xs) => switch (xs) { [] => 'empty', [var a, ...] => 'a$a', _ 
       final Map<String, dynamic> firstCase = (statement['cases'] as List<dynamic>).first as Map<String, dynamic>;
       expect(firstCase.containsKey('pattern'), isTrue);
       expect(firstCase.containsKey('guard'), isTrue);
+    });
+  });
+
+  group('extension members (M13, ADR-0068)', () {
+    test('an extension member is a function with extensionOn; calls, getters, setters and bare uses name it with extensionTarget', () async {
+      final Extracted e = await extract(r'''
+extension S on String { int twice() => length * 2; String get up => toUpperCase(); set up(String v) {} String both() => up + '${twice()}'; }
+extension on int { int get d => this * 2; }
+class Box { int n = 0; }
+extension B on Box { int get p => n; }
+int f(String s, Box b) { b.p; return s.twice() + 1.d + s.up.length; }
+''');
+      final List<Map<String, dynamic>> members = e.ofKind('logic.FunctionDecl').where((Map<String, dynamic> d) => d.containsKey('extensionOn')).toList();
+      expect(members.map((Map<String, dynamic> d) => d['name']), containsAll(<String>['S_twice', 'S_up', 'S_set_up', 'S_both', 'B_p']));
+      expect(members.any((Map<String, dynamic> d) => (d['name'] as String).startsWith('ext') && (d['name'] as String).endsWith('_d')), isTrue, reason: 'an anonymous extension is keyed by its offset');
+      final Set<String> ids = members.map((Map<String, dynamic> d) => d['id'] as String).toSet();
+      final Map<String, dynamic> f = e.ofKind('logic.FunctionDecl').singleWhere((Map<String, dynamic> d) => d['name'] == 'f');
+      int uses = 0;
+      void walk(Object? v) {
+        if (v is Map<String, dynamic>) {
+          if (v['extensionTarget'] != null) {
+            expect(ids, contains(v['extensionTarget']));
+            uses++;
+          }
+          v.values.forEach(walk);
+        } else if (v is List) {
+          v.forEach(walk);
+        }
+      }
+      walk(f);
+      expect(uses, 4, reason: 'twice(), 1.d, s.up and b.p');
+      final Map<String, dynamic> both = members.singleWhere((Map<String, dynamic> d) => d['name'] == 'S_both');
+      uses = 0;
+      walk(both);
+      expect(uses, 2, reason: 'the bare `up` and `twice()` inside the extension resolve through the extension');
+      expect(e.ofKind('logic.OpaqueDecl'), isEmpty);
     });
   });
 }

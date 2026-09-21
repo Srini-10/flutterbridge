@@ -374,6 +374,10 @@
             "type": {
               "$ref": "shared.json#/$defs/TypeRef",
               "description": "Resolved return type."
+            },
+            "extensionTarget": {
+              "$ref": "shared.json#/$defs/NodeId",
+              "description": "The extension member (`logic.FunctionDecl` with `extensionOn`) this call or access resolves to (ADR-0068). The receiver is the extension's `this`."
             }
           }
         }
@@ -416,6 +420,10 @@
             "type": {
               "$ref": "shared.json#/$defs/TypeRef",
               "description": "Resolved type."
+            },
+            "extensionTarget": {
+              "$ref": "shared.json#/$defs/NodeId",
+              "description": "The extension member (`logic.FunctionDecl` with `extensionOn`) this call or access resolves to (ADR-0068). The receiver is the extension's `this`."
             }
           }
         }
@@ -1774,6 +1782,10 @@
                 "type": "string"
               },
               "description": "The names of a generic function's or method's own type parameters (`T identity<T>(T v)`)."
+            },
+            "extensionOn": {
+              "$ref": "shared.json#/$defs/TypeRef",
+              "description": "Set for an extension member (ADR-0068): the type the extension extends. The member takes it as its receiver (`this`); a call site names the member with `extensionTarget`."
             }
           }
         }

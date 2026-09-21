@@ -29,6 +29,9 @@ final class FileDigest {
     required this.apiFingerprint,
     required this.implFingerprint,
     required this.imports,
+    this.declares = const <String>[],
+    this.inherits = const <String>[],
+    this.hasInheritance = true,
   });
 
   /// Reads a digest from its cached form.
@@ -38,6 +41,10 @@ final class FileDigest {
     apiFingerprint: json['apiFingerprint']! as String,
     implFingerprint: json['implFingerprint']! as String,
     imports: (json['imports']! as List<Object?>).cast<String>(),
+    declares: ((json['declares'] ?? const <Object?>[]) as List<Object?>).cast<String>(),
+    inherits: ((json['inherits'] ?? const <Object?>[]) as List<Object?>).cast<String>(),
+    // A digest cached before inheritance was recorded cannot say what it declares: it is recomputed.
+    hasInheritance: json.containsKey('declares'),
   );
 
   /// The file, project-relative.
@@ -65,12 +72,26 @@ final class FileDigest {
   /// a build, and pinning the SDK is what the version context is for.
   final List<String> imports;
 
+  /// The classes and mixins this file declares, by name, sorted.
+  final List<String> declares;
+
+  /// The names this file's classes extend, mix in or constrain with `on`, sorted.
+  ///
+  /// Whether a class is *inherited from* changes how the class itself is extracted (ADR-0059), and that fact is written in the
+  /// **inheriting** file — so it flows against the import direction and is part of the declaring file's cache key.
+  final List<String> inherits;
+
+  /// Whether this digest records [declares]/[inherits] (false for one read from an older cache).
+  final bool hasInheritance;
+
   /// The digest's cached form.
   Map<String, Object?> toJson() => <String, Object?>{
     'apiFingerprint': apiFingerprint,
     'contentHash': contentHash,
     'implFingerprint': implFingerprint,
     'imports': imports,
+    'inherits': inherits,
+    'declares': declares,
     'path': path,
   };
 }

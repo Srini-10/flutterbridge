@@ -80,6 +80,8 @@ function directFunctionRefs(
     const owner = classes.staticOwner.get(node['target'] as NodeId);
     if (owner !== undefined) classes.found.add(owner);
   }
+  // A call of, or access through, an extension member reaches the member (ADR-0068).
+  if (typeof node['extensionTarget'] === 'string') found.add(node['extensionTarget'] as NodeId);
   if (kindOf(node) === 'logic.Ref' && typeof node['target'] === 'string') {
     const target = node['target'] as NodeId;
     const declaration = lookup(target);
@@ -1018,6 +1020,7 @@ export function emitFunctionModules(
         functionModules,
         paramInScope: (name) => paramNames.get(name) ?? scope.paramInScope(name),
         localName: (localId) => locals.get(localId) ?? scope.localName(localId),
+        ...(fn['extensionOn'] === undefined ? {} : { thisAs: '$this' }),
         report: (code, severity, message, nodeId) => {
           if (severity === 'error') hadError = true;
           else scope.report(code, severity, message, nodeId);
@@ -1053,13 +1056,15 @@ export function emitFunctionModules(
       const returnType = isSoleExhaustiveSwitch
         ? `: ${typeTextOf(fn['returnType'] as Node | undefined, (name) => useRuntime(scratch, name), classOf)}`
         : '';
-      const signature = `(${paramListOf(
+      const extensionOn = fn['extensionOn'] as Node | undefined;
+      const thisParam = extensionOn === undefined ? '' : `$this: ${typeTextOf(extensionOn, (name) => useRuntime(scratch, name), classOf)}`;
+      const signature = `(${[thisParam, paramListOf(
         params,
         identifierOf,
         (name) => useRuntime(scratch, name),
         classOf,
         (param) => emitExpression(param['defaultValue'] as Node, fnScope),
-      )})${returnType}`;
+      )].filter((part) => part !== '').join(', ')})${returnType}`;
       const lines = emitStatements(body, fnScope);
       for (const tp of fnTypeParams) typeParamScope.delete(tp);
 

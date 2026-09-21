@@ -93,7 +93,10 @@ final class DeclarationExtractor {
       case MixinDeclaration():
         _mixin(node, scope);
 
-      case ExtensionDeclaration() || ExtensionTypeDeclaration():
+      case ExtensionDeclaration():
+        _extension(node, scope);
+
+      case ExtensionTypeDeclaration():
         out.emit(out.opaqueDecl(node, _describe(node)));
 
       case CompilationUnitMember():
@@ -182,6 +185,55 @@ final class DeclarationExtractor {
         },
       ),
     );
+  }
+
+  /// An extension (M12, ADR-0068): each instance member is a function whose receiver is `this`, typed by the extended type
+  /// (`extensionOn`); a call site names it with `extensionTarget`. Anonymous extensions are keyed by their own offset.
+  void _extension(ExtensionDeclaration node, Scope scope) {
+    final String owner = extensionOwnerName(node.name?.lexeme, node.declaredFragment?.offset ?? node.offset);
+    final DartType? on = node.declaredFragment?.element.extendedType;
+    final bool was = expressions.generalClassBody;
+    expressions.generalClassBody = true;
+    for (final ClassMember member in node.body.members) {
+      if (member is! MethodDeclaration || member.isStatic || member.isOperator) {
+        if (member is MethodDeclaration) {
+          out.emit(out.opaqueDecl(member, member.isOperator ? 'extension operator' : 'static extension member'));
+        }
+        continue;
+      }
+      final String memberName = member.isSetter ? '${member.name.lexeme}=' : member.name.lexeme;
+      final String symbol = out.symbols.function(memberName, owner: owner);
+      final Scope inner = Scope.forBody(scope, owner: symbol, body: member.body).child(<Binding>[
+        for (final FormalParameter parameter in member.parameters?.parameters ?? const <FormalParameter>[])
+          if (parameter.name != null) Binding(name: parameter.name!.lexeme, binds: Binds.parameter),
+      ]);
+      final List<String> typeParameters = <String>[
+        if (node.typeParameters case final TypeParameterList list) for (final TypeParameter p in list.typeParameters) p.name.lexeme,
+        if (member.typeParameters case final TypeParameterList list) for (final TypeParameter p in list.typeParameters) p.name.lexeme,
+      ];
+      out.emit(
+        RawNode(
+          kind: 'logic.FunctionDecl',
+          span: out.span(member),
+          symbol: symbol,
+          fields: <String, RawValue>{
+            'name': RawLiteral('${owner}_${member.isSetter ? 'set_' : ''}${member.name.lexeme}'),
+            'returnType': out.typeRef(
+              _valueReturnTypeOf(member.declaredFragment?.element.returnType ?? member.returnType?.type, isAsync: member.body.isAsynchronous),
+              at: member,
+            ),
+            'params': RawList(_params(member.parameters, scope)),
+            'body': RawList(expressions.bodyOf(member.body, inner)),
+            if (member.body.isAsynchronous) 'isAsync': const RawLiteral(true),
+            if (typeParameters.isNotEmpty) 'typeParameters': RawList(typeParameters.map(RawLiteral.new).toList()),
+            'extensionOn': out.typeRef(on, at: node),
+            if (member.isGetter) 'isGetter': const RawLiteral(true),
+            if (member.isSetter) 'isSetter': const RawLiteral(true),
+          },
+        ),
+      );
+    }
+    expressions.generalClassBody = was;
   }
 
   /// A `mixin` (M12, ADR-0059): a class-shaped declaration whose members are added to every class that applies it. Extracted like a

@@ -41,6 +41,23 @@ final class DigestComputer {
     // the order they happen to be declared in. Moving a method must not rebuild the world.
     api.sort();
 
+    final Set<String> declares = <String>{};
+    final Set<String> inherits = <String>{};
+    for (final CompilationUnitMember member in unit.declarations) {
+      switch (member) {
+        case ClassDeclaration():
+          declares.add(member.namePart.typeName.lexeme);
+          if (member.extendsClause case final ExtendsClause clause) {
+            inherits.add(clause.superclass.name.lexeme);
+          }
+          member.withClause?.mixinTypes.forEach((NamedType t) => inherits.add(t.name.lexeme));
+        case MixinDeclaration():
+          declares.add(member.name.lexeme);
+          member.onClause?.superclassConstraints.forEach((NamedType t) => inherits.add(t.name.lexeme));
+        default:
+      }
+    }
+
     return FileDigest(
       path: path,
       contentHash: hashString(source),
@@ -48,6 +65,8 @@ final class DigestComputer {
       // Bodies keep their declaration order: unlike a signature set, an implementation is a sequence.
       implFingerprint: hashParts(impl),
       imports: _imports(unit, path),
+      declares: declares.toList()..sort(),
+      inherits: inherits.toList()..sort(),
     );
   }
 

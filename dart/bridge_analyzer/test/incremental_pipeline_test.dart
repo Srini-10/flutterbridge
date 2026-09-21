@@ -240,4 +240,41 @@ void main() {
       expect(cached.stagesRun, <String>['load', 'extract', 'canonical', 'emit']);
     });
   });
+
+  group('a class newly inherited from in ANOTHER file (ADR-0059)', () {
+    Map<String, String> inheritance({required bool extended}) => <String, String>{
+      // `Base` is a plain record-like class until something extends it; then it is emitted as a class (its members are inherited).
+      'base.dart': r'''
+class Base {
+  const Base(this.id);
+  final int id;
+  String describe() => 'base $id';
+}
+''',
+      'main.dart': '''
+import 'package:flutter/material.dart';
+import 'package:app/base.dart';
+
+${extended ? 'class Child extends Base { const Child(super.id); }' : 'class Child { const Child(this.id); final int id; }'}
+
+class Screen extends StatelessWidget {
+  const Screen({super.key});
+  @override
+  Widget build(BuildContext context) => Text(const Child(1).id.toString());
+}
+''',
+    };
+
+    test('extending a class from another file re-extracts the extended class, exactly as a clean build does', () async {
+      rewrite(project, inheritance(extended: false));
+      await incremental();
+
+      // Only `main.dart` changes. `base.dart` is byte-identical — but its extraction now differs, because a class became inherited from.
+      rewrite(project, inheritance(extended: true));
+      final ({String bytes, List<String>? rebuilt}) after = await incremental();
+
+      expect(after.rebuilt, contains('lib/base.dart'), reason: 'the extended class must be re-extracted');
+      expect(after.bytes, await clean());
+    });
+  });
 }

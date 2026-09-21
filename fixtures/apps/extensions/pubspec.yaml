@@ -1,0 +1,20 @@
+name: extensions
+description: >-
+  M13 (ADR-0068): extension methods, getters and setters — on SDK types, generic and nullable receivers, anonymous extensions, a project class,
+  calls between members of one extension. Run by Flutter and as the generated component, compared.
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

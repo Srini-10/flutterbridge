@@ -59,6 +59,8 @@ export interface EmitScope {
   readonly module: ModuleBuilder;
   /** The identifier the enclosing `catch` clause binds — what `rethrow` throws again. Set by the statement emitter while it lowers a catch body. */
   catchBinding?: string | undefined;
+  /** Inside an extension member: what `this` is called (`$this`) — a real parameter, so a `null`/primitive receiver is not coerced (ADR-0068). */
+  thisAs?: string | undefined;
   /** Reports a finding. */
   report(code: string, severity: 'error' | 'warning' | 'info', message: string, nodeId?: string): void;
   /**
@@ -1139,6 +1141,36 @@ export function compilePattern(pattern: Node, subject: string, scope: EmitScope)
   }
 }
 
+/**
+ * A call of, or access through, an extension member (ADR-0068): the member is a module-level function taking the receiver as `this`, so
+ * `x.foo(a)` is `Ext_foo(x, a)` and `x.prop` is `Ext_prop(x)` (a setter: `Ext_set_prop(x, value)`).
+ */
+function emitExtensionUse(node: Node, scope: EmitScope, args: readonly string[] | undefined, value?: string): string | undefined {
+  const target = node['extensionTarget'];
+  if (typeof target !== 'string') return undefined;
+  const receiver = emitExpression(node['receiver'] as Node, scope);
+  if (receiver === REFUSED) return REFUSED;
+  const emitted = scope.functionModules.get(target as NodeId);
+  if (emitted === undefined) {
+    scope.report(
+      GeneratorDiagnosticCode.UnsupportedCapability,
+      'error',
+      `\`${String(node['method'] ?? node['property'] ?? 'this member')}\` is an extension member this generator could not lower (its body reports its own diagnostics).`,
+      idOf(node),
+    );
+    return REFUSED;
+  }
+  const name = emitted.path === scope.module.path ? emitted.name : scope.module.use(emitted.module, emitted.name);
+  const declaration = scope.node(target as NodeId) as unknown as Node | undefined;
+  let ordered: readonly string[] = args ?? [];
+  if (args !== undefined && declaration !== undefined && Array.isArray(declaration['params'])) {
+    const arranged = generalCallArguments(declaration['params'] as Node[], node, scope, `\`${String(declaration['name'])}\``);
+    if (arranged === undefined) return REFUSED;
+    ordered = arranged;
+  }
+  return `${name}(${[receiver, ...ordered, ...(value === undefined ? [] : [value])].join(', ')})`;
+}
+
 /** Whether `node` evaluates an `await` of its own — not one inside a nested lambda, which has its own function. */
 function containsAwait(node: unknown): boolean {
   if (Array.isArray(node)) return node.some((child) => containsAwait(child));
@@ -1321,6 +1353,7 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
       }
 
       // `this` / `super` inside the body of a general class (M12): the class is emitted as a real class, so they are themselves.
+      if (target === undefined && scope.thisAs !== undefined && node['name'] === 'this') return scope.thisAs;
       if (target === undefined && scope.memberSelf === undefined && (node['name'] === 'this' || node['name'] === 'super')) {
         return String(node['name']);
       }
@@ -1781,6 +1814,7 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
     }
 
     case 'logic.PropertyAccess': {
+      if (node['extensionTarget'] !== undefined) return emitExtensionUse(node, scope, undefined) ?? REFUSED;
       // `x.runtimeType`, and the implicit `this.runtimeType`: the value's class (a runtime function, so it works on an `Object`-typed value).
       if (node['property'] === 'runtimeType' && node['receiver'] !== undefined) {
         const receiver = emitExpression(node['receiver'] as Node, scope);
@@ -1964,6 +1998,7 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
     }
 
     case 'logic.MethodCall': {
+      if (node['extensionTarget'] !== undefined) return emitExtensionUse(node, scope, []) ?? REFUSED;
       // A call on a general class (M12): a real method call, its arguments ordered by the method's own signature.
       {
         const receiverNode = node['receiver'] as Node | undefined;
@@ -3227,6 +3262,11 @@ function emitAssignmentEffect(node: Node, scope: EmitScope): string {
   // `items[i] = v`, `cache[k] += 1`, `counts[k]++`: an index write (ADR-0051).
   if (kindOf(target) === 'logic.MethodCall' && target['method'] === '[]') {
     return emitIndexAssignment(node, target, operator, scope);
+  }
+  // `x.prop = v` where `prop` is an extension setter (ADR-0068).
+  if (kindOf(target) === 'logic.PropertyAccess' && target['extensionTarget'] !== undefined && operator === 'assign') {
+    const written = emitExpression(node['value'] as Node, scope);
+    return written === REFUSED ? REFUSED : (emitExtensionUse(target, scope, undefined, written) ?? REFUSED);
   }
   const targetText = emitTarget(target, scope);
   const valueNode = node['value'] as Node | undefined;

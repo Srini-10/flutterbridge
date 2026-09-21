@@ -117,7 +117,7 @@ final class IncrementalAnalyzer {
       final String contentHash = hashString(source);
 
       FileDigest? digest = cache.readDigest(contentHash);
-      if (digest == null || digest.path != path) {
+      if (digest == null || digest.path != path || !digest.hasInheritance) {
         // A cache hit under a different path means two files have identical content — legal, and the
         // digest is still valid, but it must be re-stamped with *this* file's path.
         digest = digestProvider(path, source);
@@ -130,6 +130,13 @@ final class IncrementalAnalyzer {
 
     // ── 2. Module keys. A file is rebuilt when its own bytes change, or when the *surface* of
     //       something it imports changes — and not otherwise (Spec §7.2). ──
+    //
+    // One input flows *against* the import direction: whether a class is extended or mixed in by a class elsewhere (ADR-0059) changes how
+    // the class itself is extracted, and that is written in the inheriting file. So each file's key also carries which of its own classes
+    // some file in the project inherits from. By simple name, so it over-approximates — a false positive costs a miss, never a stale hit.
+    final Set<String> inheritedNames = <String>{
+      for (final String path in paths) ...digests[path]!.inherits,
+    };
     final Map<String, CacheKey> keys = <String, CacheKey>{};
     for (final String path in paths) {
       keys[path] = CacheKey.module(
@@ -138,6 +145,8 @@ final class IncrementalAnalyzer {
         <String>[
           for (final String dependency in graph.transitiveDependenciesOf(path))
             '$dependency ${digests[dependency]!.apiFingerprint}',
+          for (final String name in digests[path]!.declares)
+            if (inheritedNames.contains(name)) 'inherited:$name',
         ],
       );
     }
