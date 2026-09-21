@@ -124,10 +124,11 @@ final class WidgetExtractor {
         // scope its arguments bind against, and the route extractor needs it (see `route_extractor.dart`
         // on why routes cannot be emitted from this walk).
         expressions.noteConstruction(node, scope);
+        final String? variant = variantComponentName(node);
         return _element(
           node,
-          name: node.constructorName.type.name.lexeme,
-          constructorName: node.constructorName.name?.name,
+          name: variant ?? node.constructorName.type.name.lexeme,
+          constructorName: variant != null ? null : node.constructorName.name?.name,
           arguments: node.argumentList,
           scope: scope,
           index: index,
@@ -168,6 +169,27 @@ final class WidgetExtractor {
         );
         return out.opaqueUi(node, 'unrecognised widget expression', type: node.staticType);
     }
+  }
+
+  // ── constructor variants ──────────────────────────────────────────────────────────────────────
+
+  /// The component a *named or factory constructor* of a project widget stands for (`AppListRow.destructive` → `AppListRow_destructive`),
+  /// or null for the unnamed constructor and for anything that is not a project widget (M12, ADR-0063).
+  String? variantComponentName(InstanceCreationExpression node) {
+    final ConstructorElement? constructor = node.constructorName.element;
+    final String? ctorName = node.constructorName.name?.name;
+    if (constructor == null || ctorName == null || ctorName == 'new') {
+      return null;
+    }
+    final DartType? type = node.staticType;
+    if (type == null) {
+      return null;
+    }
+    final WidgetRecognition recognition = registry.recogniseWidget(context, type);
+    if (!recognition.isWidget || registry.isFrameworkLibrary(type.element?.library?.identifier ?? '')) {
+      return null;
+    }
+    return '${node.constructorName.type.name.lexeme}_$ctorName';
   }
 
   // ── widgets as values ─────────────────────────────────────────────────────────────────────────

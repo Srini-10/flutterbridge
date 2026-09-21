@@ -48,6 +48,9 @@ class _ToggleState extends State<Toggle> {
     for (var k = 0; k < n; k++) {
       items.add('item $k');
     }
+    if (n > 4) {
+      return const Text('> stop');
+    }
     final Widget footer = n > 2 ? const Text('> big') : const Text('> small');
     return Column(
       children: [

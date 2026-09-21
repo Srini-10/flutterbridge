@@ -76,6 +76,11 @@ Widget-returning helpers in the same file are inlined; a `build` with loops, `if
 widgets can be held in locals and lists (`ReactNode`), spread (`...rows`) and passed as `Widget`/`List<Widget>` props
 ([ADR-0062](../adr/0062-widget-helpers-and-statement-builds.md)).
 
+## Widget constructors — ADR-0063
+
+Initializer-list constants, named constructors and factories of a project widget ([ADR-0063](../adr/0063-widget-constructors.md)). A redirecting
+constructor, a value computed from a parameter, and a named constructor of a stateful widget are refused (`BRG1309`).
+
 ## Not supported (refused, by name)
 
 Everything not listed. The census of two real applications (see the final audit report) found the blockers in practice are: freezed

@@ -9797,14 +9797,49 @@ $extraDecls
       expect(codesOf(app), contains('BRG1309'));
     });
 
-    test('a named constructor is refused (BRG1309)', () async {
+    test('a named constructor is its own component with its own parameters and the initializer-list value (ADR-0063)', () async {
       final Extracted app = await widgetWith('const W({super.key, this.x = 1});\n  const W.small({super.key}) : x = 2;');
-      expect(codesOf(app), contains('BRG1309'));
+      expect(codesOf(app), isNot(contains('BRG1309')));
+      final Map<String, dynamic> variant = app.ofKind('ui.Component').singleWhere((Map<String, dynamic> c) => c['name'] == 'W_small');
+      expect(variant.containsKey('params'), isFalse, reason: '`small` takes no parameters; `x` is the constant its initializer list sets');
+      expect(jsonEncode(variant['render']), contains('"value":2'), reason: 'the tree reads `x` as the initializer-list value');
     });
 
-    test('a factory constructor is refused (BRG1309)', () async {
-      final Extracted app = await widgetWith('const W._({super.key, this.x = 1});\n  factory W.make() => const W._(x: 4);');
-      expect(codesOf(app), contains('BRG1309'));
+    test('a factory constructor is its own component whose render is the widget it returns (ADR-0063)', () async {
+      final Extracted app = await widgetWith('const W._({super.key, this.x = 1});\n  factory W.make(int y) => W._(x: y);');
+      expect(codesOf(app), isNot(contains('BRG1309')));
+      final Map<String, dynamic> variant = app.ofKind('ui.Component').singleWhere((Map<String, dynamic> c) => c['name'] == 'W_make');
+      expect(((variant['params'] as List<dynamic>).single as Map<String, dynamic>)['name'], 'y');
+      expect(
+        ((variant['render'] as Map<String, dynamic>)['component'] as Map<String, dynamic>)['name'],
+        'W__',
+        reason: 'the private named constructor it returns is itself a component variant',
+      );
+    });
+
+    test('a named constructor of a stateful widget, and a value computed from a parameter, are still refused (BRG1309)', () async {
+      final Extracted stateful = await extract('''
+import 'package:flutter/material.dart';
+class S extends StatefulWidget {
+  const S({super.key});
+  const S.other({super.key});
+  @override
+  State<S> createState() => _SState();
+}
+class _SState extends State<S> {
+  @override
+  Widget build(BuildContext context) => const Text('s');
+}
+''');
+      expect(codesOf(stateful), contains('BRG1309'));
+    });
+
+    test("an initializer-list constant is the field's default, so a caller that cannot pass it is not missing a required prop", () async {
+      final Extracted app = await widgetWith('const W({super.key}) : x = 7;');
+      expect(codesOf(app), isNot(contains('BRG1309')));
+      final Map<String, dynamic> x = (app.only('ui.Component')['params'] as List<dynamic>).single as Map<String, dynamic>;
+      expect(x.containsKey('required'), isFalse);
+      expect((x['defaultValue'] as Map<String, dynamic>)['value'], 7);
     });
 
     test('a plain constructor, `super(key: key)` and an `assert` initializer are not', () async {

@@ -96,15 +96,22 @@ final class ComponentExtractor {
     // `required this.name` is required. Before ADR-0053 every field with no initializer was `required`, so a defaulted
     // constructor parameter — one of the commonest idioms in Flutter — lost its default and became a mandatory prop.
     final Map<String, FormalParameter> constructorParams = <String, FormalParameter>{};
+    final Map<String, Expression> initFieldValues = <String, Expression>{};
     for (final ClassMember member in node.body.members) {
       if (member is! ConstructorDeclaration) {
         continue;
       }
-      _refuseUnmodelledConstructor(member);
+      _refuseUnmodelledConstructor(member, stateful: state != null);
       if (member.name == null) {
         for (final FormalParameter parameter in member.parameters.parameters) {
           if (parameter is FieldFormalParameter) {
             constructorParams[parameter.name.lexeme] = parameter;
+          }
+        }
+        // `: destructive = false` — a field the constructor computes from constants. No caller can pass it, so its value is its default.
+        for (final ConstructorInitializer initializer in member.initializers) {
+          if (initializer is ConstructorFieldInitializer) {
+            initFieldValues[initializer.fieldName.name] = initializer.expression;
           }
         }
       }
@@ -120,7 +127,7 @@ final class ComponentExtractor {
           continue;
         }
         final FormalParameter? formal = constructorParams[field];
-        final bool required = formal != null ? formal.isRequired : variable.initializer == null;
+        final bool required = formal != null ? formal.isRequired : variable.initializer == null && initFieldValues[field] == null;
         params.add(
           RawMap(<String, RawValue>{
             'name': RawLiteral(field),
@@ -131,7 +138,9 @@ final class ComponentExtractor {
             // `final int base = 10;` — a field the constructor does not take: no caller can supply it, so its
             // initializer is its value. Before this it resolved to `null` (`intAdd(x, null)`).
             else if (formal == null && variable.initializer != null)
-              'defaultValue': RawChild(signals.expressions.extract(variable.initializer!, enclosing)),
+              'defaultValue': RawChild(signals.expressions.extract(variable.initializer!, enclosing))
+            else if (formal == null && initFieldValues[field] != null)
+              'defaultValue': RawChild(signals.expressions.extract(initFieldValues[field]!, enclosing)),
           }),
         );
         paramBindings.add(Binding(name: field, binds: Binds.parameter));
@@ -147,12 +156,36 @@ final class ComponentExtractor {
     // from action discovery: `build` is the render tree, already extracted below by `WidgetExtractor`,
     // never an ordinary callable method regardless of whether it writes state.
     final MethodDeclaration? build = _buildMethod(builder);
-    if (build == null) {
-      // A widget class with no `build` — an abstract base, or one whose build lives in a mixin. It is
-      // not a component we can render, and pretending otherwise would emit a component with an
-      // invented body. `ui.Component.render` is required, so there is nothing honest to emit.
+    if (build == null && (node.abstractKeyword != null || node.sealedKeyword != null)) {
+      // An abstract base: nothing renders it, and nothing needs a declaration for it.
       transitions.enclosingComponent = null;
       return null;
+    }
+    if (build == null) {
+      // A widget class with no `build` — a `RenderObjectWidget`, an `InheritedWidget`, an abstract base. Other classes refer to it (its
+      // symbol is a component's), so it is declared, with an opaque render that names why: the generator refuses each use explicitly
+      // rather than the reference dangling (BRG1201).
+      out.report(
+        Codes.unknownWidget,
+        'The widget `$name` has no `build` method (a custom render object or an inherited widget): it cannot be lowered, and is '
+        'preserved as an opaque component.',
+        node,
+      );
+      out.emit(
+        RawNode(
+          kind: 'ui.Component',
+          span: out.span(node),
+          symbol: symbol,
+          anchorSegment: name,
+          fields: <String, RawValue>{
+            'name': RawLiteral(name),
+            if (params.isNotEmpty) 'params': RawList(params),
+            'render': RawChild(out.opaqueUi(node, 'widget without a build method')),
+          },
+        ),
+      );
+      transitions.enclosingComponent = null;
+      return symbol;
     }
 
     final ClassState classState = signals.extract(
@@ -193,23 +226,7 @@ final class ComponentExtractor {
     // already proved collision-free for statement-level for-loops. Used for both branches below.
     final Scope renderScope = Scope.forWidgetTree(buildScope, owner: symbol, body: build.body);
 
-    final Expression? rendered = _returnedWidget(build.body);
-    List<RawValue>? prelude;
-    final RawNode render;
-    if (rendered != null) {
-      render = widgets.extract(rendered, renderScope);
-    } else if (_preludeShape(build.body) case final _PreludeShape shape) {
-      // Statements, then `return <tree>` (M12, ADR-0062): the statements are extracted as statements, the tree in the scope they leave.
-      final ExpressionExtractor expressions = signals.expressions;
-      final bool was = expressions.widgetValues;
-      expressions.widgetValues = true;
-      final (List<RawValue> statements, Scope after) = expressions.statements.statementsThrough(shape.before, renderScope);
-      expressions.widgetValues = was;
-      prelude = statements;
-      render = widgets.extract(shape.returned, after);
-    } else {
-      render = _structuredBody(build.body, renderScope) ?? out.opaqueUi(build.body, 'build body with statements');
-    }
+    final (RawNode render, List<RawValue>? prelude) = _render(build, renderScope);
 
     out.emit(
       RawNode(
@@ -229,8 +246,131 @@ final class ComponentExtractor {
       ),
     );
 
+    _variants(node, build: build, classScope: classState.scope, enclosing: enclosing, stateful: state != null);
+
     transitions.enclosingComponent = null;
     return symbol;
+  }
+
+  /// The render tree of [build] in [renderScope], and the statements it runs first (a statement-bodied build, ADR-0062).
+  (RawNode, List<RawValue>?) _render(MethodDeclaration build, Scope renderScope) {
+    final Expression? rendered = _returnedWidget(build.body);
+    if (rendered != null) {
+      return (widgets.extract(rendered, renderScope), null);
+    }
+    if (_preludeShape(build.body) case final _PreludeShape shape) {
+      // Statements, then `return <tree>`: the statements are extracted as statements, the tree in the scope they leave.
+      final ExpressionExtractor expressions = signals.expressions;
+      final bool was = expressions.widgetValues;
+      expressions.widgetValues = true;
+      final (List<RawValue> statements, Scope after) = expressions.statements.statementsThrough(shape.before, renderScope);
+      expressions.widgetValues = was;
+      return (widgets.extract(shape.returned, after), statements);
+    }
+    return (
+      _structuredBody(build.body, renderScope) ?? out.opaqueUi(build.body, 'build body with statements'),
+      null,
+    );
+  }
+
+  /// One component per *named or factory constructor* of a widget class (M12, ADR-0063): `AppListRow.destructive(...)` is
+  /// `AppListRow_destructive`, with the constructor's own parameters. A factory's render is the widget it returns; a generative named
+  /// constructor's is the class's `build`, with each field bound to a parameter, to the initializer-list value, or to its own default.
+  void _variants(
+    ClassDeclaration node, {
+    required MethodDeclaration build,
+    required Scope classScope,
+    required Scope enclosing,
+    required bool stateful,
+  }) {
+    final String className = node.namePart.typeName.lexeme;
+    for (final ClassMember member in node.body.members) {
+      if (member is! ConstructorDeclaration || member.name == null || (stateful && member.factoryKeyword == null)) {
+        continue;
+      }
+      final String ctor = member.name!.lexeme;
+      final String name = '${className}_$ctor';
+      final String symbol = out.symbols.component(name);
+
+      final List<RawValue> params = <RawValue>[];
+      final List<Binding> paramBindings = <Binding>[];
+      for (final FormalParameter parameter in member.parameters.parameters) {
+        final String? paramName = parameter.name?.lexeme;
+        if (paramName == null || parameter is SuperFormalParameter || paramName == 'key') {
+          continue;
+        }
+        params.add(
+          RawMap(<String, RawValue>{
+            'name': RawLiteral(paramName),
+            'type': out.typeRef(parameter.declaredFragment?.element.type, at: parameter),
+            if (parameter.isRequired) 'required': const RawLiteral(true),
+            if (parameter.defaultClause case final FormalParameterDefaultClause clause)
+              'defaultValue': RawChild(signals.expressions.extract(clause.value, enclosing)),
+          }),
+        );
+        paramBindings.add(Binding(name: paramName, binds: Binds.parameter));
+      }
+      final Scope ctorScope = enclosing.child(paramBindings);
+
+      final RawNode render;
+      List<RawValue>? prelude;
+      if (member.factoryKeyword != null) {
+        final Expression? returned = switch (member.body) {
+          ExpressionFunctionBody(:final Expression expression) => expression,
+          BlockFunctionBody(block: Block(statements: [ReturnStatement(:final Expression? expression)])) => expression,
+          _ => null,
+        };
+        if (returned == null) {
+          continue;
+        }
+        render = widgets.extract(returned, Scope.forWidgetTree(ctorScope, owner: symbol, body: member.body));
+      } else {
+        final List<Binding> fieldBindings = <Binding>[...paramBindings];
+        final Map<String, Expression> initValues = <String, Expression>{
+          for (final ConstructorInitializer i in member.initializers)
+            if (i is ConstructorFieldInitializer) i.fieldName.name: i.expression,
+        };
+        final Set<String> viaParam = <String>{
+          for (final FormalParameter p in member.parameters.parameters)
+            if (p is FieldFormalParameter) p.name.lexeme,
+        };
+        for (final ClassMember m in node.body.members) {
+          if (m is! FieldDeclaration || m.isStatic) {
+            continue;
+          }
+          for (final VariableDeclaration v in m.fields.variables) {
+            final String field = v.name.lexeme;
+            if (viaParam.contains(field)) {
+              fieldBindings.add(Binding(name: field, binds: Binds.parameter));
+            } else if (initValues[field] case final Expression value) {
+              fieldBindings.add(Binding(name: field, binds: Binds.local, inlineValue: value, inlineScope: ctorScope));
+            } else if (v.initializer case final Expression value) {
+              fieldBindings.add(Binding(name: field, binds: Binds.local, inlineValue: value, inlineScope: enclosing));
+            }
+          }
+        }
+        final Scope buildScope = classScope.child(<Binding>[
+          ...fieldBindings,
+          for (final FormalParameter p in build.parameters?.parameters ?? const <FormalParameter>[])
+            if (p.name != null) Binding(name: p.name!.lexeme, binds: Binds.parameter),
+        ]);
+        (render, prelude) = _render(build, Scope.forWidgetTree(buildScope, owner: symbol, body: build.body));
+      }
+      out.emit(
+        RawNode(
+          kind: 'ui.Component',
+          span: out.span(member),
+          symbol: symbol,
+          anchorSegment: name,
+          fields: <String, RawValue>{
+            'name': RawLiteral(name),
+            if (params.isNotEmpty) 'params': RawList(params),
+            if (prelude != null && prelude.isNotEmpty) 'prelude': RawList(prelude),
+            'render': RawChild(render),
+          },
+        ),
+      );
+    }
   }
 
   /// Reports a constructor of a widget class whose effect is not "arguments become fields" (BRG1304, ADR-0053).
@@ -238,24 +378,35 @@ final class ComponentExtractor {
   /// A component receives its props by name, so an initializer list that computes a field, a `factory`, a redirecting
   /// constructor and a named constructor would all vanish from the generated component without a trace. `super(...)` and
   /// `assert(...)` initializers are not behaviour the output needs, and are not reported.
-  void _refuseUnmodelledConstructor(ConstructorDeclaration constructor) {
-    final bool computes = constructor.initializers.any(
-      (ConstructorInitializer initializer) =>
-          initializer is ConstructorFieldInitializer || initializer is RedirectingConstructorInvocation,
+  void _refuseUnmodelledConstructor(ConstructorDeclaration constructor, {required bool stateful}) {
+    final Set<String> paramNames = <String>{
+      for (final FormalParameter p in constructor.parameters.parameters)
+        if (p.name != null) p.name!.lexeme,
+    };
+    final bool redirects = constructor.initializers.any((ConstructorInitializer i) => i is RedirectingConstructorInvocation) ||
+        constructor.redirectedConstructor != null;
+    // An initializer-list value that reads a constructor parameter is computed per construction; only constants become defaults.
+    final bool computesFromParams = constructor.initializers.any(
+      (ConstructorInitializer i) => i is ConstructorFieldInitializer && _mentionsAny(i.expression, paramNames),
     );
-    if (constructor.factoryKeyword == null &&
-        constructor.redirectedConstructor == null &&
-        constructor.name == null &&
-        !computes) {
+    // A named or factory constructor is its own component (`_variants`) — for a stateless widget.
+    final bool variantUnsupported = constructor.name != null && (stateful && constructor.factoryKeyword == null);
+    if (!redirects && !computesFromParams && !variantUnsupported) {
       return;
     }
     out.report(
       Codes.unmodelledConstructor,
       'The widget constructor `${constructor.toSource().split('{').first.trim()}` does something other than turn its '
-      'arguments into fields (an initializer list, a factory, a redirecting or a named constructor), and a component '
-      'receives its props by name, so it would be silently absent from the generated component.',
+      'arguments into fields (a redirecting constructor, an initializer-list value computed from a parameter, or a named constructor of '
+      'a stateful widget), and a component receives its props by name, so it would be silently absent from the generated component.',
       constructor,
     );
+  }
+
+  static bool _mentionsAny(Expression expression, Set<String> names) {
+    final _NameFinder finder = _NameFinder(names);
+    expression.accept(finder);
+    return finder.found;
   }
 
   /// A build body that is statements followed by one `return <widget>` — and that `_structuredBody` cannot hold: a statement other
@@ -274,28 +425,29 @@ final class ComponentExtractor {
       return null;
     }
     final List<Statement> before = statements.sublist(0, statements.length - 1);
-    final _ReturnFinder finder = _ReturnFinder();
+    // What the structured path (`ui.Cond` trees) already handles: single-variable locals with initializers, and an `if` that returns.
+    // Anything else — or a local the build mutates — is a prelude; an early `return <widget>` inside it returns from the component.
+    bool structured = true;
     for (final Statement statement in before) {
+      final _ReturnFinder finder = _ReturnFinder();
       statement.accept(finder);
-    }
-    if (finder.found) {
-      return null;
-    }
-    bool simple = true;
-    for (final Statement statement in before) {
-      if (statement is! VariableDeclarationStatement ||
+      if (statement is IfStatement && finder.found) {
+        continue;
+      }
+      if (finder.found ||
+          statement is! VariableDeclarationStatement ||
           statement.variables.variables.length != 1 ||
           statement.variables.variables.single.initializer == null) {
-        simple = false;
+        structured = false;
         break;
       }
       final Element? element = statement.variables.variables.single.declaredFragment?.element;
       if (element != null && _isMutatedIn(statements, element)) {
-        simple = false;
+        structured = false;
         break;
       }
     }
-    return simple ? null : _PreludeShape(before, returned);
+    return structured ? null : _PreludeShape(before, returned);
   }
 
   /// The `build` method, if the class has one.
@@ -567,5 +719,20 @@ final class _ReturnFinder extends RecursiveAstVisitor<void> {
   @override
   void visitFunctionExpression(FunctionExpression node) {
     // A closure's own returns are its own.
+  }
+}
+
+/// Whether a subtree mentions one of [names] as a simple identifier.
+final class _NameFinder extends RecursiveAstVisitor<void> {
+  _NameFinder(this.names);
+
+  final Set<String> names;
+  bool found = false;
+
+  @override
+  void visitSimpleIdentifier(SimpleIdentifier node) {
+    if (names.contains(node.name)) {
+      found = true;
+    }
   }
 }
