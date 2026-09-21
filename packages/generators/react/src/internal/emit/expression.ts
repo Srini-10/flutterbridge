@@ -34,6 +34,14 @@ import {
   type CollectionDeps,
 } from './collections.js';
 import {
+  callArguments,
+  constructorOf,
+  ctorFactoryName,
+  findMember,
+  OPERATOR_NAMES,
+  targetOfType,
+} from './dart_classes.js';
+import {
   lowerNumericProperty,
   lowerStringMethod,
   lowerStringProperty,
@@ -316,6 +324,12 @@ export interface EmitScope {
    * `const` and appears in {@link functionModules}.
    */
   readonly projectStaticFieldIds: ReadonlySet<NodeId>;
+  /**
+   * Every *general* project class this program emits as a real class (M12, ADR-0055), by id, with the module it lives in and the
+   * name it is declared under. A class here is constructed with `Class.$new(…)`, its members are read and called as members, and
+   * `x is Class` is `dartIs(x, Class)`.
+   */
+  readonly generalClasses: ReadonlyMap<NodeId, { readonly path: string; readonly module: string; readonly name: string }>;
   /**
    * Set only while emitting a project-class member helper's own body (ADR-0038, M9-Q) — the receiver
    * every implicit/`this.`-qualified instance-field read inside that body must rewrite to, and the class
@@ -866,6 +880,100 @@ function literal(node: Node, scope: EmitScope): string {
   return 'null';
 }
 
+
+
+/** `x is T` for the `dart:core` types a JavaScript value can be told apart by. */
+function sdkTypeTest(name: string, library: unknown, operand: string, scope: EmitScope): string | undefined {
+  if (library !== 'dart:core') return undefined;
+  const base = name.replace(/\?$/, '').split('<')[0];
+  const nullable = name.endsWith('?');
+  const orNull = (test: string): string => (nullable ? `(${operand} === null || ${test})` : test);
+  switch (base) {
+    case 'int':
+      return orNull(`Number.isInteger(${operand})`);
+    case 'double':
+    case 'num':
+      return orNull(`(typeof ${operand} === 'number')`);
+    case 'String':
+      return orNull(`(typeof ${operand} === 'string')`);
+    case 'bool':
+      return orNull(`(typeof ${operand} === 'boolean')`);
+    case 'List':
+      return orNull(`Array.isArray(${operand})`);
+    case 'Map':
+      return orNull(`(${operand} instanceof Map)`);
+    case 'Set':
+      return orNull(`(${operand} instanceof Set)`);
+    case 'Object':
+      return nullable ? 'true' : `(${operand} !== null && ${operand} !== undefined)`;
+    default:
+      void scope;
+      return undefined;
+  }
+}
+
+
+/**
+ * The signal a general-class object lives in, when `node` is rooted at one and we are in a callback (M12): `_c.tick()` and
+ * `_c.value = 1` change what `_c` holds without assigning it, so the signal must be told (`touch`). In the render tree the read is
+ * the subscribed snapshot (`_c$`) and nothing is told — a call there is a read.
+ */
+function objectSignalOf(node: Node | undefined, scope: EmitScope): string | undefined {
+  let current = node;
+  while (current !== undefined) {
+    const kind = kindOf(current);
+    if (kind === 'logic.PropertyAccess') current = current['receiver'] as Node | undefined;
+    else if (kind === 'logic.MethodCall' && current['method'] === '[]') current = current['receiver'] as Node | undefined;
+    else break;
+  }
+  if (current === undefined || kindOf(current) !== 'logic.Ref') return undefined;
+  const id = signalTargetOf(current, scope);
+  if (id === undefined) return undefined;
+  const read = scope.signalRead(id as NodeId);
+  if (read === undefined || !read.endsWith('.get()')) return undefined;
+  return scope.signalLocal(id as NodeId);
+}
+
+/** A read-only view of the general classes (M12) — what `dart_classes.ts`'s lookups take. */
+function generalView(scope: EmitScope): ReadonlyMap<NodeId, Node> {
+  return {
+    get: (id: NodeId) => (scope.generalClasses.has(id) ? (scope.node(id) as unknown as Node | undefined) : undefined),
+    has: (id: NodeId) => scope.generalClasses.has(id),
+  } as unknown as ReadonlyMap<NodeId, Node>;
+}
+
+/** The general class a type (or a receiver expression's type) names, if any. */
+function generalClassOf(type: unknown, scope: EmitScope): NodeId | undefined {
+  const id = targetOfType(type);
+  return id !== undefined && scope.generalClasses.has(id) ? id : undefined;
+}
+
+/** The emitted name of a general class, imported into the current module when it lives elsewhere. */
+function generalClassName(id: NodeId, scope: EmitScope): string {
+  const info = scope.generalClasses.get(id) as { readonly path: string; readonly module: string; readonly name: string };
+  return info.path === scope.module.path ? info.name : scope.module.use(info.module, info.name);
+}
+
+/**
+ * The call-site argument texts for `callable` (a `ConstructorDecl` or `FunctionDecl`), ordered by ITS signature.
+ * Returns `undefined` — after reporting — when a named argument has no parameter to go to.
+ */
+function generalCallArguments(params: readonly Node[], node: Node, scope: EmitScope, what: string): string[] | undefined {
+  const positional = asArray(node['args']).map((a) => emitExpression(a as Node, scope));
+  const named: Record<string, string> = {};
+  for (const [key, value] of Object.entries((node['namedArgs'] ?? {}) as Record<string, Node>)) named[key] = emitExpression(value, scope);
+  if (positional.includes(REFUSED) || Object.values(named).includes(REFUSED)) return undefined;
+  const ordered = callArguments(params, positional, named);
+  if (Array.isArray(ordered)) return ordered;
+  scope.report(
+    GeneratorDiagnosticCode.UnsupportedExpression,
+    'error',
+    `${what} is passed the named argument \`${ordered.unknown}\`, which its declaration has no parameter for.`,
+    idOf(node),
+  );
+  return undefined;
+}
+
 /**
  * Lowers one expression to TypeScript.
  *
@@ -883,6 +991,20 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
 
     case 'logic.Ref': {
       const target = node['target'];
+
+      // A static method of a general class (M12): `Point.zero` is a static member of the emitted class.
+      if (typeof target === 'string') {
+        for (const classId of scope.generalClasses.keys()) {
+          const owner = scope.node(classId) as unknown as Node | undefined;
+          const method = asArray(owner?.['methods']).find((m) => m['id'] === target && m['isStatic'] === true);
+          if (method !== undefined) return `${generalClassName(classId, scope)}.${identifierOf(String(method['name']))}`;
+        }
+      }
+
+      // `this` / `super` inside the body of a general class (M12): the class is emitted as a real class, so they are themselves.
+      if (target === undefined && scope.memberSelf === undefined && (node['name'] === 'this' || node['name'] === 'super')) {
+        return String(node['name']);
+      }
 
       // A member helper's own body referencing its own receiver, `this` (M10-B) — reached here whenever
       // something ELSE (the `logic.PropertyAccess`/`logic.MethodCall` getter-helper/method-helper
@@ -1175,6 +1297,21 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
       const left = emitExpression(node['left'] as Node, scope);
       const right = emitExpression(node['right'] as Node, scope);
 
+      // An operator a general class declares (`Point operator +(Point other)`, `==`): a method call (M12).
+      {
+        const leftNode = node['left'] as Node | undefined;
+        const classId = generalClassOf(leftNode?.['type'], scope);
+        if (classId !== undefined && left !== REFUSED && right !== REFUSED) {
+          const lookup = operator === '!=' ? '==' : operator;
+          const declared = findMember(classId, lookup, generalView(scope));
+          const mapped = OPERATOR_NAMES[lookup];
+          if (declared !== undefined && declared.member['isOperator'] === true && mapped !== undefined) {
+            const call = `${left}.${mapped}(${right})`;
+            return operator === '!=' ? `(!${call})` : call;
+          }
+        }
+      }
+
       if (operator in EQUALITY) return paren(`${left} ${EQUALITY[operator]} ${right}`);
 
       // `String * int` repeats the string (ADR-0054); JavaScript's `*` is `NaN`.
@@ -1294,6 +1431,16 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
     }
 
     case 'logic.PropertyAccess': {
+      // A member of a general class (M12): a real property or getter. Nothing to look up — TypeScript's own member access is the
+      // lowering — and the M9-J refusal below is for classes this generator has no member model for.
+      {
+        const receiverForGeneral = node['receiver'] as Node | undefined;
+        if (generalClassOf(receiverForGeneral?.['type'], scope) !== undefined) {
+          const receiverText = emitExpression(receiverForGeneral as Node, scope);
+          if (receiverText === REFUSED) return REFUSED;
+          return `${receiverText}.${identifierOf(String(node['property'] ?? ''))}`;
+        }
+      }
       // A bounded getter helper's own body (ADR-0038, M9-Q): `this.count` — extracted as a
       // `PropertyAccess` whose own receiver is literally `this` (ADR-0033), never a bare `logic.Ref` the
       // way an implicit `count` is. The identical `self.<field>` rewrite `case 'logic.Ref':` already
@@ -1462,6 +1609,30 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
     }
 
     case 'logic.MethodCall': {
+      // A call on a general class (M12): a real method call, its arguments ordered by the method's own signature.
+      {
+        const receiverNode = node['receiver'] as Node | undefined;
+        const classId = generalClassOf(receiverNode?.['type'], scope);
+        if (classId !== undefined && receiverNode !== undefined) {
+          const receiverText = emitExpression(receiverNode, scope);
+          if (receiverText === REFUSED) return REFUSED;
+          const methodName = String(node['method'] ?? '');
+          const found = findMember(classId, methodName, generalView(scope));
+          if (found !== undefined) {
+            const ordered = generalCallArguments(asArray(found.member['params']) as Node[], node, scope, `\`${methodName}\``);
+            if (ordered === undefined) return REFUSED;
+            const call = `${receiverText}.${identifierOf(methodName)}(${ordered.join(', ')})`;
+            const held = objectSignalOf(receiverNode, scope);
+            return held === undefined ? call : `${scope.module.use(RUNTIME, 'touchAfter')}(${held}, ${call})`;
+          }
+          // Not declared by a general class in the chain (`toString`, `hashCode`, an inherited framework member): only a call with
+          // positional arguments can be passed through unchanged.
+          if (node['namedArgs'] === undefined) {
+            const args = emitArguments(node['args'], scope);
+            return `${receiverText}.${identifierOf(methodName)}(${args})`;
+          }
+        }
+      }
       // A `ScaffoldMessenger`-family call (ADR-0030) — checked, and lowered, *before* the receiver is
       // emitted: there is no runtime component for `.of(context)` itself (the messenger collapses into
       // "the one root host"), so emitting the receiver here would spuriously refuse it
@@ -1752,6 +1923,28 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
 
       const constructorName = node['constructorName'];
       const kitProvided = isKitProvided(node['type'] as Node | undefined);
+
+      // A general project class (M12): `Class.$new(…)`, or `Class.$named(…)`, arguments ordered by the constructor's signature.
+      {
+        const classId = generalClassOf(node['type'], scope);
+        if (classId !== undefined) {
+          const decl = scope.node(classId) as unknown as Node;
+          const name = typeof constructorName === 'string' && constructorName !== '' ? constructorName : undefined;
+          const ctor = constructorOf(decl, name);
+          if (ctor === undefined) {
+            scope.report(
+              GeneratorDiagnosticCode.UnsupportedExpression,
+              'error',
+              `\`${String(decl['name'])}${name === undefined ? '' : `.${name}`}\` is not a constructor this class declares.`,
+              idOf(node),
+            );
+            return REFUSED;
+          }
+          const ordered = generalCallArguments(asArray(ctor['params']) as Node[], node, scope, `\`${String(decl['name'])}\``);
+          if (ordered === undefined) return REFUSED;
+          return `${generalClassName(classId, scope)}.${ctorFactoryName(name, String(decl['name']))}(${ordered.join(', ')})`;
+        }
+      }
 
       // Bounded structural project-class construction (ADR-0036, generalized to a constructor-keyed
       // mapping by ADR-0037) — checked before every other path below, and only for a non-`const`
@@ -2057,6 +2250,25 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
       // this one). `paren(...)` unconditionally, matching every sibling low-precedence node, rather than
       // asking every future consumer to remember to wrap an `Await` receiver specifically.
       return paren(`await ${emitExpression(node['operand'] as Node, scope)}`);
+
+    case 'logic.TypeCheck': {
+      const operand = emitExpression(node['operand'] as Node, scope);
+      if (operand === REFUSED) return REFUSED;
+      const type = node['type'] as Node | undefined;
+      const negate = node['negated'] === true ? '!' : '';
+      const classId = generalClassOf(type, scope);
+      if (classId !== undefined) return `${negate}${scope.module.use(RUNTIME, 'dartIs')}(${operand}, ${generalClassName(classId, scope)})`;
+      const test = sdkTypeTest(String(type?.['name'] ?? ''), type?.['library'], operand, scope);
+      if (test !== undefined) return negate === '' ? test : `(!${test})`;
+      scope.report(
+        GeneratorDiagnosticCode.UnsupportedExpression,
+        'error',
+        `\`is ${String(type?.['name'] ?? 'this type')}\` has no lowering: only a test against a project class, or \`int\`, \`double\`, ` +
+          '`num`, `String`, `bool`, `List`, `Map`, `Set` or `Object`, can be told at runtime here (ADR-0055).',
+        idOf(node),
+      );
+      return REFUSED;
+    }
 
     case 'logic.Cast':
       // Dart's `as` is a *checked* downcast that throws; TypeScript's is erased. Emitting `as` would silently
@@ -2617,5 +2829,8 @@ function signalName(id: string, scope: EmitScope): string {
 function assignTo(target: Node, targetText: string, value: string, scope: EmitScope): string {
   const signal = signalTargetOf(target, scope);
   if (signal !== undefined) return `${signalName(signal, scope)}.set(${value})`;
+  // `_c.value = 1` writes a property of an object a signal holds: assigned, then the signal is told (M12).
+  const held = kindOf(target) === 'logic.PropertyAccess' ? objectSignalOf(target['receiver'] as Node | undefined, scope) : undefined;
+  if (held !== undefined) return `(${targetText} = ${value}, ${held}.touch())`;
   return `${targetText} = ${value}`;
 }

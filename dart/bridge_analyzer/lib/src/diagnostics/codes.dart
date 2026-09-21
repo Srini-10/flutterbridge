@@ -341,6 +341,23 @@ abstract final class Codes {
         'problem.',
   );
 
+  /// A `build()`-method local holds a mutable object that the build then mutates through a method call, an index write or a
+  /// property write (M12).
+  static const DiagnosticCode mutatedBuildLocal = DiagnosticCode(
+    id: 'BRG1313',
+    category: DiagnosticCategory.extraction,
+    defaultSeverity: Severity.error,
+    docsSlug: 'mutated-build-local',
+    title: 'A build-method local holds an object that is mutated',
+    explanation:
+        'A `build()`-method local is carried by re-extracting its initializer at every read (ADR-0048), which is sound for a value '
+        'never mutated. `final c = Counter(10); … c.tick() … c.value` reads it three times, and each read would construct its own '
+        '`Counter`: `c.tick()` would mutate one object and `c.value` read another. The same is true of a list, set or map the '
+        'build mutates. The build is refused rather than compiled to different numbers.\n'
+        '\n'
+        'Hold the object in a field of the `State` class (`final Counter _c = Counter(10);`), or do the mutation inside a callback.',
+  );
+
   /// A write (assignment, compound assignment, increment/decrement) targets a `build()`-method-level
   /// local — one `_structuredBody` (M8-B) carries by re-extracting its own initializer at each
   /// reference (`Binding.inlineValue`) rather than by declaration-tier identity (ADR-28, M11-G).
@@ -550,6 +567,7 @@ abstract final class Codes {
     nonCanonicalOrder,
     serializationFailed,
     writeToInlinedLocal,
+    mutatedBuildLocal,
   ]);
 
   /// Looks up a code by id, or `null` if it is not registered.

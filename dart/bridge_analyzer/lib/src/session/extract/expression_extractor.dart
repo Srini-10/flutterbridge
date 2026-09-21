@@ -143,6 +143,9 @@ final class ExpressionExtractor {
         if (registry.mountedIntrinsicOf(node) case final MountedKind kind) {
           return _intrinsic(kind, null, node);
         }
+        if (generalClassBody && scope.lookup(node.name) == null && _isInstanceMember(node.element)) {
+          return _implicitThisAccess(node, node.name, node.element, _typeOfIdentifier(node));
+        }
         return _reference(
           node,
           node.name,
@@ -387,6 +390,18 @@ final class ExpressionExtractor {
       case SetOrMapLiteral():
         return _mapLiteral(node, scope);
 
+      // `x is Foo`, `x is! Foo` (M12): the type tested is the resolved one, so a target names the declaring class.
+      case IsExpression():
+        return RawNode(
+          kind: 'logic.TypeCheck',
+          span: out.span(node),
+          fields: <String, RawValue>{
+            'operand': RawChild(extract(node.expression, scope)),
+            'type': out.typeRef(node.type.type, at: node),
+            if (node.notOperator != null) 'negated': const RawLiteral(true),
+          },
+        );
+
       case AsExpression():
         return RawNode(
           kind: 'logic.Cast',
@@ -572,6 +587,54 @@ final class ExpressionExtractor {
   /// extractors refer to each other, and neither can be constructed first.
   late final StatementExtractorRef statements;
 
+  /// True while extracting the members of a *general* class (M12, ADR-0055), where an unqualified reference to an instance
+  /// member (`x`, `plus(o)`, `value += 1`) is made explicit — `this.x` — because the generator emits the class as a real
+  /// class and `this.` is how one reads a member of it.
+  bool generalClassBody = false;
+
+  /// Whether [element] is an instance member (field, getter, setter or method) of a class — what an unqualified name in a
+  /// class body reads through the implicit `this`.
+  static bool _isInstanceMember(Element? element) {
+    final Element? unwrapped = element is GetterElement && element.isOriginVariable
+        ? element.variable
+        : element is SetterElement && element.isOriginVariable
+            ? element.variable
+            : element;
+    if (unwrapped is FieldElement) {
+      return !unwrapped.isStatic && !unwrapped.isEnumConstant && unwrapped.enclosingElement is InterfaceElement;
+    }
+    if (unwrapped is GetterElement || unwrapped is SetterElement) {
+      return unwrapped!.enclosingElement is InterfaceElement && !(unwrapped as PropertyAccessorElement).isStatic;
+    }
+    if (unwrapped is MethodElement) {
+      return !unwrapped.isStatic && unwrapped.enclosingElement is InterfaceElement;
+    }
+    return false;
+  }
+
+  /// `this.<name>` for an unqualified member reference in a general class's body.
+  RawNode _implicitThisAccess(AstNode at, String name, Element? element, DartType? type) {
+    final DartType? thisType = _thisType(element);
+    final String? memberTarget = _internalMemberTarget(element);
+    return RawNode(
+      kind: 'logic.PropertyAccess',
+      span: out.span(at),
+      fields: <String, RawValue>{
+        'receiver': RawChild(
+          RawNode(
+            kind: 'logic.Ref',
+            span: out.span(at),
+            fields: <String, RawValue>{'name': const RawLiteral('this'), 'type': out.typeRef(thisType, at: at)},
+          ),
+        ),
+        'property': RawLiteral(name),
+        // Declaration provenance, as ever (ADR-0033): the member this names, when the bounded machinery can name it.
+        if (memberTarget != null) 'target': RawRef(memberTarget),
+        'type': out.typeRef(type, at: at),
+      },
+    );
+  }
+
   /// The transition extractor's hook, offered every method invocation so it can recognise a navigation.
   ///
   /// Nullable, and set once by the orchestrator, because a navigation is a `MethodInvocation` and this
@@ -721,6 +784,18 @@ final class ExpressionExtractor {
                 'in setState.',
           );
           return out.opaqueExpr(node, 'write to a build-method local', type: writeType);
+        }
+        // On the left of an assignment (or under `++`), the analyzer resolves the *write* element, not `node.element`.
+        final AstNode? parent = node.parent;
+        final Element? written = parent is AssignmentExpression && parent.leftHandSide == node
+            ? parent.writeElement
+            : parent is PrefixExpression && parent.operand == node
+                ? parent.writeElement
+                : parent is PostfixExpression && parent.operand == node
+                    ? parent.writeElement
+                    : node.element;
+        if (generalClassBody && scope.lookup(node.name) == null && _isInstanceMember(written)) {
+          return _implicitThisAccess(node, node.name, written, writeType);
         }
         return _reference(node, node.name, scope, type: writeType);
       // A write to a static: `GoRouter.optionURLReflectsImperativeAPIs = true`. The left-hand side is
@@ -1279,6 +1354,30 @@ final class ExpressionExtractor {
     // shape to handle either way. Anything else (a top-level function, a store/component method, or an
     // instance method that is not independently eligible) falls through completely unchanged to the
     // existing `target == null` branch below.
+    // A bare call to an instance method of a general class: `this.m(...)`, no `target` (the bounded helper machinery is not
+    // involved — the class is emitted as a real class and the call is a real method call).
+    if (target == null && generalClassBody && _isInstanceMember(node.methodName.element)) {
+      return RawNode(
+        kind: 'logic.MethodCall',
+        span: out.span(node),
+        fields: <String, RawValue>{
+          'receiver': RawChild(
+            RawNode(
+              kind: 'logic.Ref',
+              span: out.span(node),
+              fields: <String, RawValue>{
+                'name': const RawLiteral('this'),
+                'type': out.typeRef(_thisType(node.methodName.element), at: node),
+              },
+            ),
+          ),
+          'method': RawLiteral(node.methodName.name),
+          ..._arguments(node.argumentList, scope),
+          'type': out.typeRef(node.staticType, at: node),
+        },
+      );
+    }
+
     if (target == null) {
       final DartType? thisType = _thisType(node.methodName.element);
       final String? methodTarget = _externalMethodTarget(thisType, node.methodName.element, awaited: awaited);
@@ -2133,6 +2232,9 @@ final class ExpressionExtractor {
     }
     return null;
   }
+
+  /// `_arguments` for a caller outside this file — a constructor's `super(...)`/`this(...)` call (M12).
+  Map<String, RawValue> argumentFields(ArgumentList list, Scope scope) => _arguments(list, scope);
 
   /// Positional and named arguments, split as the schema splits them.
   ///

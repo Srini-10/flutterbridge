@@ -17,6 +17,7 @@ library;
 import 'package:analyzer/dart/ast/ast.dart';
 import 'package:analyzer/dart/ast/visitor.dart';
 import 'package:analyzer/dart/element/element.dart';
+import 'package:analyzer/dart/element/type.dart';
 import 'package:bridge_analyzer/src/diagnostics/codes.dart';
 import 'package:bridge_analyzer/src/model/raw_node.dart';
 import 'package:bridge_analyzer/src/session/adapters/adapter_context.dart';
@@ -306,6 +307,17 @@ final class ComponentExtractor {
         return null;
       }
       declared.add(element);
+      // A mutable object mutated by the build cannot be substituted at each read (BRG1313, M12).
+      if (_isMutatedIn(statements, element)) {
+        out.report(
+          Codes.mutatedBuildLocal,
+          'The build-method local `${variable.name.lexeme}` holds an object that the build mutates, and a build-method local is '
+          'substituted at every read (ADR-0048): each read would get its own object.',
+          variable,
+          hint: 'Hold it in a field of the State class, or mutate it inside a callback.',
+        );
+        return null;
+      }
       withLocals = withLocals.withBinding(
         Binding(name: variable.name.lexeme, binds: Binds.local, inlineValue: initializer),
       );
@@ -418,5 +430,65 @@ final class _UsageFinder extends RecursiveAstVisitor<void> {
       elements.add(element);
     }
     super.visitSimpleIdentifier(node);
+  }
+}
+
+/// Whether [statements] mutate the object [local] holds: a mutating call on a collection, any method call or property write on an
+/// instance of a class with a mutable field, or an index write.
+bool _isMutatedIn(List<Statement> statements, Element local) {
+  final _MutationFinder finder = _MutationFinder(local);
+  for (final Statement statement in statements) {
+    statement.accept(finder);
+  }
+  return finder.mutated;
+}
+
+final class _MutationFinder extends RecursiveAstVisitor<void> {
+  _MutationFinder(this.local);
+
+  final Element local;
+  bool mutated = false;
+
+  bool _isLocal(Expression? e) => e is SimpleIdentifier && e.element == local;
+
+  DartType? get _type {
+    final Element e = local;
+    return e is LocalVariableElement ? e.type : null;
+  }
+
+  bool get _isCollection {
+    final DartType? type = _type;
+    return type != null && (type.isDartCoreList || type.isDartCoreSet || type.isDartCoreMap);
+  }
+
+  bool get _hasMutableFields {
+    final DartType? type = _type;
+    final Element? owner = type is InterfaceType ? type.element : null;
+    if (owner is! ClassElement || owner.library.isInSdk) {
+      return false;
+    }
+    return owner.fields.any((FieldElement f) => !f.isStatic && !f.isFinal && f.isOriginDeclaration);
+  }
+
+  @override
+  void visitMethodInvocation(MethodInvocation node) {
+    if (_isLocal(node.realTarget)) {
+      if (_isCollection ? collectionMutators.contains(node.methodName.name) : _hasMutableFields) {
+        mutated = true;
+      }
+    }
+    super.visitMethodInvocation(node);
+  }
+
+  @override
+  void visitAssignmentExpression(AssignmentExpression node) {
+    final Expression lhs = node.leftHandSide;
+    final bool onLocal = (lhs is PrefixedIdentifier && lhs.prefix.element == local) ||
+        (lhs is PropertyAccess && _isLocal(lhs.target)) ||
+        (lhs is IndexExpression && _isLocal(lhs.target));
+    if (onLocal) {
+      mutated = true;
+    }
+    super.visitAssignmentExpression(node);
   }
 }

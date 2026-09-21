@@ -8,6 +8,12 @@
 import type { AnyUirNode, NodeId } from '@bridge/uir';
 
 import { GeneratorDiagnosticCode } from '../diagnostics/codes.js';
+import {
+  emitClassSource,
+  generalClassesOf,
+  targetOfType,
+  type ClassEmitContext,
+} from './dart_classes.js';
 import { emitExpression, isEligibleStructuralField, localBindingsIn, type EmitScope } from './expression.js';
 import { fileNameOf, identifierOf, ModuleBuilder } from './module.js';
 import { useRuntime, useRuntimeType } from './runtime.js';
@@ -49,13 +55,22 @@ export function modulePathFor(spanFile: string): { readonly path: string; readon
  * never itself reference a `sig.Action` — the walk only ever needs to look for more functions once it is
  * inside a function's own body, never actions.
  */
-function directFunctionRefs(value: unknown, lookup: (id: NodeId) => Node | undefined, found: Set<NodeId>): void {
+function directFunctionRefs(
+  value: unknown,
+  lookup: (id: NodeId) => Node | undefined,
+  found: Set<NodeId>,
+  classes?: { readonly general: ReadonlyMap<NodeId, Node>; readonly found: Set<NodeId> },
+): void {
   if (Array.isArray(value)) {
-    for (const item of value) directFunctionRefs(item, lookup, found);
+    for (const item of value) directFunctionRefs(item, lookup, found, classes);
     return;
   }
   if (value === null || typeof value !== 'object') return;
   const node = value as Node;
+  // A general class (M12) is reached by naming its type anywhere: a `TypeRef` with a `target` (a value object with no `kind`).
+  if (classes !== undefined && node['kind'] === undefined && typeof node['target'] === 'string' && typeof node['name'] === 'string') {
+    if (classes.general.has(node['target'] as NodeId)) classes.found.add(node['target'] as NodeId);
+  }
   if (kindOf(node) === 'logic.Ref' && typeof node['target'] === 'string') {
     const target = node['target'] as NodeId;
     const declaration = lookup(target);
@@ -65,7 +80,7 @@ function directFunctionRefs(value: unknown, lookup: (id: NodeId) => Node | undef
       found.add(target);
     }
   }
-  for (const child of Object.values(node)) directFunctionRefs(child, lookup, found);
+  for (const child of Object.values(node)) directFunctionRefs(child, lookup, found, classes);
 }
 
 /** Every `static` field embedded on a project `ClassDecl`, by id, with its owner's name (M12). */
@@ -93,27 +108,46 @@ export function staticFieldsOf(nodes: readonly AnyUirNode[]): Map<NodeId, { read
  * is scoped to one component's own render tree and one declaration kind; this one is program-wide and
  * walks into a *function's* own body for further functions, which `referencedActions` has no reason to do.
  */
-export function reachableFunctions(nodes: readonly AnyUirNode[], scope: EmitScope): NodeId[] {
+export function reachableFunctions(
+  nodes: readonly AnyUirNode[],
+  scope: EmitScope,
+  general: ReadonlyMap<NodeId, Node> = new Map(),
+  classesOut: Set<NodeId> = new Set(),
+): NodeId[] {
   const statics = staticFieldsOf(nodes);
   const lookup = (id: NodeId): Node | undefined => (scope.node(id) as unknown as Node | undefined) ?? statics.get(id)?.field;
   const found = new Set<NodeId>();
+  const classes = { general, found: classesOut };
   for (const node of nodes as unknown as Node[]) {
     if (kindOf(node) === 'ui.Component') {
-      directFunctionRefs(node['render'], lookup, found);
+      directFunctionRefs(node['render'], lookup, found, classes);
+      directFunctionRefs(node['params'], lookup, found, classes);
     } else if (kindOf(node) === 'sig.Action') {
-      directFunctionRefs(node['body'], lookup, found);
+      directFunctionRefs(node['body'], lookup, found, classes);
+      directFunctionRefs(node['params'], lookup, found, classes);
+    } else if (kindOf(node) === 'sig.Signal' || kindOf(node) === 'app.Store') {
+      // A signal's initial value and type: `RoundState _state = const RoundState.idle();`.
+      directFunctionRefs(node['initial'], lookup, found, classes);
+      directFunctionRefs(node['type'], lookup, found, classes);
     }
   }
 
+  // Fixed point over functions, constants AND general classes: a class's members reach functions, a function's body reaches
+  // classes, and either reaches more of both.
   let queue = [...found];
-  while (queue.length > 0) {
+  let classQueue = [...classesOut];
+  const expandedClasses = new Set<NodeId>();
+  while (queue.length > 0 || classQueue.length > 0) {
     const next: NodeId[] = [];
     for (const id of queue) {
       const fn = lookup(id);
       if (fn === undefined) continue;
       const discovered = new Set<NodeId>();
-      // A function's body, or a constant's initializer, may reach further declarations.
-      directFunctionRefs(kindOf(fn) === 'logic.FieldDecl' ? fn['initializer'] : fn['body'], lookup, discovered);
+      // A function's body, or a constant's initializer, may reach further declarations; its signature reaches classes.
+      directFunctionRefs(kindOf(fn) === 'logic.FieldDecl' ? fn['initializer'] : fn['body'], lookup, discovered, classes);
+      directFunctionRefs(fn['params'], lookup, discovered, classes);
+      directFunctionRefs(fn['returnType'], lookup, discovered, classes);
+      directFunctionRefs(fn['type'], lookup, discovered, classes);
       for (const candidate of discovered) {
         if (!found.has(candidate)) {
           found.add(candidate);
@@ -121,7 +155,29 @@ export function reachableFunctions(nodes: readonly AnyUirNode[], scope: EmitScop
         }
       }
     }
+    const nextClasses: NodeId[] = [];
+    for (const id of classQueue) {
+      if (expandedClasses.has(id)) continue;
+      expandedClasses.add(id);
+      const decl = general.get(id);
+      if (decl === undefined) continue;
+      const before = new Set(classesOut);
+      const discovered = new Set<NodeId>();
+      for (const key of ['superclass', 'interfaces', 'mixins', 'fields', 'constructors', 'methods']) {
+        directFunctionRefs(decl[key], lookup, discovered, classes);
+      }
+      for (const candidate of discovered) {
+        if (!found.has(candidate)) {
+          found.add(candidate);
+          next.push(candidate);
+        }
+      }
+      for (const c of classesOut) if (!before.has(c)) nextClasses.push(c);
+    }
+    // Classes newly found while walking functions.
+    for (const c of classesOut) if (!expandedClasses.has(c) && !nextClasses.includes(c)) nextClasses.push(c);
     queue = next;
+    classQueue = nextClasses;
   }
 
   return [...found].sort();
@@ -412,8 +468,13 @@ export function emitFunctionModules(
   readonly projectClassMethodIds: ReadonlySet<NodeId>;
   readonly projectClassGetterIds: ReadonlySet<NodeId>;
   readonly projectStaticFieldIds: ReadonlySet<NodeId>;
+  readonly generalClasses: ReadonlyMap<NodeId, { readonly path: string; readonly module: string; readonly name: string }>;
 } {
-  const reachable = reachableFunctions(nodes, scope);
+  const generalAll = generalClassesOf(nodes);
+  const reachableGeneral = new Set<NodeId>();
+  const reachable = reachableFunctions(nodes, scope, generalAll, reachableGeneral);
+  // Filled below, before any function body is emitted: a `logic.New` of a general class needs its name at expression time.
+  const generalInfo = new Map<NodeId, { readonly path: string; readonly module: string; readonly name: string }>();
   const staticFields = staticFieldsOf(nodes);
   // Computed here, like `projectClassGetterIdsLocal`: the root scope's copy is filled only after this function returns, and
   // a function or constant emitted from WITHIN it must already tell a static field from an unresolved name.
@@ -560,6 +621,8 @@ export function emitFunctionModules(
   }
   const eligibleClasses: EligibleClass[] = [];
   for (const id of [...classIdsNeedingTypes].sort()) {
+    // A general class (M12) is emitted as a real class below, never as a type-only interface.
+    if (generalAll.has(id)) continue;
     const classDecl = scope.node(id) as unknown as Node | undefined;
     if (classDecl === undefined) continue;
     const name = typeof classDecl['name'] === 'string' ? classDecl['name'] : undefined;
@@ -599,6 +662,25 @@ export function emitFunctionModules(
     const localName = pending.builder.declare(name, id);
     classModules.set(id, { path: pending.builder.path, module: specifier, name: localName });
     eligibleClasses.push({ id, classDecl, name, spanFile, localName, pending, specifier });
+  }
+
+  // General classes (M12): reserve every reachable one's module and name now — before any function or constant body is emitted, so
+  // a `New`, a type or an `is` in any of them can name a class declared later — and emit the class bodies after the fixed
+  // point below, when every function and constant they call has a home.
+  const generalOrder = [...reachableGeneral].filter((id) => generalAll.has(id)).sort();
+  const generalPending = new Map<NodeId, PendingModule>();
+  for (const id of generalOrder) {
+    const decl = generalAll.get(id) as Node;
+    const library = typeof decl['library'] === 'string' ? decl['library'] : undefined;
+    const name = typeof decl['name'] === 'string' ? decl['name'] : undefined;
+    if (library === undefined || name === undefined) continue;
+    const { path, specifier } = modulePathFor(library);
+    const pending = pendingModuleFor(path, specifier);
+    const localName = pending.builder.declare(name, id);
+    generalPending.set(id, pending);
+    const info = { path: pending.builder.path, module: specifier, name: localName };
+    generalInfo.set(id, info);
+    classModules.set(id, info);
   }
 
   interface MemberAttempt {
@@ -721,6 +803,7 @@ export function emitFunctionModules(
       const helperScope: EmitScope = {
         ...scope,
         projectStaticFieldIds: staticFieldIdsLocal,
+        generalClasses: generalInfo,
         module: scratch,
         classModules,
         getterHelpers,
@@ -838,6 +921,7 @@ export function emitFunctionModules(
         const fieldScope: EmitScope = {
           ...scope,
         projectStaticFieldIds: staticFieldIdsLocal,
+        generalClasses: generalInfo,
           module: fieldScratch,
           functionModules,
           report: (code, severity, message, nodeId) => {
@@ -912,6 +996,7 @@ export function emitFunctionModules(
       const fnScope: EmitScope = {
         ...scope,
         projectStaticFieldIds: staticFieldIdsLocal,
+        generalClasses: generalInfo,
         module: scratch,
         functionModules,
         paramInScope: (name) => paramNames.get(name) ?? scope.paramInScope(name),
@@ -968,6 +1053,65 @@ export function emitFunctionModules(
     }
   }
 
+  // ── general classes: the bodies ──────────────────────────────────────────────────────────────────
+  const generalDecls = new Map(generalOrder.map((id) => [id, generalAll.get(id) as Node] as const));
+  // Superclass first within a module: `class B extends A` evaluates `A` at definition time.
+  const emitOrder: NodeId[] = [];
+  const placed = new Set<NodeId>();
+  const place = (id: NodeId): void => {
+    if (placed.has(id) || !generalDecls.has(id)) return;
+    placed.add(id);
+    const parent = targetOfType((generalDecls.get(id) as Node)['superclass']);
+    if (parent !== undefined && generalPending.get(parent) === generalPending.get(id)) place(parent);
+    emitOrder.push(id);
+  };
+  for (const id of generalOrder) place(id);
+
+  for (const id of emitOrder) {
+    const decl = generalDecls.get(id) as Node;
+    const pending = generalPending.get(id);
+    const info = generalInfo.get(id);
+    if (pending === undefined || info === undefined) continue;
+    const classSpan = decl['span'] as Node | undefined;
+    const classFile = typeof classSpan?.['file'] === 'string' ? classSpan['file'] : 'Dart source';
+    const useIn = (name: string): string => useRuntime(pending.builder, name);
+    const classOfHere = (target: NodeId): string | undefined => {
+      const target_ = generalInfo.get(target) ?? classModules.get(target);
+      if (target_ === undefined) return undefined;
+      return target_.path === pending.builder.path ? target_.name : pending.builder.use(target_.module, target_.name, { typeOnly: false });
+    };
+    const scopeFor = (params: readonly Node[], statements: unknown): EmitScope => {
+      const names = new Map<string, string>();
+      for (const param of params) if (typeof param['name'] === 'string') names.set(param['name'], identifierOf(param['name']));
+      const locals = localBindingsIn(statements);
+      return {
+        ...scope,
+        module: pending.builder,
+        functionModules,
+        projectStaticFieldIds: staticFieldIdsLocal,
+        generalClasses: generalInfo,
+        paramInScope: (name) => names.get(name) ?? scope.paramInScope(name),
+        localName: (localId) => locals.get(localId) ?? scope.localName(localId),
+      };
+    };
+    const ctx: ClassEmitContext = {
+      general: generalAll,
+      typeText: (type) => typeTextOf(type, useIn, classOfHere),
+      nameOf: (target) => {
+        const t = generalInfo.get(target);
+        if (t === undefined) return undefined;
+        return t.path === pending.builder.path ? t.name : pending.builder.use(t.module, t.name);
+      },
+      expr: (node, params) => emitExpression(node, scopeFor(params, node)),
+      body: (statements, params) => emitStatements(statements, scopeFor(params, statements)),
+      identifier: identifierOf,
+      report: (message, nodeId) => scope.report(GeneratorDiagnosticCode.UnsupportedCapability, 'error', message, nodeId),
+    };
+    const lines = emitClassSource(decl, info.name, ctx);
+    if (lines === undefined) continue;
+    pending.lines.push(`/** \`${String(decl['name'])}\`, from ${classFile}. A Dart class, emitted as a class (ADR-0055). */`, ...lines, '');
+  }
+
   for (const id of remaining) {
     const why = fieldFailures.get(id);
     if (why !== undefined) {
@@ -1001,5 +1145,6 @@ export function emitFunctionModules(
     projectClassMethodIds: projectClassMethodIdsLocal,
     projectClassGetterIds: projectClassGetterIdsLocal,
     projectStaticFieldIds: new Set(staticFields.keys()),
+    generalClasses: generalInfo,
   };
 }

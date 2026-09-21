@@ -14,7 +14,7 @@ import { createHash } from 'node:crypto';
 export const UIR_VERSION = '1.15.0' as const;
 
 /** A hash of the schema sources this module was generated from. */
-export const UIR_SCHEMA_HASH = 'f62dca49b77bb249' as const;
+export const UIR_SCHEMA_HASH = '2154c603f4fa171b' as const;
 
 /** Node kind -> the fields of that node which hold `NodeId` references. */
 export const UIR_REFERENCE_FIELDS: Readonly<Record<string, readonly string[]>> = {
@@ -70,6 +70,7 @@ export const UIR_REFERENCE_FIELDS: Readonly<Record<string, readonly string[]>> =
   'app.Token': ['id'],
   'logic.TryCatch': ['id'],
   'logic.TypeAliasDecl': ['id'],
+  'logic.TypeCheck': ['id'],
   'ui.Async': ['id'],
   'ui.Cond': ['id'],
   'ui.Element': ['id'],
@@ -768,6 +769,46 @@ export interface ConstructibleConstructor {
   readonly name?: string;
 }
 
+/// A call to another constructor: `super(...)`, `super.named(...)`, `this(...)` or `this.named(...)`.
+export interface ConstructorCall {
+  /// Positional arguments, in order.
+  readonly args?: readonly Expr[];
+  /// The named constructor called. Absent for the unnamed one.
+  readonly constructorName?: string;
+  /// Named arguments, by name.
+  readonly namedArgs?: Readonly<Record<string, Expr>>;
+}
+
+/// A constructor of a class (M12, ADR-0055).
+export interface ConstructorDecl {
+  /// The body, in order. Absent for an empty or absent body.
+  readonly body?: readonly Stmt[];
+  /// The initializer list's `field = value` entries, in order. `assert` entries are not carried.
+  readonly initializers?: readonly ConstructorInit[];
+  /// Whether declared `const`. Present only when true.
+  readonly isConst?: boolean;
+  /// Whether declared `factory`. Present only when true.
+  readonly isFactory?: boolean;
+  /// The constructor's name. Absent for the unnamed constructor.
+  readonly name?: string;
+  /// Parameters, in order. An initializing formal (`this.x`) carries `initializesField`.
+  readonly params?: readonly ParamDecl[];
+  /// For a redirecting factory (`factory A() = _A;`), the constructor it is defined as.
+  readonly redirectedFactory?: RedirectedFactory;
+  /// For a redirecting generative constructor (`: this(...)`), the sibling constructor it delegates to.
+  readonly redirectsTo?: ConstructorCall;
+  /// The `super(...)` call, if the initializer list has one.
+  readonly superCall?: ConstructorCall;
+}
+
+/// One `field = value` entry of a constructor's initializer list.
+export interface ConstructorInit {
+  /// The field initialized.
+  readonly field: string;
+  /// The value.
+  readonly value: Expr;
+}
+
 /// The layout information a ui-realm generator needs, computed by the `layout-boundedness` analysis.
 ///
 /// Additive: it is an optional field on `UiElement` and changes no existing node semantics.
@@ -784,6 +825,10 @@ export interface LayoutIntent {
 export interface ParamDecl {
   /// Default value, if any.
   readonly defaultValue?: Expr;
+  /// For an initializing formal (`this.x`), the name of the field it initializes. Present only then (M12).
+  readonly initializesField?: string;
+  /// Whether this is a super parameter (`super.x`), forwarded to the superclass constructor under the same name. Present only when true (M12).
+  readonly isSuper?: boolean;
   /// Parameter name.
   readonly name: string;
   /// Whether the parameter is named rather than positional.
@@ -791,6 +836,14 @@ export interface ParamDecl {
   /// Whether the parameter is required.
   readonly required?: boolean;
   /// Resolved type.
+  readonly type: TypeRef;
+}
+
+/// The constructor a redirecting factory is defined as.
+export interface RedirectedFactory {
+  /// Its constructor, if named.
+  readonly constructorName?: string;
+  /// The class the factory redirects to (`= _Impl`).
   readonly type: TypeRef;
 }
 
@@ -1052,22 +1105,36 @@ export interface ClassDecl {
   readonly anchor?: Anchor;
   /// One entry per this class's own constructor that is safely equivalent to a plain, immutable record's own construction (ADR-0036, generalized by ADR-0037 from a single class-global mapping to a constructor-keyed list): non-const, non-factory, non-redirecting, an empty body and an empty initializer list, and field-formal parameters — uniformly required-positional or uniformly required-named, never mixed — that cover every one of the class's own instance fields exactly once. The whole-class prerequisite is unchanged from ADR-0036: every instance field public/final/non-static/non-late, and the class itself public, non-generic, with no superclass/`implements`/`with`. A constructor failing its own eligibility (a body, a factory keyword, an incomplete field-formal set, a mix of positional and named field-formals, and so on) is simply absent from this array — it neither disqualifies a sibling constructor nor the class's own other, eligible constructors (ADR-0037 §9). Present as an empty array when the class satisfies the whole-class prerequisite but has no individually eligible constructor; present as a single implicit-unnamed-positional entry with an empty `fields` array for a fieldless class with no explicit constructor; absent entirely when the whole-class prerequisite itself fails. Constructor identity is `(this ClassDecl, this entry's own name)` — already unique, since Dart forbids two constructors sharing one name on one class, and two different classes never share a `ClassDecl` id — so no separate constructor-identity node or symbol scheme was introduced. Derived exclusively from `FieldFormalParameterElement.field` — never from parameter-name or field-name text equality. Declaration provenance only — never a claim that any constructor is invoked at runtime; a generator resolving a construction against an entry here emits a plain object literal, never a call to the constructor this entry describes.
   readonly constructibleConstructors?: readonly ConstructibleConstructor[];
+  /// Every constructor the class declares, in declaration order (M12, ADR-0055). Unlike `constructibleConstructors` — which lists only the few a plain record could stand in for — this is the whole set, with bodies and initializers, for a class the generator emits as a real class.
+  readonly constructors?: readonly ConstructorDecl[];
   /// Plugin extension data, namespaced `x-<plugin>`. Core passes round-trip it untouched (Spec §2.6).
   readonly ext?: Readonly<Record<string, unknown>>;
   /// Fields, in declaration order.
   readonly fields?: readonly FieldDecl[];
   /// The node's stable, content-addressed identity.
   readonly id: NodeId;
+  /// The types this class `implements`, in order.
+  readonly interfaces?: readonly TypeRef[];
+  /// Whether the class is `abstract` (or `sealed`, which is abstract). Present only when true.
+  readonly isAbstract?: boolean;
+  /// Whether this declares a `mixin` rather than a class. Present only when true.
+  readonly isMixin?: boolean;
   /// Discriminant.
   readonly kind: 'logic.ClassDecl';
+  /// The library file this class belongs to — its own path, or for a declaration in a `part of` file the path of the library that includes it. Absent for a class of a synthesized declaration. A generated module is per library (M12, ADR-0055).
+  readonly library?: string;
   /// Methods, in declaration order.
   readonly methods?: readonly FunctionDecl[];
+  /// The mixins this class applies (`with`), in order.
+  readonly mixins?: readonly TypeRef[];
   /// Class name.
   readonly name: string;
   /// Where the node came from.
   readonly span: SourceSpan;
   /// The superclass, if any.
   readonly superclass?: TypeRef;
+  /// The class's type parameters, in order (`class Box<T>`). Absent for a non-generic class.
+  readonly typeParameters?: readonly string[];
 }
 
 /// A widget the application declares — a screen or a reusable widget.
@@ -1338,10 +1405,16 @@ export interface FunctionDecl {
   readonly ext?: Readonly<Record<string, unknown>>;
   /// The node's stable, content-addressed identity.
   readonly id: NodeId;
+  /// Whether the member has no body (`abstract` or an interface's). Present only when true (M12).
+  readonly isAbstract?: boolean;
   /// Whether the function is async.
   readonly isAsync?: boolean;
   /// Whether this declaration is a class's own explicit instance getter (ADR-0038), as opposed to an ordinary method or a setter. Present only on a `logic.FunctionDecl` embedded in `ClassDecl.methods` — a top-level `logic.FunctionDecl` (ADR-29) is never marked this way, since Dart's own top-level `get` declarations extract identically to an ordinary top-level function (`declaration_extractor.dart`'s own `_function`), the same way this schema has always treated one; there is no `isGetter` distinction to make at that level. A class's own setter continues to be represented as an ordinary, unflagged `logic.FunctionDecl` (its own symbol mangled with a trailing `=`, unchanged since before M9-Q) — `isGetter` absent (never `false`) for it, exactly as for an ordinary method; M9-Q's own bounded execution model reads `isGetter === true` as the one positive signal it needs, never infers a setter from its absence.
   readonly isGetter?: boolean;
+  /// Whether this is an operator declaration (`operator ==`, `operator []`); its `name` is the operator token. Present only when true (M12).
+  readonly isOperator?: boolean;
+  /// Whether this is a setter (`set value(int v)`), as opposed to a getter of the same name. Present only when true (M12).
+  readonly isSetter?: boolean;
   /// Whether the function is static.
   readonly isStatic?: boolean;
   /// Discriminant.
@@ -2022,6 +2095,26 @@ export interface TypeAliasDecl {
   readonly span: SourceSpan;
 }
 
+/// An `is` / `is!` type test: `value is Type`.
+export interface TypeCheck {
+  /// The override key, when the node is addressable by a human.
+  readonly anchor?: Anchor;
+  /// Plugin extension data, namespaced `x-<plugin>`. Core passes round-trip it untouched (Spec §2.6).
+  readonly ext?: Readonly<Record<string, unknown>>;
+  /// The node's stable, content-addressed identity.
+  readonly id: NodeId;
+  /// Discriminant.
+  readonly kind: 'logic.TypeCheck';
+  /// Whether this is `is!`. Present only when true.
+  readonly negated?: boolean;
+  /// The value tested.
+  readonly operand: Expr;
+  /// Where the node came from.
+  readonly span: SourceSpan;
+  /// The type tested against.
+  readonly type: TypeRef;
+}
+
 /// An asynchronous subtree — the normalized form of `FutureBuilder` (pass N4).
 ///
 /// The waiting/error/data branch shape is mechanically recognizable in real Flutter code, which is what lets N4 pattern-match rather than interpret.
@@ -2298,6 +2391,7 @@ export type Expr =
   | PropertyAccess
   | Ref
   | StringInterp
+  | TypeCheck
   | Unary
 ;
 
@@ -2383,6 +2477,86 @@ export function copyWithConstructibleConstructor(node: ConstructibleConstructor,
   return { ...node, ...patch };
 }
 
+/** Parses a {@link ConstructorCall}, validating as it goes. Throws {@link UirParseError} on bad input. */
+export function parseConstructorCall(value: unknown, path = 'ConstructorCall'): ConstructorCall {
+  const o = asObject(value, path);
+  return {
+    ...(own(o, 'args') === undefined || own(o, 'args') === null ? {} : { args: asList(own(o, 'args'), `${path}.args`, (v, p) => parseExpr(v, p)) }),
+    ...(own(o, 'constructorName') === undefined || own(o, 'constructorName') === null ? {} : { constructorName: asString(own(o, 'constructorName'), `${path}.constructorName`) }),
+    ...(own(o, 'namedArgs') === undefined || own(o, 'namedArgs') === null ? {} : { namedArgs: asMap(own(o, 'namedArgs'), `${path}.namedArgs`, (v, p) => parseExpr(v, p)) }),
+  };
+}
+
+/** Serializes a {@link ConstructorCall} to canonical JSON. */
+export function serializeConstructorCall(node: ConstructorCall): Record<string, unknown> {
+  return canonicalJson(node) as Record<string, unknown>;
+}
+
+/** Structural equality. List order is significant: UIR children are ordered (Spec §2.3). */
+export function equalsConstructorCall(a: ConstructorCall, b: ConstructorCall): boolean {
+  return deepEquals(canonicalJson(a), canonicalJson(b));
+}
+
+/** Returns a copy of [node] with [patch] applied. The original is never mutated. */
+export function copyWithConstructorCall(node: ConstructorCall, patch: Partial<ConstructorCall>): ConstructorCall {
+  return { ...node, ...patch };
+}
+
+/** Parses a {@link ConstructorDecl}, validating as it goes. Throws {@link UirParseError} on bad input. */
+export function parseConstructorDecl(value: unknown, path = 'ConstructorDecl'): ConstructorDecl {
+  const o = asObject(value, path);
+  return {
+    ...(own(o, 'body') === undefined || own(o, 'body') === null ? {} : { body: asList(own(o, 'body'), `${path}.body`, (v, p) => parseStmt(v, p)) }),
+    ...(own(o, 'initializers') === undefined || own(o, 'initializers') === null ? {} : { initializers: asList(own(o, 'initializers'), `${path}.initializers`, (v, p) => parseConstructorInit(v, p)) }),
+    ...(own(o, 'isConst') === undefined || own(o, 'isConst') === null ? {} : { isConst: asBool(own(o, 'isConst'), `${path}.isConst`) }),
+    ...(own(o, 'isFactory') === undefined || own(o, 'isFactory') === null ? {} : { isFactory: asBool(own(o, 'isFactory'), `${path}.isFactory`) }),
+    ...(own(o, 'name') === undefined || own(o, 'name') === null ? {} : { name: asString(own(o, 'name'), `${path}.name`) }),
+    ...(own(o, 'params') === undefined || own(o, 'params') === null ? {} : { params: asList(own(o, 'params'), `${path}.params`, (v, p) => parseParamDecl(v, p)) }),
+    ...(own(o, 'redirectedFactory') === undefined || own(o, 'redirectedFactory') === null ? {} : { redirectedFactory: parseRedirectedFactory(own(o, 'redirectedFactory'), `${path}.redirectedFactory`) }),
+    ...(own(o, 'redirectsTo') === undefined || own(o, 'redirectsTo') === null ? {} : { redirectsTo: parseConstructorCall(own(o, 'redirectsTo'), `${path}.redirectsTo`) }),
+    ...(own(o, 'superCall') === undefined || own(o, 'superCall') === null ? {} : { superCall: parseConstructorCall(own(o, 'superCall'), `${path}.superCall`) }),
+  };
+}
+
+/** Serializes a {@link ConstructorDecl} to canonical JSON. */
+export function serializeConstructorDecl(node: ConstructorDecl): Record<string, unknown> {
+  return canonicalJson(node) as Record<string, unknown>;
+}
+
+/** Structural equality. List order is significant: UIR children are ordered (Spec §2.3). */
+export function equalsConstructorDecl(a: ConstructorDecl, b: ConstructorDecl): boolean {
+  return deepEquals(canonicalJson(a), canonicalJson(b));
+}
+
+/** Returns a copy of [node] with [patch] applied. The original is never mutated. */
+export function copyWithConstructorDecl(node: ConstructorDecl, patch: Partial<ConstructorDecl>): ConstructorDecl {
+  return { ...node, ...patch };
+}
+
+/** Parses a {@link ConstructorInit}, validating as it goes. Throws {@link UirParseError} on bad input. */
+export function parseConstructorInit(value: unknown, path = 'ConstructorInit'): ConstructorInit {
+  const o = asObject(value, path);
+  return {
+    field: asString(req(o, 'field', path), `${path}.field`),
+    value: parseExpr(req(o, 'value', path), `${path}.value`),
+  };
+}
+
+/** Serializes a {@link ConstructorInit} to canonical JSON. */
+export function serializeConstructorInit(node: ConstructorInit): Record<string, unknown> {
+  return canonicalJson(node) as Record<string, unknown>;
+}
+
+/** Structural equality. List order is significant: UIR children are ordered (Spec §2.3). */
+export function equalsConstructorInit(a: ConstructorInit, b: ConstructorInit): boolean {
+  return deepEquals(canonicalJson(a), canonicalJson(b));
+}
+
+/** Returns a copy of [node] with [patch] applied. The original is never mutated. */
+export function copyWithConstructorInit(node: ConstructorInit, patch: Partial<ConstructorInit>): ConstructorInit {
+  return { ...node, ...patch };
+}
+
 /** Parses a {@link LayoutIntent}, validating as it goes. Throws {@link UirParseError} on bad input. */
 export function parseLayoutIntent(value: unknown, path = 'LayoutIntent'): LayoutIntent {
   const o = asObject(value, path);
@@ -2413,6 +2587,8 @@ export function parseParamDecl(value: unknown, path = 'ParamDecl'): ParamDecl {
   const o = asObject(value, path);
   return {
     ...(own(o, 'defaultValue') === undefined || own(o, 'defaultValue') === null ? {} : { defaultValue: parseExpr(own(o, 'defaultValue'), `${path}.defaultValue`) }),
+    ...(own(o, 'initializesField') === undefined || own(o, 'initializesField') === null ? {} : { initializesField: asString(own(o, 'initializesField'), `${path}.initializesField`) }),
+    ...(own(o, 'isSuper') === undefined || own(o, 'isSuper') === null ? {} : { isSuper: asBool(own(o, 'isSuper'), `${path}.isSuper`) }),
     name: asString(req(o, 'name', path), `${path}.name`),
     ...(own(o, 'named') === undefined || own(o, 'named') === null ? {} : { named: asBool(own(o, 'named'), `${path}.named`) }),
     ...(own(o, 'required') === undefined || own(o, 'required') === null ? {} : { required: asBool(own(o, 'required'), `${path}.required`) }),
@@ -2432,6 +2608,30 @@ export function equalsParamDecl(a: ParamDecl, b: ParamDecl): boolean {
 
 /** Returns a copy of [node] with [patch] applied. The original is never mutated. */
 export function copyWithParamDecl(node: ParamDecl, patch: Partial<ParamDecl>): ParamDecl {
+  return { ...node, ...patch };
+}
+
+/** Parses a {@link RedirectedFactory}, validating as it goes. Throws {@link UirParseError} on bad input. */
+export function parseRedirectedFactory(value: unknown, path = 'RedirectedFactory'): RedirectedFactory {
+  const o = asObject(value, path);
+  return {
+    ...(own(o, 'constructorName') === undefined || own(o, 'constructorName') === null ? {} : { constructorName: asString(own(o, 'constructorName'), `${path}.constructorName`) }),
+    type: parseTypeRef(req(o, 'type', path), `${path}.type`),
+  };
+}
+
+/** Serializes a {@link RedirectedFactory} to canonical JSON. */
+export function serializeRedirectedFactory(node: RedirectedFactory): Record<string, unknown> {
+  return canonicalJson(node) as Record<string, unknown>;
+}
+
+/** Structural equality. List order is significant: UIR children are ordered (Spec §2.3). */
+export function equalsRedirectedFactory(a: RedirectedFactory, b: RedirectedFactory): boolean {
+  return deepEquals(canonicalJson(a), canonicalJson(b));
+}
+
+/** Returns a copy of [node] with [patch] applied. The original is never mutated. */
+export function copyWithRedirectedFactory(node: RedirectedFactory, patch: Partial<RedirectedFactory>): RedirectedFactory {
   return { ...node, ...patch };
 }
 
@@ -2887,14 +3087,21 @@ export function parseClassDecl(value: unknown, path = 'ClassDecl'): ClassDecl {
   return {
     ...(own(o, 'anchor') === undefined || own(o, 'anchor') === null ? {} : { anchor: parseAnchor(own(o, 'anchor'), `${path}.anchor`) }),
     ...(own(o, 'constructibleConstructors') === undefined || own(o, 'constructibleConstructors') === null ? {} : { constructibleConstructors: asList(own(o, 'constructibleConstructors'), `${path}.constructibleConstructors`, (v, p) => parseConstructibleConstructor(v, p)) }),
+    ...(own(o, 'constructors') === undefined || own(o, 'constructors') === null ? {} : { constructors: asList(own(o, 'constructors'), `${path}.constructors`, (v, p) => parseConstructorDecl(v, p)) }),
     ...(own(o, 'ext') === undefined || own(o, 'ext') === null ? {} : { ext: asMap(own(o, 'ext'), `${path}.ext`, (v) => v) }),
     ...(own(o, 'fields') === undefined || own(o, 'fields') === null ? {} : { fields: asList(own(o, 'fields'), `${path}.fields`, (v, p) => parseFieldDecl(v, p)) }),
     id: parseNodeId(req(o, 'id', path), `${path}.id`),
+    ...(own(o, 'interfaces') === undefined || own(o, 'interfaces') === null ? {} : { interfaces: asList(own(o, 'interfaces'), `${path}.interfaces`, (v, p) => parseTypeRef(v, p)) }),
+    ...(own(o, 'isAbstract') === undefined || own(o, 'isAbstract') === null ? {} : { isAbstract: asBool(own(o, 'isAbstract'), `${path}.isAbstract`) }),
+    ...(own(o, 'isMixin') === undefined || own(o, 'isMixin') === null ? {} : { isMixin: asBool(own(o, 'isMixin'), `${path}.isMixin`) }),
     kind: 'logic.ClassDecl',
+    ...(own(o, 'library') === undefined || own(o, 'library') === null ? {} : { library: asString(own(o, 'library'), `${path}.library`) }),
     ...(own(o, 'methods') === undefined || own(o, 'methods') === null ? {} : { methods: asList(own(o, 'methods'), `${path}.methods`, (v, p) => parseFunctionDecl(v, p)) }),
+    ...(own(o, 'mixins') === undefined || own(o, 'mixins') === null ? {} : { mixins: asList(own(o, 'mixins'), `${path}.mixins`, (v, p) => parseTypeRef(v, p)) }),
     name: asString(req(o, 'name', path), `${path}.name`),
     span: parseSourceSpan(req(o, 'span', path), `${path}.span`),
     ...(own(o, 'superclass') === undefined || own(o, 'superclass') === null ? {} : { superclass: parseTypeRef(own(o, 'superclass'), `${path}.superclass`) }),
+    ...(own(o, 'typeParameters') === undefined || own(o, 'typeParameters') === null ? {} : { typeParameters: asList(own(o, 'typeParameters'), `${path}.typeParameters`, (v, p) => asString(v, p)) }),
   };
 }
 
@@ -3325,8 +3532,11 @@ export function parseFunctionDecl(value: unknown, path = 'FunctionDecl'): Functi
     ...(own(o, 'body') === undefined || own(o, 'body') === null ? {} : { body: asList(own(o, 'body'), `${path}.body`, (v, p) => parseStmt(v, p)) }),
     ...(own(o, 'ext') === undefined || own(o, 'ext') === null ? {} : { ext: asMap(own(o, 'ext'), `${path}.ext`, (v) => v) }),
     id: parseNodeId(req(o, 'id', path), `${path}.id`),
+    ...(own(o, 'isAbstract') === undefined || own(o, 'isAbstract') === null ? {} : { isAbstract: asBool(own(o, 'isAbstract'), `${path}.isAbstract`) }),
     ...(own(o, 'isAsync') === undefined || own(o, 'isAsync') === null ? {} : { isAsync: asBool(own(o, 'isAsync'), `${path}.isAsync`) }),
     ...(own(o, 'isGetter') === undefined || own(o, 'isGetter') === null ? {} : { isGetter: asBool(own(o, 'isGetter'), `${path}.isGetter`) }),
+    ...(own(o, 'isOperator') === undefined || own(o, 'isOperator') === null ? {} : { isOperator: asBool(own(o, 'isOperator'), `${path}.isOperator`) }),
+    ...(own(o, 'isSetter') === undefined || own(o, 'isSetter') === null ? {} : { isSetter: asBool(own(o, 'isSetter'), `${path}.isSetter`) }),
     ...(own(o, 'isStatic') === undefined || own(o, 'isStatic') === null ? {} : { isStatic: asBool(own(o, 'isStatic'), `${path}.isStatic`) }),
     kind: 'logic.FunctionDecl',
     name: asString(req(o, 'name', path), `${path}.name`),
@@ -4349,6 +4559,39 @@ export function copyWithTypeAliasDecl(node: TypeAliasDecl, patch: Partial<TypeAl
   return { ...node, ...patch };
 }
 
+/** Parses a {@link TypeCheck}, validating as it goes. Throws {@link UirParseError} on bad input. */
+export function parseTypeCheck(value: unknown, path = 'TypeCheck'): TypeCheck {
+  const o = asObject(value, path);
+  const kind = asString(req(o, 'kind', path), `${path}.kind`);
+  if (kind !== 'logic.TypeCheck') throw new UirParseError(`${path}.kind`, `expected "logic.TypeCheck", got "${kind}"`);
+
+  return {
+    ...(own(o, 'anchor') === undefined || own(o, 'anchor') === null ? {} : { anchor: parseAnchor(own(o, 'anchor'), `${path}.anchor`) }),
+    ...(own(o, 'ext') === undefined || own(o, 'ext') === null ? {} : { ext: asMap(own(o, 'ext'), `${path}.ext`, (v) => v) }),
+    id: parseNodeId(req(o, 'id', path), `${path}.id`),
+    kind: 'logic.TypeCheck',
+    ...(own(o, 'negated') === undefined || own(o, 'negated') === null ? {} : { negated: asBool(own(o, 'negated'), `${path}.negated`) }),
+    operand: parseExpr(req(o, 'operand', path), `${path}.operand`),
+    span: parseSourceSpan(req(o, 'span', path), `${path}.span`),
+    type: parseTypeRef(req(o, 'type', path), `${path}.type`),
+  };
+}
+
+/** Serializes a {@link TypeCheck} to canonical JSON. */
+export function serializeTypeCheck(node: TypeCheck): Record<string, unknown> {
+  return canonicalJson(node) as Record<string, unknown>;
+}
+
+/** Structural equality. List order is significant: UIR children are ordered (Spec §2.3). */
+export function equalsTypeCheck(a: TypeCheck, b: TypeCheck): boolean {
+  return deepEquals(canonicalJson(a), canonicalJson(b));
+}
+
+/** Returns a copy of [node] with [patch] applied. The original is never mutated. */
+export function copyWithTypeCheck(node: TypeCheck, patch: Partial<TypeCheck>): TypeCheck {
+  return { ...node, ...patch };
+}
+
 /** Parses a {@link UiAsync}, validating as it goes. Throws {@link UirParseError} on bad input. */
 export function parseUiAsync(value: unknown, path = 'UiAsync'): UiAsync {
   const o = asObject(value, path);
@@ -4867,6 +5110,8 @@ export function parseExpr(value: unknown, path = 'Expr'): Expr {
       return parseRef(o, path);
     case 'logic.StringInterp':
       return parseStringInterp(o, path);
+    case 'logic.TypeCheck':
+      return parseTypeCheck(o, path);
     case 'logic.Unary':
       return parseUnary(o, path);
     default:
@@ -4899,6 +5144,7 @@ export interface ExprVisitor<R> {
   visitPropertyAccess(node: PropertyAccess): R;
   visitRef(node: Ref): R;
   visitStringInterp(node: StringInterp): R;
+  visitTypeCheck(node: TypeCheck): R;
   visitUnary(node: Unary): R;
 }
 
@@ -4941,6 +5187,8 @@ export function acceptExpr<R>(node: Expr, visitor: ExprVisitor<R>): R {
       return visitor.visitRef(node as Ref);
     case 'logic.StringInterp':
       return visitor.visitStringInterp(node as StringInterp);
+    case 'logic.TypeCheck':
+      return visitor.visitTypeCheck(node as TypeCheck);
     case 'logic.Unary':
       return visitor.visitUnary(node as Unary);
     default:
@@ -5119,7 +5367,7 @@ export function acceptUiNode<R>(node: UiNode, visitor: UiNodeVisitor<R>): R {
 }
 
 /** Any UIR node. */
-export type AnyUirNode = Action | Assign | Await | Binary | Block | Break | Call | Cast | ClassDecl | Component | Conditional | ConstBinding | Continue | Derived | Effect | Endpoint | EnumDecl | ExprBinding | ExprStmt | FieldDecl | For | FunctionDecl | If | Intrinsic | Lambda | ListLit | Lit | MapLit | MethodCall | Navigate | New | NullCheck | OpaqueDecl | OpaqueExpr | OpaqueStmt | ParamBinding | PropertyAccess | Ref | Return | Route | RouteTransition | Signal | SignalBinding | SourceFile | Store | StoreInstance | StringInterp | Switch | Throw | Token | TryCatch | TypeAliasDecl | UiAsync | UiCond | UiElement | UiList | UiOpaque | UiOverrideRef | UiSlotRef | UiText | Unary | VarDecl | While;
+export type AnyUirNode = Action | Assign | Await | Binary | Block | Break | Call | Cast | ClassDecl | Component | Conditional | ConstBinding | Continue | Derived | Effect | Endpoint | EnumDecl | ExprBinding | ExprStmt | FieldDecl | For | FunctionDecl | If | Intrinsic | Lambda | ListLit | Lit | MapLit | MethodCall | Navigate | New | NullCheck | OpaqueDecl | OpaqueExpr | OpaqueStmt | ParamBinding | PropertyAccess | Ref | Return | Route | RouteTransition | Signal | SignalBinding | SourceFile | Store | StoreInstance | StringInterp | Switch | Throw | Token | TryCatch | TypeAliasDecl | TypeCheck | UiAsync | UiCond | UiElement | UiList | UiOpaque | UiOverrideRef | UiSlotRef | UiText | Unary | VarDecl | While;
 
 /** Parses any UIR node, dispatching on `kind` across every node kind in the schema. */
 export function parseUirNode(value: unknown, path = 'UirNode'): AnyUirNode {
@@ -5230,6 +5478,8 @@ export function parseUirNode(value: unknown, path = 'UirNode'): AnyUirNode {
       return parseTryCatch(o, path);
     case 'logic.TypeAliasDecl':
       return parseTypeAliasDecl(o, path);
+    case 'logic.TypeCheck':
+      return parseTypeCheck(o, path);
     case 'ui.Async':
       return parseUiAsync(o, path);
     case 'ui.Cond':

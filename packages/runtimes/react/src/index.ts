@@ -657,3 +657,5 @@ export {
   strReplaceFirst,
   strSubstring,
 } from './internal/core/dart_string.js';
+
+export { dartIs, touchAfter } from './internal/core/dart_is.js';

@@ -28,6 +28,7 @@ library;
 
 import 'package:analyzer/dart/ast/ast.dart';
 import 'package:analyzer/dart/ast/visitor.dart';
+import 'package:analyzer/dart/element/element.dart';
 import 'package:analyzer/dart/element/type.dart';
 import 'package:bridge_analyzer/src/model/raw_node.dart';
 import 'package:bridge_analyzer/src/session/adapters/adapter_registry.dart';
@@ -171,7 +172,8 @@ final class SignalExtractor {
                 (!member.fields.isFinal ||
                     mutated.names.contains(name) ||
                     (fieldType != null &&
-                        (fieldType.isDartCoreList || fieldType.isDartCoreSet || fieldType.isDartCoreMap))));
+                        (fieldType.isDartCoreList || fieldType.isDartCoreSet || fieldType.isDartCoreMap)) ||
+                    _isMutableObject(fieldType)));
 
         if (!reactive) {
           // A constant of the object. No symbol: nothing declares it as a node, so a reference to it
@@ -439,6 +441,16 @@ final class SignalExtractor {
     _ => null,
   };
 
+  /// Whether [type] is an instance of a project class with a mutable field (M12) — `final Counter _c = Counter(10);` never
+  /// re-assigns `_c`, but `_c.tick()` changes what it holds, so the field is state even though it is `final`.
+  static bool _isMutableObject(DartType? type) {
+    final Element? owner = type is InterfaceType ? type.element : null;
+    if (owner is! ClassElement || owner.library.isInSdk) {
+      return false;
+    }
+    return owner.fields.any((FieldElement f) => !f.isStatic && !f.isFinal && f.isOriginDeclaration);
+  }
+
   /// Whether [node] is a store: state that outlives any one component.
   bool isStore(ClassDeclaration node) =>
       registry.isStoreBase(node.declaredFragment?.element.thisType);
@@ -593,3 +605,6 @@ final class _ReadFinder extends RecursiveAstVisitor<void> {
     super.visitSimpleIdentifier(node);
   }
 }
+
+/// The collection methods that mutate their receiver — shared with the build-local mutation check (M12).
+const Set<String> collectionMutators = _WriteFinder.mutators;

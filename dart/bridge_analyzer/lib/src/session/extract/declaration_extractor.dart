@@ -133,9 +133,20 @@ final class DeclarationExtractor {
     // extracted every field and body twice — doubling the work, and emitting every diagnostic twice.
     final String className = node.namePart.typeName.lexeme;
     final List<RawValue> fields = _fields(node, scope, owner: className);
+    final bool wasGeneral = expressions.generalClassBody;
+    // Whether this class will be emitted as a real class is decided from the (cheap) constructor probe below, before the members
+    // are extracted, because an unqualified `x` in a general class's body must be extracted as `this.x`.
+    expressions.generalClassBody = !semantic && _isGeneralShape(node, className);
     final List<RawValue> methods = semantic ? const <RawValue>[] : _methods(node, scope, owner: className);
     final List<RawValue>? constructibleConstructors =
         semantic ? null : _constructibleConstructors(node, owner: className);
+    // A class that is not a plain record is a *general* class (M12, ADR-0055): the generator emits it as a real class, so it
+    // needs everything a class is — every constructor, its type parameters, what it implements and mixes in.
+    // (Structural = at least one constructor a plain record can stand in for, ADR-0036/0037; a class with none — `Point(this.x,
+    // this.y)` written `const`, or with an initializer list — is not one, and is emitted as a class.)
+    final bool general = !semantic && expressions.generalClassBody;
+    final List<RawValue> constructors = general ? _constructors(node, scope, owner: className) : const <RawValue>[];
+    expressions.generalClassBody = wasGeneral;
 
     out.emit(
       RawNode(
@@ -151,10 +162,99 @@ final class DeclarationExtractor {
             'superclass': out.typeRef(node.extendsClause!.superclass.type, at: node),
           if (fields.isNotEmpty) 'fields': RawList(fields),
           if (methods.isNotEmpty) 'methods': RawList(methods),
+          // Kept for a general class too: the record-shaped constructors are still a fact about it (ADR-0037); the generator prefers the
+          // class model whenever `library` is present.
           if (constructibleConstructors != null) 'constructibleConstructors': RawList(constructibleConstructors),
+          if (general) 'library': RawLiteral(out.symbols.path),
+          if (general && node.abstractKeyword != null || general && node.sealedKeyword != null)
+            'isAbstract': const RawLiteral(true),
+          if (general && node.namePart.typeParameters != null)
+            'typeParameters': RawList(<RawValue>[
+              for (final TypeParameter p in node.namePart.typeParameters!.typeParameters) RawLiteral(p.name.lexeme),
+            ]),
+          if (general && node.implementsClause != null)
+            'interfaces': RawList(<RawValue>[
+              for (final NamedType t in node.implementsClause!.interfaces) out.typeRef(t.type, at: node),
+            ]),
+          if (general && node.withClause != null)
+            'mixins': RawList(<RawValue>[
+              for (final NamedType t in node.withClause!.mixinTypes) out.typeRef(t.type, at: node),
+            ]),
+          if (constructors.isNotEmpty) 'constructors': RawList(constructors),
         },
       ),
     );
+  }
+
+  /// Whether [node] is a *general* class (see `_class`): not a record the structural machinery can stand in for. Decided before its
+  /// members are extracted, so it must not depend on them.
+  bool _isGeneralShape(ClassDeclaration node, String owner) {
+    final List<RawValue>? structural = _constructibleConstructors(node, owner: owner);
+    if (structural == null || structural.isEmpty) {
+      return true;
+    }
+    // A record for SOME constructors only: `Wrapper(this.a, this.b)` is one, `Wrapper.twin(int a) : this(a, a)` is not — and a
+    // construction of the second would be refused. The class is emitted as a class so that every constructor works.
+    final int declared = node.body.members.whereType<ConstructorDeclaration>().length;
+    return declared > structural.length;
+  }
+
+  /// Every constructor of a general class, with initializers, `super`/`this` calls and body (M12, ADR-0055).
+  List<RawValue> _constructors(ClassDeclaration node, Scope scope, {required String owner}) {
+    final List<RawValue> constructors = <RawValue>[];
+    for (final ClassMember member in node.body.members) {
+      if (member is! ConstructorDeclaration) {
+        continue;
+      }
+      final String label = member.name?.lexeme ?? '';
+      final Scope inner = Scope.forBody(scope, owner: 'ctor:${out.symbols.path}#$owner.$label', body: member.body).child(
+        <Binding>[
+          for (final FormalParameter parameter in member.parameters.parameters)
+            if (parameter.name != null) Binding(name: parameter.name!.lexeme, binds: Binds.parameter),
+        ],
+      );
+      RawValue callOf(ArgumentList arguments, String? name) => RawMap(<String, RawValue>{
+        'constructorName': ?(name == null ? null : RawLiteral(name)),
+        ...expressions.argumentFields(arguments, inner),
+      });
+      final List<RawValue> initializers = <RawValue>[];
+      RawValue? superCall;
+      RawValue? redirectsTo;
+      for (final ConstructorInitializer initializer in member.initializers) {
+        if (initializer is ConstructorFieldInitializer) {
+          initializers.add(
+            RawMap(<String, RawValue>{
+              'field': RawLiteral(initializer.fieldName.name),
+              'value': RawChild(expressions.extract(initializer.expression, inner)),
+            }),
+          );
+        } else if (initializer is SuperConstructorInvocation) {
+          superCall = callOf(initializer.argumentList, initializer.constructorName?.name);
+        } else if (initializer is RedirectingConstructorInvocation) {
+          redirectsTo = callOf(initializer.argumentList, initializer.constructorName?.name);
+        }
+      }
+      final ConstructorName? redirected = member.redirectedConstructor;
+      final List<RawValue> body = member.body is EmptyFunctionBody ? const <RawValue>[] : expressions.bodyOf(member.body, inner);
+      constructors.add(
+        RawMap(<String, RawValue>{
+          'name': ?(member.name == null ? null : RawLiteral(member.name!.lexeme)),
+          'params': RawList(_params(member.parameters, scope)),
+          if (member.constKeyword != null) 'isConst': const RawLiteral(true),
+          if (member.factoryKeyword != null) 'isFactory': const RawLiteral(true),
+          if (initializers.isNotEmpty) 'initializers': RawList(initializers),
+          'superCall': ?superCall,
+          'redirectsTo': ?redirectsTo,
+          if (redirected != null)
+            'redirectedFactory': RawMap(<String, RawValue>{
+              'type': out.typeRef(redirected.type.type, at: member),
+              'constructorName': ?(redirected.name == null ? null : RawLiteral(redirected.name!.name)),
+            }),
+          if (body.isNotEmpty) 'body': RawList(body),
+        }),
+      );
+    }
+    return constructors;
   }
 
   /// The `static` fields of a widget's `State` class (`static const _repository = Repository();`).
@@ -414,6 +514,9 @@ final class DeclarationExtractor {
               if (member.body.isAsynchronous) 'isAsync': const RawLiteral(true),
               if (member.isStatic) 'isStatic': const RawLiteral(true),
               if (member.isGetter) 'isGetter': const RawLiteral(true),
+              if (member.isSetter) 'isSetter': const RawLiteral(true),
+              if (member.isOperator) 'isOperator': const RawLiteral(true),
+              if (member.body is EmptyFunctionBody && member.externalKeyword == null) 'isAbstract': const RawLiteral(true),
             },
           ),
         ),
@@ -486,6 +589,9 @@ final class DeclarationExtractor {
         'type': out.typeRef(parameter.declaredFragment?.element.type, at: parameter),
         if (parameter.isNamed) 'named': const RawLiteral(true),
         if (parameter.isRequired) 'required': const RawLiteral(true),
+        // `this.x` initializes the field `x`; `super.x` is forwarded to the superclass constructor (M12, ADR-0055).
+        if (parameter is FieldFormalParameter) 'initializesField': RawLiteral(parameter.name.lexeme),
+        if (parameter is SuperFormalParameter) 'isSuper': const RawLiteral(true),
         // `[int n = 0]` and `{int n = 0}` — the only two places a default can be written. Lowered
         // through the ordinary expression path: a default is an expression, and it is not a special
         // kind of one.

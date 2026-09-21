@@ -31,7 +31,7 @@ const String uirVersion = '1.15.0';
 /// A hash of the schema sources this library was generated from.
 ///
 /// Stamped into every emitted manifest: a UIR document always says which schema produced it.
-const String uirSchemaHash = 'f62dca49b77bb249';
+const String uirSchemaHash = '2154c603f4fa171b';
 
 /// Node kind -> the fields of that node which hold `NodeId` references.
 ///
@@ -90,6 +90,7 @@ const Map<String, List<String>> uirReferenceFields = <String, List<String>>{
   'app.Token': <String>['id'],
   'logic.TryCatch': <String>['id'],
   'logic.TypeAliasDecl': <String>['id'],
+  'logic.TypeCheck': <String>['id'],
   'ui.Async': <String>['id'],
   'ui.Cond': <String>['id'],
   'ui.Element': <String>['id'],
@@ -904,6 +905,8 @@ sealed class Expr extends UirNode {
         return Ref.fromJson(json, path);
       case 'logic.StringInterp':
         return StringInterp.fromJson(json, path);
+      case 'logic.TypeCheck':
+        return TypeCheck.fromJson(json, path);
       case 'logic.Unary':
         return Unary.fromJson(json, path);
       default:
@@ -1157,6 +1160,266 @@ final class ConstructibleConstructor {
   ]);
 }
 
+/// A call to another constructor: `super(...)`, `super.named(...)`, `this(...)` or `this.named(...)`.
+@immutable
+final class ConstructorCall {
+  /// Creates a [ConstructorCall].
+  const ConstructorCall({
+    this.args,
+    this.constructorName,
+    this.namedArgs,
+  });
+
+  /// Parses a [ConstructorCall] from JSON, validating as it goes.
+  factory ConstructorCall.fromJson(Object? value, [String path = 'ConstructorCall']) {
+    final Map<String, Object?> json = _asObject(value, path);
+    return ConstructorCall(
+      args: json['args'] == null ? null : _asList<Expr>(json['args'], '$path.args', Expr.fromJson),
+      constructorName: json['constructorName'] == null ? null : _asString(json['constructorName'], '$path.constructorName'),
+      namedArgs: json['namedArgs'] == null ? null : _asMap<Expr>(json['namedArgs'], '$path.namedArgs', Expr.fromJson),
+    );
+  }
+
+  /// Positional arguments, in order.
+  final List<Expr>? args;
+
+  /// The named constructor called. Absent for the unnamed one.
+  final String? constructorName;
+
+  /// Named arguments, by name.
+  final Map<String, Expr>? namedArgs;
+
+  /// Serializes to canonical JSON: keys sorted, nulls omitted.
+  Map<String, Object?> toJson() => canonicalJson(<String, Object?>{
+    'args': args?.map((Expr v) => v.toJson()).toList(),
+    'constructorName': constructorName,
+    'namedArgs': namedArgs?.map((String k, Expr v) => MapEntry<String, Object?>(k, v.toJson())),
+  })! as Map<String, Object?>;
+
+  /// Returns a copy with the given fields replaced. The original is never mutated.
+  ///
+  /// An omitted argument keeps its current value; `copyWith` cannot set a field back to
+  /// null. Construct a new node when that is what you mean.
+  ConstructorCall copyWith({
+    List<Expr>? args,
+    String? constructorName,
+    Map<String, Expr>? namedArgs,
+  }) {
+    return ConstructorCall(
+      args: args ?? this.args,
+      constructorName: constructorName ?? this.constructorName,
+      namedArgs: namedArgs ?? this.namedArgs,
+    );
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is ConstructorCall &&
+        _equality.equals(other.args, args) &&
+        _equality.equals(other.constructorName, constructorName) &&
+        _equality.equals(other.namedArgs, namedArgs);
+  }
+
+  @override
+  int get hashCode => Object.hashAll(<Object?>[
+    'ConstructorCall',
+    _equality.hash(args),
+    _equality.hash(constructorName),
+    _equality.hash(namedArgs),
+  ]);
+}
+
+/// A constructor of a class (M12, ADR-0055).
+@immutable
+final class ConstructorDecl {
+  /// Creates a [ConstructorDecl].
+  const ConstructorDecl({
+    this.body,
+    this.initializers,
+    this.isConst,
+    this.isFactory,
+    this.name,
+    this.params,
+    this.redirectedFactory,
+    this.redirectsTo,
+    this.superCall,
+  });
+
+  /// Parses a [ConstructorDecl] from JSON, validating as it goes.
+  factory ConstructorDecl.fromJson(Object? value, [String path = 'ConstructorDecl']) {
+    final Map<String, Object?> json = _asObject(value, path);
+    return ConstructorDecl(
+      body: json['body'] == null ? null : _asList<Stmt>(json['body'], '$path.body', Stmt.fromJson),
+      initializers: json['initializers'] == null ? null : _asList<ConstructorInit>(json['initializers'], '$path.initializers', ConstructorInit.fromJson),
+      isConst: json['isConst'] == null ? null : _asBool(json['isConst'], '$path.isConst'),
+      isFactory: json['isFactory'] == null ? null : _asBool(json['isFactory'], '$path.isFactory'),
+      name: json['name'] == null ? null : _asString(json['name'], '$path.name'),
+      params: json['params'] == null ? null : _asList<ParamDecl>(json['params'], '$path.params', ParamDecl.fromJson),
+      redirectedFactory: json['redirectedFactory'] == null ? null : RedirectedFactory.fromJson(json['redirectedFactory'], '$path.redirectedFactory'),
+      redirectsTo: json['redirectsTo'] == null ? null : ConstructorCall.fromJson(json['redirectsTo'], '$path.redirectsTo'),
+      superCall: json['superCall'] == null ? null : ConstructorCall.fromJson(json['superCall'], '$path.superCall'),
+    );
+  }
+
+  /// The body, in order. Absent for an empty or absent body.
+  final List<Stmt>? body;
+
+  /// The initializer list's `field = value` entries, in order. `assert` entries are not carried.
+  final List<ConstructorInit>? initializers;
+
+  /// Whether declared `const`. Present only when true.
+  final bool? isConst;
+
+  /// Whether declared `factory`. Present only when true.
+  final bool? isFactory;
+
+  /// The constructor's name. Absent for the unnamed constructor.
+  final String? name;
+
+  /// Parameters, in order. An initializing formal (`this.x`) carries `initializesField`.
+  final List<ParamDecl>? params;
+
+  /// For a redirecting factory (`factory A() = _A;`), the constructor it is defined as.
+  final RedirectedFactory? redirectedFactory;
+
+  /// For a redirecting generative constructor (`: this(...)`), the sibling constructor it delegates to.
+  final ConstructorCall? redirectsTo;
+
+  /// The `super(...)` call, if the initializer list has one.
+  final ConstructorCall? superCall;
+
+  /// Serializes to canonical JSON: keys sorted, nulls omitted.
+  Map<String, Object?> toJson() => canonicalJson(<String, Object?>{
+    'body': body?.map((Stmt v) => v.toJson()).toList(),
+    'initializers': initializers?.map((ConstructorInit v) => v.toJson()).toList(),
+    'isConst': isConst,
+    'isFactory': isFactory,
+    'name': name,
+    'params': params?.map((ParamDecl v) => v.toJson()).toList(),
+    'redirectedFactory': redirectedFactory?.toJson(),
+    'redirectsTo': redirectsTo?.toJson(),
+    'superCall': superCall?.toJson(),
+  })! as Map<String, Object?>;
+
+  /// Returns a copy with the given fields replaced. The original is never mutated.
+  ///
+  /// An omitted argument keeps its current value; `copyWith` cannot set a field back to
+  /// null. Construct a new node when that is what you mean.
+  ConstructorDecl copyWith({
+    List<Stmt>? body,
+    List<ConstructorInit>? initializers,
+    bool? isConst,
+    bool? isFactory,
+    String? name,
+    List<ParamDecl>? params,
+    RedirectedFactory? redirectedFactory,
+    ConstructorCall? redirectsTo,
+    ConstructorCall? superCall,
+  }) {
+    return ConstructorDecl(
+      body: body ?? this.body,
+      initializers: initializers ?? this.initializers,
+      isConst: isConst ?? this.isConst,
+      isFactory: isFactory ?? this.isFactory,
+      name: name ?? this.name,
+      params: params ?? this.params,
+      redirectedFactory: redirectedFactory ?? this.redirectedFactory,
+      redirectsTo: redirectsTo ?? this.redirectsTo,
+      superCall: superCall ?? this.superCall,
+    );
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is ConstructorDecl &&
+        _equality.equals(other.body, body) &&
+        _equality.equals(other.initializers, initializers) &&
+        _equality.equals(other.isConst, isConst) &&
+        _equality.equals(other.isFactory, isFactory) &&
+        _equality.equals(other.name, name) &&
+        _equality.equals(other.params, params) &&
+        _equality.equals(other.redirectedFactory, redirectedFactory) &&
+        _equality.equals(other.redirectsTo, redirectsTo) &&
+        _equality.equals(other.superCall, superCall);
+  }
+
+  @override
+  int get hashCode => Object.hashAll(<Object?>[
+    'ConstructorDecl',
+    _equality.hash(body),
+    _equality.hash(initializers),
+    _equality.hash(isConst),
+    _equality.hash(isFactory),
+    _equality.hash(name),
+    _equality.hash(params),
+    _equality.hash(redirectedFactory),
+    _equality.hash(redirectsTo),
+    _equality.hash(superCall),
+  ]);
+}
+
+/// One `field = value` entry of a constructor's initializer list.
+@immutable
+final class ConstructorInit {
+  /// Creates a [ConstructorInit].
+  const ConstructorInit({
+    required this.field,
+    required this.value,
+  });
+
+  /// Parses a [ConstructorInit] from JSON, validating as it goes.
+  factory ConstructorInit.fromJson(Object? value, [String path = 'ConstructorInit']) {
+    final Map<String, Object?> json = _asObject(value, path);
+    return ConstructorInit(
+      field: _asString(_req(json, 'field', path), '$path.field'),
+      value: Expr.fromJson(_req(json, 'value', path), '$path.value'),
+    );
+  }
+
+  /// The field initialized.
+  final String field;
+
+  /// The value.
+  final Expr value;
+
+  /// Serializes to canonical JSON: keys sorted, nulls omitted.
+  Map<String, Object?> toJson() => canonicalJson(<String, Object?>{
+    'field': field,
+    'value': value.toJson(),
+  })! as Map<String, Object?>;
+
+  /// Returns a copy with the given fields replaced. The original is never mutated.
+  ///
+  /// An omitted argument keeps its current value; `copyWith` cannot set a field back to
+  /// null. Construct a new node when that is what you mean.
+  ConstructorInit copyWith({
+    String? field,
+    Expr? value,
+  }) {
+    return ConstructorInit(
+      field: field ?? this.field,
+      value: value ?? this.value,
+    );
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is ConstructorInit &&
+        _equality.equals(other.field, field) &&
+        _equality.equals(other.value, value);
+  }
+
+  @override
+  int get hashCode => Object.hashAll(<Object?>[
+    'ConstructorInit',
+    _equality.hash(field),
+    _equality.hash(value),
+  ]);
+}
+
 /// The layout information a ui-realm generator needs, computed by the `layout-boundedness` analysis.
 ///
 /// Additive: it is an optional field on `UiElement` and changes no existing node semantics.
@@ -1237,6 +1500,8 @@ final class ParamDecl {
     required this.name,
     required this.type,
     this.defaultValue,
+    this.initializesField,
+    this.isSuper,
     this.named,
     this.required,
   });
@@ -1246,6 +1511,8 @@ final class ParamDecl {
     final Map<String, Object?> json = _asObject(value, path);
     return ParamDecl(
       defaultValue: json['defaultValue'] == null ? null : Expr.fromJson(json['defaultValue'], '$path.defaultValue'),
+      initializesField: json['initializesField'] == null ? null : _asString(json['initializesField'], '$path.initializesField'),
+      isSuper: json['isSuper'] == null ? null : _asBool(json['isSuper'], '$path.isSuper'),
       name: _asString(_req(json, 'name', path), '$path.name'),
       named: json['named'] == null ? null : _asBool(json['named'], '$path.named'),
       required: json['required'] == null ? null : _asBool(json['required'], '$path.required'),
@@ -1255,6 +1522,12 @@ final class ParamDecl {
 
   /// Default value, if any.
   final Expr? defaultValue;
+
+  /// For an initializing formal (`this.x`), the name of the field it initializes. Present only then (M12).
+  final String? initializesField;
+
+  /// Whether this is a super parameter (`super.x`), forwarded to the superclass constructor under the same name. Present only when true (M12).
+  final bool? isSuper;
 
   /// Parameter name.
   final String name;
@@ -1271,6 +1544,8 @@ final class ParamDecl {
   /// Serializes to canonical JSON: keys sorted, nulls omitted.
   Map<String, Object?> toJson() => canonicalJson(<String, Object?>{
     'defaultValue': defaultValue?.toJson(),
+    'initializesField': initializesField,
+    'isSuper': isSuper,
     'name': name,
     'named': named,
     'required': required,
@@ -1283,6 +1558,8 @@ final class ParamDecl {
   /// null. Construct a new node when that is what you mean.
   ParamDecl copyWith({
     Expr? defaultValue,
+    String? initializesField,
+    bool? isSuper,
     String? name,
     bool? named,
     bool? required,
@@ -1290,6 +1567,8 @@ final class ParamDecl {
   }) {
     return ParamDecl(
       defaultValue: defaultValue ?? this.defaultValue,
+      initializesField: initializesField ?? this.initializesField,
+      isSuper: isSuper ?? this.isSuper,
       name: name ?? this.name,
       named: named ?? this.named,
       required: required ?? this.required,
@@ -1302,6 +1581,8 @@ final class ParamDecl {
     if (identical(this, other)) return true;
     return other is ParamDecl &&
         _equality.equals(other.defaultValue, defaultValue) &&
+        _equality.equals(other.initializesField, initializesField) &&
+        _equality.equals(other.isSuper, isSuper) &&
         _equality.equals(other.name, name) &&
         _equality.equals(other.named, named) &&
         _equality.equals(other.required, required) &&
@@ -1312,9 +1593,71 @@ final class ParamDecl {
   int get hashCode => Object.hashAll(<Object?>[
     'ParamDecl',
     _equality.hash(defaultValue),
+    _equality.hash(initializesField),
+    _equality.hash(isSuper),
     _equality.hash(name),
     _equality.hash(named),
     _equality.hash(required),
+    _equality.hash(type),
+  ]);
+}
+
+/// The constructor a redirecting factory is defined as.
+@immutable
+final class RedirectedFactory {
+  /// Creates a [RedirectedFactory].
+  const RedirectedFactory({
+    required this.type,
+    this.constructorName,
+  });
+
+  /// Parses a [RedirectedFactory] from JSON, validating as it goes.
+  factory RedirectedFactory.fromJson(Object? value, [String path = 'RedirectedFactory']) {
+    final Map<String, Object?> json = _asObject(value, path);
+    return RedirectedFactory(
+      constructorName: json['constructorName'] == null ? null : _asString(json['constructorName'], '$path.constructorName'),
+      type: TypeRef.fromJson(_req(json, 'type', path), '$path.type'),
+    );
+  }
+
+  /// Its constructor, if named.
+  final String? constructorName;
+
+  /// The class the factory redirects to (`= _Impl`).
+  final TypeRef type;
+
+  /// Serializes to canonical JSON: keys sorted, nulls omitted.
+  Map<String, Object?> toJson() => canonicalJson(<String, Object?>{
+    'constructorName': constructorName,
+    'type': type.toJson(),
+  })! as Map<String, Object?>;
+
+  /// Returns a copy with the given fields replaced. The original is never mutated.
+  ///
+  /// An omitted argument keeps its current value; `copyWith` cannot set a field back to
+  /// null. Construct a new node when that is what you mean.
+  RedirectedFactory copyWith({
+    String? constructorName,
+    TypeRef? type,
+  }) {
+    return RedirectedFactory(
+      constructorName: constructorName ?? this.constructorName,
+      type: type ?? this.type,
+    );
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is RedirectedFactory &&
+        _equality.equals(other.constructorName, constructorName) &&
+        _equality.equals(other.type, type);
+  }
+
+  @override
+  int get hashCode => Object.hashAll(<Object?>[
+    'RedirectedFactory',
+    _equality.hash(constructorName),
     _equality.hash(type),
   ]);
 }
@@ -2854,10 +3197,17 @@ final class ClassDecl extends Decl {
     required this.span,
     this.anchor,
     this.constructibleConstructors,
+    this.constructors,
     this.ext,
     this.fields,
+    this.interfaces,
+    this.isAbstract,
+    this.isMixin,
+    this.library,
     this.methods,
+    this.mixins,
     this.superclass,
+    this.typeParameters,
   });
 
   /// Parses a [ClassDecl] from JSON, validating as it goes.
@@ -2870,13 +3220,20 @@ final class ClassDecl extends Decl {
     return ClassDecl(
       anchor: json['anchor'] == null ? null : _asString(json['anchor'], '$path.anchor'),
       constructibleConstructors: json['constructibleConstructors'] == null ? null : _asList<ConstructibleConstructor>(json['constructibleConstructors'], '$path.constructibleConstructors', ConstructibleConstructor.fromJson),
+      constructors: json['constructors'] == null ? null : _asList<ConstructorDecl>(json['constructors'], '$path.constructors', ConstructorDecl.fromJson),
       ext: json['ext'] == null ? null : _asMap<Object?>(json['ext'], '$path.ext', (Object? v, String p) => v),
       fields: json['fields'] == null ? null : _asList<FieldDecl>(json['fields'], '$path.fields', FieldDecl.fromJson),
       id: _asString(_req(json, 'id', path), '$path.id'),
+      interfaces: json['interfaces'] == null ? null : _asList<TypeRef>(json['interfaces'], '$path.interfaces', TypeRef.fromJson),
+      isAbstract: json['isAbstract'] == null ? null : _asBool(json['isAbstract'], '$path.isAbstract'),
+      isMixin: json['isMixin'] == null ? null : _asBool(json['isMixin'], '$path.isMixin'),
+      library: json['library'] == null ? null : _asString(json['library'], '$path.library'),
       methods: json['methods'] == null ? null : _asList<FunctionDecl>(json['methods'], '$path.methods', FunctionDecl.fromJson),
+      mixins: json['mixins'] == null ? null : _asList<TypeRef>(json['mixins'], '$path.mixins', TypeRef.fromJson),
       name: _asString(_req(json, 'name', path), '$path.name'),
       span: SourceSpan.fromJson(_req(json, 'span', path), '$path.span'),
       superclass: json['superclass'] == null ? null : TypeRef.fromJson(json['superclass'], '$path.superclass'),
+      typeParameters: json['typeParameters'] == null ? null : _asList<String>(json['typeParameters'], '$path.typeParameters', _asString),
     );
   }
 
@@ -2885,6 +3242,9 @@ final class ClassDecl extends Decl {
 
   /// One entry per this class's own constructor that is safely equivalent to a plain, immutable record's own construction (ADR-0036, generalized by ADR-0037 from a single class-global mapping to a constructor-keyed list): non-const, non-factory, non-redirecting, an empty body and an empty initializer list, and field-formal parameters — uniformly required-positional or uniformly required-named, never mixed — that cover every one of the class's own instance fields exactly once. The whole-class prerequisite is unchanged from ADR-0036: every instance field public/final/non-static/non-late, and the class itself public, non-generic, with no superclass/`implements`/`with`. A constructor failing its own eligibility (a body, a factory keyword, an incomplete field-formal set, a mix of positional and named field-formals, and so on) is simply absent from this array — it neither disqualifies a sibling constructor nor the class's own other, eligible constructors (ADR-0037 §9). Present as an empty array when the class satisfies the whole-class prerequisite but has no individually eligible constructor; present as a single implicit-unnamed-positional entry with an empty `fields` array for a fieldless class with no explicit constructor; absent entirely when the whole-class prerequisite itself fails. Constructor identity is `(this ClassDecl, this entry's own name)` — already unique, since Dart forbids two constructors sharing one name on one class, and two different classes never share a `ClassDecl` id — so no separate constructor-identity node or symbol scheme was introduced. Derived exclusively from `FieldFormalParameterElement.field` — never from parameter-name or field-name text equality. Declaration provenance only — never a claim that any constructor is invoked at runtime; a generator resolving a construction against an entry here emits a plain object literal, never a call to the constructor this entry describes.
   final List<ConstructibleConstructor>? constructibleConstructors;
+
+  /// Every constructor the class declares, in declaration order (M12, ADR-0055). Unlike `constructibleConstructors` — which lists only the few a plain record could stand in for — this is the whole set, with bodies and initializers, for a class the generator emits as a real class.
+  final List<ConstructorDecl>? constructors;
 
   /// Plugin extension data, namespaced `x-<plugin>`. Core passes round-trip it untouched (Spec §2.6).
   final Map<String, Object?>? ext;
@@ -2895,8 +3255,23 @@ final class ClassDecl extends Decl {
   /// The node's stable, content-addressed identity.
   final NodeId id;
 
+  /// The types this class `implements`, in order.
+  final List<TypeRef>? interfaces;
+
+  /// Whether the class is `abstract` (or `sealed`, which is abstract). Present only when true.
+  final bool? isAbstract;
+
+  /// Whether this declares a `mixin` rather than a class. Present only when true.
+  final bool? isMixin;
+
+  /// The library file this class belongs to — its own path, or for a declaration in a `part of` file the path of the library that includes it. Absent for a class of a synthesized declaration. A generated module is per library (M12, ADR-0055).
+  final String? library;
+
   /// Methods, in declaration order.
   final List<FunctionDecl>? methods;
+
+  /// The mixins this class applies (`with`), in order.
+  final List<TypeRef>? mixins;
 
   /// Class name.
   final String name;
@@ -2907,6 +3282,9 @@ final class ClassDecl extends Decl {
   /// The superclass, if any.
   final TypeRef? superclass;
 
+  /// The class's type parameters, in order (`class Box<T>`). Absent for a non-generic class.
+  final List<String>? typeParameters;
+
   /// The node's discriminant.
   @override
   String get kind => 'logic.ClassDecl';
@@ -2916,14 +3294,21 @@ final class ClassDecl extends Decl {
   Map<String, Object?> toJson() => canonicalJson(<String, Object?>{
     'anchor': anchor,
     'constructibleConstructors': constructibleConstructors?.map((ConstructibleConstructor v) => v.toJson()).toList(),
+    'constructors': constructors?.map((ConstructorDecl v) => v.toJson()).toList(),
     'ext': ext,
     'fields': fields?.map((FieldDecl v) => v.toJson()).toList(),
     'id': id,
+    'interfaces': interfaces?.map((TypeRef v) => v.toJson()).toList(),
+    'isAbstract': isAbstract,
+    'isMixin': isMixin,
     'kind': 'logic.ClassDecl',
+    'library': library,
     'methods': methods?.map((FunctionDecl v) => v.toJson()).toList(),
+    'mixins': mixins?.map((TypeRef v) => v.toJson()).toList(),
     'name': name,
     'span': span.toJson(),
     'superclass': superclass?.toJson(),
+    'typeParameters': typeParameters,
   })! as Map<String, Object?>;
 
   /// Returns a copy with the given fields replaced. The original is never mutated.
@@ -2933,24 +3318,38 @@ final class ClassDecl extends Decl {
   ClassDecl copyWith({
     Anchor? anchor,
     List<ConstructibleConstructor>? constructibleConstructors,
+    List<ConstructorDecl>? constructors,
     Map<String, Object?>? ext,
     List<FieldDecl>? fields,
     NodeId? id,
+    List<TypeRef>? interfaces,
+    bool? isAbstract,
+    bool? isMixin,
+    String? library,
     List<FunctionDecl>? methods,
+    List<TypeRef>? mixins,
     String? name,
     SourceSpan? span,
     TypeRef? superclass,
+    List<String>? typeParameters,
   }) {
     return ClassDecl(
       anchor: anchor ?? this.anchor,
       constructibleConstructors: constructibleConstructors ?? this.constructibleConstructors,
+      constructors: constructors ?? this.constructors,
       ext: ext ?? this.ext,
       fields: fields ?? this.fields,
       id: id ?? this.id,
+      interfaces: interfaces ?? this.interfaces,
+      isAbstract: isAbstract ?? this.isAbstract,
+      isMixin: isMixin ?? this.isMixin,
+      library: library ?? this.library,
       methods: methods ?? this.methods,
+      mixins: mixins ?? this.mixins,
       name: name ?? this.name,
       span: span ?? this.span,
       superclass: superclass ?? this.superclass,
+      typeParameters: typeParameters ?? this.typeParameters,
     );
   }
 
@@ -2963,13 +3362,20 @@ final class ClassDecl extends Decl {
     return other is ClassDecl &&
         _equality.equals(other.anchor, anchor) &&
         _equality.equals(other.constructibleConstructors, constructibleConstructors) &&
+        _equality.equals(other.constructors, constructors) &&
         _equality.equals(other.ext, ext) &&
         _equality.equals(other.fields, fields) &&
         _equality.equals(other.id, id) &&
+        _equality.equals(other.interfaces, interfaces) &&
+        _equality.equals(other.isAbstract, isAbstract) &&
+        _equality.equals(other.isMixin, isMixin) &&
+        _equality.equals(other.library, library) &&
         _equality.equals(other.methods, methods) &&
+        _equality.equals(other.mixins, mixins) &&
         _equality.equals(other.name, name) &&
         _equality.equals(other.span, span) &&
-        _equality.equals(other.superclass, superclass);
+        _equality.equals(other.superclass, superclass) &&
+        _equality.equals(other.typeParameters, typeParameters);
   }
 
   @override
@@ -2977,13 +3383,20 @@ final class ClassDecl extends Decl {
     'ClassDecl',
     _equality.hash(anchor),
     _equality.hash(constructibleConstructors),
+    _equality.hash(constructors),
     _equality.hash(ext),
     _equality.hash(fields),
     _equality.hash(id),
+    _equality.hash(interfaces),
+    _equality.hash(isAbstract),
+    _equality.hash(isMixin),
+    _equality.hash(library),
     _equality.hash(methods),
+    _equality.hash(mixins),
     _equality.hash(name),
     _equality.hash(span),
     _equality.hash(superclass),
+    _equality.hash(typeParameters),
   ]);
 }
 
@@ -4521,8 +4934,11 @@ final class FunctionDecl extends Decl {
     this.anchor,
     this.body,
     this.ext,
+    this.isAbstract,
     this.isAsync,
     this.isGetter,
+    this.isOperator,
+    this.isSetter,
     this.isStatic,
     this.params,
   });
@@ -4539,8 +4955,11 @@ final class FunctionDecl extends Decl {
       body: json['body'] == null ? null : _asList<Stmt>(json['body'], '$path.body', Stmt.fromJson),
       ext: json['ext'] == null ? null : _asMap<Object?>(json['ext'], '$path.ext', (Object? v, String p) => v),
       id: _asString(_req(json, 'id', path), '$path.id'),
+      isAbstract: json['isAbstract'] == null ? null : _asBool(json['isAbstract'], '$path.isAbstract'),
       isAsync: json['isAsync'] == null ? null : _asBool(json['isAsync'], '$path.isAsync'),
       isGetter: json['isGetter'] == null ? null : _asBool(json['isGetter'], '$path.isGetter'),
+      isOperator: json['isOperator'] == null ? null : _asBool(json['isOperator'], '$path.isOperator'),
+      isSetter: json['isSetter'] == null ? null : _asBool(json['isSetter'], '$path.isSetter'),
       isStatic: json['isStatic'] == null ? null : _asBool(json['isStatic'], '$path.isStatic'),
       name: _asString(_req(json, 'name', path), '$path.name'),
       params: json['params'] == null ? null : _asList<ParamDecl>(json['params'], '$path.params', ParamDecl.fromJson),
@@ -4561,11 +4980,20 @@ final class FunctionDecl extends Decl {
   /// The node's stable, content-addressed identity.
   final NodeId id;
 
+  /// Whether the member has no body (`abstract` or an interface's). Present only when true (M12).
+  final bool? isAbstract;
+
   /// Whether the function is async.
   final bool? isAsync;
 
   /// Whether this declaration is a class's own explicit instance getter (ADR-0038), as opposed to an ordinary method or a setter. Present only on a `logic.FunctionDecl` embedded in `ClassDecl.methods` — a top-level `logic.FunctionDecl` (ADR-29) is never marked this way, since Dart's own top-level `get` declarations extract identically to an ordinary top-level function (`declaration_extractor.dart`'s own `_function`), the same way this schema has always treated one; there is no `isGetter` distinction to make at that level. A class's own setter continues to be represented as an ordinary, unflagged `logic.FunctionDecl` (its own symbol mangled with a trailing `=`, unchanged since before M9-Q) — `isGetter` absent (never `false`) for it, exactly as for an ordinary method; M9-Q's own bounded execution model reads `isGetter === true` as the one positive signal it needs, never infers a setter from its absence.
   final bool? isGetter;
+
+  /// Whether this is an operator declaration (`operator ==`, `operator []`); its `name` is the operator token. Present only when true (M12).
+  final bool? isOperator;
+
+  /// Whether this is a setter (`set value(int v)`), as opposed to a getter of the same name. Present only when true (M12).
+  final bool? isSetter;
 
   /// Whether the function is static.
   final bool? isStatic;
@@ -4593,8 +5021,11 @@ final class FunctionDecl extends Decl {
     'body': body?.map((Stmt v) => v.toJson()).toList(),
     'ext': ext,
     'id': id,
+    'isAbstract': isAbstract,
     'isAsync': isAsync,
     'isGetter': isGetter,
+    'isOperator': isOperator,
+    'isSetter': isSetter,
     'isStatic': isStatic,
     'kind': 'logic.FunctionDecl',
     'name': name,
@@ -4612,8 +5043,11 @@ final class FunctionDecl extends Decl {
     List<Stmt>? body,
     Map<String, Object?>? ext,
     NodeId? id,
+    bool? isAbstract,
     bool? isAsync,
     bool? isGetter,
+    bool? isOperator,
+    bool? isSetter,
     bool? isStatic,
     String? name,
     List<ParamDecl>? params,
@@ -4625,8 +5059,11 @@ final class FunctionDecl extends Decl {
       body: body ?? this.body,
       ext: ext ?? this.ext,
       id: id ?? this.id,
+      isAbstract: isAbstract ?? this.isAbstract,
       isAsync: isAsync ?? this.isAsync,
       isGetter: isGetter ?? this.isGetter,
+      isOperator: isOperator ?? this.isOperator,
+      isSetter: isSetter ?? this.isSetter,
       isStatic: isStatic ?? this.isStatic,
       name: name ?? this.name,
       params: params ?? this.params,
@@ -4646,8 +5083,11 @@ final class FunctionDecl extends Decl {
         _equality.equals(other.body, body) &&
         _equality.equals(other.ext, ext) &&
         _equality.equals(other.id, id) &&
+        _equality.equals(other.isAbstract, isAbstract) &&
         _equality.equals(other.isAsync, isAsync) &&
         _equality.equals(other.isGetter, isGetter) &&
+        _equality.equals(other.isOperator, isOperator) &&
+        _equality.equals(other.isSetter, isSetter) &&
         _equality.equals(other.isStatic, isStatic) &&
         _equality.equals(other.name, name) &&
         _equality.equals(other.params, params) &&
@@ -4662,8 +5102,11 @@ final class FunctionDecl extends Decl {
     _equality.hash(body),
     _equality.hash(ext),
     _equality.hash(id),
+    _equality.hash(isAbstract),
     _equality.hash(isAsync),
     _equality.hash(isGetter),
+    _equality.hash(isOperator),
+    _equality.hash(isSetter),
     _equality.hash(isStatic),
     _equality.hash(name),
     _equality.hash(params),
@@ -8471,6 +8914,129 @@ final class TypeAliasDecl extends Decl {
   ]);
 }
 
+/// An `is` / `is!` type test: `value is Type`.
+@immutable
+final class TypeCheck extends Expr {
+  /// Creates a [TypeCheck].
+  const TypeCheck({
+    required this.id,
+    required this.operand,
+    required this.span,
+    required this.type,
+    this.anchor,
+    this.ext,
+    this.negated,
+  });
+
+  /// Parses a [TypeCheck] from JSON, validating as it goes.
+  factory TypeCheck.fromJson(Object? value, [String path = 'TypeCheck']) {
+    final Map<String, Object?> json = _asObject(value, path);
+    final String kind = _asString(_req(json, 'kind', path), '$path.kind');
+    if (kind != 'logic.TypeCheck') {
+      throw UirParseError('$path.kind', 'expected "logic.TypeCheck", got "$kind"');
+    }
+    return TypeCheck(
+      anchor: json['anchor'] == null ? null : _asString(json['anchor'], '$path.anchor'),
+      ext: json['ext'] == null ? null : _asMap<Object?>(json['ext'], '$path.ext', (Object? v, String p) => v),
+      id: _asString(_req(json, 'id', path), '$path.id'),
+      negated: json['negated'] == null ? null : _asBool(json['negated'], '$path.negated'),
+      operand: Expr.fromJson(_req(json, 'operand', path), '$path.operand'),
+      span: SourceSpan.fromJson(_req(json, 'span', path), '$path.span'),
+      type: TypeRef.fromJson(_req(json, 'type', path), '$path.type'),
+    );
+  }
+
+  /// The override key, when the node is addressable by a human.
+  final Anchor? anchor;
+
+  /// Plugin extension data, namespaced `x-<plugin>`. Core passes round-trip it untouched (Spec §2.6).
+  final Map<String, Object?>? ext;
+
+  /// The node's stable, content-addressed identity.
+  final NodeId id;
+
+  /// Whether this is `is!`. Present only when true.
+  final bool? negated;
+
+  /// The value tested.
+  final Expr operand;
+
+  /// Where the node came from.
+  final SourceSpan span;
+
+  /// The type tested against.
+  final TypeRef type;
+
+  /// The node's discriminant.
+  @override
+  String get kind => 'logic.TypeCheck';
+
+  /// Serializes to canonical JSON: keys sorted, nulls omitted.
+  @override
+  Map<String, Object?> toJson() => canonicalJson(<String, Object?>{
+    'anchor': anchor,
+    'ext': ext,
+    'id': id,
+    'kind': 'logic.TypeCheck',
+    'negated': negated,
+    'operand': operand.toJson(),
+    'span': span.toJson(),
+    'type': type.toJson(),
+  })! as Map<String, Object?>;
+
+  /// Returns a copy with the given fields replaced. The original is never mutated.
+  ///
+  /// An omitted argument keeps its current value; `copyWith` cannot set a field back to
+  /// null. Construct a new node when that is what you mean.
+  TypeCheck copyWith({
+    Anchor? anchor,
+    Map<String, Object?>? ext,
+    NodeId? id,
+    bool? negated,
+    Expr? operand,
+    SourceSpan? span,
+    TypeRef? type,
+  }) {
+    return TypeCheck(
+      anchor: anchor ?? this.anchor,
+      ext: ext ?? this.ext,
+      id: id ?? this.id,
+      negated: negated ?? this.negated,
+      operand: operand ?? this.operand,
+      span: span ?? this.span,
+      type: type ?? this.type,
+    );
+  }
+
+  @override
+  R accept<R>(ExprVisitor<R> visitor) => visitor.visitTypeCheck(this);
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is TypeCheck &&
+        _equality.equals(other.anchor, anchor) &&
+        _equality.equals(other.ext, ext) &&
+        _equality.equals(other.id, id) &&
+        _equality.equals(other.negated, negated) &&
+        _equality.equals(other.operand, operand) &&
+        _equality.equals(other.span, span) &&
+        _equality.equals(other.type, type);
+  }
+
+  @override
+  int get hashCode => Object.hashAll(<Object?>[
+    'TypeCheck',
+    _equality.hash(anchor),
+    _equality.hash(ext),
+    _equality.hash(id),
+    _equality.hash(negated),
+    _equality.hash(operand),
+    _equality.hash(span),
+    _equality.hash(type),
+  ]);
+}
+
 /// An asynchronous subtree — the normalized form of `FutureBuilder` (pass N4).
 ///
 /// The waiting/error/data branch shape is mechanically recognizable in real Flutter code, which is what lets N4 pattern-match rather than interpret.
@@ -9991,6 +10557,9 @@ abstract interface class ExprVisitor<R> {
   /// Visits a [StringInterp].
   R visitStringInterp(StringInterp node);
 
+  /// Visits a [TypeCheck].
+  R visitTypeCheck(TypeCheck node);
+
   /// Visits a [Unary].
   R visitUnary(Unary node);
 }
@@ -10185,6 +10754,8 @@ UirNode uirNodeFromJson(Object? value, [String path = 'UirNode']) {
       return TryCatch.fromJson(json, path);
     case 'logic.TypeAliasDecl':
       return TypeAliasDecl.fromJson(json, path);
+    case 'logic.TypeCheck':
+      return TypeCheck.fromJson(json, path);
     case 'ui.Async':
       return UiAsync.fromJson(json, path);
     case 'ui.Cond':

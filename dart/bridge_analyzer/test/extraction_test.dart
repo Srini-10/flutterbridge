@@ -5845,7 +5845,7 @@ class W extends StatelessWidget {
       expect(bType['target'], isNot(localId));
     });
 
-    test('a generic class instantiation carries no target — bounded out (ADR-0034 §12)', () async {
+    test('a generic class instantiation carries the target of its class (M12: the class model emits generics; formerly bounded out, ADR-0034 §12)', () async {
       final Extracted app = await extract('''
 import 'package:flutter/material.dart';
 class Box<T> {}
@@ -5857,7 +5857,9 @@ class W extends StatelessWidget {
 }
 ''');
       final Map<String, dynamic> type = paramOf(app, 'box')['type'] as Map<String, dynamic>;
-      expect(type['target'], isNull);
+      final Map<String, dynamic> box = app.ofKind('logic.ClassDecl').singleWhere((Map<String, dynamic> c) => c['name'] == 'Box');
+      expect(type['target'], box['id']);
+      expect(box['typeParameters'], <String>['T']);
     });
 
     test('a component class used as a parameter type carries no target — already represented as ui.Component', () async {
@@ -8699,10 +8701,26 @@ class W extends StatelessWidget {
       final Map<String, dynamic> callBare = (derived['methods'] as List<dynamic>)
           .cast<Map<String, dynamic>>()
           .singleWhere((Map<String, dynamic> m) => m['name'] == 'callBare');
-      final Map<String, dynamic>? call = callOf(callBare['body']);
+      // M12: `Derived` is a general class, so the bare call is `this.multiply(x)` — a method call on the implicit `this` — and
+      // still carries no target through the static-member path.
+      Map<String, dynamic>? find(Object? node) {
+        if (node is Map<String, dynamic>) {
+          if (node['kind'] == 'logic.MethodCall' && node['method'] == 'multiply') return node;
+          for (final Object? value in node.values) {
+            if (find(value) case final Map<String, dynamic> found) return found;
+          }
+        } else if (node is List<dynamic>) {
+          for (final Object? item in node) {
+            if (find(item) case final Map<String, dynamic> found) return found;
+          }
+        }
+        return null;
+      }
+
+      final Map<String, dynamic>? call = find(callBare['body']);
       expect(call, isNotNull);
-      final Map<String, dynamic> callee = call!['callee'] as Map<String, dynamic>;
-      expect(callee.containsKey('target'), isFalse);
+      expect(call!.containsKey('target'), isFalse);
+      expect((call['receiver'] as Map<String, dynamic>)['name'], 'this');
     });
 
     test('a static method with a named parameter never resolves a target', () async {
@@ -9926,6 +9944,114 @@ class _Model {
       app.nodes.forEach(walk);
       expect(refs, isNotEmpty);
       expect(refs.every((Map<String, dynamic> r) => r['target'] == decl['id']), isTrue);
+    });
+  });
+
+  group('the general class model (M12, ADR-0055)', () {
+    Iterable<String> codesOf(Extracted app) => app.result.diagnostics.map((Diagnostic d) => d.code.id);
+
+    test('a class with a non-record constructor carries every constructor, with initializers, super and redirect', () async {
+      final Extracted app = await extract(r'''
+import 'package:flutter/material.dart';
+class Base { Base(this.name); final String name; }
+class Point extends Base {
+  Point(this.x, {this.y = 2}) : super('p');
+  Point.origin() : this(0);
+  Point.sum(int a, int b) : x = a + b, y = 0, super('s');
+  factory Point.make() => Point(1);
+  factory Point.twin() = Point.origin;
+  final int x;
+  final int y;
+}
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => Text('${Point(1).x}');
+}
+''');
+      final Map<String, dynamic> point = app.ofKind('logic.ClassDecl').singleWhere((Map<String, dynamic> c) => c['name'] == 'Point');
+      expect(point['library'], 'lib/main.dart');
+      final List<Map<String, dynamic>> ctors = (point['constructors'] as List<dynamic>).cast<Map<String, dynamic>>();
+      expect(ctors.map((Map<String, dynamic> c) => c['name']), <Object?>[null, 'origin', 'sum', 'make', 'twin']);
+      final Map<String, dynamic> unnamed = ctors[0];
+      expect((unnamed['params'] as List<dynamic>).cast<Map<String, dynamic>>().map((Map<String, dynamic> p) => p['initializesField']), <String>['x', 'y']);
+      expect((unnamed['superCall'] as Map<String, dynamic>)['args'] as List<dynamic>, hasLength(1));
+      expect((ctors[1]['redirectsTo'] as Map<String, dynamic>).containsKey('args'), isTrue);
+      expect((ctors[2]['initializers'] as List<dynamic>).map((dynamic i) => (i as Map<String, dynamic>)['field']), <String>['x', 'y']);
+      expect(ctors[3]['isFactory'], isTrue);
+      expect(ctors[3]['body'], isNotEmpty, reason: 'an expression-bodied factory keeps its body');
+      expect((ctors[4]['redirectedFactory'] as Map<String, dynamic>)['constructorName'], 'origin');
+    });
+
+    test('`is` and `is!` are logic.TypeCheck, with the class as the target', () async {
+      final Extracted app = await extract(r'''
+import 'package:flutter/material.dart';
+class Shape {}
+class Circle extends Shape {}
+class W extends StatelessWidget {
+  const W({super.key, required this.s});
+  final Shape s;
+  @override
+  Widget build(BuildContext context) => Text('${s is Circle} ${s is! Circle}');
+}
+''');
+      final List<Map<String, dynamic>> checks = app.ofKind('logic.TypeCheck');
+      expect(checks, hasLength(2));
+      expect(checks.map((Map<String, dynamic> c) => c['negated']), <Object?>[null, true]);
+      final Map<String, dynamic> circle = app.ofKind('logic.ClassDecl').singleWhere((Map<String, dynamic> c) => c['name'] == 'Circle');
+      expect((checks.first['type'] as Map<String, dynamic>)['target'], circle['id']);
+    });
+
+    test('unqualified instance members in a general class body are `this.` accesses, including as assignment targets', () async {
+      final Extracted app = await extract(r'''
+import 'package:flutter/material.dart';
+class Counter {
+  Counter(this.start) : value = start;
+  final int start;
+  int value;
+  int tick() { value += 1; return value; }
+}
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) => Text('${Counter(1).tick()}');
+}
+''');
+      final Map<String, dynamic> counter = app.ofKind('logic.ClassDecl').singleWhere((Map<String, dynamic> c) => c['name'] == 'Counter');
+      final Map<String, dynamic> tick = (counter['methods'] as List<dynamic>).cast<Map<String, dynamic>>().single;
+      final Map<String, dynamic> assign = ((tick['body'] as List<dynamic>).first as Map<String, dynamic>)['expr'] as Map<String, dynamic>;
+      final Map<String, dynamic> target = assign['target'] as Map<String, dynamic>;
+      expect(target['kind'], 'logic.PropertyAccess');
+      expect((target['receiver'] as Map<String, dynamic>)['name'], 'this');
+    });
+
+    test('a build-method local holding an object the build mutates is refused (BRG1313); a list only read is not', () async {
+      final Extracted mutated = await extract(r'''
+import 'package:flutter/material.dart';
+class Counter { int n = 0; void tick() { n++; } }
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) {
+    final c = Counter();
+    c.tick();
+    return Text('${c.n}');
+  }
+}
+''');
+      expect(codesOf(mutated), contains('BRG1313'));
+      final Extracted readOnly = await extract(r'''
+import 'package:flutter/material.dart';
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) {
+    final labels = ['a', 'b'];
+    return Text('${labels.length} ${labels.join(",")}');
+  }
+}
+''');
+      expect(codesOf(readOnly), isNot(contains('BRG1313')));
     });
   });
 }

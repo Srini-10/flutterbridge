@@ -186,6 +186,7 @@ export function generateProject(context: GeneratorContext): GeneratorOutput {
     projectClassMethodIds: resolvedProjectClassMethodIds,
     projectClassGetterIds: resolvedProjectClassGetterIds,
     projectStaticFieldIds: resolvedStaticFieldIds,
+    generalClasses: resolvedGeneralClasses,
   } = emitFunctionModules(context.program.nodes, scope);
   for (const [id, info] of resolvedFunctions) {
     (scope.functionModules as Map<NodeId, { readonly path: string; readonly module: string; readonly name: string }>).set(id, info);
@@ -206,6 +207,9 @@ export function generateProject(context: GeneratorContext): GeneratorOutput {
     (scope.projectClassGetterIds as Set<NodeId>).add(id);
   }
   for (const id of resolvedStaticFieldIds) (scope.projectStaticFieldIds as Set<NodeId>).add(id);
+  for (const [id, info] of resolvedGeneralClasses) {
+    (scope.generalClasses as Map<NodeId, { readonly path: string; readonly module: string; readonly name: string }>).set(id, info);
+  }
   files.push(...functionFiles);
 
   // ── theme ──
@@ -678,6 +682,7 @@ function rootScope(
   const projectClassMethodIds = new Set<NodeId>();
   const projectClassGetterIds = new Set<NodeId>();
   const projectStaticFieldIds = new Set<NodeId>();
+  const generalClasses = new Map<NodeId, { readonly path: string; readonly module: string; readonly name: string }>();
 
   const scope: EmitScope = {
     module: new ModuleBuilder('<none>'),
@@ -694,6 +699,7 @@ function rootScope(
     projectClassMethodIds,
     projectClassGetterIds,
     projectStaticFieldIds,
+    generalClasses,
     node: (id: NodeId) => context.program.get(id) as AnyUirNode | undefined,
     // A bare reference at the root resolves nothing — every store member reachable here is resolved
     // explicitly, per component, by `declareStoreConsumption` (M7-F), which is the only thing that knows

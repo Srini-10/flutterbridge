@@ -214,6 +214,7 @@ function storeScope(
     projectClassMethodIds: parent.projectClassMethodIds,
     projectClassGetterIds: parent.projectClassGetterIds,
     projectStaticFieldIds: parent.projectStaticFieldIds,
+    generalClasses: parent.generalClasses,
     storeAccessRead: (id) => parent.storeAccessRead(id),
     node: parent.node.bind(parent),
     isStoreOwned: (id) => parent.isStoreOwned(id),

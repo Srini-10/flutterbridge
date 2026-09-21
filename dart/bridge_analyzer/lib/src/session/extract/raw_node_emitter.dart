@@ -156,9 +156,6 @@ final class RawNodeEmitter {
     if (element is! ClassElement) {
       return null;
     }
-    if (type is InterfaceType && type.typeArguments.isNotEmpty) {
-      return null;
-    }
     if (registry.isComponentBase(type) || registry.isStateBase(type) || registry.isStoreBase(type)) {
       return null;
     }
