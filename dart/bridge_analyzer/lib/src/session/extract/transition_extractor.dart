@@ -304,7 +304,12 @@ final class TransitionExtractor {
   List<RawValue> _arguments(List<TransitionArgument> arguments, Scope scope) {
     final List<RawValue> out = <RawValue>[];
     for (final TransitionArgument argument in arguments) {
+      // A widget handed to the destination — `DetailScreen(header: Text('…'))` — is a value the destination renders, so it is
+      // a `logic.WidgetExpr` holding its `ui.*` tree, not a `logic.New` of a class that has no emitted counterpart (ADR-0062).
+      final bool was = widgets.expressions.widgetValues;
+      widgets.expressions.widgetValues = true;
       final RawNode binding = bindings.extract(argument.value, scope);
+      widgets.expressions.widgetValues = was;
       if (BindingExtractor.isOpaque(binding)) {
         continue;
       }

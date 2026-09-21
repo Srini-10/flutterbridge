@@ -159,6 +159,63 @@ export function screenKeyFor(componentId: string, transition: Node, scope: EmitS
 }
 
 /**
+ * Whether an argument's value can only be computed **where the navigation happens** — it reads something the
+ * call site has and the page module does not.
+ *
+ * An inline destination (`Navigator.push`, `showDialog`, `showModalBottomSheet` constructing a component) is an entry
+ * on the runtime's stack, not a URL, so nothing forces its arguments to be constants. The page module emits a wrapper
+ * for the ones that *are* — `title: 'Details'` — and the push itself carries the rest as `props`, evaluated in the
+ * component that pushes: its own constructor parameters, its locals, a closure over both.
+ *
+ * The test is structural, on the binding, because **two emitters must agree on it** — `pipeline.ts` decides what
+ * the wrapper omits and `statement.ts` decides what the push carries — and they run against different scopes, so a
+ * probe of "does this lower cleanly here" would give each a different answer. Per-invocation state is:
+ *
+ * - a `bind.Param` — the caller's own constructor parameter;
+ * - a `logic.Ref` with no `target` (a parameter has no id, ADR-17) or whose `target` no top-level node answers to (a
+ *   local variable, which lives in a statement body and never in the program's index);
+ * - a `logic.Lambda` — a closure, which captures whatever surrounds it;
+ * - a signal or an action a component still owns — N11 moves what a boundary shares into a store, and what it did not
+ *   move is read where its component is.
+ *
+ * A `logic.Ref` that resolves — a store signal, a lifted action, a function — is module-level and stays static.
+ */
+export function readsCallSiteState(binding: unknown, scope: EmitScope): boolean {
+  let found = false;
+  const visit = (value: unknown): void => {
+    if (found) return;
+    if (Array.isArray(value)) {
+      value.forEach(visit);
+      return;
+    }
+    if (value === null || typeof value !== 'object') return;
+    const node = value as Node;
+    const kind = node['kind'];
+    if (kind === 'bind.Param' || kind === 'logic.Lambda') {
+      found = true;
+      return;
+    }
+    if (kind === 'logic.Ref' || kind === 'bind.Signal') {
+      const target = kind === 'bind.Signal' ? node['signal'] : node['target'];
+      const declared = typeof target === 'string' ? (scope.node(target) as unknown as Node | undefined) : undefined;
+      // A component's own signal or action is its instance's — until N11 promotes it into a store, which is what
+      // makes it module-level. Anything unpromoted is read where the component is.
+      const componentOwned =
+        declared !== undefined &&
+        ((declared['kind'] === 'sig.Signal' && declared['scope'] !== 'store') || declared['kind'] === 'sig.Action') &&
+        declared['store'] === undefined;
+      if (declared === undefined || componentOwned) {
+        found = true;
+        return;
+      }
+    }
+    for (const child of Object.values(node)) visit(child);
+  };
+  visit(binding);
+  return found;
+}
+
+/**
  * The names a route supplies to its component, from `app.Route.arguments` (ADR-0025 D1).
  *
  * An argument with no `name` is not a name that can satisfy anything, so it is not counted — the check

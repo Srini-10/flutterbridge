@@ -679,6 +679,24 @@ export function setStatementLowering(
   lowerStatements = lower;
 }
 
+/**
+ * Lowers a `bind.*` binding to an expression. Assigned by `component.ts` at import, for the same reason
+ * {@link setStatementLowering} is: `statement.ts` needs it — a push carries its arguments as values — and
+ * `component.ts` imports `statement.ts`.
+ */
+let lowerBinding: ((binding: Record<string, unknown>, scope: EmitScope) => string) | undefined;
+
+/** Wires the binding emitter in. Called once, by `component.ts`. */
+export function setBindingLowering(lower: (binding: Record<string, unknown>, scope: EmitScope) => string): void {
+  lowerBinding = lower;
+}
+
+/** A binding as a value, in the scope it is read from. */
+export function emitBindingValue(binding: Record<string, unknown>, scope: EmitScope): string {
+  if (lowerBinding === undefined) throw new Error('the binding emitter was not wired in (component.ts is imported first)');
+  return lowerBinding(binding, scope);
+}
+
 const kindOf = (node: Node): string => (typeof node['kind'] === 'string' ? node['kind'] : '<unknown>');
 const idOf = (node: Node): string | undefined => (typeof node['id'] === 'string' ? node['id'] : undefined);
 

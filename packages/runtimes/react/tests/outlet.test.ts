@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, expect, it } from 'vitest';
-import { act, createElement, type ReactElement } from 'react';
+import { act, createElement, useEffect, useState, type ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 
 import { RouterOutlet, RouterProvider, useRouter, type RouterDescriptor } from '../src/index.js';
@@ -70,6 +70,16 @@ function app(
   return render(createElement(RouterProvider, { descriptor: routes }, createElement(Shell)));
 }
 
+/** The text a user can see: everything except what an ancestor hides with `display: none`. */
+function visibleText(container: HTMLElement): string {
+  const walk = (node: Node): string => {
+    if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? '';
+    if (node instanceof HTMLElement && node.style.display === 'none') return '';
+    return Array.from(node.childNodes).map(walk).join('');
+  };
+  return walk(container);
+}
+
 function click(container: HTMLElement): void {
   const button = container.querySelector('button');
   act(() => {
@@ -89,8 +99,8 @@ describe('the outlet renders the top of the stack', () => {
 
     click(container);
 
-    expect(container.textContent).toContain('SETTINGS');
-    expect(container.textContent).not.toContain('HOME');
+    expect(visibleText(container)).toContain('SETTINGS');
+    expect(visibleText(container)).not.toContain('HOME');
   });
 
   it('renders an inline destination, which has no path and needs none (§A17.6)', () => {
@@ -149,7 +159,7 @@ describe('a destination it cannot render', () => {
     const { container } = app((router) => router.push({ kind: 'component', component: 'unregistered' }));
 
     expect(() => click(container)).not.toThrow();
-    expect(container.textContent).not.toContain('HOME');
+    expect(visibleText(container)).not.toContain('HOME');
   });
 
   it('keeps route names and component ids in separate namespaces', () => {
@@ -164,5 +174,105 @@ describe('a destination it cannot render', () => {
     // `settings` as a *component* identity must resolve to Detail, not to the route's Settings.
     expect(container.textContent).toContain('DETAIL');
     expect(container.textContent).not.toContain('SETTINGS');
+  });
+});
+
+describe('the stack beneath the top stays alive', () => {
+  // What a Flutter `Navigator` does, and what rendering only the top got wrong: a push does not dispose the route
+  // underneath, so a pop returns to it exactly as it was.
+  const Counter = (): ReactElement => {
+    const [count, setCount] = useState(0);
+    return createElement('span', { id: 'counter', onClick: () => setCount(count + 1) }, `count ${count}`);
+  };
+
+  it('keeps the pushing screen’s state across a push and a pop', () => {
+    const { container } = app(
+      (router) => (router.canPop.get() ? router.pop() : router.push({ kind: 'component', component: 'detail-id' })),
+      { routes: { home: Counter, settings: Settings }, components: { 'detail-id': Detail } },
+    );
+    const counter = (): HTMLElement => container.querySelector('#counter') as HTMLElement;
+    act(() => counter().dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    act(() => counter().dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    expect(counter().textContent).toBe('count 2');
+
+    click(container); // push
+    expect(visibleText(container)).toContain('DETAIL');
+    expect(visibleText(container)).not.toContain('count');
+
+    click(container); // pop
+    expect(visibleText(container)).not.toContain('DETAIL');
+    expect(counter().textContent).toBe('count 2');
+  });
+
+  it('unmounts the popped screen, and only that one', () => {
+    let mounts = 0;
+    let unmounts = 0;
+    const Tracked = (): ReactElement => {
+      useEffect(() => {
+        mounts += 1;
+        return () => {
+          unmounts += 1;
+        };
+      }, []);
+      return createElement('span', null, 'TRACKED');
+    };
+    const { container } = app(
+      (router) => (router.canPop.get() ? router.pop() : router.push({ kind: 'component', component: 'tracked' })),
+      { components: { tracked: Tracked } },
+    );
+
+    click(container);
+    expect([mounts, unmounts]).toEqual([1, 0]);
+    click(container);
+    expect([mounts, unmounts]).toEqual([1, 1]);
+    expect(container.textContent).not.toContain('TRACKED');
+  });
+
+  it('hides what is beneath from layout and from assistive technology', () => {
+    const { container } = app((router) => router.push({ kind: 'route', route: 'settings' }));
+    click(container);
+
+    const hidden = Array.from(container.querySelectorAll<HTMLElement>('div[aria-hidden="true"]'));
+    expect(hidden).toHaveLength(1);
+    expect(hidden[0]!.style.display).toBe('none');
+    expect(hidden[0]!.textContent).toBe('HOME');
+  });
+});
+
+describe('an inline destination is handed what the push carried', () => {
+  it('passes `props` to the component — live values, never serialized', () => {
+    const received: unknown[] = [];
+    const Detail2 = (props: { readonly owner?: string; readonly onPick?: () => void; readonly item?: object }): ReactElement => {
+      received.push(props);
+      return createElement('span', null, `owner ${props.owner}`);
+    };
+    const item = { name: 'x' };
+    const onPick = (): void => {};
+    const { container } = app(
+      (router) => router.push({ kind: 'component', component: 'd', props: { owner: 'Ada', item, onPick } }),
+      { components: { d: Detail2 } },
+    );
+
+    click(container);
+
+    expect(visibleText(container)).toContain('owner Ada');
+    const props = received.at(-1) as { item: unknown; onPick: unknown };
+    expect(props.item).toBe(item); // the same object, not a copy and not a string
+    expect(props.onPick).toBe(onPick);
+  });
+});
+
+describe('`go` makes the destination the whole stack', () => {
+  it('leaves nothing beneath it: a pop afterwards has nothing to return to', () => {
+    const { container } = app((router) => {
+      router.push({ kind: 'component', component: 'detail-id' });
+      router.go({ kind: 'route', route: 'settings' });
+    }, { components: { 'detail-id': Detail } });
+
+    click(container);
+
+    expect(visibleText(container)).toContain('SETTINGS');
+    expect(container.textContent).not.toContain('HOME'); // unmounted, not merely hidden
+    expect(container.textContent).not.toContain('DETAIL');
   });
 });

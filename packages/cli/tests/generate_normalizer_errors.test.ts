@@ -5,9 +5,11 @@
 // boundary) went on to the generator, which reported a different set of errors or none. `build` stopped at the
 // normalizer, and additionally left the refused document on disk as `normalized.ndjson`, which `generate` prefers.
 //
-// The document here is `fixtures/uir/hello_bridge.ndjson`, which N11 refuses with four BRG2305s.
+// The document is `fixtures/uir/hello_bridge.ndjson` with its one push rewritten to name a route — a URL boundary — so the
+// caller's own parameters it forwards (BRG2305) are values no URL can carry. (As the inline push it was, nothing is refused:
+// a pushed component has no URL.)
 
-import { existsSync, mkdirSync, mkdtempSync, copyFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -16,6 +18,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { main } from '../src/index.js';
 
 const fixture = join(import.meta.dirname, '../../../fixtures/uir/hello_bridge.ndjson');
+
+/** The fixture with its inline push turned into a navigation to the route that exists — a boundary with a URL. */
+function refusedDocument(): string {
+  const records = readFileSync(fixture, 'utf8')
+    .split('\n')
+    .filter((line) => line !== '')
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+  const route = records.find((r) => r['kind'] === 'app.Route')!;
+  const push = records.find((r) => r['kind'] === 'app.RouteTransition')!;
+  delete push['component'];
+  push['target'] = route['id'];
+  return `${records.map((r) => JSON.stringify(r)).join('\n')}\n`;
+}
 
 let dir: string;
 let out: string[];
@@ -27,7 +42,7 @@ beforeEach(() => {
     join(dir, 'bridge.json'),
     JSON.stringify({ source: '.', out: 'build/bridge', work: '.bridge', generator: '@bridge/gen-react', plugins: ['@bridge/widgets-material'] }),
   );
-  copyFileSync(fixture, join(dir, '.bridge', 'uir.ndjson'));
+  writeFileSync(join(dir, '.bridge', 'uir.ndjson'), refusedDocument());
   out = [];
   vi.spyOn(process, 'cwd').mockReturnValue(dir);
   vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => (out.push(String(chunk)), true));

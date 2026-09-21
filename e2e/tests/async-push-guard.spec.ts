@@ -36,7 +36,7 @@ test.describe('the guarded async push, still mounted', () => {
 
     // The destination renders with its own constant (`title: 'Authenticated'`) — proof `logic.Navigate`
     // performed the exact transition `screenFor` (M7-G) resolved arguments for, not a different one.
-    await expect(page.locator('header')).toContainText('Authenticated');
+    await expect(page.locator('header:visible')).toContainText('Authenticated');
   });
 
   test('the promoted signal and action cross the push boundary, same as before this milestone', async ({
@@ -44,11 +44,11 @@ test.describe('the guarded async push, still mounted', () => {
   }) => {
     await page.goto('/');
     await page.getByRole('button', { name: 'Sign in' }).click();
-    await expect(page.getByText('Count: 0')).toBeVisible();
+    await expect(page.getByText('Count: 0', { exact: true })).toBeVisible();
 
     await page.getByRole('button', { name: 'Increment' }).click();
     await page.getByRole('button', { name: 'Increment' }).click();
-    await expect(page.getByText('Count: 2')).toBeVisible();
+    await expect(page.getByText('Count: 2', { exact: true })).toBeVisible();
 
     // Popping back shows the same promoted store, unaffected by which screen is rendering it.
     await page.getByRole('button', { name: 'Go back' }).click();
@@ -58,14 +58,14 @@ test.describe('the guarded async push, still mounted', () => {
   test('popping returns to the home screen, and the stack keeps working afterwards', async ({ page }) => {
     await page.goto('/');
     await page.getByRole('button', { name: 'Sign in' }).click();
-    await expect(page.locator('header')).toContainText('Authenticated');
+    await expect(page.locator('header:visible')).toContainText('Authenticated');
 
     await page.getByRole('button', { name: 'Go back' }).click();
     await expect(page.getByText(/Home count:/)).toBeVisible();
 
     // The router is not left in a broken state by the pop — signing in again still resolves correctly.
     await page.getByRole('button', { name: 'Sign in' }).click();
-    await expect(page.locator('header')).toContainText('Authenticated');
+    await expect(page.locator('header:visible')).toContainText('Authenticated');
   });
 
   test('the button disables while submitting, driven by the same handler the guard sits in', async ({
@@ -86,7 +86,7 @@ test.describe('the guarded async push, still mounted', () => {
     // By the time navigation has occurred, `_isSubmitting` was already reset to `false` before the push
     // (source order: setState(true) → await delay → mounted check → setState(false) → push) — the
     // destination screen is what's on screen now, not a disabled button frozen mid-submit.
-    await expect(page.locator('header')).toContainText('Authenticated');
+    await expect(page.locator('header:visible')).toContainText('Authenticated');
   });
 });
 

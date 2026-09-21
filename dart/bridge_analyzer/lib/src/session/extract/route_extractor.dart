@@ -39,6 +39,7 @@ import 'package:bridge_analyzer/src/model/raw_node.dart';
 import 'package:bridge_analyzer/src/session/adapters/adapter_context.dart';
 import 'package:bridge_analyzer/src/session/adapters/adapter_registry.dart';
 import 'package:bridge_analyzer/src/session/adapters/adapter_result.dart';
+import 'package:bridge_analyzer/src/session/adapters/framework_key.dart';
 import 'package:bridge_analyzer/src/session/extract/binding_extractor.dart';
 import 'package:bridge_analyzer/src/session/extract/raw_node_emitter.dart';
 import 'package:bridge_analyzer/src/session/extract/scope.dart';
@@ -131,7 +132,7 @@ final class RouteExtractor {
               'component': RawRef(target),
               if (_pathParams(route.path).isNotEmpty)
                 'params': RawList(_pathParams(route.path)),
-              if (_arguments(widget) case final List<RawValue> args when args.isNotEmpty)
+              if (_arguments(widget, _builderLocals(component)) case final List<RawValue> args when args.isNotEmpty)
                 'arguments': RawList(args),
             },
           ),
@@ -163,13 +164,17 @@ final class RouteExtractor {
   /// Returns empty when the construction has no banked scope — see this file's header. Empty is also
   /// what a route with no arguments yields, and the two are deliberately indistinguishable in the
   /// document: the field is absent either way, which is what it has always been.
-  List<RawValue> _arguments(Expression? widget) {
+  List<RawValue> _arguments(Expression? widget, List<Binding> locals) {
     if (widget is! InstanceCreationExpression) {
       return const <RawValue>[];
     }
-    final Scope? scope = _scopes[widget];
+    Scope? scope = _scopes[widget];
     if (scope == null) {
       return const <RawValue>[];
+    }
+    // The builder's own locals, so an argument that reads one is the value it was given rather than a name nothing declares.
+    for (final Binding local in locals) {
+      scope = scope!.withBinding(local);
     }
 
     final List<RawValue> arguments = <RawValue>[];
@@ -177,7 +182,11 @@ final class RouteExtractor {
       if (argument is! NamedArgument) {
         continue;
       }
-      final RawNode binding = bindings.extract(argument.argumentExpression, scope);
+      // The framework's `Key` is identity, not data — see `isFrameworkKeyArgument`.
+      if (isFrameworkKeyArgument(widget, argument.name.lexeme)) {
+        continue;
+      }
+      final RawNode binding = bindings.extract(argument.argumentExpression, scope!);
       // An argument whose value has no UIR representation is omitted, not serialized as Dart source.
       // The expression extractor has already reported it (BRG1302).
       if (BindingExtractor.isOpaque(binding)) {
@@ -192,6 +201,33 @@ final class RouteExtractor {
       );
     }
     return arguments;
+  }
+
+  /// The `final` locals a block-bodied route builder declares before it returns its page — `final customer =
+  /// state.uri.queryParameters['customer']; return Page(initialCustomerId: customer);` — as inline bindings.
+  ///
+  /// A route argument is bound in the scope of the construction, which is where the *router* is written, not inside the
+  /// builder; so a local the builder declared was a name nothing resolved. It reached N11 as an untargeted reference and
+  /// was refused there as a "forwarded constructor parameter" (BRG2305) — a route has no constructor to forward from. A
+  /// `final` local with an initializer is a single value, so the argument that reads it reads that initializer, as a
+  /// build-method local does (ADR-0048). A local this cannot substitute — not `final`, no initializer — stays a name, as
+  /// it was.
+  static List<Binding> _builderLocals(Expression? builder) {
+    if (builder is! FunctionExpression || builder.body is! BlockFunctionBody) {
+      return const <Binding>[];
+    }
+    final List<Binding> locals = <Binding>[];
+    for (final Statement statement in (builder.body as BlockFunctionBody).block.statements) {
+      if (statement is! VariableDeclarationStatement || !(statement.variables.isFinal || statement.variables.isConst)) {
+        continue;
+      }
+      for (final VariableDeclaration variable in statement.variables.variables) {
+        if (variable.initializer case final Expression initializer) {
+          locals.add(Binding(name: variable.name.lexeme, binds: Binds.local, inlineValue: initializer));
+        }
+      }
+    }
+    return locals;
   }
 
   /// The widget expression a route's page comes from.

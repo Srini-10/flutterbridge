@@ -89,6 +89,15 @@ export type Destination =
       readonly component: string;
       /** Arguments passed to it, as `RouteArgument`s would carry. */
       readonly params?: RouteParams;
+      /**
+       * Live values the push hands the component — its constructor arguments, as the Dart call evaluated them:
+       * the caller's own parameters, locals, closures, objects.
+       *
+       * **Never serialized, and never in a URL.** An inline destination has no path (§A17.6), so nothing forces a
+       * value to be a string, and `params` — which are strings because a URL carries strings — is the wrong
+       * vehicle for an object or a callback. These live exactly as long as the stack entry does.
+       */
+      readonly props?: Readonly<Record<string, unknown>>;
     };
 
 /** One entry on the navigation stack. */
@@ -118,6 +127,11 @@ export interface RouterInstance {
   push(destination: Destination): void;
   /** Replaces the current entry, leaving the rest of the stack alone. `pushReplacement`. */
   replace(destination: Destination): void;
+  /**
+   * Makes the destination the whole stack. `go_router`'s `context.go` — declarative navigation to a location, which
+   * replaces the stack rather than adding to it, so a `pop` afterwards has nothing to return to.
+   */
+  go(destination: Destination): void;
   /**
    * Pops the top entry. `Navigator.pop()`.
    *
@@ -213,6 +227,10 @@ export function createRouter(descriptor: RouterDescriptor): RouterInstance {
     replace(destination) {
       const entry = entryOf(destination);
       batch(() => stack.update((current) => Object.freeze([...current.slice(0, -1), entry])));
+    },
+    go(destination) {
+      const entry = entryOf(destination);
+      batch(() => stack.set(Object.freeze([entry])));
     },
     pop() {
       if (stack.peek().length <= 1) return false;

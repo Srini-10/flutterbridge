@@ -42,6 +42,7 @@ import { RUNTIME_MODULE } from './emit/runtime.js';
 import { banner, scaffold, type PageInput, type PageScreen } from './emit/project.js';
 import {
   emitRoutes,
+  readsCallSiteState,
   reportUnsatisfiableConstructions,
   routeArguments,
   routeNameOf,
@@ -492,14 +493,24 @@ function pageOf(
     emitted: { readonly module: string; readonly name: string },
     boundaryId: string,
     describeBoundary: () => string,
+    /** Whether the destination is a stack entry the push can hand values to, rather than a URL. */
+    inMemory = false,
   ): string => {
     const props: string[] = [];
     const unreachable: string[] = [];
+    let receivesProps = false;
     for (const argument of args) {
       const name = argument['name'];
       const binding = argument['binding'];
       if (typeof name !== 'string' || name === '') continue;
       if (binding === null || typeof binding !== 'object') continue;
+      // What only the call site can compute travels on the push (`statement.ts`'s `destinationOf`), not through
+      // this wrapper: the wrapper is module-level and has no caller to read. Shared predicate — see
+      // `readsCallSiteState` — so the two sides cannot disagree about which arguments are whose.
+      if (inMemory && readsCallSiteState(binding, scope)) {
+        receivesProps = true;
+        continue;
+      }
 
       // Lowered **twice, on purpose**: once against a throwaway module with a report sink that only
       // counts, and again for real if that came back clean.
@@ -551,6 +562,19 @@ function pageOf(
     if (props.length === 0) return emitted.name;
 
     const wrapper = module.declare(`${emitted.name}Route`, `construction:${boundaryId}`);
+    if (receivesProps) {
+      // The push supplies the rest. Spread first, so a constant the boundary states wins over nothing at all —
+      // the two sets are disjoint by construction, `readsCallSiteState` having split them.
+      const componentProps = module.use('react', 'ComponentProps', { typeOnly: true });
+      declarations.push(
+        `/** ${describeBoundary()} — \`${emitted.name}\`: the constants this boundary records, and what the push passes. */`,
+        `function ${wrapper}(passed: ${componentProps}<typeof ${emitted.name}>) {`,
+        `  return <${emitted.name} {...passed} ${props.join(' ')} />;`,
+        '}',
+        '',
+      );
+      return wrapper;
+    }
     declarations.push(
       `/** ${describeBoundary()} — \`${emitted.name}\`, with the arguments this boundary records. */`,
       `function ${wrapper}() {`,
@@ -604,7 +628,7 @@ function pageOf(
       continue;
     }
 
-    const name = screenFor(routeArguments(transition), emitted, key, () => `the push at ${spanOf(transition)}`);
+    const name = screenFor(routeArguments(transition), emitted, key, () => `the push at ${spanOf(transition)}`, true);
     componentScreens.push({ key, name });
   }
 

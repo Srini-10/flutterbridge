@@ -751,7 +751,7 @@ final class StatementExtractor implements StatementExtractorRef {
     //
     // The offer returns the edge's symbol, so the two are bound by construction. Nothing matches a span,
     // nothing matches a name, and the generator reconstructs nothing — it reads a `NodeId` (M7-B).
-    if (action == NavigateAction.push || action == NavigateAction.replace) {
+    if (action == NavigateAction.push || action == NavigateAction.replace || action == NavigateAction.go) {
       final String? transition = expressions.transitions?.call(expression, scope);
       // A navigation to a *route* (by path or by name) has an edge with no symbol, so the departure names the route itself; the
       // builder resolves it, and one that resolves to nothing leaves the field out — the generator then refuses this navigation by

@@ -415,6 +415,63 @@ final GoRouter router = GoRouter(
     });
   });
 
+  group('a route builder that declares locals before it returns its page', () {
+    test('an argument that reads one is the local\'s value — not a name nothing declares', () async {
+      // `final customer = state.uri.queryParameters['customer']; return Panel(label: customer)` — the local lives in the *builder*, and
+      // the route's arguments are bound where the *router* is written. It was left a bare reference, and N11 refused it as a forwarded
+      // constructor parameter (BRG2305): a route has no constructor to forward from.
+      final String project = createProject(
+        name: 'app',
+        dependencies: <String, Map<String, String>>{'flutter': flutterPackage, 'go_router': goRouterPackage},
+        libraries: <String, String>{
+          'main.dart': '''
+import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
+
+class Panel extends StatelessWidget {
+  const Panel({required this.label, this.count = 0, super.key});
+  final String? label;
+  final int count;
+  @override
+  Widget build(BuildContext context) => Text(label ?? '');
+}
+
+final GoRouter router = GoRouter(
+  routes: <RouteBase>[
+    GoRoute(
+      path: '/detail',
+      builder: (BuildContext context, GoRouterState state) {
+        final customer = state.uri.queryParameters['customer'];
+        final shouted = customer;
+        return Panel(label: shouted);
+      },
+    ),
+  ],
+);
+''',
+        },
+      );
+      final Directory out = Directory.systemTemp.createTempSync('route_args_locals_');
+      addTearDown(() => out.deleteSync(recursive: true));
+      await const BridgeAnalyzer().run(AnalyzerRequest(projectRoot: project, outputPath: '${out.path}/uir.ndjson'));
+      final List<Map<String, dynamic>> nodes = File('${out.path}/uir.ndjson')
+          .readAsLinesSync()
+          .where((String line) => line.isNotEmpty)
+          .map((String line) => jsonDecode(line) as Map<String, dynamic>)
+          .toList();
+
+      final Map<String, dynamic> route = ofKind(nodes, 'app.Route').single;
+      final Map<String, dynamic> label = (route['arguments']! as List<Object?>).single! as Map<String, dynamic>;
+      final Map<String, dynamic> expr = (label['binding']! as Map<String, dynamic>)['expr']! as Map<String, dynamic>;
+      // The initializer itself — `state.uri.queryParameters['customer']` — through both locals, not a `logic.Ref` to either.
+      expect(expr['kind'], 'logic.MethodCall');
+      expect(expr['method'], '[]');
+      expect(jsonEncode(expr), isNot(contains('"name":"customer"')));
+      expect(jsonEncode(expr), isNot(contains('"name":"shouted"')));
+      expect(jsonEncode(expr), contains('"property":"queryParameters"'));
+    });
+  });
+
   group('a component constructed by an imperative navigation', () {
     test('an unresolved Navigator/MaterialPageRoute (real Dart errors) refuses the whole file, never an opaque guess (ADR-0031, M9-H)', () async {
       // This harness's own default `flutterPackage` (unlike `transition_test.dart`'s own `navFlutter`)

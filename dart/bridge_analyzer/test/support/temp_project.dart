@@ -777,6 +777,10 @@ import 'package:flutter/widgets.dart';
 
 class GoRouterState {
   const GoRouterState();
+  Map<String, String> get pathParameters => const <String, String>{};
+  Uri get uri => Uri();
+  Object? get extra => null;
+  String get matchedLocation => '';
 }
 
 class RouteBase {

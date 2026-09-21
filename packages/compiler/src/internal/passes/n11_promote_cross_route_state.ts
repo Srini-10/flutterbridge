@@ -31,6 +31,16 @@
 //    nothing can name it as a `target`). This is the multi-hop case the M7-E2 ADR amendment scoped out:
 //    the compiler cannot prove what such a reference resolves to without inferring from its name, which
 //    is disallowed. `BRG2305` (error): named, not guessed at.
+//
+// **Cases 3 and 4 — and a callback this pass cannot promote (`BRG2303`) — are defects only across a URL.** The
+// reasoning above is about what a URL can carry. An **in-memory** boundary (`ComponentBoundary.inMemory`: a
+// `Navigator.push(MaterialPageRoute(...))`, `showDialog`, `showModalBottomSheet` that constructs a component, and
+// names no route) has no URL, so nothing is serialized and none of the three applies: the value is a prop the push
+// carries, evaluated where the Flutter call evaluated it (ADR-0077). This pass used to apply all three to every
+// boundary, and so refused the most ordinary application code there is — `showDialog(builder: (_) =>
+// EditDialog(item: item))` — on the grounds that it could not be put in an address bar. A closure that writes
+// component-scoped state is still promoted, in either kind of boundary: that is about the state outliving its
+// component, not about the URL.
 // 5. **A primitive** — unchanged. Primitives cross a URL boundary fine.
 // 6. **An otherwise-promotable action whose own body depends on a declaration this pass does not also
 //    promote** — a call to another `sig.Action`, or a read of a component-scoped `sig.Signal` it never
@@ -115,7 +125,7 @@ export class N11PromoteCrossRouteState implements Pass {
       boundary.arguments.map((argument) => ({
         boundary,
         argument,
-        verdict: classify(argument.binding, actions, signals),
+        verdict: classifyAt(boundary, argument.binding, actions, signals),
       })),
     );
 
@@ -191,7 +201,7 @@ export class N11PromoteCrossRouteState implements Pass {
           return {
             boundary: b,
             argument,
-            verdict: argument === undefined ? undefined : classify(argument.binding, actions, signals),
+            verdict: argument === undefined ? undefined : classifyAt(b, argument.binding, actions, signals),
           };
         });
 
@@ -233,11 +243,19 @@ export class N11PromoteCrossRouteState implements Pass {
             b.source === component &&
             b.arguments.some((a) => {
               if (a.name !== name) return false;
+              // Raw, not `classifyAt`: whether the forward is an *error* depends on where it goes, but whether it
+              // *reads the parameter* does not. An in-memory push forwards `count` fine as a prop — and still reads
+              // the parameter this pass would be removing.
               const v = classify(a.binding, actions, signals);
               return v.kind === 'forwarded';
             }),
         );
         if (outboundHazard) {
+          // The parameter stays, and nothing is promoted or rewritten, either way. Whether that is a *defect* is a
+          // question about the callers: a URL boundary reaching this component still carries a component-scoped value
+          // no URL can hold, and is left unpromoted (INV-18); a caller that is itself an in-memory push carries it as
+          // a prop, which is what it would have done without this pass.
+          if (perBoundary.every((p) => p.boundary.inMemory)) continue;
           context.report({
             code: 'BRG2305',
             severity: 'error',
@@ -361,6 +379,31 @@ function groupByComponentAndName(
     byComponent.set(c.boundary.component, byName);
   }
   return byComponent;
+}
+
+/**
+ * Classifies an argument at a boundary, which is what decides whether a live value is a defect.
+ *
+ * A URL boundary serializes what crosses it, so a live object (case 3) or a forwarded parameter whose type the pass
+ * cannot prove (case 4) is a real problem there. An **in-memory** boundary serializes nothing — the value is carried
+ * in a prop the call site evaluates, exactly as the Flutter call carries it — so neither is: both are passed through,
+ * as a primitive is. A callback that writes component-scoped state is different and is left to `classify`: promoting
+ * that state is how it stays live after the component that owns it is gone, which a prop does not do.
+ */
+function classifyAt(
+  boundary: ComponentBoundary,
+  binding: Record<string, unknown> | undefined,
+  actions: ReadonlyMap<NodeId, AnyUirNode>,
+  signals: ReadonlyMap<NodeId, AnyUirNode>,
+): Verdict {
+  const verdict = classify(binding, actions, signals);
+  if (!boundary.inMemory) return verdict;
+  if (verdict.kind === 'object' || verdict.kind === 'forwarded') return { kind: 'primitive' };
+  // A closure this pass cannot promote is a closure the push can *carry*. What is wrong with it is only that it
+  // cannot be put in a store; an in-memory entry does not need it there.
+  if (verdict.kind === 'unpromotable' && verdict.reason !== 'a signal that does not exist') return { kind: 'primitive' };
+  return verdict;
+  return verdict;
 }
 
 /** Classifies an argument binding. Never guesses: an unrecognised shape is unpromotable, not a primitive. */

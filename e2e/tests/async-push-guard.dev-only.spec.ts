@@ -23,7 +23,7 @@ test.describe('the development build, mounted-guarded async push', () => {
     await page.goto('/', { waitUntil: 'networkidle' });
 
     await page.getByRole('button', { name: 'Sign in' }).click();
-    await expect(page.locator('header')).toContainText('Authenticated');
+    await expect(page.locator('header:visible')).toContainText('Authenticated');
 
     expectNoHydrationMismatch(transcript);
   });
@@ -37,7 +37,7 @@ test.describe('the development build, mounted-guarded async push', () => {
     // silently. Signing in here only succeeds if the ref reads `true` post-replay.
     await page.goto('/', { waitUntil: 'networkidle' });
     await page.getByRole('button', { name: 'Sign in' }).click();
-    await expect(page.locator('header')).toContainText('Authenticated');
+    await expect(page.locator('header:visible')).toContainText('Authenticated');
   });
 
   test('reports no hook-order or rules-of-hooks violation across repeated sign-in/back', async ({ page }) => {

@@ -15,6 +15,7 @@ import 'package:bridge_analyzer/src/diagnostics/codes.dart';
 import 'package:bridge_analyzer/src/session/adapters/adapter.dart';
 import 'package:bridge_analyzer/src/session/adapters/adapter_context.dart';
 import 'package:bridge_analyzer/src/session/adapters/adapter_result.dart';
+import 'package:bridge_analyzer/src/session/adapters/framework_key.dart';
 import 'package:bridge_analyzer/src/session/adapters/route/wrapper_resolver.dart';
 import 'package:bridge_analyzer/src/session/adapters/widget/generated/material_catalog.dart';
 
@@ -569,7 +570,7 @@ final class MaterialRouteAdapter implements RouteAdapter, TransitionAdapter {
     }
     return <TransitionArgument>[
       for (final Argument argument in destination.argumentList.arguments)
-        if (argument is NamedArgument)
+        if (argument is NamedArgument && !isFrameworkKeyArgument(destination, argument.name.lexeme))
           TransitionArgument(
             name: argument.name.lexeme,
             value: argument.argumentExpression,

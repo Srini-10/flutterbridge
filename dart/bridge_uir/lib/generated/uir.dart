@@ -31,7 +31,7 @@ const String uirVersion = '1.15.0';
 /// A hash of the schema sources this library was generated from.
 ///
 /// Stamped into every emitted manifest: a UIR document always says which schema produced it.
-const String uirSchemaHash = 'cff772aab15c7b89';
+const String uirSchemaHash = '3dacb10f0b3c2306';
 
 /// Node kind -> the fields of that node which hold `NodeId` references.
 ///
@@ -632,7 +632,7 @@ enum MaterialRole {
 
 /// What a `logic.Navigate` does.
 ///
-/// Named for the **effect on the navigation stack**, not for the Flutter API that produced it: a `go_router` `context.go` and a `Navigator.pushNamed` are both `push`, and a generator lowers the effect rather than recognising a package. ADR-0025 §5 is why — the M6-D corpus found zero `go_router` in two production applications after C1 recorded it as dominant, so which package is popular is not something to build a vocabulary on.
+/// Named for the **effect on the navigation stack**, not for the Flutter API that produced it: a `go_router` `context.push` and a `Navigator.pushNamed` are both `push`, and a generator lowers the effect rather than recognising a package. A `go_router` `context.go` is not: it is `go` (ADR-0077 D6). ADR-0025 §5 is why — the M6-D corpus found zero `go_router` in two production applications after C1 recorded it as dominant, so which package is popular is not something to build a vocabulary on.
 enum NavigateAction {
   /// A new entry on the stack. `Navigator.push`, `pushNamed`, and every route overlay — a dialog, modal sheet or menu pushes a `Route` (ADR-0024 cites the SDK).
   push,
@@ -642,6 +642,8 @@ enum NavigateAction {
   pop,
   /// Entries are removed until a predicate holds. The predicate is **not** modelled; a generator that cannot express one must refuse rather than approximate.
   popUntil,
+  /// The whole stack becomes the destination. `go_router`'s `context.go` / `goNamed` — declarative navigation to a location, which replaces the stack rather than adding to it (ADR-0077 D6). A later `pop` has nothing to return to.
+  go,
   ;
 
   /// Parses a [NavigateAction] from its wire value. Rejects anything outside the enum.

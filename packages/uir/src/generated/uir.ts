@@ -14,7 +14,7 @@ import { createHash } from 'node:crypto';
 export const UIR_VERSION = '1.15.0' as const;
 
 /** A hash of the schema sources this module was generated from. */
-export const UIR_SCHEMA_HASH = 'cff772aab15c7b89' as const;
+export const UIR_SCHEMA_HASH = '3dacb10f0b3c2306' as const;
 
 /** Node kind -> the fields of that node which hold `NodeId` references. */
 export const UIR_REFERENCE_FIELDS: Readonly<Record<string, readonly string[]>> = {
@@ -577,7 +577,7 @@ export function parseMaterialRole(value: unknown, path = 'MaterialRole'): Materi
 
 /// What a `logic.Navigate` does.
 ///
-/// Named for the **effect on the navigation stack**, not for the Flutter API that produced it: a `go_router` `context.go` and a `Navigator.pushNamed` are both `push`, and a generator lowers the effect rather than recognising a package. ADR-0025 §5 is why — the M6-D corpus found zero `go_router` in two production applications after C1 recorded it as dominant, so which package is popular is not something to build a vocabulary on.
+/// Named for the **effect on the navigation stack**, not for the Flutter API that produced it: a `go_router` `context.push` and a `Navigator.pushNamed` are both `push`, and a generator lowers the effect rather than recognising a package. A `go_router` `context.go` is not: it is `go` (ADR-0077 D6). ADR-0025 §5 is why — the M6-D corpus found zero `go_router` in two production applications after C1 recorded it as dominant, so which package is popular is not something to build a vocabulary on.
 export const NavigateAction = {
   /// A new entry on the stack. `Navigator.push`, `pushNamed`, and every route overlay — a dialog, modal sheet or menu pushes a `Route` (ADR-0024 cites the SDK).
   push: 'push',
@@ -587,11 +587,13 @@ export const NavigateAction = {
   pop: 'pop',
   /// Entries are removed until a predicate holds. The predicate is **not** modelled; a generator that cannot express one must refuse rather than approximate.
   popUntil: 'popUntil',
+  /// The whole stack becomes the destination. `go_router`'s `context.go` / `goNamed` — declarative navigation to a location, which replaces the stack rather than adding to it (ADR-0077 D6). A later `pop` has nothing to return to.
+  go: 'go',
 } as const;
 
 /// What a `logic.Navigate` does.
 ///
-/// Named for the **effect on the navigation stack**, not for the Flutter API that produced it: a `go_router` `context.go` and a `Navigator.pushNamed` are both `push`, and a generator lowers the effect rather than recognising a package. ADR-0025 §5 is why — the M6-D corpus found zero `go_router` in two production applications after C1 recorded it as dominant, so which package is popular is not something to build a vocabulary on.
+/// Named for the **effect on the navigation stack**, not for the Flutter API that produced it: a `go_router` `context.push` and a `Navigator.pushNamed` are both `push`, and a generator lowers the effect rather than recognising a package. A `go_router` `context.go` is not: it is `go` (ADR-0077 D6). ADR-0025 §5 is why — the M6-D corpus found zero `go_router` in two production applications after C1 recorded it as dominant, so which package is popular is not something to build a vocabulary on.
 export type NavigateAction = (typeof NavigateAction)[keyof typeof NavigateAction];
 
 const navigateActionValues = Object.values(NavigateAction) as readonly NavigateAction[];

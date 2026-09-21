@@ -219,6 +219,12 @@ export function inlinePushPropsRaw(): string {
   return readFileSync(path, 'utf8');
 }
 
+/** The real `fixtures/apps/inline_push_dynamic` document, raw analyzer output (M14) — not yet normalized. */
+export function inlinePushDynamicRaw(): string {
+  const path = fileURLToPath(new URL('../../../../fixtures/uir/inline_push_dynamic.ndjson', import.meta.url));
+  return readFileSync(path, 'utf8');
+}
+
 /** The real `fixtures/apps/async_push_guard` document, raw analyzer output (M7-H) — not yet normalized. */
 export function asyncPushGuardRaw(): string {
   const path = fileURLToPath(new URL('../../../../fixtures/uir/async_push_guard.ndjson', import.meta.url));

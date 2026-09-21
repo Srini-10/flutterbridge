@@ -73,6 +73,8 @@ export const APPS = [
   { name: 'named-routes', source: 'fixtures/apps/named_routes' },
   // M14 (ADR-0075): a repository over `dio`, running on the browser's real `fetch` against network routes the test fulfils.
   { name: 'dio-client', source: 'fixtures/apps/dio_client' },
+  // M14 (ADR-0077): an inline push whose arguments are the caller's own parameter, a local, a live object, a widget and a closure.
+  { name: 'dynamic-push', source: 'fixtures/apps/inline_push_dynamic' },
 ];
 
 const run = (program, args, cwd, env = {}) =>

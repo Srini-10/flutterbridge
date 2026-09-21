@@ -17,7 +17,7 @@ test.describe('the development build, inline push destination resolution', () =>
     await page.goto('/', { waitUntil: 'networkidle' });
 
     await page.getByRole('button', { name: 'Open Details' }).click();
-    await expect(page.locator('header')).toContainText('Details');
+    await expect(page.locator('header:visible')).toContainText('Details');
 
     expectNoHydrationMismatch(transcript);
   });
@@ -40,7 +40,7 @@ test.describe('the development build, inline push destination resolution', () =>
     await page.getByRole('button', { name: 'Go back' }).click();
 
     await page.getByRole('button', { name: 'Open Details' }).click();
-    await expect(page.getByText('Count: 2')).toBeVisible();
+    await expect(page.getByText('Count: 2', { exact: true })).toBeVisible();
 
     const hookProblems = transcript.messages.filter(
       (message) =>

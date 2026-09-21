@@ -57,6 +57,18 @@ export interface ComponentBoundary {
 
   /** Every argument this boundary carries, in order. */
   readonly arguments: readonly TransitionArgument[];
+
+  /**
+   * Whether the destination is **an entry on the runtime's navigation stack rather than a URL** — an inline
+   * `Navigator.push(MaterialPageRoute(builder: ...))`, `showDialog`, `showModalBottomSheet`: a transition that
+   * constructs a component (or a widget tree) and names no route (Spec v2.4 §A17.6).
+   *
+   * Nothing is serialized across such a boundary, so a value that cannot be a URL segment — a live object, a
+   * closure, the caller's own constructor parameter — is *not* a defect there: it is carried in memory, as the
+   * call in Flutter carries it. That is the distinction ADR-11a's refusal (BRG2301) and BRG2305 were written
+   * for a URL boundary and never drew: they applied to every boundary and so refused programs that need no URL.
+   */
+  readonly inMemory: boolean;
 }
 
 /** The route graph, and what crosses it. */
@@ -138,6 +150,7 @@ export function navGraph(program: Program): NavGraph {
         id: node.id,
         component: node.component,
         arguments: argumentsOf(record),
+        inMemory: false,
       })),
     ...program
       .ofKind('app.RouteTransition')
@@ -158,6 +171,8 @@ export function navGraph(program: Program): NavGraph {
             : {}),
           ...(typeof record['source'] === 'string' ? { source: record['source'] as NodeId } : {}),
           arguments: argumentsOf(record),
+          // A route named by `target` has a path and is a URL boundary; a constructed component or an inline tree is not.
+          inMemory: target === undefined,
         };
       }),
   ].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));

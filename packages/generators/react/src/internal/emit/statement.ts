@@ -10,9 +10,9 @@
 import type { Stmt } from '@bridge/uir';
 
 import { GeneratorDiagnosticCode } from '../diagnostics/codes.js';
-import { catchTypeTest, compilePattern, emitExpression, scopeWithNames, markValueUnused, setStatementLowering, type EmitScope } from './expression.js';
+import { catchTypeTest, compilePattern, emitBindingValue, emitExpression, scopeWithNames, markValueUnused, setStatementLowering, type EmitScope } from './expression.js';
 import { identifierOf } from './module.js';
-import { routeNameOf, screenKeyFor } from './routes.js';
+import { readsCallSiteState, routeNameOf, screenKeyFor } from './routes.js';
 import { opaqueDetailOf, opaqueReasonSuffix } from './unsupported.js';
 
 type Node = Record<string, unknown>;
@@ -528,7 +528,8 @@ export function emitStatement(statement: Stmt | Node | undefined, scope: EmitSco
         case 'pop':
           return [`${router}.pop();`];
         case 'push':
-        case 'replace': {
+        case 'replace':
+        case 'go': {
           // The edge this performs, named by `NodeId` (M7-B). Resolved, never searched for: the analyzer
           // minted the transition's identity and put it here, so this is a lookup of a reference the
           // document already carries rather than a reconstruction of one.
@@ -558,8 +559,8 @@ export function emitStatement(statement: Stmt | Node | undefined, scope: EmitSco
             );
             return [];
           }
-          const method = action === 'push' ? 'push' : 'replace';
-          return [`${router}.${method}(${destination});`];
+          // `go` is declarative: the destination is the whole stack (ADR-0077 D6).
+          return [`${router}.${action}(${destination});`];
         }
         default:
           // `push`, `replace` and `popUntil` are modelled by the schema and not lowered yet — a push
@@ -637,7 +638,23 @@ function destinationOf(transition: Node, scope: EmitScope): string | undefined {
     // declared parameter is keyed by *this transition's own id*, because a second push to it may supply
     // different constant arguments and must resolve to a different screen at runtime, not the first one
     // found.
-    return `{ kind: 'component', component: ${JSON.stringify(screenKeyFor(component, transition, scope))} }`;
+    const key = JSON.stringify(screenKeyFor(component, transition, scope));
+
+    // What only this call site can compute goes on the push (`readsCallSiteState`): the wrapper `pipeline.ts`
+    // declares for the screen is module-level and has no caller to read, so it carries the constants and this
+    // carries the rest — evaluated here, in the component that pushes, in the scope the Dart call was written in.
+    const args = Array.isArray(transition['arguments']) ? (transition['arguments'] as Node[]) : [];
+    const carried: string[] = [];
+    for (const argument of args) {
+      const name = argument['name'];
+      const binding = argument['binding'];
+      if (typeof name !== 'string' || name === '' || binding === null || typeof binding !== 'object') continue;
+      if (!readsCallSiteState(binding, scope)) continue;
+      carried.push(`${identifierOf(name)}: ${emitBindingValue(binding as Node, scope)}`);
+    }
+    return carried.length === 0
+      ? `{ kind: 'component', component: ${key} }`
+      : `{ kind: 'component', component: ${key}, props: { ${carried.join(', ')} } }`;
   }
   return undefined;
 }

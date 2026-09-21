@@ -35,7 +35,7 @@ test.describe('two pushes to the same component, distinct arguments', () => {
     // The AppBar title is `title`, a per-push constant — proof the wrapper this push resolved to is the
     // one carrying `'Details'`, not `'Other'` (a first-caller-wins collapse would show the wrong one, or
     // whichever push the generator happened to visit first).
-    await expect(page.locator('header')).toContainText('Details');
+    await expect(page.locator('header:visible')).toContainText('Details');
     await expect(page.getByText('Enabled: true')).toBeVisible();
     await expect(page.getByText(/Count: \d+/)).toBeVisible();
   });
@@ -44,7 +44,7 @@ test.describe('two pushes to the same component, distinct arguments', () => {
     await page.goto('/');
     await page.getByRole('button', { name: 'Open Other' }).click();
 
-    await expect(page.locator('header')).toContainText('Other');
+    await expect(page.locator('header:visible')).toContainText('Other');
     await expect(page.getByText('Enabled: false')).toBeVisible();
   });
 
@@ -52,18 +52,18 @@ test.describe('two pushes to the same component, distinct arguments', () => {
     await page.goto('/');
 
     await page.getByRole('button', { name: 'Open Other' }).click();
-    await expect(page.locator('header')).toContainText('Other');
+    await expect(page.locator('header:visible')).toContainText('Other');
     await expect(page.getByText('Enabled: false')).toBeVisible();
     await page.getByRole('button', { name: 'Go back' }).click();
 
     await page.getByRole('button', { name: 'Open Details' }).click();
-    await expect(page.locator('header')).toContainText('Details');
+    await expect(page.locator('header:visible')).toContainText('Details');
     await expect(page.getByText('Enabled: true')).toBeVisible();
     await page.getByRole('button', { name: 'Go back' }).click();
 
     // A third round, reversed order again — nothing about which was visited first leaks into the other.
     await page.getByRole('button', { name: 'Open Other' }).click();
-    await expect(page.locator('header')).toContainText('Other');
+    await expect(page.locator('header:visible')).toContainText('Other');
     await expect(page.getByText('Enabled: false')).toBeVisible();
   });
 });
@@ -74,11 +74,11 @@ test.describe('the promoted signal and action cross the push boundary', () => {
     await expect(page.getByText('Home count: 0')).toBeVisible();
 
     await page.getByRole('button', { name: 'Open Details' }).click();
-    await expect(page.getByText('Count: 0')).toBeVisible();
+    await expect(page.getByText('Count: 0', { exact: true })).toBeVisible();
 
     await page.getByRole('button', { name: 'Increment' }).click();
     await page.getByRole('button', { name: 'Increment' }).click();
-    await expect(page.getByText('Count: 2')).toBeVisible();
+    await expect(page.getByText('Count: 2', { exact: true })).toBeVisible();
 
     await page.getByRole('button', { name: 'Go back' }).click();
     await expect(page.getByText('Home count: 2')).toBeVisible();
@@ -89,14 +89,14 @@ test.describe('back navigation', () => {
   test('popping returns to the home screen, and the stack keeps working afterwards', async ({ page }) => {
     await page.goto('/');
     await page.getByRole('button', { name: 'Open Details' }).click();
-    await expect(page.locator('header')).toContainText('Details');
+    await expect(page.locator('header:visible')).toContainText('Details');
 
     await page.getByRole('button', { name: 'Go back' }).click();
     await expect(page.getByText(/Home count:/)).toBeVisible();
 
     // The router is not left in a broken state by the pop — another push still resolves correctly.
     await page.getByRole('button', { name: 'Open Other' }).click();
-    await expect(page.locator('header')).toContainText('Other');
+    await expect(page.locator('header:visible')).toContainText('Other');
   });
 });
 

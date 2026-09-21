@@ -38,6 +38,16 @@ class Route<T> {
   Route();
 }
 
+/// The framework's identity hint. A `Key` is declared in `package:flutter/`, which is what makes it the framework's.
+abstract class Key {
+  const Key.empty();
+}
+
+class ValueKey<T> extends Key {
+  const ValueKey(this.value) : super.empty();
+  final T value;
+}
+
 class RouteSettings {
   const RouteSettings({this.name, this.arguments});
   final String? name;
@@ -475,7 +485,8 @@ final GoRouter router = GoRouter(
       final Map<String, dynamic> route = extracted.ofKind('app.Route').singleWhere((Map<String, dynamic> r) => r['name'] == 'settings');
       expect(route['path'], '/settings');
       final Map<String, dynamic> navigate = extracted.ofKind('logic.Navigate').single;
-      expect(navigate['action'], 'push');
+      // `goNamed` is declarative: the location becomes the whole stack, which is `go`, not a push (ADR-0077 D6).
+      expect(navigate['action'], 'go');
       expect(navigate['route'], route['id']);
     });
 
@@ -693,6 +704,40 @@ class _HomeState extends State<Home> {
       expect(app.argumentBindings.containsKey('data'), isFalse,
           reason: 'the opaque argument is omitted, not serialized');
       expect(app.codes(Severity.warning), contains('BRG1302'));
+    });
+  });
+
+  group('a Flutter `Key` argument is identity, not data', () {
+    const String keyed = '''
+class Keyed extends StatelessWidget {
+  const Keyed({Key? key, this.id = 0}) : super(key: key);
+  final int id;
+  @override
+  Widget build(BuildContext context) => const Text('keyed');
+}
+''';
+
+    test('a `Key`-typed argument is not recorded — it names nothing on the destination', () async {
+      // It used to be recorded, read by N11 as a live object (BRG2301), and the program refused for a value the
+      // destination never receives.
+      final Extracted app = await extractNav(
+        screen(
+          'Navigator.push(context, MaterialPageRoute(builder: (BuildContext c) => Keyed(key: ValueKey(_count), id: _count)));',
+          extra: keyed,
+        ),
+      );
+
+      expect(app.errors, isEmpty);
+      expect(app.argumentBindings.keys, <String>['id']);
+    });
+
+    test('decided by the resolved type, not the spelling: a non-Key parameter called `key` is data and is kept', () async {
+      // The stand-in `Widget.key` is `Object?`, so `Detail(key: …)` is an ordinary argument named `key`.
+      final Extracted app = await extractNav(
+        screen('Navigator.push(context, MaterialPageRoute(builder: (BuildContext c) => Detail(key: _count)));'),
+      );
+
+      expect(app.argumentBindings.keys, <String>['key']);
     });
   });
 

@@ -45,9 +45,9 @@ test.describe('startup', () => {
     // `Scaffold` lowers to landmark elements rather than a pile of divs — an AppBar is a `<header>` and the
     // body is `<main>`. This is a contract of the runtime kit, and it is what makes the emitted app
     // navigable by assistive technology at all.
-    await expect(page.locator('header')).toHaveCount(1);
+    await expect(page.locator('header:visible')).toHaveCount(1);
     await expect(page.locator('main')).toHaveCount(1);
-    await expect(page.locator('header')).toContainText('FlutterBridge');
+    await expect(page.locator('header:visible')).toContainText('FlutterBridge');
   });
 });
 

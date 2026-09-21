@@ -282,6 +282,10 @@ a constant. The compiler read its declared initializer ("$path") — but if it i
     if (method.startsWith('pushReplacement') || method.startsWith('replace')) {
       return NavigateAction.replace;
     }
+    // `go` is declarative: the location it names *is* the stack, so it is not a push (ADR-0077 D6).
+    if (method == 'go' || method == 'goNamed') {
+      return NavigateAction.go;
+    }
     if (_byPath.contains(method) || _byName.contains(method)) {
       return NavigateAction.push;
     }

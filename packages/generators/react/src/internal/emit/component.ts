@@ -26,7 +26,7 @@
 import type { NodeId } from '@bridge/uir';
 
 import { GeneratorDiagnosticCode } from '../diagnostics/codes.js';
-import { emitExpression, isScaffoldMessengerCall, localBindingsIn, stringLiteral, type EmitScope } from './expression.js';
+import { emitExpression, isScaffoldMessengerCall, localBindingsIn, setBindingLowering, stringLiteral, type EmitScope } from './expression.js';
 import { behaviourOf, methodOf, splitInitState } from './lifecycle.js';
 import { emitStatements } from './statement.js';
 import { identifierOf, type ModuleBuilder } from './module.js';
@@ -319,7 +319,7 @@ function needsRouter(node: Node, scope: EmitScope): boolean {
     const transition = scope.node(dismisses) as unknown as Node | undefined;
     return transition === undefined || transition['inline'] === undefined;
   }
-  if (action !== 'push' && action !== 'replace') return true;
+  if (action !== 'push' && action !== 'replace' && action !== 'go') return true;
   const transitionId = node['transition'];
   if (typeof transitionId !== 'string') return true;
   const transition = scope.node(transitionId) as unknown as Node | undefined;
@@ -1799,6 +1799,9 @@ export function emitBinding(
       return 'undefined';
   }
 }
+
+// `statement.ts` lowers a push's arguments and cannot import this module (see `setBindingLowering`).
+setBindingLowering((binding, scope) => emitBinding(binding, scope));
 
 /** Emits a `sig.Action` body as a lambda, for an event prop. */
 export function emitActionBody(action: Node, scope: EmitScope, reservedNames?: ReadonlySet<string>): string[] {

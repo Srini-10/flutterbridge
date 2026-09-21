@@ -40,6 +40,9 @@ enum NavigateAction {
 
   /// Entries are removed until a predicate holds — `popUntil`. The predicate is not modelled.
   popUntil,
+
+  /// The whole stack becomes the destination — `go_router`'s `context.go` / `goNamed` (ADR-0077 D6).
+  go,
 }
 
 /// Which framework liveness fact a `logic.Intrinsic` reads (ADR-0026).

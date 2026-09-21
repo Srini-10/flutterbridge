@@ -735,8 +735,62 @@ describe('N11 — component-interface promotion (M7-E3, ADR-11 amendment)', () =
       (comp as unknown as Record<string, unknown>)['params'],
     );
     expect(result.program.ofKind('app.Store')).toEqual([]);
-    // Once for the transition's own unprovable forward, once for the component blocked from removing it.
-    expect(result.diagnostics.map((d) => d.code)).toEqual(['BRG2305', 'BRG2305']);
+    // The route reaching `Middle` carries a component-scoped value no URL can hold, and `Middle` still reads the
+    // parameter that would be removed — so that is one error, on the component. The push `Middle` makes is
+    // in-memory: its forward is a prop, not a defect, and is no longer a second one.
+    expect(result.diagnostics.map((d) => d.code)).toEqual(['BRG2305']);
+  });
+
+  it('the same forward is not an error when every caller is an in-memory push — the parameter is kept and nothing is promoted', () => {
+    const comp = component('compMiddle', 'Middle', ['count'], leaf('leaf1', bindParam('bp1', 'count')));
+    const program = Program.of([
+      signal('sigCount'),
+      comp,
+      inlineTransition('t0', 'compHome', 'compMiddle', [arg('count', { id: 'b1', kind: 'bind.Signal', span, signal: 'sigCount' })]),
+      inlineTransition('t1', 'compMiddle', 'compNext', [
+        arg('count', { id: 'b2', kind: 'bind.Expr', span, expr: { id: 'e', kind: 'logic.Ref', span, name: 'count' } }),
+      ]),
+    ]);
+
+    const result = manager().run(program, options);
+
+    expect(result.diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
+    expect(result.program.ofKind('app.Store')).toEqual([]);
+    expect((result.program.get('compMiddle') as unknown as Record<string, unknown>)['params']).toEqual(
+      (comp as unknown as Record<string, unknown>)['params'],
+    );
+  });
+
+  it('an in-memory push carries the caller’s own parameter as a prop — a URL boundary cannot, an inline destination needs none', () => {
+    // Nothing is serialized across `Navigator.push(MaterialPageRoute(builder: ...))`, so a forwarded parameter (BRG2305) is
+    // not a defect there — and is still one across a URL boundary, which the neighbouring test pins.
+    for (const binding of [
+      bindParam('b1', 'x'),
+      { id: 'b2', kind: 'bind.Expr', span, expr: { id: 'e', kind: 'logic.Ref', span, name: 'x' } },
+    ]) {
+      const program = Program.of([inlineTransition('t1', 'compHome', 'compDetail', [arg('x', binding)])]);
+      const result = manager().run(program, options);
+      expect(result.diagnostics.map((d) => d.code)).toEqual([]);
+    }
+  });
+
+  it('an in-memory push carries a live object and a closure it cannot promote; a URL boundary refuses both', () => {
+    const object = { id: 'b', kind: 'bind.Expr', span, expr: { id: 'e', kind: 'logic.New', span, typeName: 'Product', type: { name: 'Product' } } };
+    const closure = { id: 'b', kind: 'bind.Expr', span, expr: { id: 'e', kind: 'logic.Lambda', span, body: [], type: { name: 'Function' } } };
+
+    const memory = (binding: Record<string, unknown>): string[] =>
+      manager()
+        .run(Program.of([inlineTransition('t1', 'compHome', 'compDetail', [arg('a', binding)])]), options)
+        .diagnostics.map((d) => d.code);
+    const url = (binding: Record<string, unknown>): string[] =>
+      manager()
+        .run(Program.of([route('r1', '/home', 'compHome'), transition('t1', 'r1', [arg('a', binding)])]), options)
+        .diagnostics.map((d) => d.code);
+
+    expect(memory(object)).toEqual([]);
+    expect(memory(closure)).toEqual([]);
+    expect(url(object)).toEqual(['BRG2301']);
+    expect(url(closure)).toEqual(['BRG2303']);
   });
 
   it('a `bind.Param` argument binding is the same forwarded shape as an untargeted `logic.Ref`', () => {

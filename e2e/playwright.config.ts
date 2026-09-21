@@ -33,6 +33,8 @@
 // `named-routes.spec.ts` gets its own pair (3325/3326): `named_routes` (M13) is an eighth.
 //
 // `dio-client.spec.ts` gets its own pair (3327/3328): `dio_client` (M14) is a ninth.
+//
+// `dynamic-push.spec.ts` gets its own pair (3329/3330): `inline_push_dynamic` (M14) is a tenth.
 
 import { defineConfig, devices } from '@playwright/test';
 
@@ -147,6 +149,16 @@ export default defineConfig({
       name: 'dio-client-development',
       use: { ...devices['Desktop Chrome'], baseURL: 'http://127.0.0.1:3328' },
       testMatch: /dio-client\.dev-only\.spec/,
+    },
+    {
+      name: 'dynamic-push-production',
+      use: { ...devices['Desktop Chrome'], baseURL: 'http://127.0.0.1:3329' },
+      testMatch: /dynamic-push\.spec/,
+    },
+    {
+      name: 'dynamic-push-development',
+      use: { ...devices['Desktop Chrome'], baseURL: 'http://127.0.0.1:3330' },
+      testMatch: /dynamic-push\.dev-only\.spec/,
     },
   ],
 
@@ -310,6 +322,24 @@ export default defineConfig({
       command: 'npx next dev --port 3328',
       cwd: './.fixtures/dio-client-dev',
       port: 3328,
+      reuseExistingServer: false,
+      timeout: 120_000,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    },
+    {
+      command: 'npx next start --port 3329',
+      cwd: './.fixtures/dynamic-push/build/bridge',
+      port: 3329,
+      reuseExistingServer: false,
+      timeout: 120_000,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    },
+    {
+      command: 'npx next dev --port 3330',
+      cwd: './.fixtures/dynamic-push-dev',
+      port: 3330,
       reuseExistingServer: false,
       timeout: 120_000,
       stdout: 'pipe',
