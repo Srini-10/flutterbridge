@@ -10057,4 +10057,46 @@ class W extends StatelessWidget {
       expect(codesOf(readOnly), isNot(contains('BRG1313')));
     });
   });
+
+  group('external names carry their library (M12, ADR-0057)', () {
+    test('an SDK function or static names the library they come from; a project name does not', () async {
+      final Extracted e = await extract(r'''
+import 'dart:async';
+import 'package:flutter/material.dart';
+bool projectSame(Object? a, Object? b) => a == b;
+void go() { unawaited(Future<void>.value()); }
+class W extends StatelessWidget {
+  const W({super.key});
+  @override
+  Widget build(BuildContext context) {
+    return Text('${identical(1, 2)} ${projectSame(1, 2)} ${double.infinity} ${Object.hash(1, 2)} ${double.nan}');
+  }
+}
+''');
+      final Iterable<Map<String, dynamic>> refs = e.bytes
+          .split('\n')
+          .where((String l) => l.contains('"logic.Ref"'))
+          .map((String l) => jsonDecode(l) as Map<String, dynamic>);
+      final Map<String, String> library = <String, String>{};
+      void walk(Object? v) {
+        if (v is Map<String, dynamic>) {
+          if (v['kind'] == 'logic.Ref' && v['library'] is String) {
+            library[v['name'] as String] = v['library'] as String;
+          }
+          v.values.forEach(walk);
+        } else if (v is List) {
+          v.forEach(walk);
+        }
+      }
+      refs.forEach(walk);
+      for (final String l in e.bytes.split('\n').where((String l) => l.isNotEmpty)) {
+        walk(jsonDecode(l));
+      }
+      expect(library['identical'], 'dart:core');
+      expect(library['unawaited'], 'dart:async');
+      expect(library['Object.hash'], 'dart:core');
+      expect(library['double.infinity'], 'dart:core');
+      expect(library.keys, isNot(contains('projectSame')), reason: 'a project function has a target, not a library');
+    });
+  });
 }

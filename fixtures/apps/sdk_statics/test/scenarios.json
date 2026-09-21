@@ -1,0 +1,4 @@
+{
+  "Statics": [],
+  "Unawaited": ["go", "@wait", "go", "@wait"]
+}

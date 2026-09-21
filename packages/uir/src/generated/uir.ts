@@ -14,7 +14,7 @@ import { createHash } from 'node:crypto';
 export const UIR_VERSION = '1.15.0' as const;
 
 /** A hash of the schema sources this module was generated from. */
-export const UIR_SCHEMA_HASH = 'f369c0e7f8ae8880' as const;
+export const UIR_SCHEMA_HASH = '7a0e349399b09af1' as const;
 
 /** Node kind -> the fields of that node which hold `NodeId` references. */
 export const UIR_REFERENCE_FIELDS: Readonly<Record<string, readonly string[]>> = {
@@ -1795,6 +1795,8 @@ export interface Ref {
   readonly id: NodeId;
   /// Discriminant.
   readonly kind: 'logic.Ref';
+  /// The library an external name comes from when it is not declared in the program: a Dart SDK top-level function, constant or static member (`dart:core`), or a `const` top-level variable of a package the program does not extract. The generator lowers a known SDK one (`identical`, `Object.hash`, `double.infinity`), treats a package constant as an opaque canonical token (identity and equality only), and refuses the rest.
+  readonly library?: string;
   /// The name referenced.
   readonly name: string;
   /// Where the node came from.
@@ -4125,6 +4127,7 @@ export function parseRef(value: unknown, path = 'Ref'): Ref {
     ...(own(o, 'ext') === undefined || own(o, 'ext') === null ? {} : { ext: asMap(own(o, 'ext'), `${path}.ext`, (v) => v) }),
     id: parseNodeId(req(o, 'id', path), `${path}.id`),
     kind: 'logic.Ref',
+    ...(own(o, 'library') === undefined || own(o, 'library') === null ? {} : { library: asString(own(o, 'library'), `${path}.library`) }),
     name: asString(req(o, 'name', path), `${path}.name`),
     span: parseSourceSpan(req(o, 'span', path), `${path}.span`),
     ...(own(o, 'target') === undefined || own(o, 'target') === null ? {} : { target: parseNodeId(own(o, 'target'), `${path}.target`) }),

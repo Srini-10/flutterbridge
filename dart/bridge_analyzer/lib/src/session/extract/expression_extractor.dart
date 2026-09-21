@@ -159,6 +159,7 @@ final class ExpressionExtractor {
           // reproduced here), so `_internalMemberTarget` correctly returns null for it and this falls
           // through to `binding?.symbol` below, unchanged.
           staticTarget: _topLevelTarget(node.element) ?? _internalMemberTarget(node.element),
+          element: node.element,
         );
 
       // `MainAxisAlignment.center`, `http.get`, `Colors.blue` — the left-hand side is a *type* or an
@@ -180,6 +181,7 @@ final class ExpressionExtractor {
               _enumConstantTarget(node.identifier.element) ??
               _enumValuesTarget(node.identifier.element) ??
               _topLevelTarget(node.identifier.element),
+          element: node.identifier.element,
         );
 
       case PrefixedIdentifier() when _enumMember(node.prefix, node.identifier.name) != null:
@@ -234,6 +236,7 @@ final class ExpressionExtractor {
                 _enumConstantTarget(node.propertyName.element) ??
                 _enumValuesTarget(node.propertyName.element) ??
                 _topLevelTarget(node.propertyName.element),
+            element: node.propertyName.element,
           );
         }
         if (registry.mountedIntrinsicOf(node) case final MountedKind kind) {
@@ -961,7 +964,7 @@ final class ExpressionExtractor {
   /// access (`Stage.ready`) is not a local, a parameter, or a field, so [Scope] never binds it, and
   /// nothing here asks it to (M8-D). It is resolved by the caller instead, from the reference's own
   /// analyzer element, before `_reference` is ever called.
-  RawNode _reference(Expression node, String name, Scope scope, {DartType? type, String? staticTarget}) {
+  RawNode _reference(Expression node, String name, Scope scope, {DartType? type, String? staticTarget, Element? element}) {
     final Binding? binding = scope.lookup(name);
     // A build-method local (M8-B): the render tree has no `logic.VarDecl` to point a `target` at, so the
     // value is carried by re-extracting the local's own initializer here instead of naming it.
@@ -978,9 +981,32 @@ final class ExpressionExtractor {
         // outside its function can refer to it — and inventing one would be a promise we could not
         // keep, which the builder would then report as BRG1201.
         if (target != null) 'target': RawRef(target),
+        // Something the SDK declares — `identical`, `double.infinity`, `Object.hash` — has no declaration in the program;
+        // the library it comes from is how the generator tells the real one from a same-named project or package name.
+        if (_sdkLibraryOf(target == null ? element : null) case final String library) 'library': RawLiteral(library),
         'type': out.typeRef(type ?? node.staticType, at: node),
       },
     );
+  }
+
+  /// The library an *external* name comes from, or null: a `dart:` top-level function, top-level variable or static member, or a
+  /// `const` top-level variable of a package the program does not extract (`package:freezed_annotation`'s `freezed`).
+  static String? _sdkLibraryOf(Element? element) {
+    final Element? unwrapped = element is GetterElement && element.isOriginVariable ? element.variable : element;
+    final String? library = unwrapped?.library?.identifier;
+    if (library == null) {
+      return null;
+    }
+    if (library.startsWith('package:')) {
+      return unwrapped is TopLevelVariableElement && unwrapped.isConst ? library : null;
+    }
+    final bool isStaticOrTopLevel = switch (unwrapped) {
+      TopLevelFunctionElement() || TopLevelVariableElement() => true,
+      MethodElement(:final bool isStatic) => isStatic,
+      FieldElement(:final bool isStatic) => isStatic,
+      _ => false,
+    };
+    return isStaticOrTopLevel && library.startsWith('dart:') ? library : null;
   }
 
   /// A colour expression, lowered to the **name of the token that holds it**.
@@ -1433,6 +1459,7 @@ final class ExpressionExtractor {
                   _enumConstantTarget(node.methodName.element) ??
                   _topLevelTarget(node.methodName.element) ??
                   _staticMemberTarget(node.methodName.element, awaited: awaited),
+              element: node.methodName.element,
             ),
           ),
           ..._arguments(node.argumentList, scope),

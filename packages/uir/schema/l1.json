@@ -252,6 +252,10 @@
               "$ref": "shared.json#/$defs/NodeId",
               "description": "The declaration referred to, when it is in the program."
             },
+            "library": {
+              "type": "string",
+              "description": "The library an external name comes from when it is not declared in the program: a Dart SDK top-level function, constant or static member (`dart:core`), or a `const` top-level variable of a package the program does not extract. The generator lowers a known SDK one (`identical`, `Object.hash`, `double.infinity`), treats a package constant as an opaque canonical token (identity and equality only), and refuses the rest."
+            },
             "type": {
               "$ref": "shared.json#/$defs/TypeRef",
               "description": "Resolved type."

@@ -31,7 +31,7 @@ const String uirVersion = '1.15.0';
 /// A hash of the schema sources this library was generated from.
 ///
 /// Stamped into every emitted manifest: a UIR document always says which schema produced it.
-const String uirSchemaHash = 'f369c0e7f8ae8880';
+const String uirSchemaHash = '7a0e349399b09af1';
 
 /// Node kind -> the fields of that node which hold `NodeId` references.
 ///
@@ -7175,6 +7175,7 @@ final class Ref extends Expr {
     required this.type,
     this.anchor,
     this.ext,
+    this.library,
     this.target,
   });
 
@@ -7189,6 +7190,7 @@ final class Ref extends Expr {
       anchor: json['anchor'] == null ? null : _asString(json['anchor'], '$path.anchor'),
       ext: json['ext'] == null ? null : _asMap<Object?>(json['ext'], '$path.ext', (Object? v, String p) => v),
       id: _asString(_req(json, 'id', path), '$path.id'),
+      library: json['library'] == null ? null : _asString(json['library'], '$path.library'),
       name: _asString(_req(json, 'name', path), '$path.name'),
       span: SourceSpan.fromJson(_req(json, 'span', path), '$path.span'),
       target: json['target'] == null ? null : _asString(json['target'], '$path.target'),
@@ -7204,6 +7206,9 @@ final class Ref extends Expr {
 
   /// The node's stable, content-addressed identity.
   final NodeId id;
+
+  /// The library an external name comes from when it is not declared in the program: a Dart SDK top-level function, constant or static member (`dart:core`), or a `const` top-level variable of a package the program does not extract. The generator lowers a known SDK one (`identical`, `Object.hash`, `double.infinity`), treats a package constant as an opaque canonical token (identity and equality only), and refuses the rest.
+  final String? library;
 
   /// The name referenced.
   final String name;
@@ -7228,6 +7233,7 @@ final class Ref extends Expr {
     'ext': ext,
     'id': id,
     'kind': 'logic.Ref',
+    'library': library,
     'name': name,
     'span': span.toJson(),
     'target': target,
@@ -7242,6 +7248,7 @@ final class Ref extends Expr {
     Anchor? anchor,
     Map<String, Object?>? ext,
     NodeId? id,
+    String? library,
     String? name,
     SourceSpan? span,
     NodeId? target,
@@ -7251,6 +7258,7 @@ final class Ref extends Expr {
       anchor: anchor ?? this.anchor,
       ext: ext ?? this.ext,
       id: id ?? this.id,
+      library: library ?? this.library,
       name: name ?? this.name,
       span: span ?? this.span,
       target: target ?? this.target,
@@ -7268,6 +7276,7 @@ final class Ref extends Expr {
         _equality.equals(other.anchor, anchor) &&
         _equality.equals(other.ext, ext) &&
         _equality.equals(other.id, id) &&
+        _equality.equals(other.library, library) &&
         _equality.equals(other.name, name) &&
         _equality.equals(other.span, span) &&
         _equality.equals(other.target, target) &&
@@ -7280,6 +7289,7 @@ final class Ref extends Expr {
     _equality.hash(anchor),
     _equality.hash(ext),
     _equality.hash(id),
+    _equality.hash(library),
     _equality.hash(name),
     _equality.hash(span),
     _equality.hash(target),

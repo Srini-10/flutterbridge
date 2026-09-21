@@ -981,6 +981,25 @@ function generalCallArguments(params: readonly Node[], node: Node, scope: EmitSc
  * @param scope - what is in scope, and where to report.
  * @returns the TypeScript text. Parenthesised where its own structure requires it.
  */
+/**
+ * The `dart:` top-level functions and static members this generator lowers, by `library#name` — what the analyzer resolved,
+ * not a spelling. Each entry is exact Dart semantics (or, for a hash, the Dart contract — see `dartHashAll`); anything else the
+ * SDK declares stays `BRG3006`.
+ */
+const SDK_STATICS: Readonly<Record<string, (scope: EmitScope) => string>> = {
+  // `identical(a, b)` is reference identity for objects and value identity for numbers, `NaN` identical to itself and `0.0` not
+  // to `-0.0` — exactly `Object.is`.
+  'dart:core#identical': () => 'Object.is',
+  'dart:core#Object.hash': (scope) => scope.module.use(RUNTIME, 'dartHash'),
+  'dart:core#Object.hashAll': (scope) => scope.module.use(RUNTIME, 'dartHashAll'),
+  'dart:async#unawaited': (scope) => scope.module.use(RUNTIME, 'unawaited'),
+  'dart:core#double.infinity': () => 'Infinity',
+  'dart:core#double.negativeInfinity': () => '(-Infinity)',
+  'dart:core#double.nan': () => 'NaN',
+  'dart:core#double.maxFinite': () => 'Number.MAX_VALUE',
+  'dart:core#double.minPositive': () => 'Number.MIN_VALUE',
+};
+
 export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope): string {
   if (expr === undefined || expr === null) return 'undefined';
   const node = expr as Node;
@@ -1260,6 +1279,20 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
         // kit does not export is caught by `tsc` in the build proof, which is what that test is for.
         if (rest.length === 1 && prefix !== undefined && typeName !== '' && isHolderOf(prefix, typeName)) {
           return `${scope.module.use(RUNTIME, prefix)}.${identifierOf(rest[0]!)}`;
+        }
+      }
+
+      // Something the Dart SDK declares (`identical`, `Object.hash`, `double.infinity`): looked up by the library the analyzer
+      // resolved it to, never by the bare name — a package or project function may be called `identical` too.
+      if (typeof name === 'string' && typeof node['library'] === 'string') {
+        const lowering = SDK_STATICS[`${node['library']}#${name}`];
+        if (lowering !== undefined) return lowering(scope);
+        // A `const` variable of a package this program does not extract (freezed's `freezed`, used as `x == freezed` to tell
+        // "argument omitted"). Dart canonicalises constants, so the value is one object: an opaque token per declaration keeps its
+        // identity and equality exactly. Nothing else is modelled — a member read or call on it has no receiver model and is
+        // refused where it occurs.
+        if (String(node['library']).startsWith('package:')) {
+          return `${scope.module.use(RUNTIME, 'dartConstToken')}(${JSON.stringify(`${node['library']}#${name}`)})`;
         }
       }
 

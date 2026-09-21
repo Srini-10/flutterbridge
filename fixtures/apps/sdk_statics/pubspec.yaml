@@ -1,0 +1,20 @@
+name: sdk_statics
+description: >-
+  M12 (ADR-0057): the Dart SDK statics real code calls (identical, Object.hash, unawaited, double.infinity) and a package const used
+  as an identity token. Run by Flutter and as the generated component, compared.
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true
