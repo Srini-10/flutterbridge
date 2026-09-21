@@ -98,6 +98,12 @@ final class TransitionExtractor {
   /// How many transitions this file has produced, and so the next one's ordinal.
   int _ordinal = 0;
 
+  /// The route each navigation site named, by AST identity — for the departure (`logic.Navigate.route`) to name it (ADR-0072).
+  final Map<MethodInvocation, RawRouteRef> _routeRefs = Map<MethodInvocation, RawRouteRef>.identity();
+
+  /// The route reference [node] navigates to, once `maybeExtract` has seen it; null for a component or inline destination.
+  RawRouteRef? routeRefOf(MethodInvocation node) => _routeRefs[node];
+
   /// Emits a transition for [node] if any adapter recognises it as a navigation.
   ///
   /// Called for every `MethodInvocation` during the scoped walk; the overwhelming majority are not
@@ -132,7 +138,10 @@ final class TransitionExtractor {
       // does not exist.
       return null;
     }
-    final bool toRoute = declaration.path != null;
+    final bool toRoute = declaration.path != null || declaration.routeName != null;
+    if (toRoute) {
+      _routeRefs[node] = destination.value! as RawRouteRef;
+    }
 
     // ── the edge's identity (M7-B) ────────────────────────────────────────────────────────────────
     //
@@ -244,6 +253,10 @@ final class TransitionExtractor {
     final String? path = declaration.path;
     if (path != null) {
       return (field: 'target', value: RawRouteRef(path), pendingWidget: null);
+    }
+    final String? routeName = declaration.routeName;
+    if (routeName != null) {
+      return (field: 'target', value: RawRouteRef.named(routeName), pendingWidget: null);
     }
 
     final Expression widget = declaration.widget!;

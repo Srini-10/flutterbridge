@@ -74,7 +74,17 @@ final class TransitionDeclaration {
     required String this.path,
     required this.at,
     this.arguments = const <TransitionArgument>[],
-  }) : widget = null;
+  }) : widget = null,
+       routeName = null;
+
+  /// A navigation to a declared route **by its name** — `context.goNamed('detail')`. Resolved against the route
+  /// table's names, as [TransitionDeclaration.toPath] is against its paths (ADR-0072).
+  const TransitionDeclaration.toName({
+    required String this.routeName,
+    required this.at,
+    this.arguments = const <TransitionArgument>[],
+  }) : path = null,
+       widget = null;
 
   /// A navigation whose destination is **constructed inline** —
   /// `Navigator.push(context, MaterialPageRoute(builder: (_) => HomeScreen(id: 3)))`.
@@ -86,7 +96,11 @@ final class TransitionDeclaration {
     required Expression this.widget,
     required this.at,
     this.arguments = const <TransitionArgument>[],
-  }) : path = null;
+  }) : path = null,
+       routeName = null;
+
+  /// The name of the route the navigation asks for, when it names one. Null unless built with `toName`.
+  final String? routeName;
 
   /// The path the navigation asks for, when it names a route. Null when [widget] is set.
   final String? path;
@@ -129,6 +143,7 @@ final class RouteDeclaration {
   const RouteDeclaration({
     required this.path,
     required this.at,
+    this.name,
     this.component,
     this.children = const <RouteDeclaration>[],
     this.hasRedirect = false,
@@ -140,6 +155,9 @@ final class RouteDeclaration {
   /// graph that does not match the application's own URLs, which is worse than no route graph: N11
   /// would promote state across a boundary that is not where it thinks it is.
   final String path;
+
+  /// The route's name as the router declares it (`GoRoute(name: 'detail')`), when it is a compile-time constant.
+  final String? name;
 
   /// The expression that produces the page.
   final Expression? component;

@@ -552,6 +552,10 @@
               "type": "string",
               "description": "The URL path, e.g. `/product/:id`."
             },
+            "name": {
+              "type": "string",
+              "description": "The route's name, as the router declares it (`GoRoute(name: 'detail')`) — what a navigation by name (`context.goNamed('detail')`) resolves against (ADR-0072). Absent for a route with no name."
+            },
             "params": {
               "type": "array",
               "items": {

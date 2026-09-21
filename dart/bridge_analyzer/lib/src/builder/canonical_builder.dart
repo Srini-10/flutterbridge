@@ -162,6 +162,7 @@ final class CanonicalBuilder {
   /// diagnostic.
   RouteIndex _routeIndex(List<RawNode> records, BuilderContext context) {
     final List<({String path, String id})> routes = <({String path, String id})>[];
+    final List<({String name, String id})> names = <({String name, String id})>[];
     for (final RawNode record in records) {
       if (record.kind != 'app.Route' || record.symbol == null) {
         continue;
@@ -173,8 +174,12 @@ final class CanonicalBuilder {
       final String? id = context.resolver.resolve(record.symbol!, record.span);
       if (id != null) {
         routes.add((path: path.value! as String, id: id));
+        final RawValue? name = record.fields['name'];
+        if (name is RawLiteral && name.value is String) {
+          names.add((name: name.value! as String, id: id));
+        }
       }
     }
-    return RouteIndex(routes);
+    return RouteIndex(routes, names: names);
   }
 }

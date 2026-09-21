@@ -69,6 +69,8 @@ export const APPS = [
   { name: 'state-semantics', source: 'fixtures/apps/state_semantics_e2e' },
   // M13 (ADR-0070, ADR-0071): gestures and constraints on one page, driven with a real mouse, keyboard and viewport.
   { name: 'interaction', source: 'fixtures/apps/interaction_e2e' },
+  // M13 (ADR-0072): go_router navigation by route name (goNamed, pushNamed, pushReplacementNamed) in a real browser.
+  { name: 'named-routes', source: 'fixtures/apps/named_routes' },
 ];
 
 const run = (program, args, cwd, env = {}) =>

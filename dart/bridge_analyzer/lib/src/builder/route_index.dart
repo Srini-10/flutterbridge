@@ -21,8 +21,26 @@ library;
 /// Resolves a concrete navigation path to the id of the route that serves it.
 final class RouteIndex {
   /// Creates an index over [routes], each a `(path, id)` pair as the route table declares them.
-  RouteIndex(Iterable<({String path, String id})> routes)
-    : _routes = List<({String path, String id})>.unmodifiable(routes);
+  RouteIndex(Iterable<({String path, String id})> routes, {Iterable<({String name, String id})> names = const <({String name, String id})>[]})
+    : _routes = List<({String path, String id})>.unmodifiable(routes),
+      _names = List<({String name, String id})>.unmodifiable(names);
+
+  /// The declared routes' names and ids.
+  final List<({String name, String id})> _names;
+
+  /// The id of the route declared with [name], or `null` if none is — or if two routes carry the same name, which the router itself rejects.
+  String? resolveName(String name) {
+    String? found;
+    for (final ({String name, String id}) route in _names) {
+      if (route.name == name) {
+        if (found != null && found != route.id) {
+          return null;
+        }
+        found = route.id;
+      }
+    }
+    return found;
+  }
 
   /// The declared routes, path and id.
   final List<({String path, String id})> _routes;

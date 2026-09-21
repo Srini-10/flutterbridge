@@ -176,25 +176,29 @@ final class NodeFactory {
         final String? id = context.resolver.resolve(symbol, owner.span);
         return id ?? _unresolved;
 
-      case RawRouteRef(:final String path):
-        // A navigation naming a path resolves to the one route that serves it (§A17). Unlike a symbol
-        // reference, a path that matches nothing is not a bug in extraction — it is a route the program
-        // does not declare, or declares through a wrapper the adapter could not read. So it is a
-        // warning (BRG1308), not the error a dangling symbol is, and only the transition that named it
-        // is dropped: `_unresolved` propagates up and the owning `app.RouteTransition` is not built.
-        final String? routeId = context.routeIndex.resolve(path);
+      case RawRouteRef(:final String? path, :final String? name):
+        // A navigation naming a path resolves to the one route that serves it (§A17); one naming a *route name* resolves to the one
+        // route declared with that name (ADR-0072). Unlike a symbol reference, a destination that matches nothing is not a bug in
+        // extraction — it is a route the program does not declare, or declares through a wrapper the adapter could not read. So it
+        // is a warning (BRG1308), not the error a dangling symbol is, and only the transition that named it is dropped:
+        // `_unresolved` propagates up and the owning `app.RouteTransition` is not built.
+        final String? routeId = name != null ? context.routeIndex.resolveName(name) : context.routeIndex.resolve(path!);
         if (routeId == null) {
           context.diagnostics.add(
             Diagnostic(
               code: Codes.unresolvedRoute,
-              message:
-                  'This navigation goes to "$path", which matches no route the program declares — by '
-                  'exact path or by a parameterized pattern. The edge is dropped rather than pointed '
-                  'at a route that is not there.',
+              message: name != null
+                  ? 'This navigation goes to the route named "$name", which no route the program declares carries — or two do. '
+                        'The edge is dropped rather than pointed at a route that is not there.'
+                  : 'This navigation goes to "$path", which matches no route the program declares — by '
+                        'exact path or by a parameterized pattern. The edge is dropped rather than pointed '
+                        'at a route that is not there.',
               span: owner.span,
             ),
           );
-          return _unresolved;
+          // A departure keeps its place: the navigation is kept, without a destination, and the generator refuses it by name. Dropping
+          // the owner would take the element and the component that hold it (M7-C §8).
+          return owner.kind == 'logic.Navigate' ? null : _unresolved;
         }
         return routeId;
 

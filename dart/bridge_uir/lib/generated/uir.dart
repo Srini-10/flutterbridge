@@ -31,7 +31,7 @@ const String uirVersion = '1.15.0';
 /// A hash of the schema sources this library was generated from.
 ///
 /// Stamped into every emitted manifest: a UIR document always says which schema produced it.
-const String uirSchemaHash = '216952f97b54d57d';
+const String uirSchemaHash = 'cff772aab15c7b89';
 
 /// Node kind -> the fields of that node which hold `NodeId` references.
 ///
@@ -70,7 +70,7 @@ const Map<String, List<String>> uirReferenceFields = <String, List<String>>{
   'logic.Lit': <String>['id'],
   'logic.MapLit': <String>['id'],
   'logic.MethodCall': <String>['extensionTarget', 'id', 'target'],
-  'logic.Navigate': <String>['dismisses', 'id', 'transition'],
+  'logic.Navigate': <String>['dismisses', 'id', 'route', 'transition'],
   'logic.New': <String>['id'],
   'logic.NullCheck': <String>['id'],
   'logic.OpaqueDecl': <String>['id'],
@@ -6876,6 +6876,7 @@ final class Navigate extends Stmt {
     this.anchor,
     this.dismisses,
     this.ext,
+    this.route,
     this.transition,
   });
 
@@ -6892,6 +6893,7 @@ final class Navigate extends Stmt {
       dismisses: json['dismisses'] == null ? null : _asString(json['dismisses'], '$path.dismisses'),
       ext: json['ext'] == null ? null : _asMap<Object?>(json['ext'], '$path.ext', (Object? v, String p) => v),
       id: _asString(_req(json, 'id', path), '$path.id'),
+      route: json['route'] == null ? null : _asString(json['route'], '$path.route'),
       span: SourceSpan.fromJson(_req(json, 'span', path), '$path.span'),
       transition: json['transition'] == null ? null : _asString(json['transition'], '$path.transition'),
     );
@@ -6916,6 +6918,9 @@ final class Navigate extends Stmt {
   /// The node's stable, content-addressed identity.
   final NodeId id;
 
+  /// The `app.Route` a departure goes to, when the navigation names a route — `context.go('/about')`, `context.goNamed('about')` (ADR-0072). Such an edge has no symbol of its own, so the departure names the route directly. **Absent when the name or path matches no declared route (or more than one)**: the navigation is kept and the generator refuses it by name, rather than the departure and its component being dropped.
+  final NodeId? route;
+
   /// Where the node came from.
   final SourceSpan span;
 
@@ -6937,6 +6942,7 @@ final class Navigate extends Stmt {
     'ext': ext,
     'id': id,
     'kind': 'logic.Navigate',
+    'route': route,
     'span': span.toJson(),
     'transition': transition,
   })! as Map<String, Object?>;
@@ -6951,6 +6957,7 @@ final class Navigate extends Stmt {
     NodeId? dismisses,
     Map<String, Object?>? ext,
     NodeId? id,
+    NodeId? route,
     SourceSpan? span,
     NodeId? transition,
   }) {
@@ -6960,6 +6967,7 @@ final class Navigate extends Stmt {
       dismisses: dismisses ?? this.dismisses,
       ext: ext ?? this.ext,
       id: id ?? this.id,
+      route: route ?? this.route,
       span: span ?? this.span,
       transition: transition ?? this.transition,
     );
@@ -6977,6 +6985,7 @@ final class Navigate extends Stmt {
         _equality.equals(other.dismisses, dismisses) &&
         _equality.equals(other.ext, ext) &&
         _equality.equals(other.id, id) &&
+        _equality.equals(other.route, route) &&
         _equality.equals(other.span, span) &&
         _equality.equals(other.transition, transition);
   }
@@ -6989,6 +6998,7 @@ final class Navigate extends Stmt {
     _equality.hash(dismisses),
     _equality.hash(ext),
     _equality.hash(id),
+    _equality.hash(route),
     _equality.hash(span),
     _equality.hash(transition),
   ]);
@@ -8816,6 +8826,7 @@ final class Route extends UirNode {
     this.guards,
     this.layout,
     this.meta,
+    this.name,
     this.params,
   });
 
@@ -8835,6 +8846,7 @@ final class Route extends UirNode {
       id: _asString(_req(json, 'id', path), '$path.id'),
       layout: json['layout'] == null ? null : _asString(json['layout'], '$path.layout'),
       meta: json['meta'] == null ? null : SeoMeta.fromJson(json['meta'], '$path.meta'),
+      name: json['name'] == null ? null : _asString(json['name'], '$path.name'),
       params: json['params'] == null ? null : _asList<ParamDecl>(json['params'], '$path.params', ParamDecl.fromJson),
       path: _asString(_req(json, 'path', path), '$path.path'),
       span: SourceSpan.fromJson(_req(json, 'span', path), '$path.span'),
@@ -8869,6 +8881,9 @@ final class Route extends UirNode {
   /// Document metadata.
   final SeoMeta? meta;
 
+  /// The route's name, as the router declares it (`GoRoute(name: 'detail')`) — what a navigation by name (`context.goNamed('detail')`) resolves against (ADR-0072). Absent for a route with no name.
+  final String? name;
+
   /// Route parameters, in order.
   final List<ParamDecl>? params;
 
@@ -8894,6 +8909,7 @@ final class Route extends UirNode {
     'kind': 'app.Route',
     'layout': layout,
     'meta': meta?.toJson(),
+    'name': name,
     'params': params?.map((ParamDecl v) => v.toJson()).toList(),
     'path': path,
     'span': span.toJson(),
@@ -8912,6 +8928,7 @@ final class Route extends UirNode {
     NodeId? id,
     NodeId? layout,
     SeoMeta? meta,
+    String? name,
     List<ParamDecl>? params,
     String? path,
     SourceSpan? span,
@@ -8925,6 +8942,7 @@ final class Route extends UirNode {
       id: id ?? this.id,
       layout: layout ?? this.layout,
       meta: meta ?? this.meta,
+      name: name ?? this.name,
       params: params ?? this.params,
       path: path ?? this.path,
       span: span ?? this.span,
@@ -8943,6 +8961,7 @@ final class Route extends UirNode {
         _equality.equals(other.id, id) &&
         _equality.equals(other.layout, layout) &&
         _equality.equals(other.meta, meta) &&
+        _equality.equals(other.name, name) &&
         _equality.equals(other.params, params) &&
         _equality.equals(other.path, path) &&
         _equality.equals(other.span, span);
@@ -8959,6 +8978,7 @@ final class Route extends UirNode {
     _equality.hash(id),
     _equality.hash(layout),
     _equality.hash(meta),
+    _equality.hash(name),
     _equality.hash(params),
     _equality.hash(path),
     _equality.hash(span),

@@ -127,6 +127,7 @@ final class RouteExtractor {
             symbol: out.symbols.route(_uniquePath(route.path)),
             fields: <String, RawValue>{
               'path': RawLiteral(route.path),
+              if (route.name != null) 'name': RawLiteral(route.name),
               'component': RawRef(target),
               if (_pathParams(route.path).isNotEmpty)
                 'params': RawList(_pathParams(route.path)),

@@ -753,6 +753,17 @@ final class StatementExtractor implements StatementExtractorRef {
     // nothing matches a name, and the generator reconstructs nothing — it reads a `NodeId` (M7-B).
     if (action == NavigateAction.push || action == NavigateAction.replace) {
       final String? transition = expressions.transitions?.call(expression, scope);
+      // A navigation to a *route* (by path or by name) has an edge with no symbol, so the departure names the route itself; the
+      // builder resolves it, and one that resolves to nothing leaves the field out — the generator then refuses this navigation by
+      // name, and only this one (ADR-0072).
+      final RawRouteRef? route = transition == null ? expressions.routeRefs?.call(expression) : null;
+      if (route != null) {
+        return RawNode(
+          kind: 'logic.Navigate',
+          span: out.span(node),
+          fields: <String, RawValue>{'action': RawLiteral(action.name), 'route': route},
+        );
+      }
       if (transition == null) {
         // No resolvable edge: an inline destination that is not a component this project declares, or a
         // path that names no route. Both are already reported where they were discovered. A

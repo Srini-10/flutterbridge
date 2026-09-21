@@ -205,6 +205,7 @@ a constant. The compiler read its declared initializer ("$path") — but if it i
 
     return RouteDeclaration(
       path: full,
+      name: _constantString(mapping.argumentFor('name', element.argumentList)),
       at: element,
       component: builder,
       children: children == null
@@ -295,14 +296,36 @@ a constant. The compiler read its declared initializer ("$path") — but if it i
     }
 
     if (_byName.contains(method)) {
-      // A route *name* is not a path. Resolving one means reading the `name:` of every declared
-      // GoRoute, which this adapter does not currently record — so the edge is named as missing
-      // rather than guessed at.
+      // A navigation by name (ADR-0072). The name is resolved against the route table's names by the builder, which alone sees
+      // every route. What travels *with* the navigation (`pathParameters`, `queryParameters`, `extra`) is not modelled: a
+      // destination that cannot be reached without them is reported, never reached without them.
+      final Argument? carried = node.argumentList.arguments
+          .whereType<NamedArgument>()
+          .where((NamedArgument a) => const <String>{'pathParameters', 'queryParameters', 'extra'}.contains(a.name.lexeme))
+          .firstOrNull;
+      if (carried != null) {
+        context.report(
+          Codes.unsupportedWrapper,
+          'This navigation by name carries `${(carried as NamedArgument).name.lexeme}`, which the route graph does not model, so '
+          'the edge is left out rather than followed without it.',
+          carried,
+        );
+        return null;
+      }
+      for (final Argument argument in node.argumentList.arguments) {
+        if (argument is NamedArgument) {
+          continue;
+        }
+        final String? name = _constantString(argument.argumentExpression);
+        if (name != null) {
+          return TransitionDeclaration.toName(routeName: name, at: node);
+        }
+        break;
+      }
       context.report(
         Codes.unsupportedWrapper,
-        'This navigation names its destination by route name rather than by path. The adapter reads '
-        'route paths, not names, so the edge cannot be resolved and will be missing from the route '
-        'graph — cross-route state promotion (N11) will not see it.',
+        'This navigation names its route with something that is not a compile-time constant, so the destination cannot be '
+        'resolved statically. The edge will be missing from the route graph.',
         node,
       );
       return null;

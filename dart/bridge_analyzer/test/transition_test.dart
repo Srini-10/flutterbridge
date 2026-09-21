@@ -135,7 +135,9 @@ extension GoRouterHelper on BuildContext {
   Object? push<T>(String location, {Object? extra}) => null;
   void pushReplacement(String location, {Object? extra}) {}
   void replace(String location, {Object? extra}) {}
-  void goNamed(String name, {Object? extra}) {}
+  void goNamed(String name, {Map<String, String> pathParameters = const <String, String>{}, Map<String, dynamic> queryParameters = const <String, dynamic>{}, Object? extra}) {}
+  Object? pushNamed<T>(String name, {Map<String, String> pathParameters = const <String, String>{}, Object? extra}) => null;
+  void pushReplacementNamed(String name, {Object? extra}) {}
   void pop<T>([T? result]) {}
 }
 ''',
@@ -419,6 +421,108 @@ class App extends StatelessWidget {
 
       expect(extracted.ofKind('app.RouteTransition'), isEmpty);
       expect(extracted.codes(Severity.warning), contains('BRG1304'));
+    });
+  });
+
+  group('go_router — navigation by route name (ADR-0072)', () {
+    String app(String navigation) =>
+        '''
+import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
+
+class Profile extends StatelessWidget {
+  const Profile({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('profile');
+}
+
+class Item extends StatelessWidget {
+  const Item({super.key});
+  @override
+  Widget build(BuildContext context) => const Text('item');
+}
+
+class Home extends StatelessWidget {
+  const Home({super.key});
+  @override
+  Widget build(BuildContext context) => ElevatedButton(
+    onPressed: () {
+      $navigation
+    },
+    child: const Text('go'),
+  );
+}
+
+final GoRouter router = GoRouter(
+  routes: <RouteBase>[
+    GoRoute(
+      path: '/settings',
+      name: 'settings',
+      builder: (BuildContext c, GoRouterState s) => const Profile(),
+      routes: <RouteBase>[
+        GoRoute(path: 'profile', name: 'profile', builder: (BuildContext c, GoRouterState s) => const Profile()),
+      ],
+    ),
+    GoRoute(path: '/item/:id', name: 'item', builder: (BuildContext c, GoRouterState s) => const Item()),
+  ],
+);
+''';
+
+    test('goNamed resolves to the route carrying the name, and the route records its name', () async {
+      final Extracted extracted = await extractNav(app("context.goNamed('settings');"), goRouter: true);
+
+      expect(extracted.errors, isEmpty);
+      final Map<String, dynamic> route = extracted.ofKind('app.Route').singleWhere((Map<String, dynamic> r) => r['name'] == 'settings');
+      expect(route['path'], '/settings');
+      final Map<String, dynamic> navigate = extracted.ofKind('logic.Navigate').single;
+      expect(navigate['action'], 'push');
+      expect(navigate['route'], route['id']);
+    });
+
+    test('a nested route is reached by its own name, at its joined path', () async {
+      final Extracted extracted = await extractNav(app("context.goNamed('profile');"), goRouter: true);
+
+      final Map<String, dynamic> route = extracted.ofKind('app.Route').singleWhere((Map<String, dynamic> r) => r['name'] == 'profile');
+      expect(route['path'], '/settings/profile');
+      expect(extracted.ofKind('logic.Navigate').single['route'], route['id']);
+    });
+
+    test('pushNamed pushes and pushReplacementNamed replaces', () async {
+      final Extracted pushed = await extractNav(app("context.pushNamed('settings');"), goRouter: true);
+      expect(pushed.ofKind('logic.Navigate').single['action'], 'push');
+      final Extracted replaced = await extractNav(app("context.pushReplacementNamed('settings');"), goRouter: true);
+      expect(replaced.ofKind('logic.Navigate').single['action'], 'replace');
+    });
+
+    test('a name no route carries is BRG1308: the departure stays, without a destination, and the screen survives', () async {
+      final Extracted extracted = await extractNav(app("context.goNamed('nowhere');"), goRouter: true);
+
+      expect(extracted.errors, isEmpty);
+      expect(extracted.codes(Severity.warning), contains('BRG1308'));
+      expect(extracted.ofKind('logic.Navigate').single.keys, isNot(contains('route')));
+      expect(extracted.ofKind('ui.Component').map((Map<String, dynamic> c) => c['name']), contains('Home'));
+    });
+
+    test('pathParameters are not modelled: the edge is left out with a warning, never followed without them', () async {
+      final Extracted extracted = await extractNav(
+        app("context.goNamed('item', pathParameters: <String, String>{'id': '7'});"),
+        goRouter: true,
+      );
+
+      expect(extracted.errors, isEmpty);
+      expect(extracted.codes(Severity.warning), contains('BRG1304'));
+      expect(extracted.ofKind('app.RouteTransition'), isEmpty);
+      expect(extracted.ofKind('logic.Navigate'), isEmpty);
+    });
+
+    test('a name that is not a constant is refused (BRG1304)', () async {
+      final Extracted extracted = await extractNav(
+        app('final String n = DateTime.now().toString(); context.goNamed(n);'),
+        goRouter: true,
+      );
+
+      expect(extracted.codes(Severity.warning), contains('BRG1304'));
+      expect(extracted.ofKind('app.RouteTransition'), isEmpty);
     });
   });
 
@@ -853,20 +957,29 @@ class App extends StatelessWidget {
       expect(navigate['transition'], extracted.ofKind('app.RouteTransition').single['id']);
     });
 
-    test('a path destination gets no identity, so the departure keeps refusing', () async {
-      // A path resolves against the route table and its edge is **dropped** when nothing serves it
-      // (BRG1308, a warning by design). A symbol would make the builder require that node to survive —
-      // BRG1207 sweeps every declared symbol — so a path transition is deliberately given none, and the
-      // departure keeps the capability refusal instead of naming an edge that might not be there.
+    test('a path destination gets no symbol; the departure names the route itself (ADR-0072)', () async {
+      // A path resolves against the route table and its edge is **dropped** when nothing serves it (BRG1308, a warning by design). A
+      // symbol would make the builder require that node to survive — BRG1207 sweeps every declared symbol — so a path transition is
+      // given none. The departure instead names the `app.Route` it goes to (`route`), which the builder resolves the same way.
       final Extracted extracted = await extractNav(
         app("Navigator.pushNamed(context, '/settings');"),
       );
 
       expect(extracted.errors, isEmpty);
-      // The edge exists and resolves.
       expect(extracted.ofKind('app.RouteTransition').single['target'], isA<String>());
-      // The departure does not.
-      expect(extracted.ofKind('logic.Navigate'), isEmpty);
+      final Map<String, dynamic> navigate = extracted.ofKind('logic.Navigate').single;
+      expect(navigate['route'], extracted.idOf('app.Route'));
+      expect(navigate.keys, isNot(contains('transition')));
+    });
+
+    test('a path that matches no route keeps the departure, without a destination — the generator refuses that one navigation', () async {
+      final Extracted extracted = await extractNav(app("Navigator.pushNamed(context, '/nope');"));
+
+      expect(extracted.errors, isEmpty);
+      expect(extracted.codes(Severity.warning), contains('BRG1308'));
+      final Map<String, dynamic> navigate = extracted.ofKind('logic.Navigate').single;
+      expect(navigate.keys, isNot(contains('route')));
+      expect(navigate.keys, isNot(contains('transition')));
     });
 
     test('a pop carries no transition — §A17.3 says there is no edge to name', () async {

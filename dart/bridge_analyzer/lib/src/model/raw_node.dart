@@ -60,10 +60,16 @@ final class RawRef extends RawValue {
 @immutable
 final class RawRouteRef extends RawValue {
   /// Creates a reference to the route the navigation to [path] lands on.
-  const RawRouteRef(this.path);
+  const RawRouteRef(String this.path) : name = null;
 
-  /// The concrete path the navigation names, e.g. `/wonder/3`.
-  final String path;
+  /// Creates a reference to the route **named** [name] — `context.goNamed('detail')` (ADR-0072).
+  const RawRouteRef.named(String this.name) : path = null;
+
+  /// The concrete path the navigation names, e.g. `/wonder/3`. Null for a reference by name.
+  final String? path;
+
+  /// The route name the navigation asks for. Null for a reference by path.
+  final String? name;
 }
 
 /// A nested node, embedded in its parent.

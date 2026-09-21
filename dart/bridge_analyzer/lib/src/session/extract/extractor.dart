@@ -118,6 +118,7 @@ final class Extractor {
     final TransitionExtractor transitions = TransitionExtractor(out, adapters, context, bindings);
     expressions
       ..transitions = transitions.maybeExtract
+      ..routeRefs = transitions.routeRefOf
       ..presentingTransition = () => transitions.presentingTransition;
 
     final AnnotationExtractor annotations = AnnotationExtractor(adapters, context);

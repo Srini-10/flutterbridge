@@ -535,15 +535,25 @@ export function emitStatement(statement: Stmt | Node | undefined, scope: EmitSco
           const transitionId = node['transition'];
           const transition =
             typeof transitionId === 'string' ? (scope.node(transitionId) as unknown as Node | undefined) : undefined;
-          const destination = transition === undefined ? undefined : destinationOf(transition, scope);
+          // A navigation to a route by path or by name (ADR-0072) names the `app.Route` itself.
+          const routeId = node['route'];
+          const routeNode =
+            typeof routeId === 'string' ? (scope.node(routeId) as unknown as Node | undefined) : undefined;
+          const destination =
+            routeNode !== undefined
+              ? `{ kind: 'route', route: ${JSON.stringify(routeNameOf(routeNode))} }`
+              : transition === undefined
+                ? undefined
+                : destinationOf(transition, scope);
           if (destination === undefined) {
             scope.report(
               GeneratorDiagnosticCode.UnsupportedCapability,
               'error',
               `a \`${action}\` navigation names no destination this generator can resolve. A departure ` +
-                'carries the `app.RouteTransition` it performs, and that edge names either a route or a ' +
-                'component; this one names neither, or names one that was dropped. That is a compiler ' +
-                'gap, not a defect in your program.',
+                'carries the `app.RouteTransition` it performs or the `app.Route` it goes to; this one ' +
+                'carries neither — its route name or path matches no route the program declares (the ' +
+                'analyzer says which), or matches more than one. With no such warning it is a compiler gap, ' +
+                'not a defect in your program.',
               idOf(node),
             );
             return [];

@@ -1,0 +1,16 @@
+name: named_routes
+description: >-
+  M13 (ADR-0072): go_router navigation by route name — goNamed, pushNamed, pushReplacementNamed — in a real browser.
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  go_router: ^14.0.0
+
+flutter:
+  uses-material-design: true

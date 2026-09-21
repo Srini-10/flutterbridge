@@ -14,7 +14,7 @@ import { createHash } from 'node:crypto';
 export const UIR_VERSION = '1.15.0' as const;
 
 /** A hash of the schema sources this module was generated from. */
-export const UIR_SCHEMA_HASH = '216952f97b54d57d' as const;
+export const UIR_SCHEMA_HASH = 'cff772aab15c7b89' as const;
 
 /** Node kind -> the fields of that node which hold `NodeId` references. */
 export const UIR_REFERENCE_FIELDS: Readonly<Record<string, readonly string[]>> = {
@@ -50,7 +50,7 @@ export const UIR_REFERENCE_FIELDS: Readonly<Record<string, readonly string[]>> =
   'logic.Lit': ['id'],
   'logic.MapLit': ['id'],
   'logic.MethodCall': ['extensionTarget', 'id', 'target'],
-  'logic.Navigate': ['dismisses', 'id', 'transition'],
+  'logic.Navigate': ['dismisses', 'id', 'route', 'transition'],
   'logic.New': ['id'],
   'logic.NullCheck': ['id'],
   'logic.OpaqueDecl': ['id'],
@@ -1749,6 +1749,8 @@ export interface Navigate {
   readonly id: NodeId;
   /// Discriminant.
   readonly kind: 'logic.Navigate';
+  /// The `app.Route` a departure goes to, when the navigation names a route — `context.go('/about')`, `context.goNamed('about')` (ADR-0072). Such an edge has no symbol of its own, so the departure names the route directly. **Absent when the name or path matches no declared route (or more than one)**: the navigation is kept and the generator refuses it by name, rather than the departure and its component being dropped.
+  readonly route?: NodeId;
   /// Where the node came from.
   readonly span: SourceSpan;
   /// The `app.RouteTransition` this performs, for a departure.
@@ -2085,6 +2087,8 @@ export interface Route {
   readonly layout?: NodeId;
   /// Document metadata.
   readonly meta?: SeoMeta;
+  /// The route's name, as the router declares it (`GoRoute(name: 'detail')`) — what a navigation by name (`context.goNamed('detail')`) resolves against (ADR-0072). Absent for a route with no name.
+  readonly name?: string;
   /// Route parameters, in order.
   readonly params?: readonly ParamDecl[];
   /// The URL path, e.g. `/product/:id`.
@@ -4408,6 +4412,7 @@ export function parseNavigate(value: unknown, path = 'Navigate'): Navigate {
     ...(own(o, 'ext') === undefined || own(o, 'ext') === null ? {} : { ext: asMap(own(o, 'ext'), `${path}.ext`, (v) => v) }),
     id: parseNodeId(req(o, 'id', path), `${path}.id`),
     kind: 'logic.Navigate',
+    ...(own(o, 'route') === undefined || own(o, 'route') === null ? {} : { route: parseNodeId(own(o, 'route'), `${path}.route`) }),
     span: parseSourceSpan(req(o, 'span', path), `${path}.span`),
     ...(own(o, 'transition') === undefined || own(o, 'transition') === null ? {} : { transition: parseNodeId(own(o, 'transition'), `${path}.transition`) }),
   };
@@ -4914,6 +4919,7 @@ export function parseRoute(value: unknown, path = 'Route'): Route {
     kind: 'app.Route',
     ...(own(o, 'layout') === undefined || own(o, 'layout') === null ? {} : { layout: parseNodeId(own(o, 'layout'), `${path}.layout`) }),
     ...(own(o, 'meta') === undefined || own(o, 'meta') === null ? {} : { meta: parseSeoMeta(own(o, 'meta'), `${path}.meta`) }),
+    ...(own(o, 'name') === undefined || own(o, 'name') === null ? {} : { name: asString(own(o, 'name'), `${path}.name`) }),
     ...(own(o, 'params') === undefined || own(o, 'params') === null ? {} : { params: asList(own(o, 'params'), `${path}.params`, (v, p) => parseParamDecl(v, p)) }),
     path: asString(req(o, 'path', path), `${path}.path`),
     span: parseSourceSpan(req(o, 'span', path), `${path}.span`),

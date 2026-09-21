@@ -29,6 +29,8 @@
 // `state-semantics.spec.ts` gets its own pair (3321/3322): `state_semantics_e2e` (M11) is a sixth.
 //
 // `interaction.spec.ts` gets its own pair (3323/3324): `interaction_e2e` (M13) is a seventh.
+//
+// `named-routes.spec.ts` gets its own pair (3325/3326): `named_routes` (M13) is an eighth.
 
 import { defineConfig, devices } from '@playwright/test';
 
@@ -123,6 +125,16 @@ export default defineConfig({
       name: 'interaction-development',
       use: { ...devices['Desktop Chrome'], baseURL: 'http://127.0.0.1:3324' },
       testMatch: /interaction\.dev-only\.spec/,
+    },
+    {
+      name: 'named-routes-production',
+      use: { ...devices['Desktop Chrome'], baseURL: 'http://127.0.0.1:3325' },
+      testMatch: /named-routes\.spec/,
+    },
+    {
+      name: 'named-routes-development',
+      use: { ...devices['Desktop Chrome'], baseURL: 'http://127.0.0.1:3326' },
+      testMatch: /named-routes\.dev-only\.spec/,
     },
   ],
 
@@ -250,6 +262,24 @@ export default defineConfig({
       command: 'npx next dev --port 3324',
       cwd: './.fixtures/interaction-dev',
       port: 3324,
+      reuseExistingServer: false,
+      timeout: 120_000,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    },
+    {
+      command: 'npx next start --port 3325',
+      cwd: './.fixtures/named-routes/build/bridge',
+      port: 3325,
+      reuseExistingServer: false,
+      timeout: 120_000,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    },
+    {
+      command: 'npx next dev --port 3326',
+      cwd: './.fixtures/named-routes-dev',
+      port: 3326,
       reuseExistingServer: false,
       timeout: 120_000,
       stdout: 'pipe',

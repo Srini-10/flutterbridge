@@ -1216,6 +1216,10 @@ final class ExpressionExtractor {
   /// which imports it — the orchestrator wires the two by passing a bound method.
   TransitionHook? transitions;
 
+  /// The route a navigation names, as a reference the builder resolves against the route table (ADR-0072): set by the transition
+  /// extractor for a `go('/x')` or `goNamed('x')`, whose edge has no symbol — so the departure that performs it names the *route*.
+  RawRouteRef? Function(MethodInvocation node)? routeRefs;
+
   /// The transition extractor's own query for whether a dialog's own presentation is currently being
   /// extracted, and which one (M9-E) — the same import-direction reason [transitions] is a function
   /// rather than a field access to `TransitionExtractor.presentingTransition` directly. Read by

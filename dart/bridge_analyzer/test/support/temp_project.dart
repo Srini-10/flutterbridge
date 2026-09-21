@@ -783,12 +783,14 @@ class RouteBase {
 class GoRoute extends RouteBase {
   const GoRoute({
     required this.path,
+    this.name,
     this.builder,
     this.pageBuilder,
     this.redirect,
     this.routes = const <RouteBase>[],
   });
   final String path;
+  final String? name;
   final Widget Function(BuildContext, GoRouterState)? builder;
   final Object? Function(BuildContext, GoRouterState)? pageBuilder;
   final Object? redirect;
