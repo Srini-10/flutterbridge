@@ -1,0 +1,26 @@
+{
+  "Times": [
+    [
+      "> 2024-03-05 10:20:30.004 | 2024-03-05T10:20:30.004 | 7 11 4 | 2940 | 2020-01-02 03:04:05.000Z 2020-01-02T03:04:05.000Z | 2021 12 58 | true 2021-12-31 23:59:58.000Z",
+      "> true false true true -1 1704067200000 7 1 format",
+      "> true false true false 12 7 255 31 null 150.0 0.5 null null"
+    ]
+  ],
+  "Ticker": [
+    [
+      "> ticks=0 waiting"
+    ],
+    [
+      "> ticks=3 ABAB x! 11,7"
+    ],
+    [
+      "> ticks=3 ABAB x! 11,7"
+    ],
+    [
+      "> ticks=3 ABAB x! 11,7"
+    ],
+    [
+      "> ticks=3 ABAB x! 11,7"
+    ]
+  ]
+}

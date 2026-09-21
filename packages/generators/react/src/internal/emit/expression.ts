@@ -609,7 +609,8 @@ function isUnmodelledMemberReceiver(type: Node | undefined): boolean {
   // below, which still catches every other still-`unknown` type (external, unresolved, or a generic
   // instantiation ADR-0034 never attaches a `target` to at all).
   if (typeof type['target'] === 'string') return true;
-  const text = typeTextOf(type);
+  // A kit-provided value class (`Duration`, `DateTime`, `Timer`) is modelled: its text is its own name, not `unknown`.
+  const text = typeTextOf(type, (kitName) => kitName);
   return text === 'unknown' || text === 'unknown | null';
 }
 
@@ -1221,6 +1222,34 @@ function collectionPieces(elements: readonly Node[], scope: EmitScope, entry: (n
 }
 
 /**
+ * SDK and package classes constructed as runtime values, keyed `Type.constructor` (the unnamed constructor is `Type.`): the runtime's
+ * `DateTime`, `Timer`, `Future` factories and `package:collection`'s `DeepCollectionEquality`. `libraryPrefix` says whose class it is — a
+ * project class called `Timer` is not this one.
+ */
+const SDK_VALUE_CONSTRUCTIONS: Readonly<
+  Record<string, { readonly library: string; readonly build: (args: string[], named: Record<string, string>, use: (name: string) => string) => string | undefined }>
+> = {
+  'DateTime.': { library: 'dart:core', build: (a, _n, use) => `${use('DartDateTime')}.local(${a.join(', ')})` },
+  'DateTime.utc': { library: 'dart:core', build: (a, _n, use) => `${use('DartDateTime')}.utc(${a.join(', ')})` },
+  'DateTime.now': { library: 'dart:core', build: (_a, _n, use) => `${use('DartDateTime')}.now()` },
+  'DateTime.parse': { library: 'dart:core', build: (a, _n, use) => `${use('DartDateTime')}.parse(${a.join(', ')})` },
+  'DateTime.tryParse': { library: 'dart:core', build: (a, _n, use) => `${use('DartDateTime')}.tryParse(${a.join(', ')})` },
+  'DateTime.fromMillisecondsSinceEpoch': {
+    library: 'dart:core',
+    build: (a, n, use) => `${use('DartDateTime')}.fromMillisecondsSinceEpoch(${[...a, ...(n['isUtc'] === undefined ? [] : [n['isUtc']])].join(', ')})`,
+  },
+  'Timer.': { library: 'dart:async', build: (a, _n, use) => `${use('DartTimer')}.once(${a.join(', ')})` },
+  'Timer.periodic': { library: 'dart:async', build: (a, _n, use) => `${use('DartTimer')}.periodic(${a.join(', ')})` },
+  'Future.value': { library: 'dart:async', build: (a) => `Promise.resolve(${a.join(', ')})` },
+  'Future.microtask': { library: 'dart:async', build: (a) => `Promise.resolve().then(${a[0] ?? '() => undefined'})` },
+  'Future.error': { library: 'dart:async', build: (a) => `Promise.reject(${a.join(', ')})` },
+  'DeepCollectionEquality.': { library: 'package:collection/', build: (_a, _n, use) => `new ${use('DartDeepCollectionEquality')}()` },
+  'EqualUnmodifiableListView.': { library: 'package:freezed_annotation/', build: (a, _n, use) => `${use('listFrom')}(${a.join(', ')})` },
+  'EqualUnmodifiableMapView.': { library: 'package:freezed_annotation/', build: (a, _n, use) => `${use('mapFrom')}(${a.join(', ')})` },
+  'EqualUnmodifiableSetView.': { library: 'package:freezed_annotation/', build: (a, _n, use) => `${use('setFrom')}(${a.join(', ')})` },
+};
+
+/**
  * Constructors of the `dart:core` collection types and `MapEntry`, keyed `Type.constructor` (the unnamed one is `Type.`): each is a
  * runtime helper with Dart's meaning. `growable:` is accepted and ignored — a fixed-length list is a growable one here, which only
  * differs where Dart would throw.
@@ -1244,7 +1273,20 @@ const SDK_COLLECTION_CONSTRUCTORS: Readonly<Record<string, { readonly helper: st
  * not a spelling. Each entry is exact Dart semantics (or, for a hash, the Dart contract — see `dartHashAll`); anything else the
  * SDK declares stays `BRG3006`.
  */
+/** The named parameters (in order, after the positional ones) of the SDK functions above that have any. */
+const SDK_NAMED_PARAMS: Readonly<Record<string, readonly string[]>> = {
+  'dart:core#int.parse': ['radix'],
+  'dart:core#int.tryParse': ['radix'],
+};
+
 const SDK_STATICS: Readonly<Record<string, (scope: EmitScope) => string>> = {
+  'dart:core#int.parse': (scope) => scope.module.use(RUNTIME, 'dartIntParse'),
+  'dart:core#int.tryParse': (scope) => scope.module.use(RUNTIME, 'dartIntTryParse'),
+  'dart:core#double.parse': (scope) => scope.module.use(RUNTIME, 'dartDoubleParse'),
+  'dart:core#double.tryParse': (scope) => scope.module.use(RUNTIME, 'dartDoubleTryParse'),
+  'dart:core#DateTime.parse': (scope) => `${scope.module.use(RUNTIME, 'DartDateTime')}.parse`,
+  'dart:core#DateTime.tryParse': (scope) => `${scope.module.use(RUNTIME, 'DartDateTime')}.tryParse`,
+  'dart:async#Future.wait': () => 'Promise.all',
   // `identical(a, b)` is reference identity for objects and value identity for numbers, `NaN` identical to itself and `0.0` not
   // to `-0.0` — exactly `Object.is`.
   'dart:core#identical': () => 'Object.is',
@@ -1592,6 +1634,18 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
       const operator = String(node['operator'] ?? '');
       const left = emitExpression(node['left'] as Node, scope);
       const right = emitExpression(node['right'] as Node, scope);
+
+      // `a == b` on two `DateTime`s is "the same instant", not identity (M12, ADR-0066).
+      if (
+        (operator === '==' || operator === '!=') &&
+        left !== REFUSED &&
+        right !== REFUSED &&
+        String((node['left'] as Node | undefined)?.['type'] && ((node['left'] as Node)['type'] as Node)['name']).replace(/\?$/, '') === 'DateTime' &&
+        ((node['left'] as Node)['type'] as Node)['library'] === 'dart:core' &&
+        String(((node['right'] as Node | undefined)?.['type'] as Node | undefined)?.['name'] ?? '').startsWith('DateTime')
+      ) {
+        return operator === '==' ? `${left}.$eq(${right})` : `(!${left}.$eq(${right}))`;
+      }
 
       // An operator a general class declares (`Point operator +(Point other)`, `==`): a method call (M12).
       {
@@ -2164,6 +2218,33 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
       // help. The second reads as a defect in valid Flutter code and points at work no author can do.
       //
       // A call the generator *can* lower still gets `BRG3002`, which is the case that diagnostic is for.
+      // A project function's own signature orders the arguments (positional first, then named in declaration order, `undefined` for an
+      // omitted one — the callee's defaults apply), as a class member's does.
+      {
+        const calleeTarget = (target as Node | undefined)?.['target'];
+        const declaration = typeof calleeTarget === 'string' ? (scope.node(calleeTarget as NodeId) as unknown as Node | undefined) : undefined;
+        if (declaration !== undefined && kindOf(declaration) === 'logic.FunctionDecl' && Array.isArray(declaration['params'])) {
+          const ordered = generalCallArguments(declaration['params'] as Node[], node, scope, `\`${String(declaration['name'])}\``);
+          return ordered === undefined ? REFUSED : `${callee}(${ordered.join(', ')})`;
+        }
+      }
+      // An SDK function with named parameters we know (`int.parse(s, radix: 16)`).
+      {
+        const library = (target as Node | undefined)?.['library'];
+        const name = (target as Node | undefined)?.['name'];
+        const named = typeof library === 'string' && typeof name === 'string' ? SDK_NAMED_PARAMS[`${library}#${name}`] : undefined;
+        if (named !== undefined) {
+          const given = (node['namedArgs'] ?? {}) as Record<string, Node>;
+          const extra = Object.keys(given).filter((key) => !named.includes(key));
+          if (extra.length === 0) {
+            const positional = asArray(node['args']).map((a) => emitExpression(a, scope));
+            const values = named.map((key) => (given[key] === undefined ? 'undefined' : emitExpression(given[key] as Node, scope)));
+            while (values.length > 0 && values[values.length - 1] === 'undefined') values.pop();
+            if (positional.includes(REFUSED) || values.includes(REFUSED)) return REFUSED;
+            return `${callee}(${[...positional, ...values].join(', ')})`;
+          }
+        }
+      }
       refuseNamedArgs(node, scope);
       return `${callee}(${emitArguments(node['args'], scope)})`;
     }
@@ -2194,7 +2275,7 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
       // is the one function the kit needed to add. Recognized by the resolved type (`dart:async`'s
       // `Future`) and constructor name, never by matching the source text `Future.delayed`.
       const constructedType = node['type'] as Node | undefined;
-      if (typeName === 'Future' && constructedType?.['library'] === 'dart:async' && node['constructorName'] === 'delayed') {
+      if (typeName === 'Future' && constructedType?.['library'] === 'dart:async' && node['constructorName'] === 'delayed' && asArray(node['args']).length <= 1) {
         const delayedArgs = asArray(node['args']);
         // The two-argument overload — `Future.delayed(duration, computation)` — runs `computation` after
         // the delay and resolves to *its* result. `delay` is `Promise<void>`: there is nothing in it to
@@ -2230,6 +2311,28 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
           const emitted = asArray(node['args']).map((a) => emitExpression(a, scope));
           if (emitted.includes(REFUSED)) return REFUSED;
           return `new ${scope.module.use(RUNTIME, cls)}(${emitted.join(', ')})`;
+        }
+      }
+
+      // `DateTime.now()`, `Timer.periodic(d, f)`, `Future.value(x)`, `DeepCollectionEquality()`: a runtime value class.
+      {
+        const key = `${typeName.split('<')[0]}.${typeof constructorName === 'string' ? constructorName : ''}`;
+        const row = SDK_VALUE_CONSTRUCTIONS[key];
+        const library = String(constructedType?.['library'] ?? '');
+        // `Future.delayed(d, computation)`: the delay, then the computation's result.
+        if (typeName.startsWith('Future') && constructorName === 'delayed' && library === 'dart:async' && asArray(node['args']).length === 2) {
+          const [duration, computation] = asArray(node['args']).map((a) => emitExpression(a, scope));
+          if (duration === REFUSED || computation === REFUSED) return REFUSED;
+          return `${scope.module.use(RUNTIME, 'delay')}(${duration}).then(${computation})`;
+        }
+        if (row !== undefined && library.startsWith(row.library)) {
+          const args = asArray(node['args']).map((a) => emitExpression(a, scope));
+          const named = Object.fromEntries(
+            Object.entries((node['namedArgs'] ?? {}) as Record<string, Node>).map(([k, v]) => [k, emitExpression(v, scope)]),
+          );
+          if (args.includes(REFUSED) || Object.values(named).includes(REFUSED)) return REFUSED;
+          const built = row.build(args, named, (name) => scope.module.use(RUNTIME, name));
+          if (built !== undefined) return built;
         }
       }
 

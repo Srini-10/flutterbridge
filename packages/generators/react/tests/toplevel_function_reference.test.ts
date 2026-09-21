@@ -21,13 +21,8 @@ function functionDecl(id: string, name: string): AnyUirNode {
     name,
     params: [{ name: 'name', type: { library: 'dart:core', name: 'String' }, required: true }],
     returnType: { library: 'dart:core', name: 'String' },
-    body: [],
-    // M8-U gives a *supported* FunctionDecl a real module-level lowering — this suite exists to test
-    // diagnostic classification (M8-L), not emission, so every declaration here is deliberately marked
-    // async: still honestly refused (ADR-29 §11 does not authorize async), same BRG3013, same message,
-    // regardless of what module emission can now do for a self-contained one (see
-    // `toplevel_function_module_emission.test.ts` for that side of the coverage).
-    isAsync: true,
+    // A body the generator refuses (an opaque statement): the declaration is real, its lowering is not.
+    body: [{ id: 'opaque-body', kind: 'logic.OpaqueStmt', span, dartSource: 'x()', reason: 'test' }],
   } as unknown as AnyUirNode;
 }
 

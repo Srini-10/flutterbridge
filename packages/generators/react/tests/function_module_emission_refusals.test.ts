@@ -41,17 +41,15 @@ function harnessFor(fn: AnyUirNode, refId: string, target: string) {
 }
 
 describe('ADR-29 (M8-U) — refusal boundary', () => {
-  it('an async function is refused, unchanged (BRG3013), even with an otherwise-trivial body', () => {
+  it('an async function is emitted `async` (ADR-0066)', () => {
     const fn: AnyUirNode = {
       id: 'fn', kind: 'logic.FunctionDecl', span, name: 'f', returnType: { name: 'String' },
       isAsync: true, body: [returnLit('r1', 'x')],
     } as unknown as AnyUirNode;
     const { context, reported } = harnessFor(fn, 'ref1', 'fn');
     const { files } = reactGenerator.generate(context);
-    expect(files).toHaveLength(0);
-    const capability = reported.find((d) => d.code === 'BRG3013');
-    expect(capability?.severity).toBe('error');
-    expect(capability?.message).toContain('f');
+    expect(reported.filter((d) => d.severity === 'error')).toEqual([]);
+    expect(files.map((f) => f.contents).join('\n')).toContain('export async function f(');
   });
 
   it('a function whose body depends on a top-level FieldDecl is refused (BRG3013), unchanged', () => {
@@ -84,7 +82,7 @@ describe('ADR-29 (M8-U) — refusal boundary', () => {
     expect(capability?.severity).toBe('error');
   });
 
-  it('a function with a named parameter is refused (BRG3002 at the site, BRG3013 at the reference)', () => {
+  it('a function with a named parameter is emitted as a positional one in declaration order (ADR-0066)', () => {
     const fn: AnyUirNode = {
       id: 'fn', kind: 'logic.FunctionDecl', span, name: 'f', returnType: { name: 'String' },
       params: [{ name: 'id', named: true, required: true, type: { name: 'int' } }],
@@ -92,8 +90,8 @@ describe('ADR-29 (M8-U) — refusal boundary', () => {
     } as unknown as AnyUirNode;
     const { context, reported } = harnessFor(fn, 'ref1', 'fn');
     const { files } = reactGenerator.generate(context);
-    expect(files).toHaveLength(0);
-    expect(reported.some((d) => d.severity === 'error' && d.code === 'BRG3013')).toBe(true);
+    expect(reported.filter((d) => d.severity === 'error')).toEqual([]);
+    expect(files.map((f) => f.contents).join('\n')).toContain('export function f(id: number)');
   });
 
   it('two mutually-recursive functions remain refused — a real, honestly-reported limitation, not silent wrong code', () => {

@@ -18,7 +18,7 @@ import { emitExpression, isEligibleStructuralField, localBindingsIn, type EmitSc
 import { fileNameOf, identifierOf, ModuleBuilder } from './module.js';
 import { useRuntime, useRuntimeType } from './runtime.js';
 import { emitStatements } from './statement.js';
-import { paramListOf, refuseNamedParams, typeTextOf } from './types.js';
+import { paramListOf, typeTextOf } from './types.js';
 
 type Node = Record<string, unknown>;
 
@@ -138,7 +138,8 @@ export function reachableFunctions(
       directFunctionRefs(node['render'], lookup, found, classes);
       directFunctionRefs(node['prelude'], lookup, found, classes);
       directFunctionRefs(node['params'], lookup, found, classes);
-    } else if (kindOf(node) === 'sig.Action') {
+    } else if (kindOf(node) === 'sig.Action' || kindOf(node) === 'sig.Effect') {
+      // A lifecycle body (`initState() { load().then(...) }`) reaches functions exactly as an action's does.
       directFunctionRefs(node['body'], lookup, found, classes);
       directFunctionRefs(node['params'], lookup, found, classes);
     } else if (kindOf(node) === 'sig.Signal' || kindOf(node) === 'app.Store') {
@@ -977,7 +978,7 @@ export function emitFunctionModules(
       const body = fn['body'];
       const span = fn['span'] as Node | undefined;
       const spanFile = typeof span?.['file'] === 'string' ? span['file'] : undefined;
-      if (fn['isAsync'] === true || !Array.isArray(body) || spanFile === undefined) {
+      if (!Array.isArray(body) || spanFile === undefined) {
         remaining.delete(id);
         continue;
       }
@@ -991,11 +992,6 @@ export function emitFunctionModules(
       // same refusal `store.ts`'s own action-parameter lowering already uses (Spec v2.5 §A18), shared via
       // `types.ts` rather than re-derived, so both stay honest about the identical gap.
       let hadError = false;
-      const namedReport = (code: string, severity: 'error' | 'warning' | 'info', message: string, nodeId?: string): void => {
-        if (severity === 'error') hadError = true;
-        else scope.report(code, severity, message, nodeId);
-      };
-      if (refuseNamedParams(params, id, 'function', namedReport)) continue;
 
       const fnName = typeof fn['name'] === 'string' ? fn['name'] : String(id);
       const localName = pending.builder.declare(fnName, id);
@@ -1062,7 +1058,7 @@ export function emitFunctionModules(
       if (hadError) continue; // try again next pass — a callee this pass hadn't resolved yet might resolve then
 
       for (const request of scratch.usedImports()) pending.builder.use(request.from, request.name, { typeOnly: request.typeOnly });
-      pending.lines.push(`export function ${localName}${signature} {`, ...lines.map((line: string) => `  ${line}`), '}', '');
+      pending.lines.push(`export ${fn['isAsync'] === true ? 'async ' : ''}function ${localName}${signature} {`, ...lines.map((line: string) => `  ${line}`), '}', '');
 
       functionModules.set(id, { path: pending.builder.path, module: specifier, name: localName });
       remaining.delete(id);

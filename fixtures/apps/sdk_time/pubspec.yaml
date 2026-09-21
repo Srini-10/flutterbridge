@@ -1,0 +1,21 @@
+name: sdk_time
+description: >-
+  M12 (ADR-0066): DateTime, Timer, Future factories and package:collection DeepCollectionEquality. Run by Flutter and as the generated
+  component, compared.
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  collection: any
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

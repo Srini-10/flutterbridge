@@ -124,10 +124,8 @@ describe('a targeted reference to a project top-level field (M8-P)', () => {
       span,
       name: 'greet',
       returnType: { library: 'dart:core', name: 'String' },
-      body: [],
-      // M8-U gives a supported FunctionDecl a real lowering — async keeps this one honestly refused, so
-      // this test still exercises the classification (BRG3013 vs BRG3006) it was written to prove.
-      isAsync: true,
+      // A body the generator refuses (an opaque statement): the declaration is real, its lowering is not.
+      body: [{ id: 'opaque-body', kind: 'logic.OpaqueStmt', span, dartSource: 'x()', reason: 'test' }],
     } as unknown as AnyUirNode;
     const nodes: AnyUirNode[] = [
       functionDeclNode,

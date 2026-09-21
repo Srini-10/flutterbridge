@@ -1,5 +1,7 @@
 // `dart:core` / `dart:async` top-level functions the generated code calls (M12).
 
+import { DartFormatException } from './dart_exceptions.js';
+
 /**
  * `unawaited(future)` — starts nothing, waits for nothing: the future's own work is already running. The lint it silences is the
  * only thing it does in Dart, so it does nothing here.
@@ -100,4 +102,38 @@ export function dartAs<T>(value: unknown, test: (value: unknown) => boolean, typ
             ? (value as object).constructor.name
             : typeof value;
   throw new TypeError(`type '${actual}' is not a subtype of type '${typeName}' in type cast`);
+}
+
+/** `int.parse(source, radix:)`: an optional sign and digits (or `0x` hex); anything else is a `FormatException`. */
+export function dartIntParse(source: string, radix?: number): number {
+  const parsed = dartIntTryParse(source, radix);
+  if (parsed === null) throw new DartFormatException(`Invalid radix-${radix ?? 10} number`, source);
+  return parsed;
+}
+
+/** `int.tryParse`. */
+export function dartIntTryParse(source: string, radix?: number): number | null {
+  const text = source.trim();
+  const base = radix ?? (/^[+-]?0x/i.test(text) ? 16 : 10);
+  const body = base === 16 ? text.replace(/^([+-]?)0x/i, '$1') : text;
+  const digits = '0123456789abcdefghijklmnopqrstuvwxyz'.slice(0, base);
+  if (!new RegExp(`^[+-]?[${digits}]+$`, 'i').test(body)) return null;
+  const value = Number.parseInt(body, base);
+  return Number.isSafeInteger(value) ? value : null;
+}
+
+/** `double.parse(source)`. */
+export function dartDoubleParse(source: string): number {
+  const parsed = dartDoubleTryParse(source);
+  if (parsed === null) throw new DartFormatException('Invalid double', source);
+  return parsed;
+}
+
+/** `double.tryParse`. */
+export function dartDoubleTryParse(source: string): number | null {
+  const text = source.trim();
+  if (/^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/.test(text)) return Number(text);
+  if (/^[+-]?Infinity$/.test(text)) return text.startsWith('-') ? -Infinity : Infinity;
+  if (text === 'NaN') return Number.NaN;
+  return null;
 }

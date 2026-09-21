@@ -1569,7 +1569,7 @@ describe('M7-L — Future.delayed(Duration(...)) lowers to delay(Duration)', () 
     expect(source).toMatch(/import \{[^}]*\bdelay\b[^}]*\} from '@bridge\/runtime-react'/);
   });
 
-  it('a computation-bearing Future.delayed is refused by name, not silently dropped', () => {
+  it('a computation-bearing Future.delayed lowers to the delay and then the computation (ADR-0066)', () => {
     const nodes: AnyUirNode[] = [
       asyncAction('act-submit', [
         {
@@ -1599,12 +1599,10 @@ describe('M7-L — Future.delayed(Duration(...)) lowers to delay(Duration)', () 
     ];
     const { context, reported } = harness(nodes);
     reactGenerator.generate(context);
-    const errors = reported.filter((d) => d.severity === 'error');
-    expect(errors.length).toBeGreaterThan(0);
-    expect(errors.some((d) => /computation callback/.test(d.message))).toBe(true);
+    expect(reported.filter((d) => d.severity === 'error')).toEqual([]);
   });
 
-  it("Future.value(...) — a different constructor — is not mistaken for the delayed(...) shape", () => {
+  it("Future.value(...) — a different constructor — is Promise.resolve, not mistaken for the delayed(...) shape (ADR-0066)", () => {
     // The recognition is `typeName === 'Future' && library === 'dart:async' && constructorName === 'delayed'`
     // together, not `typeName === 'Future'` alone — a different named constructor still refuses as an
     // ordinary unmapped construction, which is the correct outcome: `Future.value` was never probed or
@@ -1643,8 +1641,6 @@ describe('M7-L — Future.delayed(Duration(...)) lowers to delay(Duration)', () 
     ];
     const { context, reported } = harness(nodes);
     reactGenerator.generate(context);
-    const errors = reported.filter((d) => d.severity === 'error');
-    expect(errors.length).toBeGreaterThan(0);
-    expect(errors.some((d) => /own class/.test(d.message) || /does not emit class declarations/.test(d.message))).toBe(true);
+    expect(reported.filter((d) => d.severity === 'error')).toEqual([]);
   });
 });

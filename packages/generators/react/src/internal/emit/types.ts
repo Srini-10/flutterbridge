@@ -45,7 +45,12 @@ const PRIMITIVES: Readonly<Record<string, string>> = {
  * parameter/property was still `unknown`, since nothing before this called `typeTextOf` with a way to
  * register the import a resolved reference needs.
  */
-const SDK_VALUE_TYPE_NAMES: ReadonlySet<string> = new Set(['dart:core#Duration']);
+const SDK_VALUE_TYPE_NAMES: ReadonlyMap<string, string> = new Map([
+  ['dart:core#Duration', 'Duration'],
+  // Runtime classes with Dart's member names (M12, ADR-0066).
+  ['dart:core#DateTime', 'DartDateTime'],
+  ['dart:async#Timer', 'DartTimer'],
+]);
 
 /**
  * The TypeScript type for a `TypeRef`.
@@ -97,7 +102,7 @@ export function typeTextOf(
   // exists there, but the check does not rely on that — it is sound regardless).
   const library = type?.['library'];
   if (use !== undefined && typeof library === 'string' && SDK_VALUE_TYPE_NAMES.has(`${library}#${name}`)) {
-    const base = use(name);
+    const base = use(SDK_VALUE_TYPE_NAMES.get(`${library}#${name}`) as string);
     return nullable ? `${base} | null` : base;
   }
 
@@ -251,10 +256,15 @@ export function paramListOf(
       // trailing argument, the parameter takes its declared value," the truthful representation of Dart's
       // own identical rule; `?` is not also needed (a default clause already makes the parameter optional
       // at every call site).
+      // A *named* parameter is positional in TypeScript, in declaration order (ADR-0055's calling convention); one that may be omitted
+      // and has no default is `null` — Dart's absent value.
+      const namedOptional = param['named'] === true && param['required'] !== true && defaultNode === undefined;
       const optional = param['required'] === false && defaultNode === undefined ? '?' : '';
       const defaultText = defaultNode !== undefined ? defaultValueOf?.(param) : undefined;
       const defaultClause = defaultText === undefined ? '' : ` = ${defaultText}`;
-      return `${name}${optional}: ${typeTextOf(param['type'] as Node | undefined, use, classOf)}${defaultClause}`;
+      const paramType = typeTextOf(param['type'] as Node | undefined, use, classOf);
+      if (namedOptional) return `${name}: ${paramType} = null as ${paramType}`;
+      return `${name}${optional}: ${paramType}${defaultClause}`;
     })
     .join(', ');
 }

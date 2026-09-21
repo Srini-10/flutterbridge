@@ -690,6 +690,7 @@ export {
 } from './internal/core/dart_string.js';
 
 export { dartIs, touchAfter } from './internal/core/dart_is.js';
+export { DartDateTime, DartDeepCollectionEquality, DartTimer } from './internal/core/dart_time.js';
 export {
   DartArgumentError,
   DartError,
@@ -703,4 +704,4 @@ export {
   isDartError,
   isDartException,
 } from './internal/core/dart_exceptions.js';
-export { dartAs, dartConstToken, dartEntry, dartHash, dartHashAll, dartThrow, unawaited } from './internal/core/dart_core.js';
+export { dartAs, dartConstToken, dartDoubleParse, dartDoubleTryParse, dartIntParse, dartIntTryParse, dartEntry, dartHash, dartHashAll, dartThrow, unawaited } from './internal/core/dart_core.js';

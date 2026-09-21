@@ -136,7 +136,7 @@ final class ExpressionExtractor {
       }
     }
 
-    return _isSafeToDuplicateNullAwareReceiver(receiver) ? build() : _bindReceiver(receiver, scope, node.staticType, build);
+    return _isSafeToDuplicateNullAwareReceiver(receiver, scope) ? build() : _bindReceiver(receiver, scope, node.staticType, build);
   }
 
   /// Extracts [node] in [scope].
@@ -335,7 +335,7 @@ final class ExpressionExtractor {
         // through the pre-existing M9-J unmodelled-member refusal rather than silently attempting an
         // unsafe duplicate evaluation.
         if (node.isNullAware && !_shorted.contains(node)) {
-          if (_isSafeToDuplicateNullAwareReceiver(target)) {
+          if (_isSafeToDuplicateNullAwareReceiver(target, scope)) {
             return RawNode(
               kind: 'logic.Conditional',
               span: out.span(node),
@@ -1673,21 +1673,23 @@ final class ExpressionExtractor {
   /// project's own consistent "receiver evaluated exactly once, no exceptions" discipline (ADR-0041 §5
   /// onward) for no real capability gain (ADR-0044 §5/§19). A method call or a constructed value is
   /// excluded outright — duplicating either would call it, or construct it, twice.
-  bool _isSafeToDuplicateNullAwareReceiver(Expression target) {
+  bool _isSafeToDuplicateNullAwareReceiver(Expression target, Scope scope) {
     if (_bound.containsKey(target)) return true;
     // `a?.b`: a bare reference. `a.b?.c`, `this.a?.b`, `a.b.c?.d` (M11, ADR-0054): a chain of *field* reads over a bare
     // reference — evaluating it twice is the same as once, exactly the argument above, applied at each link. Without it
     // the guard was dropped for every receiver that was not a bare name, and (for an SDK member) that was silent.
     if (target is PrefixedIdentifier) {
-      return _isSafeToDuplicateNullAwareReceiver(target.prefix) && _isFieldRead(target.identifier.element);
+      return _isSafeToDuplicateNullAwareReceiver(target.prefix, scope) && _isFieldRead(target.identifier.element);
     }
     if (target is PropertyAccess && !target.isNullAware) {
       final Expression? base = target.target;
       return base != null &&
-          (base is ThisExpression || _isSafeToDuplicateNullAwareReceiver(base)) &&
+          (base is ThisExpression || _isSafeToDuplicateNullAwareReceiver(base, scope)) &&
           _isFieldRead(target.propertyName.element);
     }
     if (target is! SimpleIdentifier) return false;
+    // A signal is read through `.get()`: reading it twice compiles, but TypeScript cannot narrow the second read, so it is bound once.
+    if (scope.lookup(target.name)?.binds == Binds.signal) return false;
     final Element? element = target.element;
     if (element is FormalParameterElement || element is LocalVariableElement) return true;
     // `State.widget` is a getter over a private field — the one computed getter that is free to evaluate twice, and
@@ -1900,7 +1902,7 @@ final class ExpressionExtractor {
     // call's own arguments when the receiver is null — achieved for free here, since `_arguments` is
     // only ever reached INSIDE `_methodCallOn`'s own guarded `then` branch, never in the guard itself.
     if (node.isNullAware && !_shorted.contains(node)) {
-      if (_isSafeToDuplicateNullAwareReceiver(target)) {
+      if (_isSafeToDuplicateNullAwareReceiver(target, scope)) {
         return RawNode(
           kind: 'logic.Conditional',
           span: out.span(node),

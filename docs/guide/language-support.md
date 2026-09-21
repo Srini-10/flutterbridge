@@ -86,6 +86,11 @@ constructor, a value computed from a parameter, and a named constructor of a sta
 Switch expressions and pattern cases: constant, wildcard, variable, object (with fields), `||`, `&&`, relational, `?`/`!`/`as` patterns and
 `when` guards ([ADR-0065](../adr/0065-dart3-patterns.md)). List, map and record patterns, and an or-pattern that binds, are refused whole.
 
+## Time, async, parsing, named functions — ADR-0066
+
+`DateTime`, `Timer`, `Future.value/delayed/microtask/wait`, `int`/`double` `parse`/`tryParse`, `DeepCollectionEquality`; async top-level functions; named
+parameters on top-level functions ([ADR-0066](../adr/0066-sdk-time-async-named-functions.md)). Difference: no microseconds.
+
 ## Not supported (refused, by name)
 
 Everything not listed. The census of two real applications (see the final audit report) found the blockers in practice are: freezed
