@@ -328,7 +328,7 @@ above), real generator, real `tsc --strict` against the real kit; App A's own ex
 (`final provider = xProvider(widget.prop); ref.watch(provider); …; ref.read(provider.notifier).method()`),
 `ref.listen` as a bare statement, and a provider-internal `ref.watch` all in one fixture.
 
-### Known gaps found while implementing this (named, not fixed)
+### Known gaps found while implementing §4a (named, not fixed; carried forward from that milestone)
 
 - **A statement-bodied top-level provider closure, referenced transitively from a *second* emitted component's own
   module, loses its own local variables.** `final base = ref.watch(baseProvider); return base * 2;` as a top-level
@@ -342,13 +342,10 @@ above), real generator, real `tsc --strict` against the real kit; App A's own ex
   fixture is deliberately expression-bodied throughout to avoid it, and its own file header says so. **Next step**:
   isolate with a non-Riverpod, minimal top-level-constant fixture (a project class taking a statement-bodied
   callback, constructed at top level, referenced from a second component) and root-cause in `pipeline.ts`'s top-level
-  value emission.
-- **`ref.watch`/`ref.listen` hook-hoisting.** The real, hard remaining piece: every `ref.watch`/`ref.listen`
-  reachable from a `build` must be hoisted to the top of the component, in source order, unconditionally — the same
-  rule `declareLocalSignals` already applies to a signal read (ADR-0048) — and a `ref.watch` whose provider argument
-  depends on a value known only later in the body must be refused, not approximated. Deliberately not attempted this
-  pass: it touches the same component-emission core as signals do, and rushing it risked a *wrong*, silently-passing
-  hook-order bug rather than a clean refusal — worse than what shipped instead.
+  value emission. Still open — §4c's own hoisting work did not touch this path.
+- ~~`ref.watch`/`ref.listen` hook-hoisting.~~ **Resolved in §4c below** — this was the gap §4a's own text named
+  here as "deliberately not attempted this pass." §4b similarly deferred `.family`/`.autoDispose` and plain
+  `FutureProvider`/`StreamProvider`, resolved in §4b above.
 
 ## 5. How it will be verified
 
