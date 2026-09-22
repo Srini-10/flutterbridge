@@ -95,7 +95,7 @@ export function sourceKeyOf(target: Listenable<unknown>): string {
 // ── providers ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 /** What a provider builds. */
-export type ProviderKind = 'provider' | 'state' | 'stateNotifier' | 'future' | 'stream';
+export type ProviderKind = 'provider' | 'state' | 'stateNotifier' | 'notifier' | 'future' | 'stream';
 
 /** The part a `StreamProvider`'s `create` returns: anything that can be listened to, or iterated. */
 export interface StreamLike<T> {
@@ -147,7 +147,7 @@ export class ProviderDef {
 
   /** The notification rule: a source is `identical`, a derived provider `==`. */
   equals(a: unknown, b: unknown): boolean {
-    return this.kind === 'state' || this.kind === 'stateNotifier' ? Object.is(a, b) : dartEquals(a, b);
+    return this.kind === 'state' || this.kind === 'stateNotifier' || this.kind === 'notifier' ? Object.is(a, b) : dartEquals(a, b);
   }
 }
 
@@ -218,7 +218,7 @@ class NotifierView extends Listenable<unknown> {
   }
   pick(element: Element): unknown {
     if (element.def.kind === 'state') return element.controller;
-    if (element.def.kind === 'stateNotifier') return element.notifier;
+    if (element.def.kind === 'stateNotifier' || element.def.kind === 'notifier') return element.notifier;
     throw new Error(`\`${element.def.name ?? element.def.kind}\` has no \`.notifier\``);
   }
   same(a: unknown, b: unknown): boolean {
@@ -342,6 +342,81 @@ export class StateNotifier<S> {
   }
 }
 
+const ATTACH_REF = Symbol('bridge.riverpod.attachRef');
+
+/**
+ * `Notifier<S>` — what a class `extends Notifier<S>` inherits (Riverpod 2's own `Notifier` API, the
+ * successor `NotifierProvider` uses in place of `StateNotifierProvider`'s create-closure convention).
+ *
+ * Deliberately its own class here, not built by extending or composing `StateNotifier<S>`
+ * (`docs/m14/riverpod-usage-matrix.md` §4e has the full account): `Notifier`'s own construction is a
+ * two-step protocol `StateNotifier`'s is not — a zero-argument factory builds the bare instance, the
+ * container then *attaches* `ref` to it (`[ATTACH_REF]`, below), and only then calls the project's own
+ * overridden `build()` to compute the value `StateNotifier`'s own constructor instead takes directly, as
+ * an ordinary argument — so sharing a base would mean changing `StateNotifier`'s own, already
+ * oracle-verified constructor signature to fit a protocol it was never measured against. What the two
+ * classes *do* share, structurally rather than by inheritance, is the identical notify-on-change contract
+ * (`state`, `mounted`, `dispose()`, the `[ATTACH]` hook) `ProviderContainer`'s own `run()` already drives
+ * either one through — the same architecture, not two, expressed as two small classes rather than one
+ * whose constructor would have to serve both protocols at once.
+ */
+export class Notifier<S> {
+  #state: S = undefined as unknown as S;
+  #mounted = true;
+  #onChange: ((previous: S, next: S) => void) | undefined;
+  #ref: Ref | undefined;
+
+  /** The provider's own `Ref` — available from `build()` onward, never before (the container attaches it first). */
+  get ref(): Ref {
+    if (this.#ref === undefined) throw new Error('Bad state: `ref` is not available before `build()` runs.');
+    return this.#ref;
+  }
+
+  get state(): S {
+    return this.#state;
+  }
+
+  set state(next: S) {
+    if (!this.#mounted) throw new Error('Bad state: Tried to use a Notifier after `dispose` was called.');
+    const previous = this.#state;
+    this.#state = next;
+    if (!Object.is(previous, next)) this.#onChange?.(previous, next);
+  }
+
+  get mounted(): boolean {
+    return this.#mounted;
+  }
+
+  dispose(): void {
+    this.#mounted = false;
+  }
+
+  /** The container's hook; not part of the Dart surface. */
+  [ATTACH](onChange: (previous: S, next: S) => void): void {
+    this.#onChange = onChange;
+  }
+
+  /** The container's hook; not part of the Dart surface. Set exactly once, before `build()` runs. */
+  [ATTACH_REF](ref: Ref): void {
+    this.#ref = ref;
+  }
+
+  /** Overridden by the project's own subclass: computes the initial (and, on every rebuild, the next) state. */
+  build(): S {
+    throw new Error('Bad state: a `Notifier` subclass must override `build()`.');
+  }
+}
+
+/**
+ * `AutoDisposeNotifier<S>` — the `autoDispose`-flavoured base real Riverpod's own type system uses to keep
+ * an `autoDispose` provider from being handed a `Notifier` that was not written for it (a compile-time
+ * distinction Dart's own type checker enforces). Structurally and behaviourally identical here — this
+ * runtime already tracks `autoDispose` on the *provider's* own definition (`ProviderOptions.autoDispose`),
+ * independent of which of these two classes builds it — so subclassing is the whole of what "the
+ * `autoDispose` flavour" needs to mean.
+ */
+export class AutoDisposeNotifier<S> extends Notifier<S> {}
+
 /** The controller a `StateProvider` exposes as `.notifier`. */
 export class StateController<S> {
   constructor(
@@ -397,7 +472,7 @@ export class Element {
   readonly listeners = new Set<Listener>();
   disposers: Array<() => void> = [];
   controller: StateController<unknown> | undefined;
-  notifier: StateNotifier<unknown> | undefined;
+  notifier: StateNotifier<unknown> | Notifier<unknown> | undefined;
   deferred: Deferred | undefined;
   subscription: { cancel(): unknown } | undefined;
   overridden: Override | undefined;
@@ -607,6 +682,32 @@ export class ProviderContainer {
 
       case 'stateNotifier': {
         const notifier = make() as StateNotifier<unknown>;
+        element.notifier = notifier;
+        notifier[ATTACH]((before, now) => {
+          if (element.notifier !== notifier || element.disposed) return;
+          element.value = now;
+          this.sourceChanged(element, before);
+        });
+        element.disposers.push(() => notifier.dispose());
+        this.assign(element, notifier.state, rebuild, previous);
+        return;
+      }
+
+      case 'notifier': {
+        // `create` is a zero-argument factory (`DiscoverDeck.new`'s own runtime shape — `() => new
+        // DiscoverDeck()`), never `(ref) => …`: `Notifier`'s own `ref` is attached *after* construction,
+        // not passed to it (`Notifier`'s own doc, above) — so this bypasses `make()`, which always calls
+        // `create(ref)`, and calls the factory directly instead.
+        const factory = create as unknown as () => Notifier<unknown>;
+        const notifier = factory();
+        notifier[ATTACH_REF](ref);
+        // `build()`'s own return is the initial state — assigned through the ordinary `state` setter (its
+        // own `#onChange` is not attached yet, so this cannot notify anyone early), exactly as
+        // `StateNotifier`'s own Dart constructor already sets its initial state before this container ever
+        // sees the instance. `build()` runs with `ref` already attached and this element already the one
+        // `element.container.building` names (set by `this.build`, above `run`), so a `ref.watch`/`.listen`
+        // inside it is tracked as this provider's own dependency, the same as any other kind's `create`.
+        notifier.state = notifier.build();
         element.notifier = notifier;
         notifier[ATTACH]((before, now) => {
           if (element.notifier !== notifier || element.disposed) return;
@@ -933,6 +1034,27 @@ export class StateNotifierProvider<N extends StateNotifier<any>> extends Provide
   }
 
   /** `counterProvider.notifier` — the concrete notifier instance: `ref.read(counterProvider.notifier).increment()`. */
+  override get notifier(): Listenable<N> {
+    return super.notifier as Listenable<N>;
+  }
+}
+
+/**
+ * `NotifierProvider<N extends Notifier<S>, S>(Ctor.new)` — Riverpod 2's own successor to
+ * `StateNotifierProvider`, and `AutoDisposeNotifierProvider`'s identical shape (this runtime tracks
+ * `autoDispose` on the provider's own definition, not through a separate class — `Notifier`'s own doc).
+ * `create` is a zero-argument factory, never `(ref) => N` — `N`'s own `ref` is attached after
+ * construction (`ProviderContainer`'s own `'notifier'` case) — otherwise the identical shape
+ * `StateNotifierProvider` is, for the identical reason: `N` is not `unknown`-erased, so
+ * `ref.read(deckProvider.notifier).bump()` sees `bump` at all.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- the constraint bound, not a value's own type; see `StateNotifierProvider`'s own doc.
+export class NotifierProvider<N extends Notifier<any>> extends ProviderInstance<N extends Notifier<infer S> ? S : never> {
+  constructor(create: () => N, options: ProviderOptions = {}) {
+    super(new ProviderDef('notifier', create as ProviderDef['create'], options.autoDispose ?? false, options.name, false), undefined, false);
+  }
+
+  /** `deckProvider.notifier` — the concrete notifier instance: `ref.read(deckProvider.notifier).bump()`. */
   override get notifier(): Listenable<N> {
     return super.notifier as Listenable<N>;
   }

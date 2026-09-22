@@ -3,7 +3,8 @@
 Status: **inventory measured; design proposed; real, verified slices implemented incrementally (§4a: `Provider`/
 `StateProvider`/`StateNotifierProvider`/`StateNotifier` subclasses; §4b: `.family`/`.autoDispose`, plain
 `FutureProvider`/`StreamProvider`; §4c: `ref.watch`/`ref.listen` hook-hoisting; §4d: `AsyncValue<T>`
-consumption outside widget position).** This is the input to an ADR, not the ADR.
+consumption outside widget position; §4e: `Notifier`/`AutoDisposeNotifier`/`NotifierProvider`,
+non-family/non-async only).** This is the input to an ADR, not the ADR.
 Numbers come from `tools/riverpod-inventory/inventory.mjs` (a textual count of `.dart` files, tests excluded), run on
 disposable copies of the two real applications used as a corpus (raw output: `riverpod-usage-A.json`,
 `riverpod-usage-B.json`). A textual count sizes the feature and names files; the compiler's own recognition must be
@@ -420,6 +421,77 @@ alone fails 7 of those 8 tests (the negative-fixture test correctly stays green,
 - ~~`ref.watch`/`ref.listen` hook-hoisting.~~ **Resolved in §4c below** — this was the gap §4a's own text named
   here as "deliberately not attempted this pass." §4b similarly deferred `.family`/`.autoDispose` and plain
   `FutureProvider`/`StreamProvider`, resolved in §4b above.
+
+## 4e. Implemented (this milestone) — `Notifier`/`AutoDisposeNotifier`/`NotifierProvider`
+
+Riverpod 2's own successor to `StateNotifierProvider` — real-corpus inventory, done before any implementation:
+**exactly 2 declarations in all of App A + App B combined**, both real App B sites
+(`features/orders/lib/src/application/discover_providers.dart`), both the identical shape —
+`NotifierProvider.autoDispose<N, S>(N.new)` with `class N extends AutoDisposeNotifier<S>` overriding `build()`.
+App A uses `StateNotifierProvider` exclusively (already supported, §4a). **Not found anywhere in either real
+corpus**: `.family`, plain (non-`autoDispose`) `Notifier`, `AsyncNotifier`/`AsyncNotifierProvider` — none
+implemented, per this phase's own "do not implement from names alone" discipline.
+
+**The architecture**: `Notifier`/`AutoDisposeNotifier` are registered as **kit-provided superclasses**
+(`package_kit.ts`'s `KIT_PACKAGE_CLASSES`, the identical mechanism `StateNotifier` already uses, ADR-0055) — a
+project subclass is an ordinary general class (its own `build()`/other methods extracted exactly like any other
+instance method, its zero-argument `constructor()` synthesized by the pre-existing, fully generic
+`dart_classes.ts` machinery with zero changes), and `NotifierProvider`/`.autoDispose` is recognized by
+`riverpod_family.ts`'s existing builder-shape table (`riverpodBuilderShapeOf`), exactly like `Provider.autoDispose`
+— never by spelling. Two things were genuinely new:
+
+1. **The runtime's own `Notifier<S>`** (`packages/runtimes/react/src/internal/riverpod/container.ts`) —
+   deliberately its own class, not built by extending or composing the already oracle-verified `StateNotifier<S>`,
+   because `Notifier`'s own construction is a two-step protocol `StateNotifier`'s is not: a zero-argument factory
+   builds the bare instance, the container attaches `ref` to it, and only then calls the project's own overridden
+   `build()` — `StateNotifier`'s own constructor instead takes the initial state directly, as an ordinary argument.
+   What the two classes share is the identical notify-on-change contract (`state`, `mounted`, `dispose()`, the same
+   `[ATTACH]` hook), not a common base class.
+2. **`this.ref`, not a bare `ref`** — a `Notifier` subclass's own `ref` reaches the generator already
+   `this.`-qualified (confirmed directly against real analyzer output), unlike `StateNotifier`'s own bare `state`.
+   `expression.ts`'s new `kitSuperclassMemberText` is the `PropertyAccess` sibling of the pre-existing *bare*-read
+   resolution (`functions.ts`'s `paramInScope`, built for `StateNotifier`'s own `state`, never `this.state`).
+
+- **SUPPORTED**: `NotifierProvider<N, S>`/`NotifierProvider.autoDispose<N, S>(N.new)` (a constructor tear-off,
+  pre-desugared by the analyzer itself into a zero-param lambda — no special-casing needed); a subclass's `build()`
+  reading/writing `state`, reading `ref` (`ref.watch`, `ref.listen`, `ref.onDispose`, all as ordinary calls through
+  `this.ref`); ordinary instance methods (not just `build()`) reading/writing `state`, including after an `await`;
+  `.notifier` read from a widget the ordinary way (`ref.read(p.notifier).method()`).
+- **NOT IMPLEMENTED, refused precisely, never silently misfired**: `NotifierProvider.family`/
+  `.autoDispose.family` — the runtime's own `'notifier'` case in `container.ts`'s `run()` invokes its factory with
+  *zero* arguments unconditionally (it has no family-argument threading, unlike `defineFamily`/
+  `defineStateNotifierFamily`), so a family construction reaching it silently would mis-invoke the factory. Recognized
+  by the identical `riverpodBuilderShapeOf` table (`{kind: 'notifier', family: true}`, verified at the unit level in
+  `riverpod_family_shape.test.ts`) and explicitly refused in `lowerRiverpodBuilderConstruction` with its own
+  diagnostic, before the generic `defineFamily` fallback could ever be reached. `AsyncNotifier`/
+  `AsyncNotifierProvider` are not registered in `KIT_PACKAGE_CLASSES` at all, so a project that declares one hits the
+  pre-existing, general "extends a class this generator does not emit" refusal (`BRG3013`) — the same refusal any
+  other unsupported framework/package superclass gets, not a silent misclassification.
+
+Verified: `fixtures/apps/riverpod_notifier` reproduces both real App B shapes exactly (`DeckNotifier`: `build()`
+watches another provider, registers `ref.onDispose`, `ref.listen`s a third provider and writes `state` from the
+listener's own callback — App B's own `DiscoverDeck`; `HintSeenNotifier`: an ordinary method, called from outside
+`build()`, writing `state` after an `await` — App B's own `DiscoverSwipeHintSeenNotifier`) +
+`riverpod_notifier_build.test.ts` (real analyzer output, real `bridge normalize`, real generator, real `tsc --strict`
+against the real kit, 7/7, including the whole emitted project typechecking) + `riverpod_notifier.test.ts` (4/4
+runtime-only: `build()` computes initial state; `ref` throws before `build()` runs and is available inside it;
+`.notifier` exposes the concrete subclass and mutation notifies watchers; `autoDispose` constructs a fresh instance
+after the last watcher leaves and a new one reads) + `riverpod_family_shape.test.ts` (the `.family` recognition
+edge, so the refusal above can fire). Mutation-tested directly against the **real corpus**, not just the fixture:
+stashing every Phase-3 source change (`container.ts`, `index.ts`, `package_kit.ts`, `riverpod_family.ts`,
+`expression.ts`) and re-running `bridge generate` on a fresh disposable copy of App B reproduces exactly the errors
+this fix removes — `DiscoverDeck`/`DiscoverSwipeHintSeenNotifier` both "extends a class this generator does not emit
+(AutoDisposeNotifier<…>)", both providers' initializers "`NotifierProvider.autoDispose` is not declared in this
+program" — restoring the changes removes every one of them, with no other App B diagnostic content changing. App
+B's generator-error count moves from 4510 (Phase-3 changes reverted) to 4506 (restored) on the same disposable copy
+— a real, direct, fully-attributed 4-error reduction, not a taxonomy-bucket coincidence (unlike §4d's own AsyncValue
+fix, this one is not dominated by a downstream blocker: both real declaration sites fully typecheck and generate).
+App A is unaffected (348 generator errors before and after — it declares no `NotifierProvider`). The coarse
+"Riverpod" taxonomy bucket moves from 860 (as recorded at the end of §4d) to 857 — consistent with, but not
+identical to, the 4-error reduction above, for the same reason §4d's own account gives: the bucket is a rollup
+across many unrelated root causes and is not a reliable unit for a narrow fix's own size. Determinism: three
+in-process `reactGenerator.generate()` runs over the fixture's own normalized document produce byte-identical
+output (file paths and contents, sha256-compared).
 
 ## 5. How it will be verified
 

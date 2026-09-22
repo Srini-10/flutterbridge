@@ -29,6 +29,22 @@ export const KIT_PACKAGE_CLASSES: Readonly<Record<string, Readonly<Record<string
     StateNotifierProvider: 'StateNotifierProvider',
     FutureProvider: 'FutureProvider',
     StreamProvider: 'StreamProvider',
+    // `NotifierProvider(Ctor.new)` — Riverpod 2's own successor to `StateNotifierProvider`, a *plain*,
+    // no-builder-chain construction real code was not found using without `.autoDispose` (which is a
+    // builder chain, recognized separately — `riverpod_family.ts`, mirroring how `Provider.autoDispose(…)`
+    // already is); included for the identical reason `FutureProvider`/`StreamProvider` are — the same
+    // recognition table this generator already has, pointed at one more real shape, not a special case.
+    NotifierProvider: 'NotifierProvider',
+    // `class Deck extends Notifier<S>` / `extends AutoDisposeNotifier<S>` (`package:riverpod/src/
+    // notifier.dart`, confirmed directly against real analyzer output — App B's own real shape:
+    // `NotifierProvider.autoDispose<DiscoverDeck, List<Product>>(DiscoverDeck.new)`, `class DiscoverDeck
+    // extends AutoDisposeNotifier<List<Product>>`). Two rows, not one that `AutoDispose` merely prefixes —
+    // real Riverpod's own type system keeps them two distinct base classes precisely so an `autoDispose`
+    // provider cannot be handed a `Notifier` that was not written for it; this runtime's own two classes
+    // mirror that (`container.ts`'s own `Notifier`/`AutoDisposeNotifier` doc has the full account of why
+    // they are not built by extending or composing `StateNotifier`, despite looking similar).
+    Notifier: 'Notifier',
+    AutoDisposeNotifier: 'AutoDisposeNotifier',
     // `AsyncValue<T>` (`package:riverpod/src/common.dart`, confirmed directly against real analyzer
     // output) — what a `FutureProvider`/`StreamProvider` watcher reads. A `kit`-provided *value* type, not
     // a construction most real code performs (`AsyncValue.data(x)`/`.loading()`/`.error(e, st)` exist —
@@ -80,6 +96,13 @@ export const KIT_SUPERCLASS_MEMBERS: Readonly<Record<string, readonly string[]>>
   // `state` — the reactive value (get/set); `mounted` — false once `dispose()` has run (both real getters on the runtime's
   // own `StateNotifier`, `packages/runtimes/react/src/internal/riverpod/container.ts`).
   StateNotifier: ['state', 'mounted'],
+  // `Notifier`/`AutoDisposeNotifier` add `ref` (available from `build()` onward) to the identical
+  // `state`/`mounted` pair — a `Notifier` subclass's own bare `ref` reaches this generator already
+  // `this.`-qualified (`expression.ts`'s own `kitSuperclassMemberText`, the `PropertyAccess` sibling of
+  // this table's *bare*-read consumer, `functions.ts`'s `paramInScope`) rather than bare, but the member
+  // this table names is the identical fact either way: no member model of its own, resolved to `this.ref`.
+  Notifier: ['ref', 'state', 'mounted'],
+  AutoDisposeNotifier: ['ref', 'state', 'mounted'],
 };
 
 /** The instance members {@link KIT_SUPERCLASS_MEMBERS} lists for the kit class `runtimeName` names, or none. */

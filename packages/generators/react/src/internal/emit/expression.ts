@@ -52,7 +52,7 @@ import {
 } from './sdk_members.js';
 import { functionFailures } from './failures.js';
 import { packageRefusal, unsupportedPackageOf, type PackageModel } from './packages.js';
-import { kitPackageClass } from './package_kit.js';
+import { kitPackageClass, kitSuperclassMembers } from './package_kit.js';
 import { RIVERPOD_VALUE_CLASS, isRiverpodFamilyValue, riverpodBuilderShapeOf, type RiverpodBuilderShape } from './riverpod_family.js';
 import { typeTextOf } from './types.js';
 import { OWNER_LABEL, missingCapabilityOf, opaqueDetailOf, opaqueReasonSuffix } from './unsupported.js';
@@ -660,6 +660,35 @@ function isRiverpodProviderRef(type: Node | undefined): boolean {
  */
 export function isWidgetRefType(type: Node | undefined): boolean {
   return type?.['library'] === 'package:flutter_riverpod/src/consumer.dart' && type['name'] === 'WidgetRef';
+}
+
+/**
+ * `this.ref` (or any other explicitly-`this.`-qualified read) of a member [property] a project class
+ * inherits from a **kit-provided superclass** with no member model of its own
+ * (`KIT_SUPERCLASS_MEMBERS`, `package_kit.ts`) — the `PropertyAccess` sibling of `functions.ts`'s own
+ * `kitSuperMembers`/`paramInScope`, which resolves the identical fact for a *bare* read (`state`, never
+ * `this.state` — real evidence for `StateNotifier`). A `Notifier`/`AutoDisposeNotifier` subclass's own
+ * `ref` reaches this generator already `this.`-qualified instead (confirmed directly against real
+ * analyzer output: the bridge analyzer's own "is this a bare read of a known state-holding base's own
+ * member" recognition is keyed to bases it already knows by name, and does not yet include `Notifier`, so
+ * Dart's own ordinary instance-member resolution reaches here unchanged, as an explicit `PropertyAccess`
+ * whose own `receiver` is `this`) — checked before the M9-J "unmodelled member" refusal, which would
+ * otherwise refuse it precisely because it has no `target`: the kit superclass has no `logic.ClassDecl` of
+ * its own for a real declaration to point at.
+ *
+ * `undefined` for anything that is not this shape — every existing caller of `target === undefined` still
+ * reaches its own, unchanged refusal for a genuinely unmodelled member.
+ */
+function kitSuperclassMemberText(receiverNode: Node | undefined, property: string, scope: EmitScope): string | undefined {
+  const target = (receiverNode?.['type'] as Node | undefined)?.['target'];
+  if (typeof target !== 'string') return undefined;
+  const classDecl = scope.node(target as NodeId) as unknown as Node | undefined;
+  const superType = classDecl?.['superclass'] as Node | undefined;
+  if (superType === undefined) return undefined;
+  const runtimeName = kitPackageClass(superType['library'], superType['name']);
+  if (runtimeName === undefined || !kitSuperclassMembers(runtimeName).includes(property)) return undefined;
+  const receiverText = emitExpression(receiverNode as Node, scope);
+  return receiverText === REFUSED ? undefined : `${receiverText}.${identifierOf(property)}`;
 }
 
 function isUnmodelledMemberReceiver(type: Node | undefined): boolean {
@@ -2150,6 +2179,14 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
         return REFUSED;
       }
 
+      // `this.ref`/`this.state` (or any other explicit `this.`-qualified read) of a kit-superclass member
+      // with no model of its own — checked before the M9-J refusal just below, which would otherwise
+      // refuse it for having no `target` (`kitSuperclassMemberText`'s own doc).
+      if (node['target'] === undefined) {
+        const explicit = kitSuperclassMemberText(receiverNode, String(node['property'] ?? ''), scope);
+        if (explicit !== undefined) return explicit;
+      }
+
       // M9-J: a property read with no resolved `target` (so not a recognized store member, per the check
       // above), off a receiver that is itself a bare parameter read (`isParameterReceiver` — the only
       // shape whose emitted type is actually `typeTextOf`'s own `unknown`, never a local's tsc-inferred
@@ -3363,6 +3400,26 @@ function lowerRiverpodBuilderConstruction(node: Node, shape: RiverpodBuilderShap
   }
   if (shape.kind === 'state') {
     return `${scope.module.use(RUNTIME, 'defineStateFamily')}(${createText}${optionsText})`;
+  }
+  // `NotifierProvider.family` needs a *different* base class entirely (`FamilyNotifier<S, A>`, whose own
+  // `build(A arg)` takes the family argument — `Notifier`'s own zero-argument `build()` does not), which
+  // this generator does not recognize as a kit superclass (`package_kit.ts` has no row for it) — so a
+  // family notifier's own class already refuses, precisely, on its own construction (`dart_classes.ts`'s
+  // "extends a class this generator does not emit"). Refused here too, rather than falling through to the
+  // generic `defineFamily` below: that path's own runtime counterpart (`ProviderContainer`'s own
+  // `'notifier'` case) calls its factory with *zero* arguments unconditionally — sound for the real,
+  // non-family shape this generator supports, silently wrong for a family one, which never reaches real
+  // Dart in the first place (its own `N` already refuses) but should not have two different reasons to.
+  if (shape.kind === 'notifier') {
+    scope.report(
+      GeneratorDiagnosticCode.UnsupportedCapability,
+      'error',
+      '`NotifierProvider.family` needs a `FamilyNotifier`/`AutoDisposeFamilyNotifier` base class, which this ' +
+        'generator does not yet support (neither real corpus this generator is measured against uses one — ' +
+        `only the plain, non-family \`NotifierProvider\`/\`.autoDispose\` shape is). Owner: ${OWNER_LABEL['generator']}.`,
+      idOf(node),
+    );
+    return REFUSED;
   }
 
   // `provider`/`future`/`stream`: `defineFamily<T, A>('kind', create, options)` — `T`/`A` from the field's

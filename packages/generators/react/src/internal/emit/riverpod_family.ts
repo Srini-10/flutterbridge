@@ -26,13 +26,14 @@
 type Node = Record<string, unknown>;
 
 /** The runtime `ProviderKind` string (`container.ts`) a Dart provider class lowers to. */
-export type RiverpodProviderKind = 'provider' | 'state' | 'stateNotifier' | 'future' | 'stream';
+export type RiverpodProviderKind = 'provider' | 'state' | 'stateNotifier' | 'notifier' | 'future' | 'stream';
 
 /** Dart's own provider class name → the runtime kind it declares (`container.ts`'s own `ProviderKind`). */
 const DART_CLASS_TO_KIND: Readonly<Record<string, RiverpodProviderKind>> = {
   Provider: 'provider',
   StateProvider: 'state',
   StateNotifierProvider: 'stateNotifier',
+  NotifierProvider: 'notifier',
   FutureProvider: 'future',
   StreamProvider: 'stream',
 };
@@ -42,6 +43,7 @@ export const RIVERPOD_VALUE_CLASS: Readonly<Record<RiverpodProviderKind, string>
   provider: 'Provider',
   state: 'StateProvider',
   stateNotifier: 'StateNotifierProvider',
+  notifier: 'NotifierProvider',
   future: 'FutureProvider',
   stream: 'StreamProvider',
 };

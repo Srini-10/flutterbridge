@@ -1,0 +1,28 @@
+name: riverpod_notifier
+description: >-
+  M14 fixture: Riverpod 2's own `Notifier`/`AutoDisposeNotifier` API — `NotifierProvider`'s successor to
+  `StateNotifierProvider`'s create-closure convention. Real-corpus inventory first: exactly 2 real
+  declarations in all of App A + App B combined (App A uses `StateNotifierProvider` exclusively, already
+  supported), both `NotifierProvider.autoDispose<N, S>(N.new)` with `class N extends AutoDisposeNotifier<S>`
+  overriding `build()` — no `.family`, no plain (non-autoDispose) `Notifier`, no `AsyncNotifier`/
+  `AsyncNotifierProvider` anywhere in either real corpus, so none of those are implemented here.
+  `DeckNotifier` reproduces App B's own `DiscoverDeck` shape exactly: `build()` watches another provider,
+  registers `ref.onDispose`, and `ref.listen`s a third provider, writing `state` from the listener's own
+  callback — the same pattern, general (not app-specific): a `List<Product>` deck reordering on a stream
+  becomes an `int` counter tracking a `Provider<int>` here. `HintSeenNotifier` reproduces the second real
+  shape (`DiscoverSwipeHintSeenNotifier`): an ordinary instance method, called from outside `build()`,
+  writing `state` after an `await` — general Dart async/state-write timing, nothing Riverpod-specific about
+  it once `state`/`ref` themselves resolve.
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_riverpod: 2.6.1
+
+flutter:
+  uses-material-design: true

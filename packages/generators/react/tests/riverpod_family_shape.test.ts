@@ -47,6 +47,36 @@ describe('riverpodBuilderShapeOf', () => {
     });
   });
 
+  // M14: `NotifierProvider`/`.autoDispose` — real-corpus usage is `NotifierProvider.autoDispose<N, S>(N.new)`
+  // only (no plain `Notifier`, no `.family` anywhere in App A or App B). The `.family` shapes are still
+  // covered here at the pure-recognizer level — proving `riverpodBuilderShapeOf` correctly identifies them
+  // as `kind: 'notifier', family: true` — because `lowerRiverpodBuilderConstruction` (`expression.ts`) relies
+  // on exactly that recognition to reach its own explicit `NotifierProvider.family` refusal (the runtime's
+  // `'notifier'` case in `container.ts`'s `run()` invokes its factory with zero arguments unconditionally, so
+  // a family construction must never silently reach it).
+  it('recognizes every NotifierProvider builder shape, including the unimplemented `.family` ones', () => {
+    expect(riverpodBuilderShapeOf({ library: BUILDERS_LIBRARY, name: 'NotifierProviderBuilder' })).toEqual({
+      kind: 'notifier',
+      family: false,
+      autoDispose: false,
+    });
+    expect(riverpodBuilderShapeOf({ library: BUILDERS_LIBRARY, name: 'AutoDisposeNotifierProviderBuilder' })).toEqual({
+      kind: 'notifier',
+      family: false,
+      autoDispose: true,
+    });
+    expect(riverpodBuilderShapeOf({ library: BUILDERS_LIBRARY, name: 'NotifierProviderFamilyBuilder' })).toEqual({
+      kind: 'notifier',
+      family: true,
+      autoDispose: false,
+    });
+    expect(riverpodBuilderShapeOf({ library: BUILDERS_LIBRARY, name: 'AutoDisposeNotifierProviderFamilyBuilder' })).toEqual({
+      kind: 'notifier',
+      family: true,
+      autoDispose: true,
+    });
+  });
+
   it('refuses a receiver from any other library, even one plausibly named — never guesses from the name alone', () => {
     expect(riverpodBuilderShapeOf({ library: 'package:app/my_builders.dart', name: 'ProviderFamilyBuilder' })).toBeUndefined();
   });

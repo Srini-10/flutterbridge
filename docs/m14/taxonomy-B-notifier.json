@@ -1,0 +1,338 @@
+{
+  "application": "B",
+  "buildStages": [
+    {
+      "name": "analyze",
+      "ok": false
+    }
+  ],
+  "normalizerErrors": 0,
+  "generatorErrors": 4506,
+  "uniqueRootCauses": 24,
+  "occurrencesByCategory": {
+    "C": 2899,
+    "B": 1577,
+    "D": 25,
+    "?": 5
+  },
+  "rootCauses": [
+    {
+      "stage": "generate",
+      "root": "riverpod-ref",
+      "category": "C",
+      "layer": "analyzer (no model of ConsumerWidget/ref)",
+      "cause": "Riverpod: ref.watch/read/listen, providers, notifiers",
+      "adr": "0073",
+      "count": 857,
+      "codes": [
+        "BRG3013"
+      ],
+      "sample": "`productsStreamProvider` is a top-level `final`/`const` (a module-level constant), but its initializer could not be lowered — the diagnostic on the initializer says why. This uses Riverpod, which has no adapter: state ma"
+    },
+    {
+      "stage": "generate",
+      "root": "unresolved-reference",
+      "category": "C",
+      "layer": "generator",
+      "cause": "a name with no declaration in the program (usually a package or a private symbol from a construct above)",
+      "adr": "0073",
+      "count": 651,
+      "codes": [
+        "BRG3006",
+        "BRG3013"
+      ],
+      "sample": "`AssignedAgentContactModel.fromRpcRow` is not declared in this program, so there is nothing to emit for it. It needs an override, or a pass that models what it means."
+    },
+    {
+      "stage": "generate",
+      "root": "theme-material-role",
+      "category": "B",
+      "layer": "analyzer (token extraction)",
+      "cause": "a theme built by a helper/ColorScheme from computed values: no token for the Material role a widget paints",
+      "adr": "0073",
+      "count": 484,
+      "codes": [
+        "BRG3010"
+      ],
+      "sample": "`Scaffold` paints the Material role `surface`, and this program's theme defines no token for it. INV-20 (ADR-13) requires every colour a mapped widget paints to resolve to an app.Token, so there is no default to fall bac"
+    },
+    {
+      "stage": "generate",
+      "root": "package-named-args",
+      "category": "C",
+      "layer": "generator (no callee signature for a package/SDK function)",
+      "cause": "named arguments to a package/SDK callee the kit does not mirror (Supabase, showModalBottomSheet, Color ops, …)",
+      "adr": "0073",
+      "count": 463,
+      "codes": [
+        "BRG3002",
+        "BRG3013"
+      ],
+      "sample": "this call passes Dart named arguments (onConflict). Lowering them needs the callee's signature, which the program does not carry, and guessing would pass a value to the wrong parameter."
+    },
+    {
+      "stage": "generate",
+      "root": "package-class-emission",
+      "category": "C",
+      "layer": "generator",
+      "cause": "construction of a class that depends on an unsupported package",
+      "adr": "0055",
+      "count": 354,
+      "codes": [
+        "BRG3002",
+        "BRG3013"
+      ],
+      "sample": "`StreamController` is one of this application's own classes, and this generator does not emit class declarations — so `new StreamController(…)` would name a type the project does not contain. Missing capability: lowering"
+    },
+    {
+      "stage": "generate",
+      "root": "theme-extension-context",
+      "category": "B",
+      "layer": "analyzer/generator (no theme-extension model)",
+      "cause": "Theme.of(context)/extension<T>() and design-system extensions on BuildContext",
+      "adr": "0073",
+      "count": 289,
+      "codes": [
+        "BRG3004",
+        "BRG3006",
+        "BRG3013"
+      ],
+      "sample": "`context` is not declared in this program, so there is nothing to emit for it. It is a `BuildContext`, which a generated component does not have: a use of `Theme.of(context)`, `MediaQuery.of(context)`, an `InheritedWidge"
+    },
+    {
+      "stage": "generate",
+      "root": "opaque-expression",
+      "category": "B",
+      "layer": "analyzer",
+      "cause": "an expression the analyzer preserved verbatim (opaque)",
+      "adr": "0058",
+      "count": 247,
+      "codes": [
+        "BRG3004"
+      ],
+      "sample": "`void bump() {if (scheduled || controller.isClosed) return; scheduled = true; scheduleMicrotask(() {scheduled = false;...` has no UIR representation and reached the generator as opaque source (INV-4). Lowering it would m"
+    },
+    {
+      "stage": "generate",
+      "root": "package-member",
+      "category": "C",
+      "layer": "generator",
+      "cause": "member of a package class with no runtime model (dio beyond the subset, audio, Supabase, …)",
+      "adr": "0073",
+      "count": 246,
+      "codes": [
+        "BRG3013"
+      ],
+      "sample": "`id` reads a member of `User?`, a class this generator has no member model for. FlutterBridge does not yet lower a project-defined or external-package class's own fields, getters or methods — this refuses reading a membe"
+    },
+    {
+      "stage": "generate",
+      "root": "unsupported-capability",
+      "category": "B",
+      "layer": "generator",
+      "cause": "a construct the generator names as unsupported",
+      "adr": "0073",
+      "count": 233,
+      "codes": [
+        "BRG3013"
+      ],
+      "sample": "`AppSpacing.pageOf` has no supported lowering for this call, even though its own declaration is otherwise eligible (ADR-0045). FlutterBridge does not yet lower this method's own body."
+    },
+    {
+      "stage": "generate",
+      "root": "unmapped-widget",
+      "category": "B",
+      "layer": "generator (widget map)",
+      "cause": "a widget with no runtime mapping",
+      "adr": "0062",
+      "count": 114,
+      "codes": [
+        "BRG3001"
+      ],
+      "sample": "`ExcludeSemantics` is not a Flutter widget this generator has a mapping for, and not one it knows to be unsupported. If it is your application's own widget, it should have extracted as a ui.Component — that it did not is"
+    },
+    {
+      "stage": "generate",
+      "root": "top-level-variable",
+      "category": "C",
+      "layer": "generator (cascade)",
+      "cause": "a top-level/static variable whose initializer contains any construct above",
+      "adr": "0073",
+      "count": 112,
+      "codes": [
+        "BRG3013"
+      ],
+      "sample": "`AppTextStyles.displayLarge` is a static field this generator could not lower: only a final or const one with an initializer becomes a module-level constant (a mutable static would be state shared by every request in a s"
+    },
+    {
+      "stage": "generate",
+      "root": "project-class-extends-package",
+      "category": "C",
+      "layer": "generator",
+      "cause": "a project class extending a package class (StateNotifier, Notifier, …)",
+      "adr": "0073",
+      "count": 99,
+      "codes": [
+        "BRG3013"
+      ],
+      "sample": "`Firm` extends a class this generator does not emit (Equatable): a project class may extend another project class, or one the runtime kit itself provides (`StateNotifier`), but not an arbitrary framework or package class"
+    },
+    {
+      "stage": "generate",
+      "root": "top-level-function-cascade",
+      "category": "C",
+      "layer": "generator (cascade)",
+      "cause": "a top-level function whose body contains any construct above",
+      "adr": "0066",
+      "count": 98,
+      "codes": [
+        "BRG3013"
+      ],
+      "sample": "`friendlyPaymentError` is a project-defined top-level function, and this generator does not yet lower a `logic.FunctionDecl` to a module-level TypeScript function. That work belongs to this generator. Its body reports: `"
+    },
+    {
+      "stage": "generate",
+      "root": "component-collision",
+      "category": "B",
+      "layer": "generator",
+      "cause": "two project widgets of the same name in different libraries (monorepo) emit to one file: refused; needs unique component file/export naming",
+      "adr": "0047",
+      "count": 57,
+      "codes": [
+        "BRG3009"
+      ],
+      "sample": "`_KpiRow` would emit to `src/components/kpi-row.tsx`, which another component of the same name (declared elsewhere in the program) already claims. Two different project classes sharing a name is legal Dart; this generato"
+    },
+    {
+      "stage": "generate",
+      "root": "unsupported-expression",
+      "category": "B",
+      "layer": "generator",
+      "cause": "an expression form with no lowering",
+      "adr": "0058",
+      "count": 56,
+      "codes": [
+        "BRG3002"
+      ],
+      "sample": "`List.cast` has no lowering yet. A Dart `List` is not a JavaScript one, and this generator emits calls into exact-Dart runtime helpers rather than the same-named method (ADR-0051). Supported on a `List`: `add`, `addAll`,"
+    },
+    {
+      "stage": "generate",
+      "root": "catch-type",
+      "category": "B",
+      "layer": "generator",
+      "cause": "a typed catch on a type that cannot be tested at runtime",
+      "adr": "0061",
+      "count": 36,
+      "codes": [
+        "BRG3003"
+      ],
+      "sample": "this catch clause names a type that cannot be told at runtime here (only a project class, an SDK exception such as `FormatException`/`StateError`/`Exception`/`Error`, `int`, `double`, `num`, `String`, `bool`, `List`, `Ma"
+    },
+    {
+      "stage": "generate",
+      "root": "colour-unresolved",
+      "category": "B",
+      "layer": "analyzer (colour hoisting)",
+      "cause": "a colour computed at runtime",
+      "adr": "0076",
+      "count": 26,
+      "codes": [
+        "BRG3014"
+      ],
+      "sample": "`Container.color` is a colour the analyzer could not resolve to an app.Token. Every constant colour is hoisted into the palette and every `colorScheme.<role>` read names one already, so this is a colour computed at run t"
+    },
+    {
+      "stage": "generate",
+      "root": "globalkey",
+      "category": "D",
+      "layer": "generator",
+      "cause": "a GlobalKey: a handle on a live widget State, no UIR construct",
+      "adr": "0058",
+      "count": 25,
+      "codes": [
+        "BRG3015"
+      ],
+      "sample": "a `GlobalKey` is a handle on a live widget's State, and UIR has no construct that denotes one — it is not a value, a signal, a route or a component. That gap belongs to the schema. A `Form` in this kit validates every re"
+    },
+    {
+      "stage": "generate",
+      "root": "navigation-inline",
+      "category": "B",
+      "layer": "analyzer/generator",
+      "cause": "a navigation that constructs its destination inline",
+      "adr": "0072",
+      "count": 20,
+      "codes": [
+        "BRG3008"
+      ],
+      "sample": "this navigation constructs its destination inline (`Navigator.push(MaterialPageRoute(...))`), so it names no route and has no path (Spec v2.4 §A17). The edge is in the nav graph and **nothing performs it** — no `logic.Na"
+    },
+    {
+      "stage": "generate",
+      "root": "riverpod-provider-initializer",
+      "category": "C",
+      "layer": "generator",
+      "cause": "a top-level provider whose initializer builds a package object",
+      "adr": "0073",
+      "count": 19,
+      "codes": [
+        "BRG3013"
+      ],
+      "sample": "the initializer of `brandConfigProvider` could not be lowered: BRG3013: `applyBrandingJson` is a project-defined top-level function, and this generator does not yet lower a `logic.FunctionDecl` to a module-level TypeScri"
+    },
+    {
+      "stage": "generate",
+      "root": "unsupported-parameter",
+      "category": "B",
+      "layer": "generator (widget map)",
+      "cause": "a widget parameter the runtime cannot honour (refused by name)",
+      "adr": "0070",
+      "count": 9,
+      "codes": [
+        "BRG3017"
+      ],
+      "sample": "`AnimatedContainer` renders, but not with `decoration` set: Flutter lerps a whole BoxDecoration — border, radius, shadows and gradient together — and CSS interpolates each of those separately with different rules, so som"
+    },
+    {
+      "stage": "generate",
+      "root": "other",
+      "category": "?",
+      "layer": "?",
+      "cause": "unclassified — needs a rule",
+      "adr": "",
+      "count": 5,
+      "codes": [
+        "BRG3001",
+        "BRG3012"
+      ],
+      "sample": "`AssetImage`'s asset key is not a constant, so it cannot go in the manifest."
+    },
+    {
+      "stage": "generate",
+      "root": "app-root-parameter",
+      "category": "B",
+      "layer": "generator (app root)",
+      "cause": "a MaterialApp parameter with no equivalent (builder, onUnknownRoute, localization, …)",
+      "adr": "0029",
+      "count": 5,
+      "codes": [
+        "BRG3016"
+      ],
+      "sample": "`MaterialApp.builder` has no equivalent in the emitted project. Missing capability: a root builder — a widget wrapping every route, below the navigator. Owner: the generator (it would become a nested layout in `app/layou"
+    },
+    {
+      "stage": "generate",
+      "root": "interpolation",
+      "category": "B",
+      "layer": "generator",
+      "cause": "interpolating a value whose Dart text cannot be reproduced from its static type (num, enum, class, dynamic elements)",
+      "adr": "0073",
+      "count": 1,
+      "codes": [
+        "BRG3002"
+      ],
+      "sample": "Interpolating a `List` has no lowering: Dart prints `[1, 2]` or `{a: 1}` where JavaScript prints `1,2` or `[object Map]`. Build the text from the elements instead."
+    }
+  ]
+}
