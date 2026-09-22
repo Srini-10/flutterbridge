@@ -261,6 +261,18 @@ export function voidExpressionBodiesRaw(): string {
   return readFileSync(path, 'utf8');
 }
 
+/** The real `fixtures/apps/riverpod_async_value` document, raw analyzer output — not yet normalized. */
+export function riverpodAsyncValueRaw(): string {
+  const path = fileURLToPath(new URL('../../../../fixtures/uir/riverpod_async_value.ndjson', import.meta.url));
+  return readFileSync(path, 'utf8');
+}
+
+/** The real `fixtures/apps/riverpod_async_value_widget_position` document, raw analyzer output — not yet normalized. */
+export function riverpodAsyncValueWidgetPositionRaw(): string {
+  const path = fileURLToPath(new URL('../../../../fixtures/uir/riverpod_async_value_widget_position.ndjson', import.meta.url));
+  return readFileSync(path, 'utf8');
+}
+
 /** The real `fixtures/apps/async_push_guard` document, raw analyzer output (M7-H) — not yet normalized. */
 export function asyncPushGuardRaw(): string {
   const path = fileURLToPath(new URL('../../../../fixtures/uir/async_push_guard.ndjson', import.meta.url));

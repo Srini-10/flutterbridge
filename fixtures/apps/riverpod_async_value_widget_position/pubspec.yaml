@@ -1,0 +1,25 @@
+name: riverpod_async_value_widget_position
+description: >-
+  M14 negative fixture, paired with `fixtures/apps/riverpod_async_value`: `AsyncValue.when(...)` embedded
+  *directly* as widget-tree content (`child: async.when(loading: ..., data: ..., error: ...)`, each branch
+  itself returning a `Widget`) must stay precisely refused (`BRG3004`, "a widget returned by a call") —
+  not silently dropped, and not accidentally "fixed" by the sibling fixture's own kit-type registration.
+  This is a pre-existing, general, non-Riverpod limitation: the render-tree extractor models a widget
+  position as a construction, a condition, a list, or a bound value — never an arbitrary method call whose
+  *static type* happens to be `Widget` — so *any* widget-typed call in that position hits it the same way,
+  with or without Riverpod. Closing it needs a new render-tree construct (conceptually `ui.Cond` keyed on
+  three states instead of a boolean) — a real UIR addition, and so an ADR, not a generator fix; out of this
+  phase's own scope (CLAUDE.md's frozen-architecture rule).
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_riverpod: 2.6.1
+
+flutter:
+  uses-material-design: true

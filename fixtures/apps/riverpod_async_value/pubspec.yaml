@@ -1,0 +1,29 @@
+name: riverpod_async_value
+description: >-
+  M14 fixture: `AsyncValue<T>` consumption — the highest-value remaining Riverpod gap App B's own
+  generator taxonomy exposed (docs/m14/riverpod-usage-matrix.md §4d). Real-corpus inventory, done before
+  any implementation: `.valueOrNull` (262 occurrences across the app + its own local feature packages),
+  `.isLoading` (131), `.hasError` (82), `.hasValue` (73), `.when(` (68), `AsyncValue<` named (59),
+  `.maybeWhen(` (8), `.whenData(` (6), `.requireValue` (10) — no `switch`/pattern-matching on
+  `AsyncData`/`AsyncLoading`/`AsyncError`, no `.unwrapPrevious`/`.copyWithPrevious`/`.asData`/`.asError`,
+  anywhere in either real corpus. `HomeScreen` exercises every property and method actually used, on a
+  `FutureProvider`-sourced value (the dominant real shape, 149 `FutureProvider` declarations against 24
+  `StreamProvider` ones — AsyncValue's own consumption surface does not depend on which produced it).
+  `WidgetPositionScreen` proves the one real shape this fix does *not* reach — `.when(...)` embedded
+  directly as widget-tree content — stays precisely refused (`BRG3004`, "widget returned by a call"): a
+  pre-existing, general, non-Riverpod limitation in the render-tree extractor (any widget-typed value
+  produced by a method call hits it, not only `AsyncValue.when`), not a new gap this fix introduces or
+  silently papers over.
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_riverpod: 2.6.1
+
+flutter:
+  uses-material-design: true

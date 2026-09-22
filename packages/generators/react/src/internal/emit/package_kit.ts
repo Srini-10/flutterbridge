@@ -29,6 +29,22 @@ export const KIT_PACKAGE_CLASSES: Readonly<Record<string, Readonly<Record<string
     StateNotifierProvider: 'StateNotifierProvider',
     FutureProvider: 'FutureProvider',
     StreamProvider: 'StreamProvider',
+    // `AsyncValue<T>` (`package:riverpod/src/common.dart`, confirmed directly against real analyzer
+    // output) — what a `FutureProvider`/`StreamProvider` watcher reads. A `kit`-provided *value* type, not
+    // a construction most real code performs (`AsyncValue.data(x)`/`.loading()`/`.error(e, st)` exist —
+    // this table gives them "for free," `logic.New`'s own named-constructor path — but neither real corpus
+    // this generator is measured against calls one outside a test); what real code actually does is read
+    // its properties (`.valueOrNull`, `.hasError`, `.hasValue`, `.isLoading`, `.value`, `.error`,
+    // `.stackTrace`, `.requireValue`) and call `.when`/`.maybeWhen`/`.whenData` — a plain member read and a
+    // named-argument method call respectively, both already the *generic* lowering this table's own header
+    // comment describes ("a member read of it is a property of the runtime class"; "named arguments become
+    // one trailing options object") for every other kit-provided type, so this one row is the whole of
+    // what `AsyncValue` consumption needs at the expression level. `docs/m14/riverpod-usage-matrix.md`
+    // §4d has the full account, including the one real shape this row does *not* reach: `.when(...)`
+    // embedded directly as widget-tree content is `ui.Opaque` before the generator ever sees it — a
+    // pre-existing, general ("a widget returned by a call"), non-Riverpod limitation in the render-tree
+    // extractor, not a new gap this row introduces or could close.
+    AsyncValue: 'AsyncValue',
   },
   // `class MyController extends StateNotifier<S>` — `flutter_riverpod` re-exports the class, but the analyzer resolves it
   // to its true declaring library, `package:state_notifier/state_notifier.dart` (confirmed directly against real analyzer

@@ -1,0 +1,33 @@
+# Generator taxonomy — B-asyncvalue
+
+`bridge build` stages: analyze ok → normalize ok → generate FAILED.
+Normalizer errors: **0**. Generator errors (past the normalizer): **4509**. Unique root causes: **24**.
+
+Occurrences by category — A (contract bug): 0; B (browser-compatible, not implemented): 1577; C (library adapter): 2902; D (no browser equivalent): 25; unclassified: 5.
+
+| Count | Stage | Cat | Root cause | First failing layer | Codes | ADR |
+| ---: | --- | --- | --- | --- | --- | --- |
+| 860 | generate | C | Riverpod: ref.watch/read/listen, providers, notifiers | analyzer (no model of ConsumerWidget/ref) | BRG3013 | 0073 |
+| 649 | generate | C | a name with no declaration in the program (usually a package or a private symbol from a construct above) | generator | BRG3006, BRG3013 | 0073 |
+| 484 | generate | B | a theme built by a helper/ColorScheme from computed values: no token for the Material role a widget paints | analyzer (token extraction) | BRG3010 | 0073 |
+| 463 | generate | C | named arguments to a package/SDK callee the kit does not mirror (Supabase, showModalBottomSheet, Color ops, …) | generator (no callee signature for a package/SDK function) | BRG3002, BRG3013 | 0073 |
+| 354 | generate | C | construction of a class that depends on an unsupported package | generator | BRG3002, BRG3013 | 0055 |
+| 289 | generate | B | Theme.of(context)/extension<T>() and design-system extensions on BuildContext | analyzer/generator (no theme-extension model) | BRG3004, BRG3006, BRG3013 | 0073 |
+| 247 | generate | B | an expression the analyzer preserved verbatim (opaque) | analyzer | BRG3004 | 0058 |
+| 246 | generate | C | member of a package class with no runtime model (dio beyond the subset, audio, Supabase, …) | generator | BRG3013 | 0073 |
+| 233 | generate | B | a construct the generator names as unsupported | generator | BRG3013 | 0073 |
+| 114 | generate | B | a widget with no runtime mapping | generator (widget map) | BRG3001 | 0062 |
+| 112 | generate | C | a top-level/static variable whose initializer contains any construct above | generator (cascade) | BRG3013 | 0073 |
+| 101 | generate | C | a project class extending a package class (StateNotifier, Notifier, …) | generator | BRG3013 | 0073 |
+| 98 | generate | C | a top-level function whose body contains any construct above | generator (cascade) | BRG3013 | 0066 |
+| 57 | generate | B | two project widgets of the same name in different libraries (monorepo) emit to one file: refused; needs unique component file/export naming | generator | BRG3009 | 0047 |
+| 56 | generate | B | an expression form with no lowering | generator | BRG3002 | 0058 |
+| 36 | generate | B | a typed catch on a type that cannot be tested at runtime | generator | BRG3003 | 0061 |
+| 26 | generate | B | a colour computed at runtime | analyzer (colour hoisting) | BRG3014 | 0076 |
+| 25 | generate | D | a GlobalKey: a handle on a live widget State, no UIR construct | generator | BRG3015 | 0058 |
+| 20 | generate | B | a navigation that constructs its destination inline | analyzer/generator | BRG3008 | 0072 |
+| 19 | generate | C | a top-level provider whose initializer builds a package object | generator | BRG3013 | 0073 |
+| 9 | generate | B | a widget parameter the runtime cannot honour (refused by name) | generator (widget map) | BRG3017 | 0070 |
+| 5 | generate | ? | unclassified — needs a rule | ? | BRG3001, BRG3012 |  |
+| 5 | generate | B | a MaterialApp parameter with no equivalent (builder, onUnknownRoute, localization, …) | generator (app root) | BRG3016 | 0029 |
+| 1 | generate | B | interpolating a value whose Dart text cannot be reproduced from its static type (num, enum, class, dynamic elements) | generator | BRG3002 | 0073 |

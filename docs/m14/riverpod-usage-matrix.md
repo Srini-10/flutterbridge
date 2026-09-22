@@ -2,8 +2,8 @@
 
 Status: **inventory measured; design proposed; real, verified slices implemented incrementally (§4a: `Provider`/
 `StateProvider`/`StateNotifierProvider`/`StateNotifier` subclasses; §4b: `.family`/`.autoDispose`, plain
-`FutureProvider`/`StreamProvider`; §4c: `ref.watch`/`ref.listen` hook-hoisting).** This is the input to an ADR,
-not the ADR.
+`FutureProvider`/`StreamProvider`; §4c: `ref.watch`/`ref.listen` hook-hoisting; §4d: `AsyncValue<T>`
+consumption outside widget position).** This is the input to an ADR, not the ADR.
 Numbers come from `tools/riverpod-inventory/inventory.mjs` (a textual count of `.dart` files, tests excluded), run on
 disposable copies of the two real applications used as a corpus (raw output: `riverpod-usage-A.json`,
 `riverpod-usage-B.json`). A textual count sizes the feature and names files; the compiler's own recognition must be
@@ -175,10 +175,12 @@ own dependency graph needs plus enough widget-side consumption to be reachable a
   cannot run there either way. A class extending a kit superclass with more than one constructor, or only a
   factory one (JavaScript allows exactly one real `constructor()`), or with a `super(...)` call passing a
   named argument or forwarding a `super.` parameter — none observed in either corpus.
-  `NotifierProvider`, `Consumer`, `select`, `AsyncValue.when`/`.valueOrNull` consumption, and
-  `ProviderScope(overrides: …)` remain covered only by the blanket `BRG3020` "no adapter" warning — real, but
-  not yet differentiated the way `dio`'s `onlyClasses` differentiates its own remaining gaps (`.family`/
-  `.autoDispose`/plain `FutureProvider`/`StreamProvider` construction are supported as of §4b).
+  `NotifierProvider`, `Consumer`, `select` and `ProviderScope(overrides: …)` remain covered only by the
+  blanket `BRG3020` "no adapter" warning — real, but not yet differentiated the way `dio`'s `onlyClasses`
+  differentiates its own remaining gaps (`.family`/`.autoDispose`/plain `FutureProvider`/`StreamProvider`
+  construction are supported as of §4b; `AsyncValue.when`/`.valueOrNull`/… consumption outside widget
+  position is supported as of §4d, below — widget-position `.when(...)` remains a separate, general,
+  non-Riverpod gap, §4d's own account).
 
 Verified: `fixtures/apps/riverpod_basic` + `riverpod_state_notifier` + `packages/generators/react/tests/
 riverpod_build.test.ts` + `riverpod_state_notifier_build.test.ts` — real analyzer output, real `bridge normalize`,
@@ -333,6 +335,72 @@ real analyzer output, real `bridge normalize` (the full pipeline, not raw analyz
 above), real generator, real `tsc --strict` against the real kit; App A's own exact pattern
 (`final provider = xProvider(widget.prop); ref.watch(provider); …; ref.read(provider.notifier).method()`),
 `ref.listen` as a bare statement, and a provider-internal `ref.watch` all in one fixture.
+
+## 4d. Implemented (this milestone) — `AsyncValue<T>` consumption
+
+The highest-value remaining Riverpod gap by App B's own generator taxonomy at the time this milestone
+started (859 occurrences in the coarse "Riverpod" root-cause bucket). Real-corpus inventory, done before
+any implementation, across App B and its own local feature packages (`.when(`/`.maybeWhen(`/`.whenData(`
+live mostly in `features/*`, not `apps/customer` itself — App B's own dependency graph, not a wider scan):
+`.valueOrNull` (262), `.isLoading` (131), `.hasError` (82), `.hasValue` (73), `.when(` (68), `AsyncValue<`
+named (59), `.maybeWhen(` (8), `.whenData(` (6), `.requireValue` (10). **Not found anywhere in either real
+corpus**: `switch`/pattern-matching on `AsyncData`/`AsyncLoading`/`AsyncError`, `.unwrapPrevious`,
+`.copyWithPrevious`, `.asData`, `.asError` — none implemented, per this phase's own "do not implement from
+assumptions" discipline.
+
+**The fix, in full**: one row. `AsyncValue` (`package:riverpod/src/common.dart`) is added to
+`package_kit.ts`'s existing `riverpod` entry in `KIT_PACKAGE_CLASSES` (ADR-0075's own table, the mechanism
+`dio` already uses) — nothing else changed. That table's own header comment already states the generic
+rule every kit-provided type gets: "a member read of it is a property of the runtime class"; "named
+arguments become one trailing options object." The runtime's own `AsyncValue`
+(`packages/runtimes/react/src/internal/riverpod/async_value.ts`, already built and oracle-verified by a
+prior milestone) already exposes `valueOrNull`/`hasError`/`hasValue`/`isLoading`/`value`/`error`/
+`stackTrace`/`requireValue` as getters under the identical Dart names, and `when`/`maybeWhen`/`whenData`
+as methods whose own signature is already `(cases: {data, error, loading, ...})` — exactly what "named
+arguments become one options object" produces. No new generator code, no new runtime code: the existing,
+general mechanism simply had never been pointed at this type.
+
+- **SUPPORTED**: every property above, and `.when`/`.maybeWhen`/`.whenData`, **wherever the call's own
+  result is not itself placed directly as widget-tree content** — assigned to a local, interpolated into a
+  string, passed as a non-widget argument, chained (`.whenData(...).valueOrNull`). `ref.read(x).requireValue`
+  inside a callback works the same way (type-driven recognition, not position-driven).
+- **NOT REACHED, precisely, not silently**: `.when(...)` (or `.maybeWhen`) embedded *directly* as
+  widget-tree content — `body: async.when(loading: () => Widget, ...)`, `child: async.when(...)` — which is
+  **the dominant real shape**: re-running `bridge generate` on App B directly after this fix, every one of
+  the 57 remaining `.valueOrNull`/`.when`/`.hasError`/… mentions in its own error output traces to one of
+  two *pre-existing, general, non-Riverpod* causes, neither touched by this fix:
+  1. **"a widget returned by a call"** (`BRG3004`, "widget returned by a call") — 106 of App B's 249 opaque-
+     expression errors overall (most of the rest of that bucket, too, is a different widget-returning-call
+     shape). The render-tree extractor models a widget position as a construction, a condition, a list, or
+     a bound value — never an arbitrary method call whose *static type* happens to be `Widget` — so *any*
+     widget-typed call in that position hits this, `AsyncValue.when` or not. Closing it needs a new
+     render-tree construct (conceptually `ui.Cond` keyed on three states instead of a boolean) — a real UIR
+     addition, and so an ADR, not a generator fix (CLAUDE.md's frozen-architecture rule).
+  2. **"build body with statements"** (`BRG3004`) — an `if` *statement* (not a switch expression) deciding
+     what a statement-bodied `build` returns (`if (banners.isEmpty) { ... } else { ... }`,
+     `if (pending == null) return ...;`), which is not lowered to `ui.Cond` at all yet — also general, also
+     not Riverpod-specific (AsyncValue's own `.hasError`/`.isLoading` just happen to be a common condition
+     inside one), also out of this phase's own scope.
+
+  Because of these two, **App B's aggregate generator error count does not visibly fall** from this fix
+  alone — a component using both a (now-fixed) `.valueOrNull` read *and* a (still-blocked) widget-position
+  `.when()`, or an `if`-statement return, still fails overall, for the *other* reason. This is stated
+  plainly rather than left to be inferred from an unchanged taxonomy number (before: 4504 generator errors,
+  859 Riverpod-bucketed; after: 4509, 860 — noise-level movement within a coarse, rollup bucket dominated by
+  unrelated cascading causes, not a regression and not the fix "not working" — see `tools/taxonomy/`'s own
+  root-cause sampling for why a single generic bucket cannot show a narrow fix's effect). The fix's own
+  correctness is established directly instead: a dedicated, real-analyzer, real-`tsc`, mutation-tested
+  fixture (below), not the aggregate count.
+
+Verified: `fixtures/apps/riverpod_async_value` (every supported property and method, on a
+`FutureProvider`-sourced value — the dominant real shape, 149 declarations against `StreamProvider`'s 24;
+`AsyncValue`'s own consumption surface does not depend on which produced it) +
+`fixtures/apps/riverpod_async_value_widget_position` (the paired **negative** fixture: `.when(...)` in
+widget position still reports `BRG3004` precisely, one error, nothing silently dropped) +
+`riverpod_async_value_build.test.ts` (real analyzer output, real `bridge normalize`, real generator, real
+`tsc --strict` against the real kit, 8/8). Mutation-tested directly: reverting the one `package_kit.ts` row
+alone fails 7 of those 8 tests (the negative-fixture test correctly stays green, proving it tests the
+*other* thing); restoring it passes all 8 again.
 
 ### Known gaps found while implementing §4a (named, not fixed; carried forward from that milestone)
 
