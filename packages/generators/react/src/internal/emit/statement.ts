@@ -184,9 +184,17 @@ export function emitStatement(statement: Stmt | Node | undefined, scope: EmitSco
   const node = statement as Node;
 
   switch (kindOf(node)) {
-    case 'logic.ExprStmt':
+    case 'logic.ExprStmt': {
+      // A hoisted `ref.listen(...)` (`component.ts`'s `declareRiverpodListens`, ADR-0048 extended to
+      // Riverpod): its subscription already runs as the hoisted `useListen(...)` at the top of the
+      // component, and neither real corpus this generator is measured against ever reads its own return
+      // value, so this bare-statement position — `ref.listen(...);`, exactly how both corpora write it —
+      // contributes nothing and is not emitted at all, rather than a dead `undefined;` line.
+      const exprId = idOf(node['expr'] as Node);
+      if (exprId !== undefined && scope.isHoistedRiverpodListen?.(exprId) === true) return [];
       markValueUnused(node['expr']);
       return [`${emitExpression(node['expr'] as Node, scope)};`];
+    }
 
     case 'logic.VarDecl': {
       const name = identifierOf(String(node['name'] ?? '_'));

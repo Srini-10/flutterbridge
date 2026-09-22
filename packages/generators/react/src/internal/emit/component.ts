@@ -132,11 +132,26 @@ export function emitComponent(component: Node, module: ModuleBuilder, scope: Emi
     const withMounted: EmitScope = mountedLocal === undefined ? withRouter : { ...withRouter, mountedLocal };
     // Riverpod's `ref` (ConsumerWidget/ConsumerState), before anything that reads it — same reasoning as `router`/`mounted`.
     declareRiverpodRef(component, module, withMounted);
+    // Every `ref.watch`/`ref.listen` reachable from render position, hoisted to the top — the same
+    // rules-of-hooks reason `router`/`mounted` are, and ADR-0048's own rule for a signal read, extended to
+    // Riverpod's own subscriptions.
+    const watches = declareRiverpodWatches(component, module, withMounted);
+    const listens = declareRiverpodListens(component, module, withMounted);
+    const withRiverpodWatches: EmitScope =
+      watches.hoisted.size === 0 && listens.hoisted.size === 0
+        ? withMounted
+        : {
+            ...withMounted,
+            riverpodWatchLocal: (id: NodeId) => watches.hoisted.get(id) ?? withMounted.riverpodWatchLocal?.(id),
+            isHoistedRiverpodListen: (id: NodeId) => listens.hoisted.has(id) || (withMounted.isHoistedRiverpodListen?.(id) ?? false),
+            isRiverpodHoistRefused: (id: NodeId) =>
+              watches.refusedIds.has(id) || listens.refusedIds.has(id) || (withMounted.isRiverpodHoistRefused?.(id) ?? false),
+          };
     // The snack bar host (ADR-0030), before the tree that presents one, for the same rules-of-hooks
     // reason `router`/`mounted` are.
-    const snackbarHostLocal = declareSnackbarHost(component, module, withMounted);
+    const snackbarHostLocal = declareSnackbarHost(component, module, withRiverpodWatches);
     const withSnackbarHost: EmitScope =
-      snackbarHostLocal === undefined ? withMounted : { ...withMounted, snackbarHostLocal };
+      snackbarHostLocal === undefined ? withRiverpodWatches : { ...withRiverpodWatches, snackbarHostLocal };
     // Every inline route-overlay destination (M9-D) this component reaches, declared and rendered here
     // — before the tree that shows one, for the same rules-of-hooks reason `router`/`mounted` are.
     const { refs: dialogRefs, hosts: dialogHosts } = declareDialogHosts(component, module, withSnackbarHost);
@@ -247,6 +262,282 @@ function declareRiverpodRef(component: Node, module: ModuleBuilder, scope: EmitS
   module.line(`const ${local} = ${useProviderContainer}();`);
   module.line();
   return local;
+}
+
+/**
+ * Every `ref.watch(...)`/`ref.listen(...)` (`method` selects which) reachable from `root` in genuine
+ * **render position** — never from inside a `logic.Lambda` (a callback: `onPressed`, `ref.listen`'s own
+ * callback) or a `ui.List`'s own `template` (its per-item scope) — in source order (by span).
+ *
+ * A hook cannot run conditionally or a variable number of times per render; a callback and a list template
+ * are exactly the two shapes in this schema where that could happen, so neither is walked into. A call
+ * reached only from one of them is left uncollected — `expression.ts`'s own fallback refusal reports it,
+ * unchanged, rather than this function hoisting something that would violate the rules of hooks were it run.
+ */
+function collectRiverpodRefCalls(root: unknown, method: 'watch' | 'listen'): Node[] {
+  const found: Node[] = [];
+  const visit = (value: unknown): void => {
+    if (Array.isArray(value)) {
+      for (const item of value) visit(item);
+      return;
+    }
+    if (value === null || typeof value !== 'object') return;
+    const node = value as Node;
+    const kind = kindOf(node);
+    if (kind === 'logic.Lambda') return;
+    if (kind === 'ui.List') {
+      visit(node['source']);
+      return;
+    }
+    if (kind === 'logic.MethodCall' && node['method'] === method && isWidgetRefType((node['receiver'] as Node | undefined)?.['type'] as Node | undefined)) {
+      found.push(node);
+    }
+    for (const child of Object.values(node)) visit(child);
+  };
+  visit(root);
+  return found.sort((a, b) => spanKey(a) - spanKey(b));
+}
+
+/** A sort key from a node's own `span` — line-major, then column; 0 for a node with none (stable, never crashes). */
+function spanKey(node: Node): number {
+  const span = node['span'] as Node | undefined;
+  const line = typeof span?.['line'] === 'number' ? (span['line'] as number) : 0;
+  const column = typeof span?.['column'] === 'number' ? (span['column'] as number) : 0;
+  return line * 100_000 + column;
+}
+
+/** The emitted name of the first `prelude`-declared local `value` reads (a `logic.Ref` whose `target` is one), or `undefined`. */
+function firstPreludeLocalRef(value: unknown, preludeLocals: ReadonlyMap<NodeId, string>): string | undefined {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = firstPreludeLocalRef(item, preludeLocals);
+      if (found !== undefined) return found;
+    }
+    return undefined;
+  }
+  if (value === null || typeof value !== 'object') return undefined;
+  const node = value as Node;
+  if (kindOf(node) === 'logic.Ref' && typeof node['target'] === 'string' && preludeLocals.has(node['target'] as NodeId)) {
+    return preludeLocals.get(node['target'] as NodeId);
+  }
+  for (const child of Object.values(node)) {
+    const found = firstPreludeLocalRef(child, preludeLocals);
+    if (found !== undefined) return found;
+  }
+  return undefined;
+}
+
+/**
+ * The `prelude`'s own top-level `final` locals, by id → the expression each one's initializer is — real
+ * evidence (`fixtures/apps/riverpod_watch`, normalized through the full N1-N11 pipeline, not raw analyzer
+ * output) is `final provider = counterByIdProvider(id); final count = ref.watch(provider);`: **not**
+ * inlined the way this milestone first assumed — `ref.watch`'s own argument is a genuine `logic.Ref`
+ * targeting `provider`'s own `logic.VarDecl`, still present in `prelude`.
+ *
+ * Only a **top-level** (a direct element of the `prelude` array, never nested inside an `if`/`for` within
+ * it) `final` (never a reassignable `let`, whose value at the hoist point could differ from its initial one)
+ * local is offered here — exactly the "declared unconditionally, before any conditional, never reassigned"
+ * shape {@link substitutePreludeLocals} needs to inline it *soundly*: evaluating its initializer again, at
+ * the top of the component instead of at its own prelude position, computes the identical value, because
+ * nothing about reaching that point was conditional and the local itself never changes after it is set.
+ */
+function topLevelPreludeVarDecls(component: Node): ReadonlyMap<NodeId, Node> {
+  const prelude = Array.isArray(component['prelude']) ? (component['prelude'] as Node[]) : [];
+  const found = new Map<NodeId, Node>();
+  for (const stmt of prelude) {
+    if (kindOf(stmt) === 'logic.VarDecl' && stmt['isFinal'] === true && typeof stmt['id'] === 'string' && stmt['initializer'] !== undefined) {
+      found.set(stmt['id'] as NodeId, stmt['initializer'] as Node);
+    }
+  }
+  return found;
+}
+
+/**
+ * `value`, with every `logic.Ref` targeting one of `substitutable`'s own top-level `prelude` locals replaced
+ * by that local's own initializer expression — recursively, so a chain of locals each reading the last one
+ * still resolves to one self-contained expression. See {@link topLevelPreludeVarDecls} for exactly which
+ * locals are safe to substitute this way, and why.
+ *
+ * A plain structural copy, not a mutation — `value`'s own nodes are never written to, only referenced or
+ * replaced in the copy this returns, so the original tree (which the ordinary prelude-statement emission
+ * still walks unchanged, right after this) is untouched.
+ */
+function substitutePreludeLocals(value: unknown, substitutable: ReadonlyMap<NodeId, Node>): unknown {
+  if (Array.isArray(value)) return value.map((item) => substitutePreludeLocals(item, substitutable));
+  if (value === null || typeof value !== 'object') return value;
+  const node = value as Node;
+  if (kindOf(node) === 'logic.Ref' && typeof node['target'] === 'string' && substitutable.has(node['target'] as NodeId)) {
+    return substitutePreludeLocals(substitutable.get(node['target'] as NodeId), substitutable);
+  }
+  const copy: Node = {};
+  for (const [key, child] of Object.entries(node)) copy[key] = substitutePreludeLocals(child, substitutable);
+  return copy;
+}
+
+/**
+ * A scope in which the component's own parameters resolve to `props.<name>` — what every hoisted-hook
+ * declaration needs (`declareLocalSignals`'s own `initialScope` is the precedent this mirrors): a hoisted
+ * call runs before `childScope` ever wires `props` in for the render tree proper, so `scope.paramInScope`
+ * as given still answers "not in scope" for a component's own bare parameter read (`counterProvider(id)`
+ * inside a `ConsumerWidget` reading its own `id` field) without this.
+ */
+function withPropsInScope(component: Node, scope: EmitScope): EmitScope {
+  const propNames = new Set(asArray(component['params']).map((p) => String((p as Node)['name'] ?? '')));
+  return {
+    ...scope,
+    paramInScope: (paramName) => (propNames.has(paramName) ? `props.${identifierOf(paramName)}` : scope.paramInScope(paramName)),
+  };
+}
+
+/** What {@link declareRiverpodWatches} hoisted, and what it found unhoistable — see that function's own doc. */
+interface RiverpodWatchDeclarations {
+  /** A hoisted `ref.watch(...)` node's own id → the `useWatch(...)` local that now holds its value. */
+  readonly hoisted: ReadonlyMap<NodeId, string>;
+  /** A `ref.watch(...)` node's own id this function already reported as refused — `expression.ts`'s own fallback must not report it again. */
+  readonly refusedIds: ReadonlySet<NodeId>;
+}
+
+/**
+ * Hoists every `ref.watch(...)` reachable from this component's own render position — its `prelude`
+ * statements and its render tree ({@link renderRoot}) — to a `useWatch(...)` call at the top of the
+ * component, in source order, exactly as {@link declareLocalSignals} already hoists a signal subscription
+ * (ADR-0048): a `ui.Cond` branch or a `ui.List` template is a conditional/variable-count position, and a
+ * hook at the top of the component is unconditional by construction.
+ *
+ * Before a call's own argument is emitted, every reference to one of {@link topLevelPreludeVarDecls}'s own
+ * locals is substituted with that local's own initializer ({@link substitutePreludeLocals}) — real evidence
+ * (`fixtures/apps/riverpod_watch`, App A's own exact shape) is `final provider = xProvider(widget.prop);
+ * final count = ref.watch(provider);`: `ref.watch`'s own argument is a genuine reference to `provider`'s own
+ * `prelude` declaration, not (as this milestone first assumed from raw, pre-normalize analyzer output)
+ * something the pipeline had already inlined away — so hoisting has to do the inlining itself, for exactly
+ * the shape that is sound to (see that function's own doc for which shape that is).
+ *
+ * Whatever is left after substitution that still reads a `prelude` local — declared inside a conditional
+ * within it, or reassignable (`let`, whose value at the hoist point could differ from its initial one) —
+ * genuinely cannot be hoisted, and is refused here, by its own span, rather than silently emitting a
+ * reference to a name not yet in scope.
+ *
+ * `expression.ts`'s own `logic.MethodCall` case consults {@link RiverpodWatchDeclarations.hoisted} by the
+ * call's own id and returns the hoisted local directly wherever that same node is read; the ordinary
+ * prelude-statement emission still runs afterward, unchanged, so `provider`'s own `const provider = …;` is
+ * still emitted (computing the same expression a second time, harmlessly, since a family-key lookup is
+ * pure) and `count`'s becomes `const count = w$0;` — the hoisted local, not a second subscription.
+ *
+ * @returns the hoisted local for each watch node's own id, and the ids already reported as refused.
+ */
+function declareRiverpodWatches(component: Node, module: ModuleBuilder, scope: EmitScope): RiverpodWatchDeclarations {
+  const watchNodes = collectRiverpodRefCalls(renderRoot(component), 'watch');
+  const hoisted = new Map<NodeId, string>();
+  const refusedIds = new Set<NodeId>();
+  if (watchNodes.length === 0) return { hoisted, refusedIds };
+
+  const preludeLocals = Array.isArray(component['prelude']) ? localBindingsIn(component['prelude']) : new Map<NodeId, string>();
+  const substitutable = topLevelPreludeVarDecls(component);
+  const useWatch = useRuntime(module, 'useWatch');
+  const withProps = withPropsInScope(component, scope);
+  let index = 0;
+  for (const node of watchNodes) {
+    const id = idOf(node);
+    if (id === undefined) continue;
+    const target = asArray(node['args'])[0] as Node | undefined;
+    if (target === undefined) continue;
+    const resolved = substitutePreludeLocals(target, substitutable) as Node;
+    const blocking = firstPreludeLocalRef(resolved, preludeLocals);
+    if (blocking !== undefined) {
+      scope.report(
+        GeneratorDiagnosticCode.UnsupportedCapability,
+        'error',
+        `\`ref.watch\` here reads \`${blocking}\`, a local this \`build\` declares that is not safe to hoist above — ` +
+          'declared inside a conditional, or reassignable — so every `ref.watch` being hoisted to the top of the ' +
+          "component (ADR-0048's own rule, extended to Riverpod's `ref`) leaves nothing there yet for it to read. " +
+          `Missing capability: a hoistable form of this call. Owner: ${OWNER_LABEL['generator']}.`,
+        id,
+      );
+      refusedIds.add(id);
+      continue;
+    }
+    const local = `w$${index++}`;
+    const targetText = emitExpression(resolved, withProps);
+    module.line(`const ${local} = ${useWatch}(${targetText});`);
+    hoisted.set(id, local);
+  }
+  if (hoisted.size > 0) module.line();
+  return { hoisted, refusedIds };
+}
+
+/** What {@link declareRiverpodListens} hoisted, and what it found unhoistable — the `ref.listen` sibling of {@link RiverpodWatchDeclarations}. */
+interface RiverpodListenDeclarations {
+  /** A hoisted `ref.listen(...)` node's own id — its residual `logic.ExprStmt` position emits nothing (`statement.ts`). */
+  readonly hoisted: ReadonlySet<NodeId>;
+  readonly refusedIds: ReadonlySet<NodeId>;
+}
+
+/**
+ * Hoists every `ref.listen(target, (previous, next) { ... })` reachable from this component's own render
+ * position to `useListen(target, callback)` at the top of the component — the `ref.listen` sibling of
+ * {@link declareRiverpodWatches}, with one difference: `ref.listen`'s own return value (a `Subscription`) is
+ * not, in either real corpus, ever read, so nothing needs to *read* the hoisted call — its `logic.ExprStmt`
+ * position (`ref.listen(...)`  is written as a bare statement) is simply not emitted there
+ * (`statement.ts`'s own `logic.ExprStmt` case checks {@link RiverpodListenDeclarations.hoisted}).
+ *
+ * Supported: exactly `ref.listen(target, callback)` — two positional arguments, no named ones (real
+ * Riverpod's own `fireImmediately`/`onError` are not exercised by either corpus this generator is measured
+ * against, so they refuse rather than being guessed at, matching `refuseNamedArgs`'s own discipline
+ * elsewhere in this generator).
+ */
+function declareRiverpodListens(component: Node, module: ModuleBuilder, scope: EmitScope): RiverpodListenDeclarations {
+  const listenNodes = collectRiverpodRefCalls(renderRoot(component), 'listen');
+  const hoisted = new Set<NodeId>();
+  const refusedIds = new Set<NodeId>();
+  if (listenNodes.length === 0) return { hoisted, refusedIds };
+
+  const preludeLocals = Array.isArray(component['prelude']) ? localBindingsIn(component['prelude']) : new Map<NodeId, string>();
+  const substitutable = topLevelPreludeVarDecls(component);
+  const useListen = useRuntime(module, 'useListen');
+  const withProps = withPropsInScope(component, scope);
+  for (const node of listenNodes) {
+    const id = idOf(node);
+    if (id === undefined) continue;
+    const args = asArray(node['args']);
+    const namedArgs = node['namedArgs'];
+    if (args.length !== 2 || (typeof namedArgs === 'object' && namedArgs !== null && Object.keys(namedArgs as object).length > 0)) {
+      scope.report(
+        GeneratorDiagnosticCode.UnsupportedCapability,
+        'error',
+        '`ref.listen` is supported with exactly its target and its `(previous, next)` callback — a ' +
+          '`fireImmediately`/`onError` argument is not (neither real corpus this generator is measured against uses ' +
+          `one). Missing capability: \`ref.listen\` with more than two arguments. Owner: ${OWNER_LABEL['generator']}.`,
+        id,
+      );
+      refusedIds.add(id);
+      continue;
+    }
+    const [target, callback] = args;
+    // Only the target is substituted — the callback's own body is a `logic.Lambda`, its own scope, and any
+    // `prelude` local it reads is read *inside the callback*, at call time, not at hoist time; nothing about
+    // hoisting the `useListen(...)` call itself changes when that callback actually runs.
+    const resolvedTarget = substitutePreludeLocals(target as Node, substitutable) as Node;
+    const blocking = firstPreludeLocalRef(resolvedTarget, preludeLocals);
+    if (blocking !== undefined) {
+      scope.report(
+        GeneratorDiagnosticCode.UnsupportedCapability,
+        'error',
+        `\`ref.listen\` here reads \`${blocking}\`, a local this \`build\` declares that is not safe to hoist above — ` +
+          'declared inside a conditional, or reassignable — so every `ref.listen` being hoisted to the top of the ' +
+          "component leaves nothing there yet for it to read. Missing capability: a hoistable form of this call. " +
+          `Owner: ${OWNER_LABEL['generator']}.`,
+        id,
+      );
+      refusedIds.add(id);
+      continue;
+    }
+    const targetText = emitExpression(resolvedTarget, withProps);
+    const callbackText = emitExpression(callback as Node, withProps);
+    module.line(`${useListen}(${targetText}, ${callbackText});`);
+    hoisted.add(id);
+  }
+  if (hoisted.size > 0) module.line();
+  return { hoisted, refusedIds };
 }
 
 function declareRouter(component: Node, module: ModuleBuilder, scope: EmitScope): string | undefined {
@@ -1158,6 +1449,13 @@ function childScope(
     // (`declareSnackbarHost`), and a recognized call reached from any nested scope must resolve to that
     // same host, never a second one.
     ...(parent.snackbarHostLocal === undefined ? {} : { snackbarHostLocal: parent.snackbarHostLocal }),
+    // Same reasoning again, for `ref.watch`/`ref.listen` hoisting (ADR-0048, extended to Riverpod) —
+    // declared once per component (`declareRiverpodWatches`/`declareRiverpodListens`), and any nested scope
+    // (a `ui.Cond` branch, a `ui.List` template) reading the identical call-site id must resolve to the same
+    // hoisted local, never re-report it as unhoisted.
+    ...(parent.riverpodWatchLocal === undefined ? {} : { riverpodWatchLocal: parent.riverpodWatchLocal }),
+    ...(parent.isHoistedRiverpodListen === undefined ? {} : { isHoistedRiverpodListen: parent.isHoistedRiverpodListen }),
+    ...(parent.isRiverpodHoistRefused === undefined ? {} : { isRiverpodHoistRefused: parent.isRiverpodHoistRefused }),
     // Program-wide, so a child scope forwards it unchanged rather than rebuilding it per component.
     themeRoles: parent.themeRoles,
     node: parent.node.bind(parent),

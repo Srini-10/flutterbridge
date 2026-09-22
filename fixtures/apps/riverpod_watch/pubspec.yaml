@@ -1,0 +1,23 @@
+name: riverpod_watch
+description: >-
+  M14 fixture: `ref.watch`/`ref.listen` hook-hoisting out of a `ConsumerWidget`'s own `build`
+  (docs/m14/riverpod-usage-matrix.md §3/§6 — "the major current App A blocker"). `HomeScreen` reproduces App
+  A's own real pattern exactly: `final provider = counterByIdProvider(widget.id); ref.watch(provider);
+  ref.read(provider.notifier).increment()` inside a callback — the family instance is resolved once, then
+  both watched and read/mutated. `ref.listen` is exercised as App B writes it: a bare statement, its return
+  value never read. `doubledProvider` exercises the *other* half of this milestone's own distinction (§7): a
+  provider watching another provider, inside its own `create` closure — never a hook, always a plain call on
+  the runtime's own `Ref`, and must not be affected by this fixture's own widget-side hoisting at all.
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_riverpod: 2.6.1
+
+flutter:
+  uses-material-design: true

@@ -1,7 +1,9 @@
 # Riverpod — measured usage and the supported-subset design
 
-Status: **inventory measured; design proposed; a first real slice implemented and verified (§4a).** This is the input
-to an ADR, not the ADR.
+Status: **inventory measured; design proposed; real, verified slices implemented incrementally (§4a: `Provider`/
+`StateProvider`/`StateNotifierProvider`/`StateNotifier` subclasses; §4b: `.family`/`.autoDispose`, plain
+`FutureProvider`/`StreamProvider`; §4c: `ref.watch`/`ref.listen` hook-hoisting).** This is the input to an ADR,
+not the ADR.
 Numbers come from `tools/riverpod-inventory/inventory.mjs` (a textual count of `.dart` files, tests excluded), run on
 disposable copies of the two real applications used as a corpus (raw output: `riverpod-usage-A.json`,
 `riverpod-usage-B.json`). A textual count sizes the feature and names files; the compiler's own recognition must be
@@ -167,15 +169,16 @@ own dependency graph needs plus enough widget-side consumption to be reachable a
   caller that needs it); and a TypeScript class with a `#private` field of its own type parameter is not a
   structural subtype of the identical class instantiated at `unknown` (contravariance) — the runtime's
   `StateNotifierProvider<N extends StateNotifier<any>>` bound, not `<unknown>`, is why.
-- **EXPLICITLY REFUSED, precisely** (not silently dropped): `ref.watch`/`ref.listen` from a `ConsumerWidget`/
-  `ConsumerState` — a real subscription needs to become a hook, hoisted to the top of the component exactly as
-  ADR-0048 already hoists a signal read, and that hoisting is not built (`expression.ts` reports this by name, before
-  `ref` is even evaluated, distinct from the generic "not declared" message). A class extending a kit superclass with
-  more than one constructor, or only a factory one (JavaScript allows exactly one real `constructor()`), or with a
-  `super(...)` call passing a named argument or forwarding a `super.` parameter — none observed in either corpus.
-  `.family`, `.autoDispose`, `FutureProvider`, `StreamProvider`, `NotifierProvider`, `Consumer`, `select`/`listen`/
-  `when` and `ProviderScope(overrides: …)` remain covered only by the blanket `BRG3020` "no adapter" warning — real,
-  but not yet differentiated the way `dio`'s `onlyClasses` differentiates its own remaining gaps.
+- **`ref.watch`/`ref.listen` from a `ConsumerWidget`/`ConsumerState`'s own render position are now supported**
+  (§4c, a later milestone than this one — hoisted to the top of the component, ADR-0048's own rule) — a call
+  reached only from inside a callback or a `ui.List` item template still refuses, precisely, since a hook
+  cannot run there either way. A class extending a kit superclass with more than one constructor, or only a
+  factory one (JavaScript allows exactly one real `constructor()`), or with a `super(...)` call passing a
+  named argument or forwarding a `super.` parameter — none observed in either corpus.
+  `NotifierProvider`, `Consumer`, `select`, `AsyncValue.when`/`.valueOrNull` consumption, and
+  `ProviderScope(overrides: …)` remain covered only by the blanket `BRG3020` "no adapter" warning — real, but
+  not yet differentiated the way `dio`'s `onlyClasses` differentiates its own remaining gaps (`.family`/
+  `.autoDispose`/plain `FutureProvider`/`StreamProvider` construction are supported as of §4b).
 
 Verified: `fixtures/apps/riverpod_basic` + `riverpod_state_notifier` + `packages/generators/react/tests/
 riverpod_build.test.ts` + `riverpod_state_notifier_build.test.ts` — real analyzer output, real `bridge normalize`,
@@ -242,10 +245,10 @@ signature, exactly as `StateProvider`/`StateNotifierProvider` already infer thei
   a `.call(...)` with other than exactly one argument; any builder type name this generator's table does not
   know (an `AsyncNotifierProviderBuilder`, were one ever added to real riverpod's own public API, refuses by
   name rather than mis-lowering into some other kind).
-- **NOT YET CONSUMABLE**: `ref.watch`/`ref.listen` in a `ConsumerWidget`/`ConsumerState` remain refused (§4a,
-  unchanged this milestone) — so a family/autoDispose declaration lowers correctly and is verified via
-  `ref.read`, but the real corpora's own dominant consumption pattern (`ref.watch(p(arg))` in a `build`) is
-  still blocked on hook-hoisting, the next piece of work. `AsyncValue.when`/`.valueOrNull`/`.hasError` (real
+- **NOT YET CONSUMABLE (as of §4b; `ref.watch`/`ref.listen` hoisting landed in §4c, below)**: at the time §4b
+  was written, family/autoDispose declarations lowered correctly and were verified only via `ref.read`,
+  since the real corpora's own dominant consumption pattern (`ref.watch(p(arg))` in a `build`) was still
+  blocked on hook-hoisting. `AsyncValue.when`/`.valueOrNull`/`.hasError` (real
   App B widget code reads all three directly on a `FutureProvider`/`StreamProvider` result) has no generator
   recognition yet — the runtime's own `AsyncValue` already implements them (oracle-verified), but nothing lowers
   a Dart `.when(...)`/`.valueOrNull` call onto it. `dart:async`'s `Stream` is not yet a kit-mirrored value
@@ -271,6 +274,59 @@ Verified: `fixtures/apps/riverpod_family` + `packages/generators/react/tests/riv
 `riverpod_family_shape.test.ts` (the two pure recognizers, including refusal edges) +
 `packages/runtimes/react/tests/riverpod_family_typed.test.ts` (the new typed family/value wrappers, behavioral,
 against the container's own already-oracle-verified semantics).
+
+## 4c. Implemented (this milestone) — `ref.watch`/`ref.listen` hook-hoisting
+
+"The major current App A blocker" (§3/§6) — every `ref.watch`/`ref.listen` reachable from a
+`ConsumerWidget`/`ConsumerState`'s own render position is now hoisted to the top of the component,
+unconditionally, in source order, exactly as `declareLocalSignals` already hoists a signal subscription
+(ADR-0048).
+
+**What "render position" means, structurally**: `component.ts`'s `declareRiverpodWatches`/
+`declareRiverpodListens` walk `renderRoot(component)` (the `prelude` statements a statement-bodied `build`
+runs, plus the render tree itself, ADR-0062) collecting every `ref.watch`/`ref.listen` `logic.MethodCall`,
+but never descend into a `logic.Lambda` (a callback: `onPressed`, `ref.listen`'s own callback) or a
+`ui.List`'s own `template` (its per-item scope) — a hook cannot run conditionally or a variable number of
+times per render, and those are the two shapes in this schema where that could happen. A call reached only
+from one of them is left uncollected and still hits the ordinary "cannot hoist" refusal, now naming the
+actual reason (a callback or a list template, not a blanket "not built yet").
+
+**The one real surprise, corrected mid-implementation**: this milestone's own §4b assumed a `final provider
+= xProvider(widget.prop); ref.watch(provider);` local was already inlined away by the time it reaches the
+generator — true of *raw* analyzer output, **false** after the full N1–N11 normalize pipeline (`bridge
+generate`'s own path, and every build-proof test's `compiledFrom`): `provider` survives as a genuine
+`prelude` local, and `ref.watch`'s own argument is a real `logic.Ref` targeting it. Hoisting therefore
+substitutes such a reference with the local's own initializer (`substitutePreludeLocals`) before emitting
+the hoisted call — recursively, so a chain of locals resolves to one self-contained expression — but only
+for a **top-level** (never nested inside a conditional within the prelude) **`final`** (never a reassignable
+`let`) local (`topLevelPreludeVarDecls`): exactly the shape where evaluating the initializer again, at the
+top of the component instead of at its own prelude position, is sound. Anything left over that still reads a
+`prelude` local after substitution — declared inside a conditional, or reassignable — is refused, by its own
+span, matching this design's own original "cannot be hoisted, refused" clause; App A's own real shape
+reaches this cleanly, not the refusal (`fixtures/apps/riverpod_watch` reproduces it exactly, real
+`tsc --strict`-verified). The ordinary prelude-statement emission still runs afterward, unchanged — `provider`
+own `const provider = …;` is still emitted (computing the same expression a second time, harmlessly, since a
+family-key lookup is pure), and `count`'s own initializer becomes `const count = w$0;`, the hoisted local,
+never a second subscription.
+
+**`ref.listen`**: the identical hoisting, to `useListen(target, callback)`, with one difference — neither
+real corpus ever reads a `ref.listen` call's own return value (a `Subscription`), so its usual bare-statement
+position (`ref.listen(...);`, how both corpora write it) is not emitted at all once hoisted
+(`statement.ts`'s `logic.ExprStmt` case), rather than a dead `undefined;` line. Supported: exactly `target`
+and its `(previous, next)` callback — a `fireImmediately`/`onError` named argument refuses (neither corpus
+uses one).
+
+**§7 preserved, proven again here**: a provider watching another provider inside its own `create` closure
+(`doubledProvider = Provider<int>((ref) => ref.watch(baseProvider) * 2)`) still lowers to a plain call —
+`new Provider((ref) => ref.watch(baseProvider) * 2)` — never a `useWatch` hook; the distinction was already
+correct before this milestone (`isRiverpodProviderRef` vs `isWidgetRefType`, §4a) and nothing about
+hoisting-for-widgets touches it, which `riverpod_watch_build.test.ts` asserts directly.
+
+Verified: `fixtures/apps/riverpod_watch` + `packages/generators/react/tests/riverpod_watch_build.test.ts` —
+real analyzer output, real `bridge normalize` (the full pipeline, not raw analyzer output — see the surprise
+above), real generator, real `tsc --strict` against the real kit; App A's own exact pattern
+(`final provider = xProvider(widget.prop); ref.watch(provider); …; ref.read(provider.notifier).method()`),
+`ref.listen` as a bare statement, and a provider-internal `ref.watch` all in one fixture.
 
 ### Known gaps found while implementing this (named, not fixed)
 

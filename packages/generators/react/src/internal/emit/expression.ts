@@ -137,6 +137,25 @@ export interface EmitScope {
    */
   renderWidget?(node: Node, depth: number, scope: EmitScope): string;
   /**
+   * The hoisted `useWatch(...)` local for a `ref.watch(...)` `logic.MethodCall`, by that call's own id — the
+   * Riverpod sibling of {@link signalRead}, populated by `component.ts`'s `declareRiverpodWatches` (ADR-0048,
+   * extended to Riverpod's own `ref`). `undefined` for a call that was not (or could not be) hoisted.
+   */
+  riverpodWatchLocal?(id: NodeId): string | undefined;
+  /**
+   * Whether a `ref.listen(...)` `logic.MethodCall`, by its own id, was hoisted to a `useListen(...)` at the
+   * top of the component (`declareRiverpodListens`) — its own occurrence then reads as `undefined` (its
+   * subscription already runs as the hoisted hook), and `statement.ts`'s `logic.ExprStmt` case uses this to
+   * skip emitting its bare-statement position entirely.
+   */
+  isHoistedRiverpodListen?(id: NodeId): boolean;
+  /**
+   * Whether a `ref.watch`/`ref.listen` `logic.MethodCall`, by its own id, was already reported as
+   * unhoistable by `declareRiverpodWatches`/`declareRiverpodListens` — so `expression.ts`'s own fallback
+   * refusal does not report the identical call a second time.
+   */
+  isRiverpodHoistRefused?(id: NodeId): boolean;
+  /**
    * The local expression that reads a signal declared by `id`, if one is in scope.
    *
    * A `logic.Ref` whose target is a `sig.Signal` must become `count.get()`, not `count` — the signal is an
@@ -2256,22 +2275,39 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
       }
 
       // `ref.watch`/`ref.listen` inside a `ConsumerWidget`/`ConsumerState` — a *subscription*, which needs to be a hook,
-      // hoisted to the top of the component exactly as `declareLocalSignals` already hoists a signal read (ADR-0048).
-      // That hoisting is not built yet, so refused here, by name, before the receiver (`ref`) is even emitted: `ref`
-      // itself resolves fine (`declareRiverpodRef` gives every other `ref.*` call somewhere to read it from), and
-      // routing through the generic "not declared" fallback would blame the wrong thing. `ref.read`/`.invalidate`/
-      // `.refresh`/`.onDispose` are not subscriptions and are not refused here (`docs/m14/riverpod-usage-matrix.md` §3–4).
+      // hoisted to the top of the component exactly as `declareLocalSignals` already hoists a signal read (ADR-0048,
+      // extended to Riverpod's own `ref` by `component.ts`'s `declareRiverpodWatches`/`declareRiverpodListens`, which
+      // run — and so populate `riverpodWatchLocal`/`isHoistedRiverpodListen` — before this node is ever reached).
+      // Checked, and resolved or refused, before the receiver (`ref`) is even emitted: `ref` itself resolves fine
+      // (`declareRiverpodRef` gives every other `ref.*` call somewhere to read it from), and routing through the
+      // generic "not declared" fallback would blame the wrong thing. `ref.read`/`.invalidate`/`.refresh`/`.onDispose`
+      // are not subscriptions and are not touched here (`docs/m14/riverpod-usage-matrix.md` §3–4).
       {
         const method = String(node['method'] ?? '');
         const refReceiver = node['receiver'] as Node | undefined;
         if ((method === 'watch' || method === 'listen') && isWidgetRefType(refReceiver?.['type'] as Node | undefined)) {
+          const callId = idOf(node);
+          if (method === 'watch') {
+            const local = callId === undefined ? undefined : scope.riverpodWatchLocal?.(callId);
+            if (local !== undefined) return local;
+          } else if (callId !== undefined && scope.isHoistedRiverpodListen?.(callId) === true) {
+            // Its subscription already runs as the hoisted `useListen(...)`; this occurrence's own value is never
+            // read in either real corpus (`declareRiverpodListens`'s own doc) — `statement.ts` skips the common
+            // bare-statement case entirely, and this is the harmless fallback for any other position.
+            return 'undefined';
+          }
+          // Already reported, by its own span, by `declareRiverpodWatches`/`declareRiverpodListens` (a call
+          // reached only from a callback or a list template was never even offered to them, and gets the
+          // generic message below instead — accurate either way, just not duplicated when it was).
+          if (callId !== undefined && scope.isRiverpodHoistRefused?.(callId) === true) return REFUSED;
           scope.report(
             GeneratorDiagnosticCode.UnsupportedCapability,
             'error',
             `\`ref.${method}\` subscribes this widget to a provider, which needs to become a hook, hoisted to the top ` +
-              "of the component — the same rule ADR-0048 already applies to a signal read, not yet extended to Riverpod's " +
-              "own `ref`. `ref.read`, `.invalidate`, `.refresh` and `.onDispose` do not need this and are supported. " +
-              `Missing capability: hoisting \`ref.${method}\` out of the render tree. Owner: ${OWNER_LABEL['generator']}.`,
+              'of the component (ADR-0048\'s own rule, extended to Riverpod\'s `ref`) — but this one is reached only ' +
+              'from inside a callback or a list item template, where a hook cannot run unconditionally, so it cannot ' +
+              `be hoisted there either. \`ref.read\`, \`.invalidate\`, \`.refresh\` and \`.onDispose\` do not need this ` +
+              `and are supported. Missing capability: hoisting \`ref.${method}\` out of that position. Owner: ${OWNER_LABEL['generator']}.`,
             idOf(node),
           );
           return REFUSED;

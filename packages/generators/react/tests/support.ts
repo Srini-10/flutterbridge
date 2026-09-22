@@ -243,6 +243,12 @@ export function riverpodFamilyRaw(): string {
   return readFileSync(path, 'utf8');
 }
 
+/** The real `fixtures/apps/riverpod_watch` document, raw analyzer output (M14) — not yet normalized. */
+export function riverpodWatchRaw(): string {
+  const path = fileURLToPath(new URL('../../../../fixtures/uir/riverpod_watch.ndjson', import.meta.url));
+  return readFileSync(path, 'utf8');
+}
+
 /** The real `fixtures/apps/top_level_closure_locals` document, raw analyzer output (M14) — not yet normalized. */
 export function topLevelClosureLocalsRaw(): string {
   const path = fileURLToPath(new URL('../../../../fixtures/uir/top_level_closure_locals.ndjson', import.meta.url));
