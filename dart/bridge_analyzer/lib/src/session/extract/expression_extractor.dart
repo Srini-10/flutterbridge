@@ -1041,16 +1041,43 @@ final class ExpressionExtractor {
     );
   }
 
+  /// Whether an arrow-bodied function/method declared to return [returnType] discards its own body's
+  /// value rather than returning it — Dart's own rule for `void` (`void f() => e;`): `e` is evaluated for
+  /// its effect and the function returns nothing, whatever `e` itself evaluates to. The language does not
+  /// even require `e`'s own static type to be assignable to `void` for this to be legal — `void log() =>
+  /// print(msg);` compiles though `print` itself returns `void` too, and so does `void f() => 3;`, though
+  /// `3` is an `int` — which is the proof this is not merely "the value happens to be `void`-typed", it is
+  /// "the value, of whatever type, is discarded".
+  ///
+  /// [returnType] is expected already `Future`-unwrapped for an `async` member (the same value a caller
+  /// computes for the schema's own `returnType` field, `_valueReturnTypeOf` in `declaration_extractor.dart`)
+  /// — `Future<void> f() async => e;` discards identically, since the future it returns resolves to no
+  /// value either.
+  static bool isVoidReturn(DartType? returnType) => returnType is VoidType;
+
   /// A function body, as the statement list the schema asks for.
   ///
-  /// `=> e` and `{ return e; }` are the same function. Turning the arrow into a `Return` here is not
-  /// *normalization* in the pipeline sense — nothing semantic changes — it is refusing to make every
-  /// downstream consumer handle two spellings of one thing.
+  /// `=> e` and `{ return e; }` are the same function *when `e`'s value is actually returned* — true for
+  /// every declared return type except `void` (`isVoidReturn`, above), where `=> e` means `{ e; }`, not
+  /// `{ return e; }`: the arrow's value is Dart's own syntax sugar for a statement, never for a return.
+  /// Emitting `logic.Return{value: e}` for a `void`-declared arrow body claims the function returns `e`'s
+  /// value, which is false — a real bug this schema's own generator caught as a `tsc` type error the first
+  /// time a `void` method's own arrow body was an assignment (`void f() => x = 1;` emitted `return (x = 1,
+  /// x);`, typed `number`, against a declared `void` return).
   ///
-  /// [discard]: the value of an arrow body is *not returned* — it is a batch spliced into a statement list (`setState(() => x = 1); more();`), where
-  /// a `Return` would end the enclosing function and drop everything after it (found by a real repository: the statements after an arrow-bodied
-  /// `setState` were unreachable in the output).
-  List<RawValue> bodyOf(FunctionBody body, Scope scope, {bool discard = false}) {
+  /// [discard]: the value of an arrow body is *not returned* for a second, structural reason, independent
+  /// of [returnType] — it is a batch spliced into a statement list (`setState(() => x = 1); more();`),
+  /// where a `Return` would end the enclosing function and drop everything after it (found by a real
+  /// repository: the statements after an arrow-bodied `setState` were unreachable in the output). Checked
+  /// first, and — unlike [returnType] — bypasses the batch-splice/navigate cases below entirely: an
+  /// explicit `discard: true` caller has already resolved *which* of those shapes this body is (the batch/
+  /// navigate detection itself lives one call up, in `statement_extractor.dart`, before it ever calls this
+  /// with `discard: true`), so re-running that detection here would be redundant, not additionally correct.
+  /// [returnType]'s own void-ness is checked *after* those cases instead (below), because a `void`-declared
+  /// arrow body can still be `() => setState(() { … })`/`() => Navigator.pop(context)`, and those already
+  /// model the arrow as an effect the identical way `isVoidReturn` would — checking void-ness first would
+  /// only ever reach the same answer through a different, untested path, so there is no reason to.
+  List<RawValue> bodyOf(FunctionBody body, Scope scope, {bool discard = false, DartType? returnType}) {
     if (discard && body is ExpressionFunctionBody) {
       return <RawValue>[
         RawChild(
@@ -1091,6 +1118,21 @@ final class ExpressionExtractor {
           if (lowered != null) {
             return <RawValue>[RawChild(lowered)];
           }
+        }
+        // `void f() => e;`: `e`'s value, whatever it is, is discarded — Dart's own rule (`isVoidReturn`'s
+        // own doc). The one place this function actually decides Return-vs-statement by the declared
+        // return type, reached only once the two structural special cases above have already had their
+        // say — both already model their own shape as an effect, regardless of what `returnType` is.
+        if (isVoidReturn(returnType)) {
+          return <RawValue>[
+            RawChild(
+              RawNode(
+                kind: 'logic.ExprStmt',
+                span: out.span(body),
+                fields: <String, RawValue>{'expr': RawChild(extract(body.expression, scope))},
+              ),
+            ),
+          ];
         }
         return <RawValue>[
           RawChild(

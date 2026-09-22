@@ -228,6 +228,10 @@ final class DeclarationExtractor {
         if (node.typeParameters case final TypeParameterList list) for (final TypeParameter p in list.typeParameters) p.name.lexeme,
         if (member.typeParameters case final TypeParameterList list) for (final TypeParameter p in list.typeParameters) p.name.lexeme,
       ];
+      final DartType? extensionReturnType = _valueReturnTypeOf(
+        member.declaredFragment?.element.returnType ?? member.returnType?.type,
+        isAsync: member.body.isAsynchronous,
+      );
       out.emit(
         RawNode(
           kind: 'logic.FunctionDecl',
@@ -235,12 +239,9 @@ final class DeclarationExtractor {
           symbol: symbol,
           fields: <String, RawValue>{
             'name': RawLiteral('${owner}_${member.isSetter ? 'set_' : ''}${member.name.lexeme}'),
-            'returnType': out.typeRef(
-              _valueReturnTypeOf(member.declaredFragment?.element.returnType ?? member.returnType?.type, isAsync: member.body.isAsynchronous),
-              at: member,
-            ),
+            'returnType': out.typeRef(extensionReturnType, at: member),
             'params': RawList(_params(member.parameters, scope)),
-            'body': RawList(expressions.bodyOf(member.body, inner)),
+            'body': RawList(expressions.bodyOf(member.body, inner, returnType: extensionReturnType)),
             if (member.body.isAsynchronous) 'isAsync': const RawLiteral(true),
             if (typeParameters.isNotEmpty) 'typeParameters': RawList(typeParameters.map(RawLiteral.new).toList()),
             'extensionOn': out.typeRef(on, at: node),
@@ -659,6 +660,10 @@ final class DeclarationExtractor {
         for (final FormalParameter parameter in member.parameters?.parameters ?? const <FormalParameter>[])
           if (parameter.name != null) Binding(name: parameter.name!.lexeme, binds: Binds.parameter),
       ]);
+      final DartType? methodReturnType = _valueReturnTypeOf(
+        member.declaredFragment?.element.returnType ?? member.returnType?.type,
+        isAsync: member.body.isAsynchronous,
+      );
       methods.add(
         RawChild(
           RawNode(
@@ -667,15 +672,9 @@ final class DeclarationExtractor {
             symbol: symbol,
             fields: <String, RawValue>{
               'name': RawLiteral(member.name.lexeme),
-              'returnType': out.typeRef(
-                _valueReturnTypeOf(
-                  member.declaredFragment?.element.returnType ?? member.returnType?.type,
-                  isAsync: member.body.isAsynchronous,
-                ),
-                at: member,
-              ),
+              'returnType': out.typeRef(methodReturnType, at: member),
               'params': RawList(_params(member.parameters, scope)),
-              'body': RawList(expressions.bodyOf(member.body, inner)),
+              'body': RawList(expressions.bodyOf(member.body, inner, returnType: methodReturnType)),
               if (member.body.isAsynchronous) 'isAsync': const RawLiteral(true),
               if (member.typeParameters case final TypeParameterList list)
                 'typeParameters': RawList(<RawValue>[for (final TypeParameter p in list.typeParameters) RawLiteral(p.name.lexeme)]),
@@ -723,6 +722,17 @@ final class DeclarationExtractor {
           Binding(name: parameter.name!.lexeme, binds: Binds.parameter),
     ]);
 
+    // `Future`-unwrapped for `async`, matching `_methods`/`_extension`'s own `_valueReturnTypeOf` exactly
+    // (found live, fixing this bug: a top-level `Future<void> f() async => e;` was the one declaration
+    // kind still passing its own *wrapped* `Future<void>` to `bodyOf`'s `isVoidReturn` check, which tests
+    // for literal `void`, never `Future<void>` — so this one shape alone kept returning `e`'s value
+    // instead of discarding it, the exact inconsistency `_valueReturnTypeOf`'s own doc says the
+    // `returnType` field must not have: "the returnType field itself always describes the VALUE, exactly
+    // as a synchronous method's own returnType already does").
+    final DartType? functionReturnType = _valueReturnTypeOf(
+      node.declaredFragment?.element.returnType ?? node.returnType?.type,
+      isAsync: function.body.isAsynchronous,
+    );
     out.emit(
       RawNode(
         kind: 'logic.FunctionDecl',
@@ -730,12 +740,9 @@ final class DeclarationExtractor {
         symbol: symbol,
         fields: <String, RawValue>{
           'name': RawLiteral(node.name.lexeme),
-          'returnType': out.typeRef(
-            node.declaredFragment?.element.returnType ?? node.returnType?.type,
-            at: node,
-          ),
+          'returnType': out.typeRef(functionReturnType, at: node),
           'params': RawList(_params(function.parameters, scope)),
-          'body': RawList(expressions.bodyOf(function.body, inner)),
+          'body': RawList(expressions.bodyOf(function.body, inner, returnType: functionReturnType)),
           if (function.body.isAsynchronous) 'isAsync': const RawLiteral(true),
           if (function.typeParameters case final TypeParameterList list)
             'typeParameters': RawList(<RawValue>[for (final TypeParameter p in list.typeParameters) RawLiteral(p.name.lexeme)]),

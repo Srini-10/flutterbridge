@@ -10833,4 +10833,155 @@ class Home extends StatelessWidget {
       expect(box.containsKey('constructors'), isFalse);
     });
   });
+
+  group('an expression-bodied void method/function discards its own arrow body, never returns it', () {
+    Iterable<Map<String, dynamic>> kinds(Object? node, String kind) sync* {
+      if (node is Map<String, dynamic>) {
+        if (node['kind'] == kind) {
+          yield node;
+        }
+        for (final Object? v in node.values) {
+          yield* kinds(v, kind);
+        }
+      } else if (node is List) {
+        for (final Object? v in node) {
+          yield* kinds(v, kind);
+        }
+      }
+    }
+
+    /// The `logic.FunctionDecl` named [name] extraction produced from [declarations] — one or more
+    /// complete top-level declarations, [use] a statement `Home.build` runs so a class among them is
+    /// reachable (found live, building this test: an unreferenced `class Counter { void increment() =>
+    /// …; }` extracted *zero* methods at all, silently — a top-level function or an extension member
+    /// needs no such reference, both are already unconditionally scanned regardless of any call site).
+    /// `print`, never `debugPrint` — this harness's own stand-in `flutter` package
+    /// (`support/temp_project.dart`) has no `foundation.dart` to resolve, and these tests are about the
+    /// raw UIR shape, never the generator, so `dart:core`'s own always-resolvable `print` is exactly as
+    /// good a "some call, not an assignment" body.
+    Future<Map<String, dynamic>> declaredAs(String declarations, String name, {String use = ''}) async {
+      final Extracted e = await extract('''
+import 'package:flutter/material.dart';
+$declarations
+class Home extends StatelessWidget {
+  const Home({super.key});
+  @override
+  Widget build(BuildContext context) {
+    $use
+    return const Text('x');
+  }
+}
+''');
+      expect(e.errors, isEmpty, reason: 'the fixture must analyze cleanly');
+      final List<Map<String, dynamic>> matches = kinds(
+        e.nodes,
+        'logic.FunctionDecl',
+      ).where((Map<String, dynamic> f) => f['name'] == name).toList();
+      expect(matches, hasLength(1), reason: 'expected exactly one logic.FunctionDecl named $name, found ${matches.length}');
+      return matches.single;
+    }
+
+    test("a general class's own method: void, an assignment — the reported shape — has no logic.Return", () async {
+      final Map<String, dynamic> increment = await declaredAs(
+        'class Counter { int value = 0; void increment() => value = value + 1; }',
+        'increment',
+        use: 'Counter().increment();',
+      );
+      expect(increment['returnType'], <String, dynamic>{'name': 'void'});
+      expect(kinds(increment['body'], 'logic.Return'), isEmpty);
+      expect(kinds(increment['body'], 'logic.ExprStmt'), hasLength(1));
+    });
+
+    test("a general class's own method: void, a call (not an assignment) — also has no logic.Return", () async {
+      final Map<String, dynamic> log = await declaredAs(
+        "class Counter { void log() => print('hi'); }",
+        'log',
+        use: 'Counter().log();',
+      );
+      expect(kinds(log['body'], 'logic.Return'), isEmpty);
+      expect(kinds(log['body'], 'logic.ExprStmt'), hasLength(1));
+    });
+
+    test("a general class's own method: non-void is unaffected — it still returns its value", () async {
+      final Map<String, dynamic> doubled = await declaredAs(
+        'class Counter { int value = 0; int doubled() => value * 2; }',
+        'doubled',
+        use: 'Counter().doubled();',
+      );
+      expect(kinds(doubled['body'], 'logic.Return'), hasLength(1));
+      expect(kinds(doubled['body'], 'logic.ExprStmt'), isEmpty);
+    });
+
+    test("a general class's own method: statement-bodied void is unaffected — already no logic.Return", () async {
+      final Map<String, dynamic> reset = await declaredAs(
+        'class Counter { int value = 0; void reset() { value = 0; } }',
+        'reset',
+        use: 'Counter().reset();',
+      );
+      expect(kinds(reset['body'], 'logic.Return'), isEmpty);
+      expect(kinds(reset['body'], 'logic.ExprStmt'), hasLength(1));
+    });
+
+    test('a top-level function: void, a call — no logic.Return', () async {
+      final Map<String, dynamic> resetAll = await declaredAs(
+        'class Counter { int value = 0; void reset() { value = 0; } }\n'
+        'void resetAll(Counter c) => c.reset();',
+        'resetAll',
+        use: 'resetAll(Counter());',
+      );
+      expect(kinds(resetAll['body'], 'logic.Return'), isEmpty);
+      expect(kinds(resetAll['body'], 'logic.ExprStmt'), hasLength(1));
+    });
+
+    test('an extension setter: implicitly void, an assignment — a different extraction path — no logic.Return', () async {
+      final Map<String, dynamic> setter = await declaredAs(
+        'class Counter { int value = 0; }\n'
+        'extension CounterX on Counter { set plus1(int v) => value = value + v; }',
+        'CounterX_set_plus1',
+        use: 'Counter().plus1 = 1;',
+      );
+      expect(setter['isSetter'], isTrue);
+      expect(kinds(setter['body'], 'logic.Return'), isEmpty);
+      expect(kinds(setter['body'], 'logic.ExprStmt'), hasLength(1));
+    });
+
+    test('an async function: Future<void>, a call — the Future-unwrapped void check — no logic.Return', () async {
+      final Map<String, dynamic> logAsync = await declaredAs(
+        "Future<void> logAsync() async => print('hi');",
+        'logAsync',
+      );
+      expect(kinds(logAsync['body'], 'logic.Return'), isEmpty);
+      expect(kinds(logAsync['body'], 'logic.ExprStmt'), hasLength(1));
+    });
+
+    test('the pre-existing setState batch-splice is untouched: a void method calling setState in arrow form still splices open, not merely discards', () async {
+      final Extracted e = await extract('''
+import 'package:flutter/material.dart';
+class Counter extends StatefulWidget {
+  const Counter({super.key});
+  @override
+  State<Counter> createState() => _CounterState();
+}
+class _CounterState extends State<Counter> {
+  int n = 0;
+  void bump() => setState(() {
+    n = n + 1;
+  });
+  @override
+  Widget build(BuildContext context) {
+    return ElevatedButton(onPressed: bump, child: const Text('x'));
+  }
+}
+''');
+      final Map<String, dynamic> bump = kinds(e.nodes, 'sig.Action').single;
+      // Spliced open — the assignment itself, not a call to `setState` and not a `logic.Return` of one.
+      expect(kinds(bump['body'], 'logic.Assign'), hasLength(1));
+      expect(kinds(bump['body'], 'logic.Return'), isEmpty);
+      expect(
+        kinds(bump['body'], 'logic.MethodCall').where((Map<String, dynamic> m) => m['method'] == 'setState'),
+        isEmpty,
+        reason: 'setState itself must not survive as a call — INV-22',
+      );
+    });
+  });
 }

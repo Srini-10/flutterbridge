@@ -255,6 +255,12 @@ export function topLevelClosureLocalsRaw(): string {
   return readFileSync(path, 'utf8');
 }
 
+/** The real `fixtures/apps/void_expression_bodies` document, raw analyzer output — not yet normalized. */
+export function voidExpressionBodiesRaw(): string {
+  const path = fileURLToPath(new URL('../../../../fixtures/uir/void_expression_bodies.ndjson', import.meta.url));
+  return readFileSync(path, 'utf8');
+}
+
 /** The real `fixtures/apps/async_push_guard` document, raw analyzer output (M7-H) — not yet normalized. */
 export function asyncPushGuardRaw(): string {
   const path = fileURLToPath(new URL('../../../../fixtures/uir/async_push_guard.ndjson', import.meta.url));

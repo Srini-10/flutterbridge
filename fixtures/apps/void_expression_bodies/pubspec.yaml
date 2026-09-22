@@ -1,0 +1,27 @@
+name: void_expression_bodies
+description: >-
+  Regression fixture: an expression-bodied (`=>`) function/method declared `void` must discard its own
+  body's own value, never return it — Dart's own rule (`void f() => e;` means `{ e; }`, not `{ return e;
+  }`, and does not even require `e`'s own type to be assignable to `void`). Found live: `void increment()
+  => state = state + 1;` (a real shape every StateNotifier controller with a one-line mutator writes)
+  lowered to `return (this.state = intAdd(this.state, 1), this.state);`, typed `number`, against its own
+  declared `void` return — a `tsc` error, not merely an imprecision. Root-caused to the analyzer's own
+  `ExpressionExtractor.bodyOf` (`dart/bridge_analyzer/lib/src/session/extract/expression_extractor.dart`),
+  which unconditionally wrapped every arrow body in `logic.Return`, regardless of the declared return
+  type — a raw-UIR representation bug, not a generator one. `Counter` exercises every extraction path this
+  bug could reach: a general class's own instance method (`increment`/`log`/`reset`/`doubled`), a top-level
+  function (`resetAll`), an extension setter (`CounterX.plus1`), a widget's own lifecycle method
+  (`dispose`) and its own action (`bump`) — general (not Riverpod-specific): nothing about `StateNotifier`
+  triggers it, any expression-bodied `void` construct assigning or calling does.
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

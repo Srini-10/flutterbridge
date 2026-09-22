@@ -258,16 +258,22 @@ signature, exactly as `StateProvider`/`StateNotifierProvider` already infer thei
   either); the real corpus does not hit it (App B's own stream providers wrap a repository method's return,
   never construct one from a raw SDK `Stream` static).
 
-**A general (non-Riverpod) bug found, not fixed, while building this milestone's own fixture**: an
-expression-bodied `void`-returning method (`void increment() => state = state + 1;`) lowers its assignment's
-own *value* as the method's return (`return (this.state = intAdd(this.state, 1), this.state);`), which does
-not typecheck against its own `void` return type. The identical *block*-bodied method
-(`void increment() { state = state + 1; }`) lowers correctly (no `return`) — already proven by
-`riverpod_state_notifier_build.test.ts`'s own `CounterController`. Not Riverpod-specific (nothing about
-`StateNotifier` triggers it; any expression-bodied `void` method assigning a value would) and out of this
-milestone's own scope — `fixtures/apps/riverpod_family`'s own `CounterNotifier.increment` is written
-block-bodied to avoid it. **Next step**: isolate with a minimal non-Riverpod fixture and root-cause in the
-statement/method-body emitter's own arrow-body handling for a `void`-declared return type.
+**A general (non-Riverpod) bug found while building this milestone's own fixture — fixed in a later,
+separate commit, root-caused in the analyzer, not the generator**: an expression-bodied `void`-returning
+method (`void increment() => state = state + 1;`) lowered its assignment's own *value* as the method's
+return (`return (this.state = intAdd(this.state, 1), this.state);`), which did not typecheck against its
+own `void` return type. Root cause: Dart's own rule for `void f() => e;` is that `e` is evaluated for its
+effect and the function returns nothing (the language does not even require `e`'s own type to be
+assignable to `void`) — the analyzer's `ExpressionExtractor.bodyOf`
+(`dart/bridge_analyzer/lib/src/session/extract/expression_extractor.dart`) unconditionally wrapped every
+arrow body in `logic.Return`, regardless of the declared return type, a raw-UIR representation bug rather
+than a generator one. Fixed generically across every extraction path that has a declared return type — a
+general class's own method, a top-level function, an extension member, a widget's own lifecycle method and
+its own action (sync and `async`) — never Riverpod-specific, and never by special-casing one fixture.
+Verified: `fixtures/apps/void_expression_bodies` + `void_expression_bodies_build.test.ts` (real analyzer →
+normalize → generate → `tsc --strict`) + 8 dedicated Dart-level extraction tests
+(`dart/bridge_analyzer/test/extraction_test.dart`), mutation-tested (reverting the analyzer change alone
+reproduces 5 of those 8 failing; restoring it passes all 8 again).
 
 Verified: `fixtures/apps/riverpod_family` + `packages/generators/react/tests/riverpod_family_build.test.ts`
 (real analyzer output, real `bridge normalize`, real generator, real `tsc --strict` against the real kit) +

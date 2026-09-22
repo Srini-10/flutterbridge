@@ -286,7 +286,12 @@ final class SignalExtractor {
                 'timing': RawLiteral(timing),
                 'method': RawLiteral(name),
                 if (params.isNotEmpty) 'params': RawList(params),
-                'body': RawList(expressions.bodyOf(member.body, inner)),
+                // A lifecycle method's own declared return type — always `void` (Flutter's own `State`
+                // declares every one of these that way, so overriding with anything else is itself a
+                // compile error) — so an arrow-bodied override (`void dispose() => super.dispose();`)
+                // discards its own body's value rather than returning it (`ExpressionExtractor.bodyOf`'s
+                // own `isVoidReturn`), the identical rule an ordinary `void` method already gets.
+                'body': RawList(expressions.bodyOf(member.body, inner, returnType: member.declaredFragment?.element.returnType)),
               },
             ),
           );
@@ -359,6 +364,17 @@ final class SignalExtractor {
       // emitted under are the same string by construction rather than by two calls agreeing.
       final String symbol = actionSymbols[name] ?? out.symbols.action(name, owner: owner);
       actions.add(symbol);
+      // An action's own declared return type — `sig.Action` carries no `returnType` field of its own (an
+      // action is a behavior, not a typed value), but an arrow-bodied one still needs to know whether it is
+      // `void` (`onSubmit() => save();`) to decide Return-vs-statement the identical way a plain
+      // `logic.FunctionDecl` does (`ExpressionExtractor.bodyOf`'s own `isVoidReturn`) — `Future`-unwrapped
+      // for `async`, mirroring `declaration_extractor.dart`'s own `_valueReturnTypeOf`: `Future<void>
+      // save() async => repo.save();` discards identically, since the future it returns resolves to no
+      // value either.
+      final DartType? declaredReturn = member.declaredFragment?.element.returnType ?? member.returnType?.type;
+      final DartType? actionReturnType = member.body.isAsynchronous && declaredReturn is InterfaceType && declaredReturn.isDartAsyncFuture
+          ? declaredReturn.typeArguments.firstOrNull
+          : declaredReturn;
       out.emit(
         RawNode(
           kind: 'sig.Action',
@@ -369,7 +385,7 @@ final class SignalExtractor {
             // two spellings of "writes nothing" would be two different documents for one program.
             if (params.isNotEmpty) 'params': RawList(params),
             if (writes.isNotEmpty) 'writes': RawList(writes.map(RawRef.new).toList()),
-            'body': RawList(expressions.bodyOf(member.body, inner)),
+            'body': RawList(expressions.bodyOf(member.body, inner, returnType: actionReturnType)),
             if (member.body.isAsynchronous) 'isAsync': const RawLiteral(true),
           },
         ),
