@@ -15,28 +15,14 @@
     }
   ],
   "normalizerErrors": 0,
-  "generatorErrors": 536,
-  "uniqueRootCauses": 20,
+  "generatorErrors": 362,
+  "uniqueRootCauses": 19,
   "occurrencesByCategory": {
-    "C": 360,
-    "B": 175,
+    "C": 192,
+    "B": 169,
     "D": 1
   },
   "rootCauses": [
-    {
-      "stage": "generate",
-      "root": "riverpod-ref",
-      "category": "C",
-      "layer": "analyzer (no model of ConsumerWidget/ref)",
-      "cause": "Riverpod: ref.watch/read/listen, providers, notifiers",
-      "adr": "0073",
-      "count": 108,
-      "codes": [
-        "BRG3006",
-        "BRG3013"
-      ],
-      "sample": "`state` is not declared in this program, so there is nothing to emit for it. It needs an override, or a pass that models what it means."
-    },
     {
       "stage": "generate",
       "root": "unresolved-reference",
@@ -44,11 +30,11 @@
       "layer": "generator",
       "cause": "a name with no declaration in the program (usually a package or a private symbol from a construct above)",
       "adr": "0073",
-      "count": 106,
+      "count": 70,
       "codes": [
         "BRG3006"
       ],
-      "sample": "`FontWeight.bold` is not declared in this program, so there is nothing to emit for it. It needs an override, or a pass that models what it means."
+      "sample": "`pending` is not declared in this program, so there is nothing to emit for it. It needs an override, or a pass that models what it means."
     },
     {
       "stage": "generate",
@@ -57,7 +43,7 @@
       "layer": "generator (no callee signature for a package/SDK function)",
       "cause": "named arguments to a package/SDK callee the kit does not mirror (Supabase, showModalBottomSheet, Color ops, …)",
       "adr": "0073",
-      "count": 64,
+      "count": 50,
       "codes": [
         "BRG3002"
       ],
@@ -70,7 +56,7 @@
       "layer": "analyzer (token extraction)",
       "cause": "a theme built by a helper/ColorScheme from computed values: no token for the Material role a widget paints",
       "adr": "0073",
-      "count": 50,
+      "count": 49,
       "codes": [
         "BRG3010"
       ],
@@ -110,7 +96,7 @@
       "layer": "generator",
       "cause": "an expression form with no lowering",
       "adr": "0058",
-      "count": 29,
+      "count": 25,
       "codes": [
         "BRG3002"
       ],
@@ -131,29 +117,16 @@
     },
     {
       "stage": "generate",
-      "root": "riverpod-provider-initializer",
+      "root": "riverpod-ref",
       "category": "C",
-      "layer": "generator",
-      "cause": "a top-level provider whose initializer builds a package object",
+      "layer": "analyzer (no model of ConsumerWidget/ref)",
+      "cause": "Riverpod: ref.watch/read/listen, providers, notifiers",
       "adr": "0073",
-      "count": 20,
+      "count": 15,
       "codes": [
         "BRG3013"
       ],
-      "sample": "the initializer of `managedSongListControllerProvider` could not be lowered: BRG3002: `StateNotifierProvider` is one of this application's own classes, and this generator does not emit class declarations — so `new StateN"
-    },
-    {
-      "stage": "generate",
-      "root": "package-member",
-      "category": "C",
-      "layer": "generator",
-      "cause": "member of a package class with no runtime model (dio beyond the subset, audio, Supabase, …)",
-      "adr": "0073",
-      "count": 16,
-      "codes": [
-        "BRG3013"
-      ],
-      "sample": "`playing` reads a member of `PlayerState`, a class this generator has no member model for. FlutterBridge does not yet lower a project-defined or external-package class's own fields, getters or methods — this refuses read"
+      "sample": "the initializer of `leaderboardListControllerProvider` could not be lowered: BRG3006: `StateNotifierProvider.family` is not declared in this program, so there is nothing to emit for it. This uses Riverpod, which has no a"
     },
     {
       "stage": "generate",
@@ -183,16 +156,29 @@
     },
     {
       "stage": "generate",
+      "root": "package-member",
+      "category": "C",
+      "layer": "generator",
+      "cause": "member of a package class with no runtime model (dio beyond the subset, audio, Supabase, …)",
+      "adr": "0073",
+      "count": 11,
+      "codes": [
+        "BRG3013"
+      ],
+      "sample": "`playing` reads a member of `PlayerState`, a class this generator has no member model for. FlutterBridge does not yet lower a project-defined or external-package class's own fields, getters or methods — this refuses read"
+    },
+    {
+      "stage": "generate",
       "root": "unsupported-capability",
       "category": "B",
       "layer": "generator",
       "cause": "a construct the generator names as unsupported",
       "adr": "0073",
-      "count": 12,
+      "count": 11,
       "codes": [
         "BRG3013"
       ],
-      "sample": "`dispose` (lib/features/game_round/application/game_round_controller.dart:421) belongs to no component — a store's lifecycle method, say — and has no lowering, so its body would be missing from the generated project, sil"
+      "sample": "`CustomScrollView` needs the sliver protocol — a scroll view whose children are viewport-aware, which is not built yet. That work belongs to an architectural decision that has not been made yet (it needs an ADR). For now"
     },
     {
       "stage": "generate",
@@ -218,7 +204,7 @@
       "codes": [
         "BRG3013"
       ],
-      "sample": "`AppColors` extends a class this generator does not emit (ThemeExtension<AppColors>): a project class may extend another project class, but not a framework or package class."
+      "sample": "`AppColors` extends a class this generator does not emit (ThemeExtension<AppColors>): a project class may extend another project class, or one the runtime kit itself provides (`StateNotifier`), but not an arbitrary frame"
     },
     {
       "stage": "generate",

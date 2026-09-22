@@ -158,11 +158,19 @@ export function callArguments(
   const out: string[] = [];
   let index = 0;
   for (const param of params) {
-    const name = String(param['name'] ?? '');
     if (param['named'] === true) {
-      if (name in named) {
-        out.push(named[name] as string);
-        remaining.delete(name);
+      // Dart's own calling convention, not this generator's: a *private* named parameter — legal only as a
+      // field-formal (`{required this._repository}`, the "private named parameters" language feature every
+      // `StateNotifier` subclass measured with an injected dependency uses) — is called by its name *with the
+      // leading underscore stripped* (`Controller(repository: value)`), even though the parameter's own
+      // declared name, and the field it initializes, both keep it. A call site's own `namedArgs` are keyed by
+      // that external label, never by the field name, so matching on `param['name']` verbatim looked up a key
+      // that was never there and refused the call as "passes an argument the declaration has no parameter
+      // for" — the actual, measured cause of the majority of App A's remaining generator errors.
+      const label = callableLabelOf(String(param['name'] ?? ''));
+      if (label in named) {
+        out.push(named[label] as string);
+        remaining.delete(label);
       } else {
         out.push('undefined');
       }
@@ -174,6 +182,11 @@ export function callArguments(
   for (const name of remaining) return { unknown: name };
   while (out.length > 0 && out[out.length - 1] === 'undefined') out.pop();
   return out;
+}
+
+/** The name a *named* parameter is called by at a construction site — see {@link callArguments}'s own doc. */
+function callableLabelOf(name: string): string {
+  return name.startsWith('_') ? name.slice(1) : name;
 }
 
 /** The suffix a constructor's members carry: `` for the unnamed one, `_name` for a named one. */

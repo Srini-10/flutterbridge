@@ -15,11 +15,11 @@
     }
   ],
   "normalizerErrors": 0,
-  "generatorErrors": 5439,
+  "generatorErrors": 4591,
   "uniqueRootCauses": 24,
   "occurrencesByCategory": {
-    "C": 3829,
-    "B": 1580,
+    "C": 2985,
+    "B": 1576,
     "D": 25,
     "?": 5
   },
@@ -31,12 +31,11 @@
       "layer": "analyzer (no model of ConsumerWidget/ref)",
       "cause": "Riverpod: ref.watch/read/listen, providers, notifiers",
       "adr": "0073",
-      "count": 1566,
+      "count": 941,
       "codes": [
-        "BRG3006",
         "BRG3013"
       ],
-      "sample": "the initializer of `marketplaceSelectedSkuIdsProvider` could not be lowered: BRG3006: `StateProvider.autoDispose` is not declared in this program, so there is nothing to emit for it. This uses Riverpod, which has no adap"
+      "sample": "the initializer of `agentRequestsProvider` could not be lowered: BRG3013: `supportRepositoryProvider` is a top-level `final`/`const` (a module-level constant), but its initializer could not be lowered — the diagnostic on"
     },
     {
       "stage": "generate",
@@ -45,7 +44,7 @@
       "layer": "generator",
       "cause": "a name with no declaration in the program (usually a package or a private symbol from a construct above)",
       "adr": "0073",
-      "count": 653,
+      "count": 650,
       "codes": [
         "BRG3006",
         "BRG3013"
@@ -110,19 +109,6 @@
     },
     {
       "stage": "generate",
-      "root": "package-member",
-      "category": "C",
-      "layer": "generator",
-      "cause": "member of a package class with no runtime model (dio beyond the subset, audio, Supabase, …)",
-      "adr": "0073",
-      "count": 260,
-      "codes": [
-        "BRG3013"
-      ],
-      "sample": "`id` reads a member of `User?`, a class this generator has no member model for. FlutterBridge does not yet lower a project-defined or external-package class's own fields, getters or methods — this refuses reading a membe"
-    },
-    {
-      "stage": "generate",
       "root": "opaque-expression",
       "category": "B",
       "layer": "analyzer",
@@ -136,29 +122,29 @@
     },
     {
       "stage": "generate",
+      "root": "package-member",
+      "category": "C",
+      "layer": "generator",
+      "cause": "member of a package class with no runtime model (dio beyond the subset, audio, Supabase, …)",
+      "adr": "0073",
+      "count": 245,
+      "codes": [
+        "BRG3013"
+      ],
+      "sample": "`id` reads a member of `User?`, a class this generator has no member model for. FlutterBridge does not yet lower a project-defined or external-package class's own fields, getters or methods — this refuses reading a membe"
+    },
+    {
+      "stage": "generate",
       "root": "unsupported-capability",
       "category": "B",
       "layer": "generator",
       "cause": "a construct the generator names as unsupported",
       "adr": "0073",
-      "count": 237,
+      "count": 233,
       "codes": [
         "BRG3013"
       ],
       "sample": "`AppSpacing.pageOf` has no supported lowering for this call, even though its own declaration is otherwise eligible (ADR-0045). FlutterBridge does not yet lower this method's own body."
-    },
-    {
-      "stage": "generate",
-      "root": "riverpod-provider-initializer",
-      "category": "C",
-      "layer": "generator",
-      "cause": "a top-level provider whose initializer builds a package object",
-      "adr": "0073",
-      "count": 226,
-      "codes": [
-        "BRG3013"
-      ],
-      "sample": "the initializer of `agentRequestsProvider` could not be lowered: BRG3013: `watch` calls a member of `AutoDisposeFutureProviderRef<List<AgentRequest>>`, a class this generator has no member model for. FlutterBridge does n"
     },
     {
       "stage": "generate",
@@ -197,7 +183,7 @@
       "codes": [
         "BRG3013"
       ],
-      "sample": "`Firm` extends a class this generator does not emit (Equatable): a project class may extend another project class, but not a framework or package class."
+      "sample": "`Firm` extends a class this generator does not emit (Equatable): a project class may extend another project class, or one the runtime kit itself provides (`StateNotifier`), but not an arbitrary framework or package class"
     },
     {
       "stage": "generate",
@@ -263,6 +249,19 @@
         "BRG3014"
       ],
       "sample": "`Container.color` is a colour the analyzer could not resolve to an app.Token. Every constant colour is hoisted into the palette and every `colorScheme.<role>` read names one already, so this is a colour computed at run t"
+    },
+    {
+      "stage": "generate",
+      "root": "riverpod-provider-initializer",
+      "category": "C",
+      "layer": "generator",
+      "cause": "a top-level provider whose initializer builds a package object",
+      "adr": "0073",
+      "count": 25,
+      "codes": [
+        "BRG3013"
+      ],
+      "sample": "the initializer of `brandConfigProvider` could not be lowered: BRG3013: `applyBrandingJson` is a project-defined top-level function, and this generator does not yet lower a `logic.FunctionDecl` to a module-level TypeScri"
     },
     {
       "stage": "generate",
