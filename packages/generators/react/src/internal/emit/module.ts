@@ -90,7 +90,7 @@ const GENERATED_NAMES: ReadonlySet<string> = new Set([
   'listSublist', 'listTake', 'listToList', 'listWhere', 'mapAddAll', 'mapClear', 'mapContainsKey',
   'mapContainsValue', 'mapEntries', 'mapGet', 'mapKeys', 'mapPutIfAbsent', 'mapRemove', 'mapSet', 'mapValues',
   'setAdd', 'setAddAll', 'setClear', 'setContains', 'setRemove', 'setToList',
-  'defineFamily', 'defineProvider', 'useListen', 'useProviderContainer', 'useRead', 'useWatch',
+  'defineFamily', 'defineProvider', 'defineStateFamily', 'defineStateNotifierFamily', 'useListen', 'useProviderContainer', 'useRead', 'useWatch',
 ]);
 
 /** Whether `name` is one the generated code binds or calls unqualified. Exported for the drift-guard test. */

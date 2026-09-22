@@ -183,6 +183,95 @@ real generator, real `tsc --strict` against the real kit, real `next build`, and
 rendered values match real Dart's answer for the same program; a click that writes `state` through `.notifier`
 completes with no console error).
 
+## 4b. Implemented (this milestone) — `.family`, `.autoDispose`, plain `FutureProvider`/`StreamProvider`
+
+Real-corpus inventory, done before any implementation (per this milestone's own discipline): App A has exactly
+3 `.family` declarations, all `StateNotifierProvider.family<N, S, Arg>`, zero `.autoDispose`, args `String`/
+`String`/an enum — consumed as `final p = xProvider(widget.prop); ref.watch(p); ref.read(p.notifier)`. App B has
+~8 `.family`/`.autoDispose.family` declarations across `Provider.family`, `Provider.autoDispose.family`,
+`FutureProvider.autoDispose.family` (dominant), `StreamProvider.autoDispose.family`, `StateProvider.autoDispose.family`
+(`customersFirmFilterProvider`/`customersAgentFilterProvider`, read through both `ref.watch` and
+`ref.read(p(arg).notifier).state = v`) — all `String`/`String?` arguments, plus one real family-depends-on-family
+chain (`resolvedPriceProvider`'s body calls `ref.watch(productRevisionProvider(productId))`, the same argument
+passed through). No object/record/multi-parameter/named-parameter family keys in either corpus.
+
+**What `.family`/`.autoDispose` actually are, structurally**: `Provider.family` and `FutureProvider.autoDispose`
+are Dart *static getters* returning a **builder** value (`package:riverpod/src/builders.dart` —
+`ProviderFamilyBuilder`, `AutoDisposeFutureProviderFamilyBuilder`, …, one per kind×autoDispose×family
+combination, confirmed directly against real analyzer output for every shape either corpus uses); the trailing
+`(create)` is a `.call` on that builder. Recognition (`riverpod_family.ts`'s `riverpodBuilderShapeOf`) reads the
+combination off the builder's own **resolved type name** — never the source spelling (`Provider.family` vs
+`itemByIdProvider`), so two differently-named providers of the same kind reach the identical code path, per
+this milestone's own "do not special-case provider names" constraint. A family *applied* to its argument
+(`itemByIdProvider('a')`) reaches the analyzer as the same `method: 'call'` shape Dart gives any callable-class
+value (`operator call`) — recognized separately (`isRiverpodFamilyValue`), by the *value's* own resolved type
+(`ProviderFamily<T, A>`, …), since the pre-existing "function value invoked via `.call()`" lowering only ever
+recognized Dart's own `Function` type, not a package's callable class.
+
+**Lowering**: a non-family shape (`Provider.autoDispose<T>(create)`) reuses the *identical* runtime value class
+a plain `Provider(create)` already uses (`package_kit.ts`'s `logic.New` path) — `new Provider(create, {
+autoDispose: true })` — now joined by `FutureProvider`/`StreamProvider` classes (added this milestone,
+mirroring `Provider`/`StateProvider` exactly) for the plain, no-builder-chain construction case. A family shape
+becomes a runtime **function**: `defineFamily<T, A>('kind', create, options)` for `provider`/`future`/`stream`
+(`T`/`A` read off the field's own declared type, `ProviderFamily<T, A>` — a `future`/`stream` value is
+`AsyncValue<T>`, what a watcher actually reads, not `create`'s own return); `defineStateFamily`/
+`defineStateNotifierFamily` for `state`/`stateNotifier`, added this milestone as the family analogue of the
+already-existing `StateProvider`/`StateNotifierProvider` value classes — both needed because `.notifier` must
+stay concretely typed (`StateController<T>` / the notifier's own class, not `unknown`), the identical reason
+their non-family siblings exist as their own classes rather than a generic `defineProvider` call. Neither new
+family function takes an explicit type argument: both `T` and `A` (and, for `defineStateNotifierFamily`, the
+notifier class `N`, with the state type `S` derived from it via `infer`) are inferred from `create`'s own
+signature, exactly as `StateProvider`/`StateNotifierProvider` already infer theirs.
+
+- **SUPPORTED**: `Provider.family`, `Provider.autoDispose`, `Provider.autoDispose.family`,
+  `StateProvider.autoDispose.family`, `FutureProvider.autoDispose.family`, `StateNotifierProvider.family`, plain
+  (non-builder-chain) `FutureProvider(create)`/`StreamProvider(create)` — every shape either real corpus
+  declares, plus (generically, from the same table, untested against a real corpus instance because neither
+  uses it) `StreamProvider.family`/`.autoDispose`, `StateProvider.family` (no `.autoDispose`), and
+  `StateNotifierProvider.autoDispose` (reuses the existing `StateNotifierProvider` class with `{ autoDispose:
+  true }}`, needing no new runtime code at all). A program may mix family and non-family declarations of the
+  same kind freely (App A/B both do); each lowers independently.
+- **Family key equality**: unchanged from the already-built, already-oracle-verified `ProviderContainer`
+  (`dartEquals`/`bucketOf`, prior milestone) — this work only ever supplies the family *value* through a new
+  typed surface, never touches key comparison. Proven again here with a fresh differential: two `family(arg)`
+  calls with `==`-equal (not `identical`) arguments read/mutate the same member; two different arguments do not
+  (`packages/runtimes/react/tests/riverpod_family_typed.test.ts`).
+- **EXPLICITLY REFUSED, precisely**: a `.family`/`.autoDispose` call passing Dart named arguments (`name:`,
+  `dependencies:` — real Riverpod accepts them on some builders; not observed in either corpus, refused rather
+  than guessed at, the same `refuseNamedArgs` diagnostic every other kit-provided construction already gives);
+  a `.call(...)` with other than exactly one argument; any builder type name this generator's table does not
+  know (an `AsyncNotifierProviderBuilder`, were one ever added to real riverpod's own public API, refuses by
+  name rather than mis-lowering into some other kind).
+- **NOT YET CONSUMABLE**: `ref.watch`/`ref.listen` in a `ConsumerWidget`/`ConsumerState` remain refused (§4a,
+  unchanged this milestone) — so a family/autoDispose declaration lowers correctly and is verified via
+  `ref.read`, but the real corpora's own dominant consumption pattern (`ref.watch(p(arg))` in a `build`) is
+  still blocked on hook-hoisting, the next piece of work. `AsyncValue.when`/`.valueOrNull`/`.hasError` (real
+  App B widget code reads all three directly on a `FutureProvider`/`StreamProvider` result) has no generator
+  recognition yet — the runtime's own `AsyncValue` already implements them (oracle-verified), but nothing lowers
+  a Dart `.when(...)`/`.valueOrNull` call onto it. `dart:async`'s `Stream` is not yet a kit-mirrored value
+  type (unlike `Future`), so a provider `create` that constructs one directly (`Stream<T>.value(x)`,
+  `Stream<T>.periodic(...)`) still refuses — found live while proving `StreamProvider`'s own construction
+  path, not a regression (this generator never supported constructing a `Stream` before this milestone
+  either); the real corpus does not hit it (App B's own stream providers wrap a repository method's return,
+  never construct one from a raw SDK `Stream` static).
+
+**A general (non-Riverpod) bug found, not fixed, while building this milestone's own fixture**: an
+expression-bodied `void`-returning method (`void increment() => state = state + 1;`) lowers its assignment's
+own *value* as the method's return (`return (this.state = intAdd(this.state, 1), this.state);`), which does
+not typecheck against its own `void` return type. The identical *block*-bodied method
+(`void increment() { state = state + 1; }`) lowers correctly (no `return`) — already proven by
+`riverpod_state_notifier_build.test.ts`'s own `CounterController`. Not Riverpod-specific (nothing about
+`StateNotifier` triggers it; any expression-bodied `void` method assigning a value would) and out of this
+milestone's own scope — `fixtures/apps/riverpod_family`'s own `CounterNotifier.increment` is written
+block-bodied to avoid it. **Next step**: isolate with a minimal non-Riverpod fixture and root-cause in the
+statement/method-body emitter's own arrow-body handling for a `void`-declared return type.
+
+Verified: `fixtures/apps/riverpod_family` + `packages/generators/react/tests/riverpod_family_build.test.ts`
+(real analyzer output, real `bridge normalize`, real generator, real `tsc --strict` against the real kit) +
+`riverpod_family_shape.test.ts` (the two pure recognizers, including refusal edges) +
+`packages/runtimes/react/tests/riverpod_family_typed.test.ts` (the new typed family/value wrappers, behavioral,
+against the container's own already-oracle-verified semantics).
+
 ### Known gaps found while implementing this (named, not fixed)
 
 - **A statement-bodied top-level provider closure, referenced transitively from a *second* emitted component's own

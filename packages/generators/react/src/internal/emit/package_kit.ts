@@ -16,14 +16,19 @@ export const KIT_PACKAGE_CLASSES: Readonly<Record<string, Readonly<Record<string
     DioExceptionType: 'DioExceptionType',
     LogInterceptor: 'LogInterceptor',
   },
-  // Only the shapes a program actually constructs as a plain value (`Provider(...)`, `StateProvider(...)`,
-  // `StateNotifierProvider(...)`) — the same subset `docs/m14/riverpod-usage-matrix.md` §4 documents as supported.
-  // `.family`/`.autoDispose` static-builder chains and `FutureProvider`/`StreamProvider` are not constructions of these
-  // classes (they are property-access chains on them) and are not recognized here; they refuse, precisely, elsewhere.
+  // The shapes a program constructs as a plain value (`Provider(...)`, `StateProvider(...)`,
+  // `StateNotifierProvider(...)`, `FutureProvider(...)`, `StreamProvider(...)`) — the same subset
+  // `docs/m14/riverpod-usage-matrix.md` §4 documents as supported. A `.family`/`.autoDispose` static-builder
+  // chain (`Provider.family(...)`, `FutureProvider.autoDispose(...)`) is not a construction of one of these
+  // classes at all — it is a `.call(...)` on a *builder* property-access chain — and is recognized separately,
+  // by its own resolved type (`riverpod_family.ts`, `expression.ts`'s `lowerRiverpodBuilderConstruction`);
+  // this table only ever sees the plain, no-builder constructor call.
   riverpod: {
     Provider: 'Provider',
     StateProvider: 'StateProvider',
     StateNotifierProvider: 'StateNotifierProvider',
+    FutureProvider: 'FutureProvider',
+    StreamProvider: 'StreamProvider',
   },
   // `class MyController extends StateNotifier<S>` — `flutter_riverpod` re-exports the class, but the analyzer resolves it
   // to its true declaring library, `package:state_notifier/state_notifier.dart` (confirmed directly against real analyzer

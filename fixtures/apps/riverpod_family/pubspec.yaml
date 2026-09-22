@@ -1,0 +1,25 @@
+name: riverpod_family
+description: >-
+  M14 fixture: Riverpod's `.family`/`.autoDispose` static-builder chain
+  (docs/m14/riverpod-usage-matrix.md §"Family and autoDispose") — every combination the real corpora
+  (App A, App B) actually use. `itemByIdProvider`/`autoItemByIdProvider` are `Provider.family`/
+  `Provider.autoDispose.family` (App B's `resolvedPriceProvider`-shaped usage); `loadedByIdProvider` is
+  `FutureProvider.autoDispose.family` (App B's dominant shape, `openProfileChangeProvider`); `filterByIdProvider`
+  is `StateProvider.autoDispose.family` (App B's `customersFirmFilterProvider`, read through both `ref.watch`
+  and `ref.read(...).notifier).state = `); `counterByIdProvider` is `StateNotifierProvider.family` (App A's
+  only family shape, all three of its controllers). `autoValueProvider`/`futureValueProvider` are the
+  non-family `.autoDispose`/plain-construction siblings, so a program that mixes family and non-family
+  declarations of the same kind (as both real apps do) is exercised too.
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_riverpod: 2.6.1
+
+flutter:
+  uses-material-design: true

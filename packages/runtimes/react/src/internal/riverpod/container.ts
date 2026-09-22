@@ -279,6 +279,23 @@ export function defineFamily<T, A>(kind: ProviderKind, create: (ref: Ref, arg: A
   return Object.assign((arg: A) => new ProviderInstance<T>(def, arg, true), { def });
 }
 
+/**
+ * `family(arg)` applied to a family's own declaration (shared by {@link defineStateFamily} and
+ * {@link defineStateNotifierFamily}): identical to {@link defineFamily}'s own construction, except each
+ * member is `wrap`'s subclass rather than a plain `ProviderInstance` — the one thing those two need beyond
+ * what `defineFamily` already gives every other kind, and the reason they exist as their own functions
+ * rather than a `defineFamily` call site casting the result.
+ */
+function familyOf<A, I extends ProviderInstance<unknown>>(
+  kind: ProviderKind,
+  create: (ref: Ref, arg: A) => unknown,
+  options: ProviderOptions,
+  wrap: (def: ProviderDef, arg: A) => I,
+): ((arg: A) => I) & { readonly def: ProviderDef } {
+  const def = new ProviderDef(kind, create as ProviderDef['create'], options.autoDispose ?? false, options.name, true);
+  return Object.assign((arg: A) => wrap(def, arg), { def });
+}
+
 // ── state holders ─────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 const ATTACH = Symbol('bridge.riverpod.attach');
@@ -919,4 +936,53 @@ export class StateNotifierProvider<N extends StateNotifier<any>> extends Provide
   override get notifier(): Listenable<N> {
     return super.notifier as Listenable<N>;
   }
+}
+
+/**
+ * `FutureProvider<T>((ref) async => value)`. What a watcher reads is `AsyncValue<T>`, not `T` — the loading/
+ * data/error wrapper real Riverpod's own `FutureProvider` reads as (`async_value.ts`; recorded from the real
+ * package, `fixtures/riverpod_oracle`) — so this is `ProviderInstance<AsyncValue<T>>`, not `ProviderInstance<T>`.
+ * `T` is still inferred from `create`'s own return (`Promise<T> | T`: Dart's `async` body and a bare
+ * synchronous return are both legal `create` bodies for a `FutureProvider`), exactly as `Provider<T>` infers
+ * `T` from its own `create` — nothing here re-derives `AsyncValue`'s own shape; `runAsync` (this file, above)
+ * already builds it, for every `future`-kind element, family or not.
+ */
+export class FutureProvider<T> extends ProviderInstance<AsyncValue<T>> {
+  constructor(create: (ref: Ref) => Promise<T> | T, options: ProviderOptions = {}) {
+    super(new ProviderDef('future', create as ProviderDef['create'], options.autoDispose ?? false, options.name, false), undefined, false);
+  }
+}
+
+/** `StreamProvider<T>((ref) => stream)` — a watcher reads `AsyncValue<T>`, the same wrapper {@link FutureProvider} reads. */
+export class StreamProvider<T> extends ProviderInstance<AsyncValue<T>> {
+  constructor(create: (ref: Ref) => StreamLike<T>, options: ProviderOptions = {}) {
+    super(new ProviderDef('stream', create as ProviderDef['create'], options.autoDispose ?? false, options.name, false), undefined, false);
+  }
+}
+
+/** `StateProvider.family<T, A>((ref, arg) => initial)` — the family form of {@link StateProvider}, with the identical typed `.notifier`. */
+class StateFamilyInstance<T> extends ProviderInstance<T> {
+  override get notifier(): Listenable<StateController<T>> {
+    return super.notifier as Listenable<StateController<T>>;
+  }
+}
+export function defineStateFamily<T, A>(create: (ref: Ref, arg: A) => T, options: ProviderOptions = {}): ((arg: A) => StateFamilyInstance<T>) & { readonly def: ProviderDef } {
+  return familyOf<A, StateFamilyInstance<T>>('state', create as ProviderDef['create'], options, (def, arg) => new StateFamilyInstance<T>(def, arg, true));
+}
+
+/** `StateNotifierProvider.family<N, S, A>((ref, arg) => N())` — the family form of {@link StateNotifierProvider}, with the identical typed `.notifier`. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- the constraint bound, not a value's own type; see `StateNotifierProvider`'s own doc.
+class StateNotifierFamilyInstance<N extends StateNotifier<any>> extends ProviderInstance<
+  N extends StateNotifier<infer S> ? S : never
+> {
+  override get notifier(): Listenable<N> {
+    return super.notifier as Listenable<N>;
+  }
+}
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- see above.
+export function defineStateNotifierFamily<N extends StateNotifier<any>, A>(
+  create: (ref: Ref, arg: A) => N,
+  options: ProviderOptions = {},
+): ((arg: A) => StateNotifierFamilyInstance<N>) & { readonly def: ProviderDef } {
+  return familyOf<A, StateNotifierFamilyInstance<N>>('stateNotifier', create as ProviderDef['create'], options, (def, arg) => new StateNotifierFamilyInstance<N>(def, arg, true));
 }

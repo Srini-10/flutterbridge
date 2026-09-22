@@ -53,6 +53,7 @@ import {
 import { functionFailures } from './failures.js';
 import { packageRefusal, unsupportedPackageOf, type PackageModel } from './packages.js';
 import { kitPackageClass } from './package_kit.js';
+import { RIVERPOD_VALUE_CLASS, isRiverpodFamilyValue, riverpodBuilderShapeOf, type RiverpodBuilderShape } from './riverpod_family.js';
 import { typeTextOf } from './types.js';
 import { OWNER_LABEL, missingCapabilityOf, opaqueDetailOf, opaqueReasonSuffix } from './unsupported.js';
 
@@ -2202,6 +2203,26 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
 
     case 'logic.MethodCall': {
       if (node['extensionTarget'] !== undefined) return emitExtensionUse(node, scope, []) ?? REFUSED;
+
+      // A Riverpod `.family`/`.autoDispose` static-builder chain's trailing `.call(create)` — `Provider.family<T,
+      // A>((ref, arg) => …)`, `FutureProvider.autoDispose.family<T, A>(…)`, `StateNotifierProvider.family<N, S,
+      // A>(…)`, `Provider.autoDispose<T>(…)` — checked, and lowered, before the receiver is emitted: the receiver
+      // is a builder value (`ProviderFamilyBuilder`, …) with no runtime mirror of its own; only the whole chain,
+      // read off its own resolved type, means anything (`riverpod_family.ts`). And a family *applied* to its
+      // argument — `itemByIdProvider('a')` — which reaches the analyzer as the identical `method: 'call'` shape
+      // Dart gives any callable-class value, and needs its own check beside the existing `isFunctionType` one
+      // (that one only ever recognizes Dart's own `Function` type, never a package's callable class).
+      if (node['method'] === 'call') {
+        const callReceiver = node['receiver'] as Node | undefined;
+        const shape = riverpodBuilderShapeOf(callReceiver?.['type'] as Node | undefined);
+        if (shape !== undefined) return lowerRiverpodBuilderConstruction(node, shape, scope);
+        if (callReceiver !== undefined && isRiverpodFamilyValue(callReceiver['type'] as Node | undefined)) {
+          const familyText = emitExpression(callReceiver, scope);
+          if (familyText === REFUSED) return REFUSED;
+          return `${familyText}(${emitArguments(node['args'], scope)})`;
+        }
+      }
+
       // A call on a general class (M12): a real method call, its arguments ordered by the method's own signature.
       {
         const receiverNode = node['receiver'] as Node | undefined;
@@ -3250,6 +3271,77 @@ function refuseNamedArgs(node: Node, scope: EmitScope): void {
 
 function asArray(value: unknown): Node[] {
   return Array.isArray(value) ? (value as Node[]) : [];
+}
+
+// ── Riverpod `.family`/`.autoDispose` (docs/m14/riverpod-usage-matrix.md §"Family and autoDispose") ────────────────────────
+
+/**
+ * Lowers a `<Kind>[.autoDispose][.family](create)` static-builder chain, once `riverpodBuilderShapeOf` has
+ * recognized `node`'s own receiver as one (checked by the caller, in `case 'logic.MethodCall'`, before the
+ * receiver itself is emitted — the receiver is a builder value with no runtime mirror, and the *chain*, not
+ * the receiver, is what this lowers).
+ *
+ * Every non-family shape reuses the identical runtime **value class** a plain `Provider(create)` already
+ * uses (`package_kit.ts`'s `logic.New` path) — `Provider.autoDispose<T>(create)` is `new Provider(create, {
+ * autoDispose: true })`, the same class, just constructed from a different Dart source shape. A family
+ * shape needs a value each `family(arg)` call produces, so it is a runtime **function** instead
+ * (`defineFamily`/`defineStateFamily`/`defineStateNotifierFamily`, `container.ts`) — `state` and
+ * `stateNotifier` get their own (`.notifier` needs a concrete type, exactly as their non-family classes
+ * already do); `provider`/`future`/`stream` share the generic `defineFamily<T, A>('kind', create, options)`,
+ * with `T` and `A` read off the field's own declared type (`ProviderFamily<T, A>`,
+ * `AutoDisposeFutureProviderFamily<T, A>`) — never off `create`'s own signature, which `defineFamily` only
+ * ever types as `unknown` (so that one function can serve every kind, whose actual create-to-value
+ * relationship differs — a `future`/`stream` value is `AsyncValue<T>`, not `create`'s own return).
+ */
+function lowerRiverpodBuilderConstruction(node: Node, shape: RiverpodBuilderShape, scope: EmitScope): string {
+  const namedArgs = node['namedArgs'];
+  if (typeof namedArgs === 'object' && namedArgs !== null && Object.keys(namedArgs as object).length > 0) {
+    refuseNamedArgs(node, scope);
+    return REFUSED;
+  }
+  const args = asArray(node['args']);
+  if (args.length !== 1) {
+    scope.report(
+      GeneratorDiagnosticCode.UnsupportedExpression,
+      'error',
+      `a Riverpod provider's own \`.call(...)\` takes exactly one argument, its \`create\` callback — this one passes ${args.length}.`,
+      idOf(node),
+    );
+    return REFUSED;
+  }
+  const createText = emitExpression(args[0] as Node, scope);
+  if (createText === REFUSED) return REFUSED;
+  const optionsText = shape.autoDispose ? ', { autoDispose: true }' : '';
+
+  if (!shape.family) {
+    const className = scope.module.use(RUNTIME, RIVERPOD_VALUE_CLASS[shape.kind]);
+    return `new ${className}(${createText}${optionsText})`;
+  }
+
+  // `N`'s own `.notifier` needs a concrete type (`StateController<T>`/the notifier class itself), which a
+  // generic `defineFamily<T, A>` cannot give — `state`/`stateNotifier` get their own typed family function,
+  // and neither one needs explicit type arguments: both infer everything from `create`'s own signature,
+  // exactly as their non-family classes (`StateProvider`, `StateNotifierProvider`) already do.
+  if (shape.kind === 'stateNotifier') {
+    return `${scope.module.use(RUNTIME, 'defineStateNotifierFamily')}(${createText}${optionsText})`;
+  }
+  if (shape.kind === 'state') {
+    return `${scope.module.use(RUNTIME, 'defineStateFamily')}(${createText}${optionsText})`;
+  }
+
+  // `provider`/`future`/`stream`: `defineFamily<T, A>('kind', create, options)` — `T`/`A` from the field's
+  // own declared type (`ProviderFamily<T, A>`); a `future`/`stream` value is `AsyncValue<T>` (what a watcher
+  // actually reads — `async_value.ts`, recorded from the real package), not `create`'s own return.
+  const outerType = node['type'] as Node | undefined;
+  const outerName = typeof outerType?.['name'] === 'string' ? (outerType['name'] as string) : undefined;
+  const generics = typeArgumentsOf(outerName);
+  const fn = scope.module.use(RUNTIME, 'defineFamily');
+  if (generics.length !== 2) return `${fn}('${shape.kind}', ${createText}${optionsText})`;
+  const [valueName, argName] = generics as [string, string];
+  const valueType = typeTextOf({ name: valueName, nullable: valueName.endsWith('?') }, (n) => scope.module.use(RUNTIME, n));
+  const argType = typeTextOf({ name: argName, nullable: argName.endsWith('?') }, (n) => scope.module.use(RUNTIME, n));
+  const valueTypeText = shape.kind === 'future' || shape.kind === 'stream' ? `${scope.module.use(RUNTIME, 'AsyncValue')}<${valueType}>` : valueType;
+  return `${fn}<${valueTypeText}, ${argType}>('${shape.kind}', ${createText}${optionsText})`;
 }
 
 // ── ADR-0030: ScaffoldMessenger / SnackBar presentation ─────────────────────────────────────────────
