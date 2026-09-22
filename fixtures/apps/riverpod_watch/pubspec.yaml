@@ -8,6 +8,9 @@ description: >-
   value never read. `doubledProvider` exercises the *other* half of this milestone's own distinction (§7): a
   provider watching another provider, inside its own `create` closure — never a hook, always a plain call on
   the runtime's own `Ref`, and must not be affected by this fixture's own widget-side hoisting at all.
+  `resolvedByIdProvider` reproduces App B's own `resolvedPriceProvider` shape exactly: family + autoDispose +
+  a provider-internal `ref.watch` chained through another family provider (the same argument passed
+  through), itself then `ref.watch`ed from the widget.
 publish_to: 'none'
 version: 1.0.0
 

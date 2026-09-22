@@ -13,7 +13,9 @@ import { cleanupBuildProofTemporaries, compiledFrom, fileAt, harness, riverpodWa
 // (inside a callback). `ref.listen(provider, (previous, next) {})` is a bare statement, as both real
 // corpora write it. `doubledProvider` is a provider watching another provider inside its own `create`
 // closure (§7) — a plain call, never a hook, and must lower unaffected by this fixture's own widget-side
-// hoisting.
+// hoisting. `resolvedByIdProvider` reproduces App B's own `resolvedPriceProvider` shape: family +
+// autoDispose + a provider-internal `ref.watch` chained through another family (the same argument passed
+// through), itself then `ref.watch`ed from the widget — every combination this phase's own brief asks for.
 //
 // The architecture this proves: every `ref.watch`/`ref.listen` reachable from a `ConsumerWidget`'s own
 // render position is hoisted to the top of the component, unconditionally, in source order — the identical
@@ -39,13 +41,16 @@ describe('M14 build-proof: `ref.watch`/`ref.listen` hook-hoisting, real analyzer
     const { context } = harness(normalized);
     const { files } = reactGenerator.generate(context);
     const home = fileAt(files, 'src/components/home-screen.tsx') ?? '';
-    expect(home).toMatch(/export function HomeScreen\(props: HomeScreenProps\) \{\s*const ref = useProviderContainer\(\);\s*\n\s*const w\$0 = useWatch\(counterByIdProvider\(props\.id\)\);\s*const w\$1 = useWatch\(doubledProvider\);/);
-    // Read at their own position through `count`/`doubled` — themselves a plain rebinding of the hoisted
-    // local (the next test), not a second, un-hoistable `ref.watch` call.
+    expect(home).toMatch(
+      /export function HomeScreen\(props: HomeScreenProps\) \{\s*const ref = useProviderContainer\(\);\s*\n\s*const w\$0 = useWatch\(counterByIdProvider\(props\.id\)\);\s*const w\$1 = useWatch\(doubledProvider\);\s*const w\$2 = useWatch\(resolvedByIdProvider\(props\.id\)\);/,
+    );
+    // Read at their own position through `count`/`doubled`/`resolved` — themselves a plain rebinding of the
+    // hoisted local (the next test), not a second, un-hoistable `ref.watch` call.
     expect(home).toContain('{`${count}`}');
     expect(home).toContain('{`${doubled}`}');
+    expect(home).toContain('{resolved}');
     // Never re-evaluated inline — the whole point of hoisting is exactly one subscription per call site.
-    expect(home.match(/useWatch\(/g)?.length).toBe(2);
+    expect(home.match(/useWatch\(/g)?.length).toBe(3);
   });
 
   it('`ref.listen` is hoisted to a bare `useListen(...)` call, and its own bare-statement position emits nothing', () => {
@@ -65,12 +70,13 @@ describe('M14 build-proof: `ref.watch`/`ref.listen` hook-hoisting, real analyzer
     expect(home).toMatch(/onPressed=\{\(\) => \{\s*return ref\.read\(provider\.notifier\)\.increment\(\);\s*\}\}/);
   });
 
-  it('`count`/`doubled`, whose own initializer was a hoisted `ref.watch`, become a plain rebinding of the hoisted local — not a second subscription', () => {
+  it('`count`/`doubled`/`resolved`, whose own initializer was a hoisted `ref.watch`, become a plain rebinding of the hoisted local — not a second subscription', () => {
     const { context } = harness(normalized);
     const { files } = reactGenerator.generate(context);
     const home = fileAt(files, 'src/components/home-screen.tsx') ?? '';
     expect(home).toContain('const count = w$0;');
     expect(home).toContain('const doubled = w$1;');
+    expect(home).toContain('const resolved = w$2;');
   });
 
   it('a provider watching another provider inside its own `create` closure is a plain call, never a hook (§7)', () => {
@@ -82,9 +88,18 @@ describe('M14 build-proof: `ref.watch`/`ref.listen` hook-hoisting, real analyzer
     expect(main).not.toContain('useWatch');
   });
 
+  it('family + autoDispose + a provider-internal `ref.watch` chained through another family (App B\'s own `resolvedPriceProvider` shape) all compose in one declaration', () => {
+    const { context } = harness(normalized);
+    const { files } = reactGenerator.generate(context);
+    const main = fileAt(files, 'src/generated/dart/app/lib/main.ts') ?? '';
+    expect(main).toMatch(
+      /export const resolvedByIdProvider = defineFamily<string, string>\('provider', \(ref, id\) => \{\s*return ref\.watch\(itemByIdProvider\(id\)\)\.toUpperCase\(\);\s*\}, \{ autoDispose: true \}\);/,
+    );
+  });
+
   it('the whole emitted project typechecks against the real runtime kit', () => {
     const { context } = harness(normalized);
     const { files } = reactGenerator.generate(context);
     typecheckEmitted(files);
-  });
+  }, 120_000);
 });

@@ -29,6 +29,12 @@ class CounterNotifier extends StateNotifier<int> {
 /// App A's own real shape: `StateNotifierProvider.family<Notifier, State, Arg>`.
 final counterByIdProvider = StateNotifierProvider.family<CounterNotifier, int, String>((ref, id) => CounterNotifier());
 
+/// App B's own real shape (`resolvedPriceProvider`): a family+autoDispose provider watching *another*
+/// family provider, the same argument passed through — combining family, autoDispose, and a
+/// provider-internal `ref.watch` chain in one declaration.
+final itemByIdProvider = Provider.family<String, String>((ref, id) => 'item-$id');
+final resolvedByIdProvider = Provider.autoDispose.family<String, String>((ref, id) => ref.watch(itemByIdProvider(id)).toUpperCase());
+
 class HomeScreen extends ConsumerWidget {
   const HomeScreen({super.key, required this.id});
   final String id;
@@ -39,12 +45,15 @@ class HomeScreen extends ConsumerWidget {
     final provider = counterByIdProvider(id);
     final count = ref.watch(provider);
     final doubled = ref.watch(doubledProvider);
+    // App B's own combo: family + autoDispose + widget-side `ref.watch`, chained through another family.
+    final resolved = ref.watch(resolvedByIdProvider(id));
     ref.listen(provider, (previous, next) {});
     return Scaffold(
       body: Column(
         children: [
           Text('$count'),
           Text('$doubled'),
+          Text(resolved),
           ElevatedButton(
             onPressed: () => ref.read(provider.notifier).increment(),
             child: const Text('inc'),
