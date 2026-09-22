@@ -1,0 +1,22 @@
+name: top_level_closure_locals
+description: >-
+  A regression fixture for a real, general (non-Riverpod) compiler bug found and fixed during the M14
+  Riverpod StateNotifier work: a local variable declared inside a statement-bodied closure that is a
+  top-level `final`/`const`'s own initializer got no declaration-tier symbol of its own (the enclosing
+  scope's own `owner` was `null` — nothing ever wrapped a top-level constant's initializer in
+  `Scope.forBody`, unlike every other body this compiler extracts: a method, an action, a component's
+  `build`). Every read of such a local reached the generator as an untargeted `logic.Ref`, indistinguishable
+  from a genuinely unresolvable name (`BRG3006`) — regardless of whether anything else in the program
+  referenced the constant. Fixed in `declaration_extractor.dart`'s `TopLevelVariableDeclaration` case.
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

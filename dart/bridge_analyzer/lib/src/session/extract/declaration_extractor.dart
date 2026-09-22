@@ -69,16 +69,33 @@ final class DeclarationExtractor {
 
       case TopLevelVariableDeclaration():
         for (final VariableDeclaration variable in node.variables.variables) {
+          final String symbol = out.symbols.variable(variable.name.lexeme);
           out.emit(
             RawNode(
               kind: 'logic.FieldDecl',
               span: out.span(variable),
-              symbol: out.symbols.variable(variable.name.lexeme),
+              symbol: symbol,
               fields: <String, RawValue>{
                 'name': RawLiteral(variable.name.lexeme),
                 'type': out.typeRef(variable.declaredFragment?.element.type, at: variable),
                 if (variable.initializer != null)
-                  'initializer': RawChild(expressions.extract(variable.initializer!, scope)),
+                  // `Scope.forBody`, not the bare enclosing `scope`: a top-level constant's own initializer had no
+                  // declaration-tier `owner`/ordinal context of its own (`scope.owner` stayed whatever the *file*
+                  // scope's was — `null`, since nothing ever wraps file scope in `Scope.forBody`), so a local
+                  // variable declared inside a *statement-bodied closure the initializer constructs*
+                  // (`final f = () { final x = ...; return x; }; `) minted no symbol for itself
+                  // (`_localSymbol`, `statement_extractor.dart`, returns `null` without an owner) and every read of
+                  // it reached the generator as an untargeted `logic.Ref`, indistinguishable from a genuinely
+                  // unresolvable name (`BRG3006`) — reproduced directly with the smallest such fixture, own
+                  // constructor parameters and (an *expression*-bodied closure, or one with no locals of its own)
+                  // both unaffected, since neither needs an ordinal. Every *other* body this compiler extracts — a
+                  // method, an action, a component's `build` — already gets one (`declaration_extractor.dart`'s own
+                  // `_constructors`/`_methods`, `signal_extractor.dart`'s own action/effect extraction, `component_
+                  // extractor.dart`'s own `Scope.forWidgetTree`); a top-level constant's own initializer was the one
+                  // expression this compiler ever lowered with no body-scope of its own at all.
+                  'initializer': RawChild(
+                    expressions.extract(variable.initializer!, Scope.forBody(scope, owner: symbol, body: variable.initializer!)),
+                  ),
                 if (node.variables.isFinal || node.variables.isConst)
                   'isFinal': const RawLiteral(true),
                 'isStatic': const RawLiteral(true),
