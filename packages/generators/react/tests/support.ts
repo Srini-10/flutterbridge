@@ -279,6 +279,18 @@ export function riverpodNotifierRaw(): string {
   return readFileSync(path, 'utf8');
 }
 
+/** The real `fixtures/apps/riverpod_consumer` document, raw analyzer output — not yet normalized. */
+export function riverpodConsumerRaw(): string {
+  const path = fileURLToPath(new URL('../../../../fixtures/uir/riverpod_consumer.ndjson', import.meta.url));
+  return readFileSync(path, 'utf8');
+}
+
+/** The real `fixtures/apps/riverpod_consumer_unsupported_body` document, raw analyzer output — not yet normalized. */
+export function riverpodConsumerUnsupportedBodyRaw(): string {
+  const path = fileURLToPath(new URL('../../../../fixtures/uir/riverpod_consumer_unsupported_body.ndjson', import.meta.url));
+  return readFileSync(path, 'utf8');
+}
+
 /** The real `fixtures/apps/async_push_guard` document, raw analyzer output (M7-H) — not yet normalized. */
 export function asyncPushGuardRaw(): string {
   const path = fileURLToPath(new URL('../../../../fixtures/uir/async_push_guard.ndjson', import.meta.url));

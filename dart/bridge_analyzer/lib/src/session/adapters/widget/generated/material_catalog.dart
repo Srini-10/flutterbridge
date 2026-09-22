@@ -301,6 +301,7 @@ abstract final class MaterialCatalog {
   /// Widgets whose only purpose is to scope a rebuild. See [RebuildBuilder].
   static const Map<String, RebuildBuilder> rebuildBuilders = <String, RebuildBuilder>{
   'Builder': RebuildBuilder(builderProp: 'builder'),
+  'Consumer': RebuildBuilder(builderProp: 'builder'),
   'ListenableBuilder': RebuildBuilder(builderProp: 'builder'),
   'ValueListenableBuilder': RebuildBuilder(builderProp: 'builder', valueProp: 'valueListenable'),
   };

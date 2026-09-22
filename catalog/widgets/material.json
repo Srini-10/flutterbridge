@@ -279,7 +279,7 @@
     "slowMiddle": "cubic-bezier(0.15, 0.85, 0.85, 0.15)"
   },
   "rebuildBuilders": {
-    "$comment": "Widgets whose only purpose is to SCOPE A REBUILD. Flutter needs them because `setState` rebuilds a whole `State`; a `ListenableBuilder` exists so that only its subtree rebuilds when a listenable fires, and a `Builder` exists only to obtain a fresh `BuildContext`. Neither is a fact about the user interface. INV-22 is explicit: 'no framework lifecycle or runtime primitive may survive extraction… their meaning is already carried by UIR constructs.' Under ADR-4 and ADR-20 a signal read IS the subscription, so the rebuild scope a Flutter program had to state by hand is what the signal graph computes — and a `BuildContext` has no UIR meaning at all. So extraction replaces these with their builder's body. `valueProp` names the parameter whose listenable binds the builder's *value* parameter; the builder's `context` and `child` parameters are framework machinery and bind to nothing. Together these are the corpus's 2nd and 3rd most-used unsupported widgets — 41 instantiations.",
+    "$comment": "Widgets whose only purpose is to SCOPE A REBUILD. Flutter needs them because `setState` rebuilds a whole `State`; a `ListenableBuilder` exists so that only its subtree rebuilds when a listenable fires, and a `Builder` exists only to obtain a fresh `BuildContext`. Neither is a fact about the user interface. INV-22 is explicit: 'no framework lifecycle or runtime primitive may survive extraction… their meaning is already carried by UIR constructs' — and its own text names 'a `Consumer` wrapper' alongside `setState`/`context.watch` as exactly this class of thing (docs/m4/m4i-widget-surface-and-packages.md §3). Under ADR-4 and ADR-20 a signal read IS the subscription, so the rebuild scope a Flutter program had to state by hand is what the signal graph computes — and a `BuildContext` has no UIR meaning at all. So extraction replaces these with their builder's body. `valueProp` names the parameter whose listenable binds the builder's *value* parameter; the builder's `context` and `child` parameters are framework machinery and bind to nothing. `Builder`/`ListenableBuilder`/`ValueListenableBuilder` together are the corpus's 2nd and 3rd most-used unsupported widgets — 41 instantiations (M4-I). `Consumer` (`package:flutter_riverpod`) has no `valueProp` of its own: its builder's `ref` parameter is a `WidgetRef`, resolved and (where safe) hoisted to `useWatch`/`useListen` by the same, already-general mechanism a `ConsumerWidget.build`'s own `ref` parameter uses (`expression.ts`'s `isWidgetRefType` check is structural — it does not care whether `ref` reached scope as a build method's own parameter or, as here, an inlined builder's — docs/m14/riverpod-usage-matrix.md §4f). Real-corpus inventory (M14): 5 declarations, all `Consumer(builder: (context, ref, _) => …)`, none passing `child:`.",
     "Builder": {
       "builderProp": "builder"
     },
@@ -289,6 +289,9 @@
     "ValueListenableBuilder": {
       "builderProp": "builder",
       "valueProp": "valueListenable"
+    },
+    "Consumer": {
+      "builderProp": "builder"
     }
   },
   "widgets": [

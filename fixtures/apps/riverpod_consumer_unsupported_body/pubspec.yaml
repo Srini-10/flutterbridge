@@ -1,0 +1,29 @@
+name: riverpod_consumer_unsupported_body
+description: >-
+  M14 fixture (negative, paired with `riverpod_consumer`): the two ways a real `Consumer(builder: ...)`
+  site fails today, each with its own precise diagnostic, neither silent. `BlockBody` is App B's own
+  *dominant* real shape — every one of its 5 real sites reads through a `final` local (usually
+  `.valueOrNull` off an `AsyncValue`) before returning — which `_widgetOfBody`'s own `BlockFunctionBody`
+  case does not inline (a block of more than one statement stays `ui.Opaque('builder body with
+  statements')`): a pre-existing, general limitation shared identically by `Builder`/`ListenableBuilder`/
+  `ValueListenableBuilder`'s own inlined bodies and by `ListView.builder`/`GridView.builder`'s own
+  `itemBuilder`, not introduced by or scoped to this milestone's own `Consumer` work
+  (`docs/m14/riverpod-usage-matrix.md` §4f). `ItemTemplate` is `search_page.dart`'s own `_Results` shape:
+  a `Consumer` reached only from inside a `GridView.builder`'s own `itemBuilder` — a position a hook
+  cannot run from unconditionally, refused by `component.ts`'s own `declareRiverpodWatches` (ADR-0048),
+  proven here with an expression-bodied builder so it is *this* refusal being exercised, not the other one
+  above (a real corpus site is usually both at once — `search_page.dart`'s own is — but each is a
+  different cause with a different fix, so this fixture isolates them).
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_riverpod: 2.6.1
+
+flutter:
+  uses-material-design: true

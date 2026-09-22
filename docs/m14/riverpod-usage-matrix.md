@@ -4,7 +4,7 @@ Status: **inventory measured; design proposed; real, verified slices implemented
 `StateProvider`/`StateNotifierProvider`/`StateNotifier` subclasses; §4b: `.family`/`.autoDispose`, plain
 `FutureProvider`/`StreamProvider`; §4c: `ref.watch`/`ref.listen` hook-hoisting; §4d: `AsyncValue<T>`
 consumption outside widget position; §4e: `Notifier`/`AutoDisposeNotifier`/`NotifierProvider`,
-non-family/non-async only).** This is the input to an ADR, not the ADR.
+non-family/non-async only; §4f: `Consumer(builder: ...)` erasure).** This is the input to an ADR, not the ADR.
 Numbers come from `tools/riverpod-inventory/inventory.mjs` (a textual count of `.dart` files, tests excluded), run on
 disposable copies of the two real applications used as a corpus (raw output: `riverpod-usage-A.json`,
 `riverpod-usage-B.json`). A textual count sizes the feature and names files; the compiler's own recognition must be
@@ -492,6 +492,82 @@ identical to, the 4-error reduction above, for the same reason §4d's own accoun
 across many unrelated root causes and is not a reliable unit for a narrow fix's own size. Determinism: three
 in-process `reactGenerator.generate()` runs over the fixture's own normalized document produce byte-identical
 output (file paths and contents, sha256-compared).
+
+## 4f. Implemented (this milestone) — `Consumer(builder: ...)` erasure
+
+Real-corpus inventory, done before any implementation: **exactly 5 `Consumer` declarations in all of App A +
+App B combined**, all App B, all the identical shape — a plain `StatelessWidget` (never `ConsumerWidget`/
+`ConsumerState`, which is the whole point of using `Consumer`: narrow, scoped `ref` access without making the
+enclosing widget Riverpod-aware), `builder: (context, ref, _)`, the `child` parameter always discarded, no site
+anywhere passing an explicit `child:` argument to `Consumer` itself. Two of the five sit directly in a class's
+`build()` (`customer_form_page.dart`, `onboarding_page.dart`), two in a small `StatelessWidget`'s `build()`
+that a list itself constructs per item (`discover_page.dart`'s `_SwipeCard`), one reached directly from a
+`GridView.builder`'s own `itemBuilder` (`search_page.dart`'s `_Results`). App A uses none.
+
+**The architecture**: `Consumer` is a **rebuild-scoping wrapper** — INV-22's own text names it explicitly,
+alongside `setState`/`context.watch`, as exactly the class of framework machinery extraction erases rather than
+renders (`docs/m4/m4i-widget-surface-and-packages.md` §3, quoted in full in §2 above): *"their meaning is
+already carried by UIR constructs."* `Builder`/`ListenableBuilder`/`ValueListenableBuilder` already get this
+treatment (`catalog/widgets/material.json`'s `rebuildBuilders`, `widget_extractor.dart`'s
+`_inlineRebuildBuilder`, M4-I) — `Consumer` never had, simply because M4 predates Riverpod being in scope at
+all. **The fix, in full**: one new catalog row, `"Consumer": { "builderProp": "builder" }` (no `valueProp` —
+unlike `ValueListenableBuilder`'s `value`, `Consumer`'s `ref` is not bound from a single named outer
+listenable), regenerated through `catalog-codegen` into `material_catalog.dart`. Nothing else changed.
+Once erased, the builder's own `ref` parameter is an ordinary `WidgetRef`-typed local, and every downstream
+mechanism that already resolves and hoists a `ConsumerWidget.build`'s own `ref` is already structural — keyed
+on the value's own resolved type (`isWidgetRefType`), never on which class declared it
+(`expression.ts`'s `name === 'ref' && isWidgetRefType(...)` resolution; `component.ts`'s
+`declareRiverpodRef`/`declareRiverpodWatches`/`declareRiverpodListens`, whose own `collectRiverpodRefCalls`
+walks the whole render tree regardless of the enclosing Dart class). Confirmed directly against real analyzer
+output before writing a line of the fix: a `Consumer`'s inlined `ref.watch(...)` reaches UIR as the exact same
+`logic.MethodCall{method:'watch', receiver: logic.Ref{name:'ref', type: WidgetRef}}` shape a `ConsumerWidget`'s
+own would. No new generator or runtime code beyond the one catalog row.
+
+- **SUPPORTED, proven end to end**: a `Consumer` whose own `builder` is expression-bodied (or a block of
+  exactly one `return` statement), in an unconditional render position — the wrapper is fully erased (no trace
+  of `Consumer` anywhere in the emitted file), its `ref.watch` hoists to `useWatch` at the top of *whichever*
+  component it is reached from, even a plain `StatelessWidget` with no `ref` of its own
+  (`fixtures/apps/riverpod_consumer`'s own `Footer`, proven independently of `HomeScreen` — each component
+  gets its own hoisted watch, not only the first one reached).
+- **NOT REACHED, precisely, not silently — two separate, both pre-existing, both general**:
+  1. **A block body with a `final` local before its `return`** — `_widgetOfBody`'s own `BlockFunctionBody`
+     case only inlines a block of *exactly one* statement. **This is App B's own dominant real shape**: every
+     one of its 5 real `Consumer` sites reads through a `final` local (usually `.valueOrNull` off an
+     `AsyncValue`) before returning — none is the single-statement shape. The whole body stays
+     `ui.Opaque('builder body with statements')` (`BRG3004`). Identical to the limitation already carried
+     forward from §4a/§4d ("build body with statements") and shared by `Builder`/`ListenableBuilder`/
+     `ValueListenableBuilder`'s own inlined bodies and by `ListView.builder`/`GridView.builder`'s own
+     `itemBuilder` alike (`fixtures/apps/builder_expansion`'s own `BlockIndexed` is the single-statement case
+     that *does* work) — not introduced by this milestone's own `Consumer` work, and, after inspection (it
+     would need `_widgetOfBody`'s own schema-level shape — a paired "locals, then a widget" — extended to
+     every one of its four call sites, which is a materially larger change than a builder-erasure catalog
+     row), not something this phase attempts to close.
+  2. **`Consumer` reached only from inside a list item template** — `search_page.dart`'s own `_Results` shape.
+     Refused by the identical, already-existing mechanism a bare `ref.watch` in the same position already
+     gets (`declareRiverpodWatches`'s own `collectRiverpodRefCalls`, which never walks into a `logic.Lambda`
+     or a `ui.List`'s own `template` — ADR-0048), verified directly with an isolated probe (an
+     expression-bodied `itemBuilder` wrapping an expression-bodied `Consumer`, so limitation 1 above is not
+     also in the way): `BRG3013`, *"`ref.watch` subscribes this widget to a provider, which needs to become a
+     hook... but this one is reached only from inside a callback or a list item template."*
+
+Verified: `fixtures/apps/riverpod_consumer` (both `HomeScreen` and the independent `Footer`; real analyzer
+output, real `bridge normalize`, real generator, real `tsc --strict` against the real kit, 8/8, including "no
+trace of `Consumer`" and "the whole project typechecks") + `fixtures/apps/riverpod_consumer_unsupported_body`
+(the paired **negative** fixture: both limitations above, each with its own precise diagnostic, `BRG3004` and
+`BRG3013` firing together with no third, unrelated construct silently failing alongside them). Mutation-tested
+directly against the **real corpus**: with the catalog row reverted and a genuinely fresh `bridge analyze` +
+`bridge generate` (not a cached `normalized.ndjson` — this fix is analyzer-side, so, unlike §4d/§4e's own
+generator-only fixes, only a fresh re-analyze can exercise it), App B reports exactly 2 `` `Consumer` is not a
+Flutter widget this generator has a mapping for `` errors (`BRG3001`); restoring the row and re-analyzing fresh
+removes both, to 0, with no other diagnostic content changing. **The aggregate generator-error count does not
+move** (4507 before and after, on the same fresh disposable copy) — stated plainly rather than left to be
+inferred: every one of the 5 real sites was already failing overall (the whole program fails when any node
+does), and after this fix it still fails, for the *other*, pre-existing reason above — the *specific*,
+attributable change is 2 fewer `BRG3001`s and a matching rise in `BRG3004`/cascading counts, not a net
+reduction, exactly the same honest pattern §4d's own account established for `AsyncValue`. App A is unaffected
+(348 generator errors, unchanged — it declares no `Consumer`). Determinism: three fresh, independent `bridge
+analyze` runs over `riverpod_consumer` produce a byte-identical `uir.ndjson` (sha256-compared), and three
+in-process `reactGenerator.generate()` runs over its normalized document produce byte-identical emitted files.
 
 ## 5. How it will be verified
 

@@ -1,0 +1,26 @@
+name: riverpod_consumer
+description: >-
+  M14 fixture: `Consumer(builder: (context, ref, child) => …)` — real-corpus inventory first: exactly 5
+  declarations in all of App A + App B combined, all App B, all the identical shape
+  (`Consumer(builder: (context, ref, _) { ... ref.watch(...) ...; return Widget; })`, the `child` parameter
+  always discarded, no site anywhere passing an explicit `child:` argument to `Consumer` itself). `HomeScreen`
+  reproduces the dominant real shape (`discover_page.dart`'s `_SwipeCard`, `customer_form_page.dart`,
+  `onboarding_page.dart`): a plain `StatelessWidget` — never `ConsumerWidget`/`ConsumerState`, which is the
+  whole point of using `Consumer` rather than making the enclosing widget Riverpod-aware — with a `Consumer`
+  directly in its own `build()`'s render tree, an unconditional position a hook can run from. `ItemsList`
+  reproduces the other real shape (`search_page.dart`'s `_Results`): a `Consumer` reached only from inside a
+  `GridView.builder`'s own `itemBuilder` closure — a position a hook cannot run from unconditionally, so its
+  own `ref.watch` must be refused precisely, not silently hoisted somewhere unsound.
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_riverpod: 2.6.1
+
+flutter:
+  uses-material-design: true
