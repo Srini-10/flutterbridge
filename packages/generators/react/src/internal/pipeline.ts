@@ -99,7 +99,13 @@ export function generateProject(context: GeneratorContext): GeneratorOutput {
 
   // One summary per package the program uses and the generator has no adapter for (ADR-0073). The per-use refusals below say where; this
   // says what the package is, and whether a browser equivalent exists — the root cause the uses share.
-  for (const { model, references } of unsupportedPackagesIn(context.program.nodes)) {
+  const unsupported = unsupportedPackagesIn(context.program.nodes);
+  // Riverpod is `onlyClasses`-free in `packages.ts` (unlike dio), so this fires for the whole package even though
+  // `Provider`/`StateProvider`/`StateNotifierProvider` and a provider's own `ref.*` are supported (`package_kit.ts`,
+  // `docs/m14/riverpod-usage-matrix.md` §4) — the warning below still names what remains unsupported. What this reads
+  // is only "does the program use Riverpod at all", to decide whether `providers.tsx` needs a `ProviderScope`.
+  const needsRiverpod = unsupported.some((u) => u.model.label === 'Riverpod');
+  for (const { model, references } of unsupported) {
     report(
       GeneratorDiagnosticCode.UnsupportedPackage,
       'warning',
@@ -380,6 +386,7 @@ export function generateProject(context: GeneratorContext): GeneratorOutput {
       assetsName: 'assetManifest',
       stores,
       needsSnackbarHost: scaffoldMessenger.needsHost,
+      needsRiverpod,
       page: pageOf(
         table,
         allRoutes,

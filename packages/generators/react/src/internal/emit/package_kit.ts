@@ -16,6 +16,15 @@ export const KIT_PACKAGE_CLASSES: Readonly<Record<string, Readonly<Record<string
     DioExceptionType: 'DioExceptionType',
     LogInterceptor: 'LogInterceptor',
   },
+  // Only the shapes a program actually constructs as a plain value (`Provider(...)`, `StateProvider(...)`,
+  // `StateNotifierProvider(...)`) — the same subset `docs/m14/riverpod-usage-matrix.md` §4 documents as supported.
+  // `.family`/`.autoDispose` static-builder chains and `FutureProvider`/`StreamProvider` are not constructions of these
+  // classes (they are property-access chains on them) and are not recognized here; they refuse, precisely, elsewhere.
+  riverpod: {
+    Provider: 'Provider',
+    StateProvider: 'StateProvider',
+    StateNotifierProvider: 'StateNotifierProvider',
+  },
 };
 
 /** The runtime export mirroring `name` from `library`, if the kit provides it. */

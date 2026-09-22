@@ -746,10 +746,13 @@ export { dartAs, dartConstToken, dartIndex, dartIsRecord, dartRecordEquals, dart
 // Every rule in the container is recorded from the real `riverpod` 2.6.1 — see `fixtures/riverpod_oracle`.
 export { AsyncValue, type WhenOptions } from './internal/riverpod/async_value.js';
 export {
+  Provider,
   ProviderContainer,
   ProviderInstance,
   StateController,
   StateNotifier,
+  StateNotifierProvider,
+  StateProvider,
   defineFamily,
   defineProvider,
   type ContainerOptions,

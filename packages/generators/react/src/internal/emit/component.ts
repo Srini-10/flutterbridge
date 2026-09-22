@@ -26,7 +26,7 @@
 import type { NodeId } from '@bridge/uir';
 
 import { GeneratorDiagnosticCode } from '../diagnostics/codes.js';
-import { emitExpression, isScaffoldMessengerCall, localBindingsIn, setBindingLowering, stringLiteral, type EmitScope } from './expression.js';
+import { emitExpression, isScaffoldMessengerCall, isWidgetRefType, localBindingsIn, setBindingLowering, stringLiteral, type EmitScope } from './expression.js';
 import { behaviourOf, methodOf, splitInitState } from './lifecycle.js';
 import { emitStatements } from './statement.js';
 import { identifierOf, type ModuleBuilder } from './module.js';
@@ -130,6 +130,8 @@ export function emitComponent(component: Node, module: ModuleBuilder, scope: Emi
     const withRouter: EmitScope = routerLocal === undefined ? scope : { ...scope, routerLocal };
     const mountedLocal = declareMounted(component, module, withRouter);
     const withMounted: EmitScope = mountedLocal === undefined ? withRouter : { ...withRouter, mountedLocal };
+    // Riverpod's `ref` (ConsumerWidget/ConsumerState), before anything that reads it — same reasoning as `router`/`mounted`.
+    declareRiverpodRef(component, module, withMounted);
     // The snack bar host (ADR-0030), before the tree that presents one, for the same rules-of-hooks
     // reason `router`/`mounted` are.
     const snackbarHostLocal = declareSnackbarHost(component, module, withMounted);
@@ -218,6 +220,35 @@ export function emitComponent(component: Node, module: ModuleBuilder, scope: Emi
  * @param scope - resolution, to reach a `sig.Action` the tree references by id (below).
  * @returns the identifier holding the router, or undefined when the component does not navigate.
  */
+/**
+ * Declares the component's provider container handle, if its tree (or an action it references) reads a
+ * `ConsumerWidget`/`ConsumerState`'s own `ref` (`docs/m14/riverpod-usage-matrix.md`).
+ *
+ * Hoisted for the same rules-of-hooks reason {@link declareRouter} is: `useProviderContainer()` is a hook, and a read
+ * of `ref` is often inside a callback (`onPressed: () => ref.read(p.notifier).increment()`). Named `ref`, matching the
+ * Dart source exactly — `ref` is never a build-method's *own* declared parameter here (the generated component's
+ * signature takes only `props`), so this is the only place that name comes from, and the bare `logic.Ref{name:'ref'}`
+ * reads `expression.ts` resolves (see its own `context`/`BuildContext`-adjacent special case) find it here.
+ *
+ * `ref.watch`/`ref.listen` are refused separately, by name, before they reach the generic call lowering that would
+ * otherwise use this declaration (a subscription needs hook-hoisting this generator does not yet do, ADR-0048) — so a
+ * component that uses only `watch`/`listen` still gets this declared (the receiver must resolve to *something*, even
+ * though the call using it is refused), never a cascaded, less specific diagnostic about `ref` itself.
+ */
+function declareRiverpodRef(component: Node, module: ModuleBuilder, scope: EmitScope): string | undefined {
+  const reads = componentReaches(
+    component,
+    scope,
+    (node) => node['kind'] === 'logic.Ref' && node['name'] === 'ref' && isWidgetRefType(node['type'] as Node | undefined),
+  );
+  if (!reads) return undefined;
+  const useProviderContainer = useRuntime(module, 'useProviderContainer');
+  const local = 'ref';
+  module.line(`const ${local} = ${useProviderContainer}();`);
+  module.line();
+  return local;
+}
+
 function declareRouter(component: Node, module: ModuleBuilder, scope: EmitScope): string | undefined {
   if (!navigatesSomewhere(component, scope)) return undefined;
   const useRouter = useRuntime(module, 'useRouter');

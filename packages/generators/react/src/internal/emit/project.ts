@@ -128,6 +128,16 @@ export interface ScaffoldInput {
    * for `DialogHost`/`useRouter`/`useMounted`.
    */
   readonly needsSnackbarHost: boolean;
+  /**
+   * Whether the program declares a Riverpod provider (`docs/m14/riverpod-usage-matrix.md`) — when `true`, `providers.tsx`
+   * declares a `ProviderScope` at the application root, exactly as `RouterProvider`/`ThemeProvider` always are.
+   *
+   * Never derived from the program's own `ProviderScope(child: …)` construction — root discovery starts from
+   * `MaterialApp`, not from `runApp`'s argument, so a hand-written wrapper is not seen and is not what this reads.
+   * A provider needs a container to run in regardless of whether the Dart source wrapped its root explicitly, the
+   * same way a store or a route table is provided unconditionally on the generator's own initiative.
+   */
+  readonly needsRiverpod: boolean;
   /** Everything `app/page.tsx` needs. Built by the pipeline, because lowering a value needs the emit scope. */
   readonly page: PageInput;
 }
@@ -314,6 +324,7 @@ function providers(input: ScaffoldInput): string {
   const runtimeImports = ['AssetProvider', 'StoreProvider', 'ThemeProvider'];
   if (input.hasRoutes) runtimeImports.push('RouterProvider');
   if (input.needsSnackbarHost) runtimeImports.push('SnackbarHostProvider');
+  if (input.needsRiverpod) runtimeImports.push('ProviderScope');
   runtimeImports.sort();
   lines.push(`import { ${runtimeImports.join(', ')} } from '@bridge/runtime-react';`);
   lines.push("import type { ReactNode } from 'react';");
@@ -332,8 +343,10 @@ function providers(input: ScaffoldInput): string {
 
   // Nested providers, innermost last. Built as text rather than by folding a tree: the nesting is fixed and
   // shallow, and a fold would make the indentation a function of the store count.
-  const open: string[] = [`<ThemeProvider descriptor={${input.themeName}}>`];
-  const close: string[] = ['</ThemeProvider>'];
+  // Outermost: nothing else here reads from or is read by a provider container, so its placement relative to the
+  // others is arbitrary except that it must enclose anything that might use `useWatch`/`useRead` — everything below does.
+  const open: string[] = input.needsRiverpod ? ['<ProviderScope>', `<ThemeProvider descriptor={${input.themeName}}>`] : [`<ThemeProvider descriptor={${input.themeName}}>`];
+  const close: string[] = input.needsRiverpod ? ['</ThemeProvider>', '</ProviderScope>'] : ['</ThemeProvider>'];
   // `SnackbarHostProvider` (ADR-0030) renders the current presentation's own surface, which reads the
   // theme (`useThemeSurface`) — it must nest *inside* `ThemeProvider`, but nothing else here depends on
   // it or is depended on by it, so it goes right after, as outer as it can be.

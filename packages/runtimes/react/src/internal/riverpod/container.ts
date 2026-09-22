@@ -857,3 +857,41 @@ export class ProviderContainer {
     }
   }
 }
+
+// ── the exact classes riverpod's programs construct ──────────────────────────────────────────────────────────────────────────
+//
+// `Provider<T>((ref) => value)`, `StateProvider<T>((ref) => initial)`, `StateNotifierProvider<N, S>((ref) => N())`: the shapes a
+// program actually writes. Named and shaped identically to the real package's, because the generator lowers a construction of a
+// kit-mirrored type by importing the kit's export of the *same name* (`package_kit.ts`, ADR-0075's mechanism) — the same one
+// `Dio`/`BaseOptions` already use. Each is a thin `ProviderInstance`; nothing here differs from `defineProvider` except the name.
+
+/** `Provider<T>((ref) => value)`. */
+export class Provider<T> extends ProviderInstance<T> {
+  constructor(create: (ref: Ref) => T, options: ProviderOptions = {}) {
+    super(new ProviderDef('provider', create as ProviderDef['create'], options.autoDispose ?? false, options.name, false), undefined, false);
+  }
+}
+
+/** `StateProvider<T>((ref) => initial)`. */
+export class StateProvider<T> extends ProviderInstance<T> {
+  constructor(create: (ref: Ref) => T, options: ProviderOptions = {}) {
+    super(new ProviderDef('state', create as ProviderDef['create'], options.autoDispose ?? false, options.name, false), undefined, false);
+  }
+
+  /** `filterProvider.notifier` — a `StateController<T>`: `ref.read(filterProvider.notifier).state = next`. */
+  override get notifier(): Listenable<StateController<T>> {
+    return super.notifier as Listenable<StateController<T>>;
+  }
+}
+
+/** `StateNotifierProvider<N extends StateNotifier<S>, S>((ref) => N())`. */
+export class StateNotifierProvider<T> extends ProviderInstance<T> {
+  constructor(create: (ref: Ref) => StateNotifier<T>, options: ProviderOptions = {}) {
+    super(new ProviderDef('stateNotifier', create as ProviderDef['create'], options.autoDispose ?? false, options.name, false), undefined, false);
+  }
+
+  /** `counterProvider.notifier` — the `StateNotifier<T>` instance: `ref.read(counterProvider.notifier).increment()`. */
+  override get notifier(): Listenable<StateNotifier<T>> {
+    return super.notifier as Listenable<StateNotifier<T>>;
+  }
+}

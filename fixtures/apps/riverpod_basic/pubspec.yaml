@@ -1,0 +1,20 @@
+name: riverpod_basic
+description: >-
+  M14 fixture: the supported Riverpod v1 subset (docs/m14/riverpod-usage-matrix.md §4) — `Provider`/`StateProvider`
+  construction, a provider reading another via `ref.watch` in its own create closure, and a `ConsumerWidget` consuming
+  both through `ref.read`, `.notifier` and `ref.invalidate`. Every provider closure is expression-bodied: a
+  statement-bodied one referenced transitively from a second component currently loses its own locals (a discovered,
+  named, pre-existing gap in top-level-constant lowering — see the design doc's "Known gaps" — not fixed here).
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_riverpod: 2.6.1
+
+flutter:
+  uses-material-design: true

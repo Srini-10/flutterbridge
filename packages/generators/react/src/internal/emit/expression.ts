@@ -617,12 +617,42 @@ export function isEligibleStructuralField(field: Node): boolean {
  * *adds* a refusal to a shape that would otherwise silently pass through; it never invents a new refusal
  * for a shape this milestone did not reproduce and prove.
  */
+/**
+ * Whether `type` is a **provider-create** `ref` — the parameter of `Provider<T>((ref) => …)` and friends (`Ref`,
+ * `ProviderRef<T>`, `StateNotifierProviderRef<N, S>`, `AutoDisposeFutureProviderRef<T>`, …), resolved to
+ * `package:riverpod/…`. **Not** `WidgetRef` (`package:flutter_riverpod/src/consumer.dart`) — a `ConsumerWidget`/
+ * `ConsumerState`'s own `ref` is a live subscription inside a render, which needs hook-hoisting this generator does
+ * not yet do (ADR-0048), so it is left refused by the ordinary M9-J check this function guards, with that check's
+ * own (accurate) message.
+ *
+ * Checked by **library**, never by the parameter's spelling — the identical discipline every other kit/package
+ * recognition in this file already uses (`isKitProvided`, `kitPackageClass`).
+ */
+function isRiverpodProviderRef(type: Node | undefined): boolean {
+  const library = type?.['library'];
+  return typeof library === 'string' && library.startsWith('package:riverpod/');
+}
+
+/**
+ * Whether `type` is a `ConsumerWidget`/`ConsumerState`'s own `ref` (`WidgetRef`) — the live-subscription `ref`, as opposed to
+ * a provider's own create-closure parameter (`isRiverpodProviderRef`). Exported for `component.ts`'s `declareRiverpodRef`,
+ * which uses the identical test to decide whether a component needs `useProviderContainer()` declared at all.
+ */
+export function isWidgetRefType(type: Node | undefined): boolean {
+  return type?.['library'] === 'package:flutter_riverpod/src/consumer.dart' && type['name'] === 'WidgetRef';
+}
+
 function isUnmodelledMemberReceiver(type: Node | undefined): boolean {
   if (type === undefined) return false;
   const rawName = type['name'];
   if (typeof rawName !== 'string') return false;
   const name = rawName.endsWith('?') ? rawName.slice(0, -1) : rawName;
   if (name === 'dynamic' || name === 'Object') return false;
+  // A provider's own `Ref` (`Provider<T>((ref) => …)`, never the widget-side `WidgetRef` — see `isRiverpodProviderRef`):
+  // `watch`/`read`/`listen`/`invalidate`/`refresh`/`onDispose`, and a provider's own `.notifier`/`.future`/`.select`, are
+  // the runtime's own `Ref`/`Listenable` API, under the identical names (`docs/m14/riverpod-usage-matrix.md` §3) — the
+  // generic `receiver.member(args)` lowering below is already correct for them, and this is what lets it run.
+  if (isRiverpodProviderRef(type)) return false;
   // A `target` (ADR-0034) means this receiver resolved to a real `logic.ClassDecl` this compiler
   // extracted — a project-defined or already-extracted-dependency class, regardless of whether
   // `typeTextOf` renders it as a real name or still falls back to `unknown` (private/inherited classes
@@ -1703,6 +1733,17 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
         if (param !== undefined) return param;
       }
 
+      // A `ConsumerWidget`/`ConsumerState`'s own `ref` — a build-method parameter (`build(context, ref)`) or an
+      // implicit field (`ConsumerState.ref`), neither of which is a `ui.Component` parameter or a lambda's own
+      // (so `paramInScope`, just above, never sees it — that binding is `ref`'s own, never this identifier's).
+      // `component.ts`'s `declareRiverpodRef` declares the local this resolves to, hoisted once per component,
+      // the same way `context.mounted`'s `useMounted()` ref is. A subscription (`ref.watch`/`ref.listen`) is
+      // refused separately, by name, before it ever reaches a call that would read this value (see the
+      // `logic.MethodCall` case) — this only says what `ref` *is*, not that every use of it is supported yet.
+      if (name === 'ref' && isWidgetRefType(node['type'] as Node | undefined)) {
+        return 'ref';
+      }
+
       // A **static const of a kit value type** — `Alignment.bottomRight`, `AlignmentDirectional.topStart`.
       // Dart writes these as `Type.member` on a class the kit mirrors, and the kit mirrors them as static
       // members for exactly this reason, so the lowering is the same text with an import attached.
@@ -2191,6 +2232,29 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
       // (`missingCapabilityOf('ScaffoldMessenger.of', ...)`) even on a call this generator does support.
       if (isScaffoldMessengerCall(node)) {
         return lowerScaffoldMessengerCall(node, scope);
+      }
+
+      // `ref.watch`/`ref.listen` inside a `ConsumerWidget`/`ConsumerState` — a *subscription*, which needs to be a hook,
+      // hoisted to the top of the component exactly as `declareLocalSignals` already hoists a signal read (ADR-0048).
+      // That hoisting is not built yet, so refused here, by name, before the receiver (`ref`) is even emitted: `ref`
+      // itself resolves fine (`declareRiverpodRef` gives every other `ref.*` call somewhere to read it from), and
+      // routing through the generic "not declared" fallback would blame the wrong thing. `ref.read`/`.invalidate`/
+      // `.refresh`/`.onDispose` are not subscriptions and are not refused here (`docs/m14/riverpod-usage-matrix.md` §3–4).
+      {
+        const method = String(node['method'] ?? '');
+        const refReceiver = node['receiver'] as Node | undefined;
+        if ((method === 'watch' || method === 'listen') && isWidgetRefType(refReceiver?.['type'] as Node | undefined)) {
+          scope.report(
+            GeneratorDiagnosticCode.UnsupportedCapability,
+            'error',
+            `\`ref.${method}\` subscribes this widget to a provider, which needs to become a hook, hoisted to the top ` +
+              "of the component — the same rule ADR-0048 already applies to a signal read, not yet extended to Riverpod's " +
+              "own `ref`. `ref.read`, `.invalidate`, `.refresh` and `.onDispose` do not need this and are supported. " +
+              `Missing capability: hoisting \`ref.${method}\` out of the render tree. Owner: ${OWNER_LABEL['generator']}.`,
+            idOf(node),
+          );
+          return REFUSED;
+        }
       }
 
       // A `List`/`Set`/`Map`/`Iterable` receiver goes to the exact-Dart collection lowering (ADR-0051) *before*

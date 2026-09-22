@@ -1,6 +1,7 @@
 # Riverpod — measured usage and the supported-subset design
 
-Status: **inventory measured; design proposed; nothing implemented.** This is the input to an ADR, not the ADR.
+Status: **inventory measured; design proposed; a first real slice implemented and verified (§4a).** This is the input
+to an ADR, not the ADR.
 Numbers come from `tools/riverpod-inventory/inventory.mjs` (a textual count of `.dart` files, tests excluded), run on
 disposable copies of the two real applications used as a corpus (raw output: `riverpod-usage-A.json`,
 `riverpod-usage-B.json`). A textual count sizes the feature and names files; the compiler's own recognition must be
@@ -122,6 +123,74 @@ zone.
 EXPLICITLY REFUSED with a precise diagnostic: `@riverpod`/`riverpod_generator`, `AsyncNotifier`/`StreamNotifier`/
 code-generated families, `ProviderContainer` constructed in application code, `ref.keepAlive`, `ref.exists`,
 `ref.state` outside a notifier, dynamic family arguments that are not comparable, `ref.watch` that cannot be hoisted.
+
+## 4a. Implemented (this milestone) — real, verified, committed
+
+The runtime side of §3 is fully built and oracle-verified (`packages/runtimes/react/src/internal/riverpod/`,
+`fixtures/riverpod_oracle`): `ProviderContainer`, `AsyncValue`, `ProviderScope`/`useWatch`/`useRead`/`useListen`. See
+its own commit for the 28 recorded scenarios and 19 killed mutations.
+
+The **compiler** side is real but narrower than §4's proposal — a first slice, chosen to be everything a provider's
+own dependency graph needs plus enough widget-side consumption to be reachable at all, while leaving the one hook
+(literally, React's) undone rather than rushed:
+
+- **SUPPORTED**: `Provider`, `StateProvider`, `StateNotifierProvider` as plain constructions (`package_kit.ts`, the
+  same mechanism `dio` uses — ADR-0075) — including as an argument to another provider's own `ref.watch`/`.read`, so a
+  dependency chain (`doubledProvider` reads `baseProvider`, `labelProvider` reads `doubledProvider`) lowers correctly.
+  Inside a provider's own `create` closure, `ref.watch`/`.read`/`.listen`/`.invalidate`/`.refresh`/`.onDispose` are
+  plain calls onto the runtime's own `Ref` (recognized structurally, by the parameter's resolved type —
+  `package:riverpod/…` — never by the name `ref`, `expression.ts`'s `isRiverpodProviderRef`). From a
+  `ConsumerWidget`/`ConsumerState`, `ref.read`, `.invalidate`, `.refresh` and `.onDispose` are supported the same way,
+  through one `const ref = useProviderContainer();` the component emitter hoists once, only when the tree needs it
+  (`component.ts`'s `declareRiverpodRef`, the same pattern `useRouter()`/`useMounted()` already use). A provider's own
+  `.notifier`, `.future` and `.select` are supported wherever a provider value is read, in either context. `providers.tsx`
+  wraps the application root in the kit's `ProviderScope` whenever the program uses Riverpod at all — unconditionally,
+  like `ThemeProvider`/`RouterProvider` already are, never derived from the program's own (unmodelled) `ProviderScope`
+  construction, since root discovery starts from `MaterialApp` and never sees it.
+- **EXPLICITLY REFUSED, precisely** (not silently dropped): `ref.watch`/`ref.listen` from a `ConsumerWidget`/
+  `ConsumerState` — a real subscription needs to become a hook, hoisted to the top of the component exactly as
+  ADR-0048 already hoists a signal read, and that hoisting is not built (`expression.ts` reports this by name, before
+  `ref` is even evaluated, distinct from the generic "not declared" message). A `class X extends StateNotifier<S>` —
+  `dart_classes.ts`'s general-class lowering requires a project-declared superclass; a real kit superclass needs its
+  own constructor path (a genuine `super(initial)`, not the `$init`/`$new` split Dart's named/factory constructors
+  need), which is real, scoped, un-risky work but was not attempted this pass — see "Known gaps" below. `.family`,
+  `.autoDispose`, `FutureProvider`, `StreamProvider`, `NotifierProvider`, `Consumer`, `select`/`listen`/`when` and
+  `ProviderScope(overrides: …)` remain covered only by the blanket `BRG3020` "no adapter" warning — real, but not yet
+  differentiated the way `dio`'s `onlyClasses` differentiates its own remaining gaps.
+
+Verified: `fixtures/apps/riverpod_basic` + `packages/generators/react/tests/riverpod_build.test.ts` — real analyzer
+output, real `bridge normalize`, real generator, real `tsc --strict` against the real kit, real `next build`, and a
+manual Chromium run confirming the server-rendered values (`value is 6`, `filter: all`) match real Dart's answer for
+the same program.
+
+### Known gaps found while implementing this (named, not fixed)
+
+- **A statement-bodied top-level provider closure, referenced transitively from a *second* emitted component's own
+  module, loses its own local variables.** `final base = ref.watch(baseProvider); return base * 2;` as a top-level
+  `Provider<int>`'s `create` reports `` `base` is not declared `` — but *only* when (a) the body is a block, not a
+  single expression, *and* (b) the program has more than one `ui.Component` and the provider is reached from other
+  than the first one emitted. The identical closure, referenced directly from the program's only/first component,
+  lowers correctly (confirmed directly: `fixtures/riverpod_oracle`-adjacent probes in `/tmp` during this session,
+  not committed as fixtures, isolated the exact trigger — see the session record if this needs reproducing). This is
+  not Riverpod-specific — nothing in this milestone's own lowering code touches locals inside a lambda — so it is a
+  pre-existing gap in top-level-constant emission this work exposed, not one it introduced. `riverpod_basic`'s own
+  fixture is deliberately expression-bodied throughout to avoid it, and its own file header says so. **Next step**:
+  isolate with a non-Riverpod, minimal top-level-constant fixture (a project class taking a statement-bodied
+  callback, constructed at top level, referenced from a second component) and root-cause in `pipeline.ts`'s top-level
+  value emission.
+- **`StateNotifier` subclass bodies.** The runtime's `StateNotifier` class (constructor, `state` getter/setter,
+  `dispose`) is ready; what's missing is generator wiring: (a) `dart_classes.ts` tolerating a kit-native superclass
+  (skip `$init`/`$new`, emit an ordinary `constructor(...) { super(initial); … }` — real, scoped, the general
+  machinery's constructor-parameter/field extraction is reusable as-is) and (b) mapping a bare `state` read/write,
+  inside such a class, to `this.state` (the same `context`/`BuildContext` special-case pattern `expression.ts`
+  already uses, keyed on the *enclosing class's* resolved superclass rather than the receiver's own type). This is
+  App A's dominant shape (9 of its 11 provider declarations) and is the highest-value next step.
+- **`ref.watch`/`ref.listen` hook-hoisting.** The real, hard remaining piece: every `ref.watch`/`ref.listen`
+  reachable from a `build` must be hoisted to the top of the component, in source order, unconditionally — the same
+  rule `declareLocalSignals` already applies to a signal read (ADR-0048) — and a `ref.watch` whose provider argument
+  depends on a value known only later in the body must be refused, not approximated. Deliberately not attempted this
+  pass: it touches the same component-emission core as signals do, and rushing it risked a *wrong*, silently-passing
+  hook-order bug rather than a clean refusal — worse than what shipped instead.
 
 ## 5. How it will be verified
 
