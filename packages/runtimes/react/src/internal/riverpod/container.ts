@@ -884,14 +884,39 @@ export class StateProvider<T> extends ProviderInstance<T> {
   }
 }
 
-/** `StateNotifierProvider<N extends StateNotifier<S>, S>((ref) => N())`. */
-export class StateNotifierProvider<T> extends ProviderInstance<T> {
-  constructor(create: (ref: Ref) => StateNotifier<T>, options: ProviderOptions = {}) {
+/**
+ * `StateNotifierProvider<N extends StateNotifier<S>, S>((ref) => N())`.
+ *
+ * Two type parameters, matching Dart's own signature exactly (`typeTextOf`, `package_kit.ts`, emits this
+ * type text verbatim from `StateNotifierProvider<N, S>` — no special-casing needed to drop one). `N` is
+ * not `unknown`-erased: `.notifier` returns `Listenable<N>`, the *concrete* notifier subclass, which is
+ * what lets `ref.read(counterProvider.notifier).increment()` see `increment` at all — the state's own
+ * base class `StateNotifier<S>` does not declare it.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- the constraint bound, not a value's own type; see the class's own doc.
+export class StateNotifierProvider<N extends StateNotifier<any>> extends ProviderInstance<
+  N extends StateNotifier<infer S> ? S : never
+> {
+  // One type parameter, not two, even though Dart's own `StateNotifierProvider<N, S>` has two (`types.ts`
+  // omits a top-level constant's own type annotation when it cannot soundly compose one — a project class
+  // used as a kit generic's own argument, `docs/m14/riverpod-usage-matrix.md` §"Known gaps" — so the
+  // constructor call is the *only* place either parameter is ever determined, and inference is what has to
+  // carry both). `S` is *derived* from `N` (`infer`) rather than declared alongside it, so only `N` — which
+  // appears directly in `create`'s own return position — needs to be inferred at all.
+  //
+  // The bound is `StateNotifier<any>`, not `StateNotifier<unknown>` — found live, the hard way: the runtime's
+  // own `StateNotifier` carries a private `#onChange: ((previous: T, next: T) => void) | undefined` field, and
+  // a function parameter is contravariant, so `StateNotifier<number>` is *not* a structural subtype of
+  // `StateNotifier<unknown>` (a `(number, number) => void` cannot stand in for a `(unknown, unknown) => void`)
+  // — every real subclass failed this class's own constraint check, silently doing nothing but reject every
+  // real use. `any` is exempt from that variance check on both sides, which is exactly what a bound that
+  // exists only to say "some `StateNotifier`, whichever" needs.
+  constructor(create: (ref: Ref) => N, options: ProviderOptions = {}) {
     super(new ProviderDef('stateNotifier', create as ProviderDef['create'], options.autoDispose ?? false, options.name, false), undefined, false);
   }
 
-  /** `counterProvider.notifier` — the `StateNotifier<T>` instance: `ref.read(counterProvider.notifier).increment()`. */
-  override get notifier(): Listenable<StateNotifier<T>> {
-    return super.notifier as Listenable<StateNotifier<T>>;
+  /** `counterProvider.notifier` — the concrete notifier instance: `ref.read(counterProvider.notifier).increment()`. */
+  override get notifier(): Listenable<N> {
+    return super.notifier as Listenable<N>;
   }
 }

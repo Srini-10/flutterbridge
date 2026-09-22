@@ -231,6 +231,12 @@ export function riverpodBasicRaw(): string {
   return readFileSync(path, 'utf8');
 }
 
+/** The real `fixtures/apps/riverpod_state_notifier` document, raw analyzer output (M14) — not yet normalized. */
+export function riverpodStateNotifierRaw(): string {
+  const path = fileURLToPath(new URL('../../../../fixtures/uir/riverpod_state_notifier.ndjson', import.meta.url));
+  return readFileSync(path, 'utf8');
+}
+
 /** The real `fixtures/apps/async_push_guard` document, raw analyzer output (M7-H) — not yet normalized. */
 export function asyncPushGuardRaw(): string {
   const path = fileURLToPath(new URL('../../../../fixtures/uir/async_push_guard.ndjson', import.meta.url));

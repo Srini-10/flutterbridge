@@ -1,0 +1,22 @@
+name: riverpod_state_notifier
+description: >-
+  M14 fixture: a `StateNotifier<S>` subclass — the supported shape (docs/m14/riverpod-usage-matrix.md §4a).
+  `LoadController` extends the runtime's own `StateNotifier<LoadState>`: a positional constructor-injected
+  dependency (`this._repository`), a defaulted parameter (`retries = 3`), a sealed `state` hierarchy read
+  through `switch`, and an `async` method that awaits before writing `state`. `CounterController` (the
+  companion, simplest-possible shape — a zero-arg constructor, `state++`-style arithmetic) is exercised by
+  `fixtures/apps/riverpod_basic`'s own build proof is not; this fixture's own build proof covers it via
+  `main.dart`'s two independent controllers.
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_riverpod: 2.6.1
+
+flutter:
+  uses-material-design: true

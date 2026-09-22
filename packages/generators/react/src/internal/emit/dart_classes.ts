@@ -186,6 +186,17 @@ export const initName = (className: string, name: string | undefined): string =>
 export const ctorFactoryName = (name: string | undefined, className: string): string =>
   `${name === undefined || name === '' ? '$new' : `$${name}`}$${className}`;
 
+/** What a class's superclass is, when it is provided by the runtime kit rather than by this program (ADR pending, M14). */
+export interface KitSuperclass {
+  /** The `extends` clause's own text, already imported and generic-applied (`StateNotifier<number>`). */
+  readonly typeText: string;
+  /**
+   * The instance members the kit class exposes with no member model of their own (`state`, `mounted`) — a bare,
+   * untargeted read of one of these inside the subclass means `this.<name>`, never "not declared".
+   */
+  readonly members: readonly string[];
+}
+
 /** What emitting one class needs from the generator, passed in so this file imports none of it. */
 export interface ClassEmitContext {
   readonly general: ReadonlyMap<NodeId, Node>;
@@ -199,6 +210,11 @@ export interface ClassEmitContext {
   readonly body: (statements: readonly Node[], params: readonly Node[]) => string[];
   readonly identifier: (raw: string) => string;
   readonly report: (message: string, nodeId?: string) => void;
+  /**
+   * What `type` is, if it is a superclass the runtime kit provides (`StateNotifier<S>`) rather than a class this
+   * program declares — `undefined` for every other type, including one the kit provides no member model for.
+   */
+  readonly kitSuperclassOf: (type: Node | undefined) => KitSuperclass | undefined;
 }
 
 const indent = (lines: readonly string[]): string[] => lines.map((line) => (line === '' ? '' : `  ${line}`));
@@ -260,10 +276,18 @@ function emitClassSourceInner(source: Node, className: string, ctx: ClassEmitCon
   const id = decl['id'] as NodeId;
   const superId = targetOfType(decl['superclass']);
   const superDecl = superId === undefined ? undefined : ctx.general.get(superId);
-  if (decl['superclass'] !== undefined && superDecl === undefined) {
+  // A superclass the runtime kit itself provides (`StateNotifier<S>`) — real, and constructible, but through its own real
+  // TypeScript constructor rather than this file's `$init`/`$new` convention (see "the shape", top of file): that
+  // convention exists so an arbitrary chain of *general* classes can share one `new X()` (always zero-argument) and do
+  // all real construction work through the static `$init`/`$new` pair instead. A kit class's constructor is not part of
+  // that chain — it is real, and it may require arguments (`StateNotifier`'s does) — so extending one needs a real
+  // `constructor()` that calls a real `super(...)`, built below, once, for the one constructor a class extending a kit
+  // superclass may declare.
+  const kitSuper = decl['superclass'] !== undefined && superDecl === undefined ? ctx.kitSuperclassOf(decl['superclass'] as Node) : undefined;
+  if (decl['superclass'] !== undefined && superDecl === undefined && kitSuper === undefined) {
     ctx.report(
       `\`${className}\` extends a class this generator does not emit (${String((decl['superclass'] as Node)['name'])}): a project class ` +
-        'may extend another project class, but not a framework or package class.',
+        'may extend another project class, or one the runtime kit itself provides (`StateNotifier`), but not an arbitrary framework or package class.',
       id,
     );
     return undefined;
@@ -331,7 +355,12 @@ function emitClassSourceInner(source: Node, className: string, ctx: ClassEmitCon
   const generics = typeParams.length === 0 ? '' : `<${typeParams.map((p) => `${p} = unknown`).join(', ')}>`;
   const genericsUse = typeParams.length === 0 ? '' : `<${typeParams.join(', ')}>`;
   const superName = superId === undefined ? undefined : ctx.nameOf(superId);
-  const superText = decl['superclass'] === undefined ? '' : ` extends ${superName ?? 'unknown'}${superTypeArguments(decl['superclass'] as Node, ctx)}`;
+  const superText =
+    decl['superclass'] === undefined
+      ? ''
+      : kitSuper !== undefined
+        ? ` extends ${kitSuper.typeText}`
+        : ` extends ${superName ?? 'unknown'}${superTypeArguments(decl['superclass'] as Node, ctx)}`;
   const isAbstract = decl['isAbstract'] === true;
   const lines: string[] = [];
   // A class's own type parameter (`$Res`) is a TypeScript type parameter of the emitted class, not `unknown`.
@@ -371,6 +400,27 @@ function emitClassSourceInner(source: Node, className: string, ctx: ClassEmitCon
   // ── constructors ───────────────────────────────────────────────────────────────────────────────
   const declared = asArray(decl['constructors']);
   const constructors = declared.length > 0 ? declared : [{ params: [] } as Node];
+  // A kit superclass's real constructor can be called from at most one place: JavaScript allows exactly one
+  // `constructor()` per class. Multiple named/factory Dart constructors sharing one kit-backed class is a real
+  // possibility this generator does not attempt to prove safe or unsafe — refused, precisely, rather than
+  // guessed at (no evidence in either real corpus needs it: every `StateNotifier` subclass measured has exactly
+  // one, unnamed, generative constructor).
+  if (kitSuper !== undefined && constructors.length > 1) {
+    ctx.report(
+      `\`${className}\` extends \`${kitSuper.typeText}\`, a class the runtime kit provides, and declares ${constructors.length} constructors. ` +
+        'A class extending a kit-provided superclass may declare only one (JavaScript allows exactly one real `constructor()`), so this is refused rather than guessed at.',
+      id,
+    );
+    return undefined;
+  }
+  if (kitSuper !== undefined && isAbstract) {
+    ctx.report(
+      `\`${className}\` is abstract and extends \`${kitSuper.typeText}\`, a class the runtime kit provides. This generator does not yet support ` +
+        'an abstract class between a subclass and a kit-provided superclass (no real construction site to build the real `constructor()` for).',
+      id,
+    );
+    return undefined;
+  }
   for (const ctor of constructors) {
     const name = ctor['name'] as string | undefined;
     const params = asArray(ctor['params']);
@@ -378,6 +428,15 @@ function emitClassSourceInner(source: Node, className: string, ctx: ClassEmitCon
     const passing = argList(paramNames(params, ctx));
 
     if (ctor['isFactory'] === true) {
+      if (kitSuper !== undefined) {
+        ctx.report(
+          `\`${className}\` extends \`${kitSuper.typeText}\`, a class the runtime kit provides, and its only constructor is a factory. A factory ` +
+            'constructor never calls a superclass constructor, so nothing would ever call the kit class’s own real constructor. This is refused ' +
+            'rather than emitting an instance the kit class never actually initialized.',
+          id,
+        );
+        return undefined;
+      }
       const redirect = ctor['redirectedFactory'] as Node | undefined;
       const body: string[] = [];
       if (redirect !== undefined) {
@@ -414,6 +473,12 @@ function emitClassSourceInner(source: Node, className: string, ctx: ClassEmitCon
 
     // A generative constructor: the initialising half…
     const init: string[] = [];
+    // Set only when `kitSuper !== undefined`: the real `super(...)` call's own argument text, computed here (where
+    // the constructor's own parameter scope, `params`, is in hand) but emitted below, in a real `constructor()` —
+    // never pushed into `init`, which becomes `$init_*`, a **static** method with no real superclass to call
+    // (`$init`'s whole reason to exist is that an arbitrary chain of *general* classes shares one always-zero-argument
+    // `new X()`; a kit superclass's constructor is not part of that chain and needs a real one — see the guard above).
+    let kitSuperArgsText: string | undefined;
     const redirectsTo = ctor['redirectsTo'] as Node | undefined;
     if (redirectsTo !== undefined) {
       const sibling = constructorOf(decl, redirectsTo['constructorName'] as string | undefined);
@@ -467,17 +532,55 @@ function emitClassSourceInner(source: Node, className: string, ctx: ClassEmitCon
           return undefined;
         }
         init.push(`${ctx.nameOf(superId as NodeId) ?? String(superDecl['name'])}.${initName(String(superDecl['name']), superName2)}.call(${['this', ...passed].join(', ')});`);
+      } else if (kitSuper !== undefined) {
+        const call = ctor['superCall'] as Node | undefined;
+        // Dart forbids `this` in an initializer list (it runs before `this` is fully constructed — every super-call
+        // argument observed in both real corpora is a constant or reads the constructor's own parameter, never
+        // `this.<field>`), so the argument text needs only `params`' own scope — exactly what `ctx.expr(a, params)`
+        // already provides for a general superclass's own super-call, just above.
+        const positional = asArray(call?.['args']).map((a) => ctx.expr(a, params));
+        const hasNamed = Object.keys((call?.['namedArgs'] ?? {}) as Record<string, Node>).length > 0;
+        const hasForwardedSuperParams = params.some((p) => p['isSuper'] === true);
+        // The kit's own constructor has no `logic.ClassDecl`, so there is no declared parameter list to order named
+        // arguments against (`callArguments`, used just above for a general superclass, needs exactly that). Every
+        // real kit constructor this milestone adds (`StateNotifier(S state)`) takes one positional argument, and
+        // real evidence never passes one by name or forwards a `super.x` parameter — refused, precisely, rather
+        // than guessed at, if either ever appears.
+        if (hasNamed || hasForwardedSuperParams) {
+          ctx.report(
+            `\`${className}\`'s call to its kit superclass's constructor (\`${kitSuper.typeText}\`) passes a named argument or forwards a ` +
+              '`super.` parameter. This generator only supports positional arguments to a kit superclass’s constructor, matching every ' +
+              'real use measured so far.',
+            id,
+          );
+          return undefined;
+        }
+        kitSuperArgsText = positional.join(', ');
       }
     }
     init.push(...ctx.body(asArray(ctor['body']), params));
 
     lines.push(`static ${initName(className, name)}${generics}(${['this: ' + className + genericsUse, plist].filter((x) => x !== '').join(', ')}): void {`, ...indent(init), '}');
-    if (!isAbstract) {
+    if (!isAbstract && kitSuper === undefined) {
       lines.push(
         `static ${ctorFactoryName(name, className)}${generics}(${plist}): ${className}${genericsUse} {`,
         `  const $self = new ${className}${genericsUse}();`,
         `  ${className}.${initName(className, name)}.call(${['$self', passing].filter((x) => x !== '').join(', ')});`,
         '  return $self;',
+        '}',
+      );
+    } else if (!isAbstract && kitSuper !== undefined) {
+      // A real constructor, because `StateNotifier`'s own is real and requires an argument `new ClassName()` (the
+      // `$init`/`$new` convention's usual zero-argument object) cannot supply. `super(...)` must be the constructor's
+      // first statement (JavaScript); `$init_*` runs after — sound because nothing before it in Dart's own
+      // initializer list may read `this` either (see the comment on `kitSuperArgsText`, above).
+      lines.push(
+        `constructor(${plist}) {`,
+        `  super(${kitSuperArgsText ?? ''});`,
+        `  ${className}.${initName(className, name)}.call(${['this', passing].filter((x) => x !== '').join(', ')});`,
+        '}',
+        `static ${ctorFactoryName(name, className)}${generics}(${plist}): ${className}${genericsUse} {`,
+        `  return new ${className}${genericsUse}(${passing});`,
         '}',
       );
     }

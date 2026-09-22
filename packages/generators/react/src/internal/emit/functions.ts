@@ -17,6 +17,7 @@ import {
 import { isAppRoot } from './app_root.js';
 import { emitExpression, isEligibleStructuralField, localBindingsIn, type EmitScope } from './expression.js';
 import { fileNameOf, identifierOf, ModuleBuilder } from './module.js';
+import { kitPackageClass, kitSuperclassMembers } from './package_kit.js';
 import { useRuntime, useRuntimeType } from './runtime.js';
 import { emitStatements } from './statement.js';
 import { functionFailures } from './failures.js';
@@ -1114,6 +1115,17 @@ export function emitFunctionModules(
       if (target_ === undefined) return undefined;
       return target_.path === pending.builder.path ? target_.name : pending.builder.use(target_.module, target_.name, { typeOnly: false });
     };
+    // What `decl` itself (not any ancestor further up — Dart resolves a name against the *nearest* declaration, and
+    // this generator does not model a multi-level kit hierarchy) inherits with no member model of its own, if its
+    // superclass is one the runtime kit provides (`StateNotifier.state`/`.mounted`) — computed once per class, since
+    // every member's own body needs the identical answer. `[]` for every other class, so `paramInScope` below is a
+    // no-op for them, unchanged.
+    const superType = decl['superclass'] as Node | undefined;
+    const superIsGeneral = superType !== undefined && typeof superType['target'] === 'string' && generalAll.has(superType['target'] as NodeId);
+    const kitSuperMembers =
+      superType === undefined || superIsGeneral
+        ? []
+        : kitSuperclassMembers(kitPackageClass(superType['library'], superType['name']) ?? '');
     const scopeFor = (params: readonly Node[], statements: unknown): EmitScope => {
       const names = new Map<string, string>();
       for (const param of params) if (typeof param['name'] === 'string') names.set(param['name'], identifierOf(param['name']));
@@ -1124,7 +1136,10 @@ export function emitFunctionModules(
         functionModules,
         projectStaticFieldIds: staticFieldIdsLocal,
         generalClasses: generalInfo,
-        paramInScope: (name) => names.get(name) ?? scope.paramInScope(name),
+        paramInScope: (name) =>
+          names.get(name) ??
+          (kitSuperMembers.includes(name) ? `this.${identifierOf(name)}` : undefined) ??
+          scope.paramInScope(name),
         localName: (localId) => locals.get(localId) ?? scope.localName(localId),
       };
     };
@@ -1140,6 +1155,11 @@ export function emitFunctionModules(
       body: (statements, params) => emitStatements(statements, scopeFor(params, statements)),
       identifier: identifierOf,
       report: (message, nodeId) => scope.report(GeneratorDiagnosticCode.UnsupportedCapability, 'error', message, nodeId),
+      kitSuperclassOf: (type) => {
+        const runtimeName = kitPackageClass(type?.['library'], type?.['name']);
+        if (runtimeName === undefined) return undefined;
+        return { typeText: typeTextOf(type, useIn, classOfHere), members: kitSuperclassMembers(runtimeName) };
+      },
     };
     const lines = emitClassSource(decl, info.name, ctx);
     if (lines === undefined) continue;

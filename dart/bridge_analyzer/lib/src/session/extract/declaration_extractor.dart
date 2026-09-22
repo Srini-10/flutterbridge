@@ -160,7 +160,7 @@ final class DeclarationExtractor {
         fields: <String, RawValue>{
           'name': RawLiteral(node.namePart.typeName.lexeme),
           if (node.extendsClause != null)
-            'superclass': out.typeRef(node.extendsClause!.superclass.type, at: node),
+            'superclass': out.typeRef(node.extendsClause!.superclass.type, at: node, includeExternalTypeArguments: true),
           if (fields.isNotEmpty) 'fields': RawList(fields),
           if (methods.isNotEmpty) 'methods': RawList(methods),
           // Kept for a general class too: the record-shaped constructors are still a fact about it (ADR-0037); the generator prefers the

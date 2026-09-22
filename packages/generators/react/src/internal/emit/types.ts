@@ -117,7 +117,25 @@ export function typeTextOf(
   const kitName = kitPackageClass(library, name);
   if (use !== undefined && kitName !== undefined) {
     const base = use(kitName);
-    const arguments_ = typeArgumentsOf(name).map((argument) => typeTextOf({ name: argument, nullable: argument.endsWith('?') }, use, classOf));
+    // The structured array (a class's own `superclass` field carries one even though it, itself, is external —
+    // `includeExternalTypeArguments`, `raw_node_emitter.dart`) resolves a *project*-class argument correctly, via
+    // its own `target`; re-parsing the outer type's display *name* (`typeArgumentsOf`) cannot; a bare re-parsed
+    // name carries no `target`/`library` of its own, so a project class used as a kit generic's own argument
+    // (`StateNotifierProvider<CounterController, int>`) fell all the way through to this function's final
+    // `unknown` fallback. Preferred when present; the text fallback still covers every other kit-generic site
+    // (a field/parameter/return type), where the analyzer does not populate the array (by design — see that
+    // parameter's own doc) and the argument is a kit/SDK type the text form already resolves correctly.
+    const structuredArgs = Array.isArray(type?.['typeArguments']) ? (type?.['typeArguments'] as Node[]) : undefined;
+    const arguments_ =
+      structuredArgs !== undefined
+        ? structuredArgs.map((argument) => typeTextOf(argument, use, classOf))
+        : typeArgumentsOf(name).map((argument) => typeTextOf({ name: argument, nullable: argument.endsWith('?') }, use, classOf));
+    // Composing an unresolvable argument into `StateNotifierProvider<unknown, number>` would be a type the kit
+    // class's own bound (`N extends StateNotifier<S>`) rejects — not merely imprecise, wrong — so the *whole*
+    // type is `unknown` instead: the field-declaration call site already omits the annotation for exactly that
+    // text and lets `tsc`'s own constructor-argument inference supply the real one, which it can, from the
+    // initializer this annotation would only get in the way of.
+    if (arguments_.includes('unknown')) return nullable ? 'unknown | null' : 'unknown';
     const applied = arguments_.length === 0 ? base : `${base}<${arguments_.join(', ')}>`;
     return nullable ? `${applied} | null` : applied;
   }

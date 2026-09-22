@@ -25,6 +25,14 @@ export const KIT_PACKAGE_CLASSES: Readonly<Record<string, Readonly<Record<string
     StateProvider: 'StateProvider',
     StateNotifierProvider: 'StateNotifierProvider',
   },
+  // `class MyController extends StateNotifier<S>` — `flutter_riverpod` re-exports the class, but the analyzer resolves it
+  // to its true declaring library, `package:state_notifier/state_notifier.dart` (confirmed directly against real analyzer
+  // output). A row here is what lets `dart_classes.ts` recognize it as a *superclass* a project class may extend, the
+  // same `kitPackageClass` lookup `logic.New`/member-call recognition already uses for a value construction — see
+  // `kitSuperclassMembers` below for the second, narrower thing extending one additionally needs.
+  state_notifier: {
+    StateNotifier: 'StateNotifier',
+  },
 };
 
 /** The runtime export mirroring `name` from `library`, if the kit provides it. */
@@ -34,4 +42,26 @@ export function kitPackageClass(library: unknown, name: unknown): string | undef
   const classes = Object.hasOwn(KIT_PACKAGE_CLASSES, pkg) ? KIT_PACKAGE_CLASSES[pkg] : undefined;
   const bare = name.replace(/\?$/, '').split('<')[0] as string;
   return classes !== undefined && Object.hasOwn(classes, bare) ? classes[bare] : undefined;
+}
+
+/**
+ * The instance members a **kit-provided superclass** exposes with no member model of their own — so a project subclass's
+ * bare, untargeted read of one of these names (`state`, never `this.state`; Dart forbids `this` before `super()` in an
+ * initializer, and a method body's own bare identifier is the same unresolved shape `context`/`ref` already are — ADR-0055,
+ * `docs/m14/riverpod-usage-matrix.md`) means *this*, not "not declared" (`BRG3006`).
+ *
+ * Keyed by the runtime **export name** (`KIT_PACKAGE_CLASSES`'s own value), not the Dart name — one project class can
+ * extend at most one kit superclass, so there is no ambiguity a library/name pair would resolve better. A future kit
+ * superclass (were one added) adds one row here; nothing about *how* a bare name resolves to `this.<name>` is specific to
+ * `StateNotifier`, which is why this stays a table rather than a name check in `dart_classes.ts` itself.
+ */
+export const KIT_SUPERCLASS_MEMBERS: Readonly<Record<string, readonly string[]>> = {
+  // `state` — the reactive value (get/set); `mounted` — false once `dispose()` has run (both real getters on the runtime's
+  // own `StateNotifier`, `packages/runtimes/react/src/internal/riverpod/container.ts`).
+  StateNotifier: ['state', 'mounted'],
+};
+
+/** The instance members {@link KIT_SUPERCLASS_MEMBERS} lists for the kit class `runtimeName` names, or none. */
+export function kitSuperclassMembers(runtimeName: string): readonly string[] {
+  return Object.hasOwn(KIT_SUPERCLASS_MEMBERS, runtimeName) ? (KIT_SUPERCLASS_MEMBERS[runtimeName] as readonly string[]) : [];
 }

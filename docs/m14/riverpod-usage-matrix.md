@@ -147,21 +147,41 @@ own dependency graph needs plus enough widget-side consumption to be reachable a
   wraps the application root in the kit's `ProviderScope` whenever the program uses Riverpod at all — unconditionally,
   like `ThemeProvider`/`RouterProvider` already are, never derived from the program's own (unmodelled) `ProviderScope`
   construction, since root discovery starts from `MaterialApp` and never sees it.
+- **`StateNotifier` subclasses**, including every real shape both corpora's own controllers use: a zero-arg
+  constructor (`CounterController() : super(0);`), a constructor-injected dependency (positional or named
+  field-formal), a defaulted parameter, a `sealed`/enum-of-classes `state` type read through `switch`/pattern
+  matching, an `async` method that awaits before writing `state`, and `@override void dispose() { …; super.dispose();
+  }`. A `class X extends StateNotifier<S>` is extracted as an ordinary **general class** (ADR-0055) — *not* an
+  `app.Store` (a `StateNotifier` was removed from `catalog/widgets/material.json`'s `storeBases`, the same table
+  `ChangeNotifier` is still in: its own `state` is inherited, not a field the subclass declares, so the `app.Store`
+  extraction that suits a `ChangeNotifier`'s own declared fields cannot see it, and Riverpod's own consumption
+  constructs a *value* — a `StateNotifierProvider<N, S>((ref) => N(...))`'s create closure — which is what a general
+  class's own `logic.New` already means and what `app.Store`'s own `defineStore` deliberately does not, ADR-15/19).
+  `dart_classes.ts` gives a class extending a **kit-provided** superclass a real `constructor()` that calls a real
+  `super(...)` first (JavaScript's own rule) and then the class's usual `$init` (`docs/m14/riverpod-usage-matrix.md`
+  §4a); `package_kit.ts`'s `kitSuperclassMembers` is what maps a bare, inherited `state`/`mounted` read to
+  `this.state`/`this.mounted`. Two real, narrow generator gaps this surfaced and fixed along the way, both general
+  (not Riverpod-specific): a kit-provided generic type's own type argument that is a *project* class could not
+  resolve through the analyzer's own text-only fallback for an external type's arguments (`raw_node_emitter.dart`'s
+  `typeRef` now carries a real, structured `typeArguments` array for a class's own `superclass` field, the one
+  caller that needs it); and a TypeScript class with a `#private` field of its own type parameter is not a
+  structural subtype of the identical class instantiated at `unknown` (contravariance) — the runtime's
+  `StateNotifierProvider<N extends StateNotifier<any>>` bound, not `<unknown>`, is why.
 - **EXPLICITLY REFUSED, precisely** (not silently dropped): `ref.watch`/`ref.listen` from a `ConsumerWidget`/
   `ConsumerState` — a real subscription needs to become a hook, hoisted to the top of the component exactly as
   ADR-0048 already hoists a signal read, and that hoisting is not built (`expression.ts` reports this by name, before
-  `ref` is even evaluated, distinct from the generic "not declared" message). A `class X extends StateNotifier<S>` —
-  `dart_classes.ts`'s general-class lowering requires a project-declared superclass; a real kit superclass needs its
-  own constructor path (a genuine `super(initial)`, not the `$init`/`$new` split Dart's named/factory constructors
-  need), which is real, scoped, un-risky work but was not attempted this pass — see "Known gaps" below. `.family`,
-  `.autoDispose`, `FutureProvider`, `StreamProvider`, `NotifierProvider`, `Consumer`, `select`/`listen`/`when` and
-  `ProviderScope(overrides: …)` remain covered only by the blanket `BRG3020` "no adapter" warning — real, but not yet
-  differentiated the way `dio`'s `onlyClasses` differentiates its own remaining gaps.
+  `ref` is even evaluated, distinct from the generic "not declared" message). A class extending a kit superclass with
+  more than one constructor, or only a factory one (JavaScript allows exactly one real `constructor()`), or with a
+  `super(...)` call passing a named argument or forwarding a `super.` parameter — none observed in either corpus.
+  `.family`, `.autoDispose`, `FutureProvider`, `StreamProvider`, `NotifierProvider`, `Consumer`, `select`/`listen`/
+  `when` and `ProviderScope(overrides: …)` remain covered only by the blanket `BRG3020` "no adapter" warning — real,
+  but not yet differentiated the way `dio`'s `onlyClasses` differentiates its own remaining gaps.
 
-Verified: `fixtures/apps/riverpod_basic` + `packages/generators/react/tests/riverpod_build.test.ts` — real analyzer
-output, real `bridge normalize`, real generator, real `tsc --strict` against the real kit, real `next build`, and a
-manual Chromium run confirming the server-rendered values (`value is 6`, `filter: all`) match real Dart's answer for
-the same program.
+Verified: `fixtures/apps/riverpod_basic` + `riverpod_state_notifier` + `packages/generators/react/tests/
+riverpod_build.test.ts` + `riverpod_state_notifier_build.test.ts` — real analyzer output, real `bridge normalize`,
+real generator, real `tsc --strict` against the real kit, real `next build`, and manual Chromium runs (server-
+rendered values match real Dart's answer for the same program; a click that writes `state` through `.notifier`
+completes with no console error).
 
 ### Known gaps found while implementing this (named, not fixed)
 
@@ -178,13 +198,6 @@ the same program.
   isolate with a non-Riverpod, minimal top-level-constant fixture (a project class taking a statement-bodied
   callback, constructed at top level, referenced from a second component) and root-cause in `pipeline.ts`'s top-level
   value emission.
-- **`StateNotifier` subclass bodies.** The runtime's `StateNotifier` class (constructor, `state` getter/setter,
-  `dispose`) is ready; what's missing is generator wiring: (a) `dart_classes.ts` tolerating a kit-native superclass
-  (skip `$init`/`$new`, emit an ordinary `constructor(...) { super(initial); … }` — real, scoped, the general
-  machinery's constructor-parameter/field extraction is reusable as-is) and (b) mapping a bare `state` read/write,
-  inside such a class, to `this.state` (the same `context`/`BuildContext` special-case pattern `expression.ts`
-  already uses, keyed on the *enclosing class's* resolved superclass rather than the receiver's own type). This is
-  App A's dominant shape (9 of its 11 provider declarations) and is the highest-value next step.
 - **`ref.watch`/`ref.listen` hook-hoisting.** The real, hard remaining piece: every `ref.watch`/`ref.listen`
   reachable from a `build` must be hoisted to the top of the component, in source order, unconditionally — the same
   rule `declareLocalSignals` already applies to a signal read (ADR-0048) — and a `ref.watch` whose provider argument

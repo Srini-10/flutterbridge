@@ -246,7 +246,7 @@ abstract final class MaterialCatalog {
   static const Set<String> stateHolders = <String>{'AnimationController', 'ChangeNotifier', 'ScrollController', 'TextEditingController', 'ValueNotifier'};
 
   /// Base classes whose subclasses are stores: state that outlives any one component.
-  static const Set<String> storeBases = <String>{'ChangeNotifier', 'Notifier', 'StateNotifier'};
+  static const Set<String> storeBases = <String>{'ChangeNotifier'};
 
   /// Lifecycle methods, and the effect timing each one is.
   static const Map<String, String> lifecycle = <String, String>{

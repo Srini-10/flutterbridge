@@ -31,9 +31,7 @@
     "ValueNotifier"
   ],
   "storeBases": [
-    "ChangeNotifier",
-    "Notifier",
-    "StateNotifier"
+    "ChangeNotifier"
   ],
   "lifecycle": {
     "initState": "mount",

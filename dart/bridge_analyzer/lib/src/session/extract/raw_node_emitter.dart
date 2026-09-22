@@ -126,7 +126,24 @@ final class RawNodeEmitter {
   /// An `InvalidType` here means the element model is incomplete — which the preflight check (M1-T7)
   /// exists to make impossible. If one arrives anyway, that is a compiler-facing fact and it is
   /// reported: `dynamic` would be a lie the rest of the pipeline could not detect.
-  RawValue typeRef(DartType? type, {required AstNode at}) {
+  ///
+  /// [includeExternalTypeArguments]: also carry [type]'s own type arguments when *[type] itself* is
+  /// external (no `target` of its own) — `false` everywhere but one caller. `$DtoCopyWith<Dto>`, the
+  /// ordinary case this field defaults `false` for, is a *project* generic wrapping another type, and
+  /// `typeArguments` has always been populated only there (`shared.json`'s own doc on the field): adding it
+  /// to *every* `InterfaceType` regardless — `List<int>`, `Future<String>`, `Response<T>` — would swell
+  /// every existing document with data the generator's own `typeArgumentsOf`-text-parsing fallback (kit/SDK
+  /// generics) never reads, for no gain and a broad, unrelated golden-fixture diff.
+  ///
+  /// But an *external* generic container wrapping a *project* type — `StateNotifier<LoadState>`, a class's
+  /// own superclass — needs exactly this the other way around: the outer type (`StateNotifier`) is external,
+  /// so `_classTypeTarget` finds it no `target`, and this function's argument recursion — gated on that
+  /// target's presence — never runs, leaving `LoadState`'s own `target` unrecorded even though `LoadState`
+  /// *is* one this compiler extracts a declaration for. `dart_classes.ts`'s own generic-argument reuse of a
+  /// kit-provided superclass's type text (`docs/m14/riverpod-usage-matrix.md`) needs that `target` to resolve
+  /// `LoadState` to its own emitted name — the display-name text `typeArgumentsOf` alone re-parses carries no
+  /// such link. One caller — `_class`'s own `superclass` field — opts in for exactly this reason.
+  RawValue typeRef(DartType? type, {required AstNode at, bool includeExternalTypeArguments = false}) {
     if (type == null || type is InvalidType) {
       report(
         Codes.analyzerInconsistency,
@@ -139,16 +156,17 @@ final class RawNodeEmitter {
 
     final Element? element = type.element;
     final String? library = element?.library?.identifier;
+    final String? target = _classTypeTarget(type, element);
     return RawMap(<String, RawValue>{
       'name': RawLiteral(type.getDisplayString()),
       if (type.nullabilitySuffix == NullabilitySuffix.question) 'nullable': const RawLiteral(true),
       if (library != null) 'library': RawLiteral(library),
-      if (_classTypeTarget(type, element) case final String symbol) ...<String, RawValue>{
-        'target': RawRef(symbol),
-        // `$DtoCopyWith<Dto>`: a project generic type keeps its arguments, so the emitted TypeScript says `$DtoCopyWith<Dto>`.
-        if (type is InterfaceType && type.typeArguments.isNotEmpty)
-          'typeArguments': RawList(<RawValue>[for (final DartType argument in type.typeArguments) typeRef(argument, at: at)]),
-      },
+      if (target != null) 'target': RawRef(target),
+      // `$DtoCopyWith<Dto>`: a project generic type keeps its arguments, so the emitted TypeScript says `$DtoCopyWith<Dto>`.
+      // `includeExternalTypeArguments`: the one caller that needs the identical thing when [type] itself has no `target`
+      // of its own — see this parameter's own doc, just above.
+      if ((target != null || includeExternalTypeArguments) && type is InterfaceType && type.typeArguments.isNotEmpty)
+        'typeArguments': RawList(<RawValue>[for (final DartType argument in type.typeArguments) typeRef(argument, at: at)]),
     });
   }
 
