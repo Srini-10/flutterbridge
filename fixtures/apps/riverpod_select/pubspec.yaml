@@ -1,0 +1,37 @@
+name: riverpod_select
+description: >-
+  M14 fixture: `ref.watch(provider.select((v) => ...))` — real-corpus inventory first: 10 genuine
+  `provider.select(...)` sites across App A + App B combined (all App B; App B's own textual `.select(`
+  count of 170 is dominated by an unrelated Supabase query-builder method of the identical name, filtered
+  out by requiring the receiver to actually be a provider). Every real site is `ref.watch(provider.select((x)
+  => <a simple, side-effect-free projection>))` — a bare field read (`b.companyName`), a null-aware chain
+  (`s.valueOrNull?.session`), or both together — never `ref.listen` with a selector, never a selector with
+  its own side effects. Two real sites select off a *family* application
+  (`visibilityTargetsForFirmProvider(product.firmId).select(...)`); three read inside *another provider's
+  own body*, not a widget (`notificationsProvider`, `tenantBrandingProvider`, `brand_providers.dart`'s own
+  resolution chain) — `ref.watch` there is an ordinary provider-to-provider dependency, ADR-0048's hoisting
+  rule does not apply, and ADR-0048 itself must not be reopened (this fixture's own `insideProvider` proves
+  it is not).
+  This is a **verification-only** fixture: no generator or runtime code changed. `Provider`/`FutureProvider`/
+  `Provider.family` were already kit-registered types (`package_kit.ts`, Phase 2/M14's own `AsyncValue` row);
+  `expression.ts`'s existing kit-method lowering already handles an arbitrary positional-argument method call
+  on a kit-registered receiver generically (not only named-argument calls); and the runtime's own
+  `ProviderInstance.select(fn)` (`container.ts`), returning a `SelectView` whose own `same()` compares the
+  *projected* value with `dartEquals` — Riverpod's real narrowing-rebuild semantics, not a "just watch
+  everything" approximation — already existed, oracle-shaped, unused by the generator until this milestone's
+  own inventory pointed at it. `component.ts`'s `declareRiverpodWatches` already passes whatever `ref.watch`'s
+  own argument is through the ordinary, general `emitExpression` — a `provider.select(fn)` MethodCall reaches
+  it exactly the same way a bare `logic.Ref` to a provider does.
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_riverpod: 2.6.1
+
+flutter:
+  uses-material-design: true

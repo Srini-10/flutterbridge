@@ -4,7 +4,8 @@ Status: **inventory measured; design proposed; real, verified slices implemented
 `StateProvider`/`StateNotifierProvider`/`StateNotifier` subclasses; §4b: `.family`/`.autoDispose`, plain
 `FutureProvider`/`StreamProvider`; §4c: `ref.watch`/`ref.listen` hook-hoisting; §4d: `AsyncValue<T>`
 consumption outside widget position; §4e: `Notifier`/`AutoDisposeNotifier`/`NotifierProvider`,
-non-family/non-async only; §4f: `Consumer(builder: ...)` erasure).** This is the input to an ADR, not the ADR.
+non-family/non-async only; §4f: `Consumer(builder: ...)` erasure; §4g: `ref.watch(provider.select(...))`,
+verified already working).** This is the input to an ADR, not the ADR.
 Numbers come from `tools/riverpod-inventory/inventory.mjs` (a textual count of `.dart` files, tests excluded), run on
 disposable copies of the two real applications used as a corpus (raw output: `riverpod-usage-A.json`,
 `riverpod-usage-B.json`). A textual count sizes the feature and names files; the compiler's own recognition must be
@@ -568,6 +569,79 @@ reduction, exactly the same honest pattern §4d's own account established for `A
 (348 generator errors, unchanged — it declares no `Consumer`). Determinism: three fresh, independent `bridge
 analyze` runs over `riverpod_consumer` produce a byte-identical `uir.ndjson` (sha256-compared), and three
 in-process `reactGenerator.generate()` runs over its normalized document produce byte-identical emitted files.
+
+## 4g. Verified (this milestone) — `ref.watch(provider.select((v) => ...))`, already working
+
+Real-corpus inventory, done before any implementation: **10 genuine `provider.select(...)` sites**, all App B
+(App A has none). App B's own *textual* `.select(` count is 170, per §1's table above — almost all of it is
+Supabase's own query-builder method of the identical name (`_client.from('orders').select('*, products(name)')`);
+filtering for a receiver that is actually a provider leaves 10. Every real site is
+`ref.watch(provider.select((x) => …))` — a bare field read (`brandConfigProvider.select((b) =>
+b.companyName)`), a null-aware chain (`authStateChangesProvider.select((s) => s.valueOrNull?.session)`), or
+both — **never** `ref.listen` with a selector, **never** a selector with a side effect. Two sites select off a
+*family* application (`visibilityTargetsForFirmProvider(product.firmId).select(...)`); three read *inside
+another provider's own body*, not a widget (`notificationsProvider`, `tenantBrandingProvider`,
+`brand_providers.dart`'s own resolution chain).
+
+**This phase changed no generator or runtime code.** Three pieces, each built for a different, earlier
+reason, already compose correctly:
+
+1. `Provider`/`FutureProvider`/`Provider.family`/… are already **kit-provided types**
+   (`package_kit.ts`'s `KIT_PACKAGE_CLASSES`, the mechanism `dio` and, this milestone, `AsyncValue` already use).
+2. `expression.ts`'s existing kit-method lowering (the `logic.MethodCall` case's `kitReceiver` branch) already
+   handles an arbitrary method call on a kit-registered receiver **generically** — positional arguments
+   together with named ones, not only named-argument calls — so `provider.select(fn)` (one positional lambda)
+   was already reachable as `<providerText>.select(<fnText>)`, with no dedicated case for `select` at all.
+3. The runtime's own `ProviderInstance.select(fn)` (`container.ts`) — returning a `SelectView` whose own
+   `same()` compares the *projected* value with `dartEquals`, real Riverpod's own narrowing-rebuild semantics
+   (a component re-renders only when the *selected* value's own equality changes, not on every change to the
+   whole provider), never a "watch everything, then read a field" approximation — already existed,
+   oracle-shaped, simply unreached by the generator until this inventory pointed at it. `useWatch` (`react.ts`)
+   already accepts any `Listenable<T>` generically, subscribing by `.source` (the stable underlying provider,
+   not the fresh `SelectView` object `provider.select(fn)` constructs on every render — `react.ts`'s own
+   `Latest` wrapper exists for exactly this, predating this milestone).
+
+`component.ts`'s `declareRiverpodWatches` already passes whatever `ref.watch`'s own argument is through the
+ordinary, general `emitExpression` — a `provider.select(fn)` reaches it exactly the same way a bare
+`logic.Ref` to a plain provider does, so hoisting, the family case, and a null-aware chain inside the selector
+body all fall out of machinery already exercised for other reasons.
+
+- **SUPPORTED, proven end to end**: a bare field selector; a null-aware chain inside the selector; `.select`
+  chained off a family application; `ref.watch(provider.select(...))` used inside *another provider's own
+  body* (an ordinary runtime call there, never hoisted — providers are not React components, and ADR-0048's
+  hoisting rule does not apply to a provider body; this is the pre-existing, protected behavior, confirmed
+  still correct with a `.select(...)` argument, not reopened).
+- **`ref.listen` with a selector, and a selector with a side effect**: not found anywhere in either real
+  corpus, so not implemented or exercised — consistent with this phase's own "do not implement from
+  assumptions" discipline, not a known gap.
+
+**A pre-existing, unrelated bug found while building this verification's own fixture, not fixed**: a top-level
+Riverpod provider field whose own declared generic argument is a **nullable project-defined class**
+(`final p = FutureProvider<Session?>((ref) async => …);`) gets an incorrect, `tsc`-failing type annotation —
+`FutureProvider<unknown | null>` instead of `FutureProvider<Session | null>` — because whatever resolves a
+project class's own name for a top-level field's *explicit* type annotation (`functions.ts`'s `fieldClassOf`,
+keyed off `classModules`) does not yet find it, and the field falls back to `unknown`. A *non-nullable*
+project-class argument (`FutureProvider<Session>`) happens to self-heal: `typeTextOf` returns the *bare*
+string `'unknown'` for that case, which `functions.ts`'s own `fieldType === 'unknown' ? '' : …` check
+recognizes and *omits* the explicit annotation entirely, so TypeScript infers the correct type from the
+factory call instead — but a *nullable* one produces `'unknown | null'`, which does not match that check, so
+the broken explicit annotation is emitted and fails `tsc`. **Confirmed to have nothing to do with `.select`**:
+it reproduces identically with a plain `ref.watch(provider).valueOrNull?.field`, no selector involved.
+`riverpod_select`'s own fixture was adjusted to avoid this exact shape (a non-nullable `FutureProvider<Session>`
+with the nullability instead on one of `Session`'s own fields, `nickname`) precisely so this verification's own
+build-proof exercises `.select` itself, not this separate defect. Not reproduced by real App B's own 10 sites
+(none selects off a `FutureProvider`/`StreamProvider` whose own top-level declared generic argument is a
+nullable project class — `authStateChangesProvider`'s own `AuthState` is a Supabase SDK type, a different
+resolution path). Next step: root-cause `fieldClassOf`'s own resolution/ordering against `classModules` for a
+nullable project-class type argument specifically.
+
+Verified: `fixtures/apps/riverpod_select` (every shape above — real analyzer output, real `bridge normalize`,
+real generator, real `tsc --strict` against the real kit, 6/6). Not mutation-tested in the usual sense (no
+code changed to revert): instead, each of the three pre-existing mechanisms above was traced to its own
+existing doc/oracle-verification from the milestone that built it, and the fixture's own emitted output was
+read directly against the runtime's real `SelectView`/`useWatch` implementation to confirm the composition,
+not merely that `tsc` was silent. Determinism: three in-process `reactGenerator.generate()` runs over the
+fixture's normalized document produce byte-identical output.
 
 ## 5. How it will be verified
 
