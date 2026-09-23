@@ -1,0 +1,21 @@
+name: string_buffer_semantics
+description: >-
+  M14: `dart:core` `StringBuffer` — construct (empty, or with initial content), `write`, `writeln`, `toString`, a cascade on
+  construction, a buffer shared by reference, passed to and returned from functions, and every kind of value `write` accepts.
+  Includes App B's two real users verbatim (`formatRupees`, `buildCsv`). Run by Flutter and as the generated component, compared.
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

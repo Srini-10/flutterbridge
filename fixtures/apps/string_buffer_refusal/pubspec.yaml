@@ -1,0 +1,19 @@
+name: string_buffer_refusal
+description: >-
+  M14 fixture (negative, paired with `string_buffer_semantics`): the `StringBuffer` members and argument kinds this generator
+  does not lower, each in its own function so each is refused by its own precise diagnostic — `length`, `isEmpty`, `writeAll`,
+  `writeCharCode`, `clear`, and `write` of a `num` (an int or a double, which a JavaScript number cannot tell apart), of a
+  collection whose element text is not reproducible, and of a value whose Dart text nothing here checks — a `Duration`, a `DateTime`, a nullable plain enum,
+  a class that declares no `toString()`. Nothing here may be emitted as a call the runtime's buffer does not have.
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

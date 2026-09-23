@@ -452,6 +452,98 @@ function sdkDeps(scope: EmitScope): SdkDeps {
   };
 }
 
+/**
+ * The Dart text of `argument` — what `"$argument"` is, which is what `StringBuffer`'s constructor and `write`/`writeln` append (`write(Object? obj)`
+ * writes `"$obj"`) — as a TypeScript expression of type `string`, or `REFUSED` (after reporting) when Dart's text for this type cannot be reproduced.
+ *
+ * What Dart prints depends on the *static type*, so this reuses string interpolation's rules for the types they are right for and refuses the rest,
+ * rather than emitting `${x}` for a value whose JavaScript text differs from Dart's without a word:
+ *
+ * - a non-nullable `String` is its own text; `dynamic`/`Object` are whatever the value prints (`dartToStringDynamic`);
+ * - `int`, `bool`, `double` (through `doubleToString`), their nullable forms and the `null` literal (`null` prints `null`), `StringBuffer` and a
+ *   printable collection: the interpolation of the value; a `num` (an int or a double, which a JavaScript number cannot tell apart) and an unprintable
+ *   collection are refused with interpolation's own message;
+ * - a *plain* enum constant (`Kind.b`) is its bare name in the target, and Dart prints `Kind.b`, so the enum's name is written in front (the analyzer
+ *   does the same for `'$k'`, ADR-0054); a plain enum *variable* is not recognised — its type carries no declaration — and is refused; an *enhanced*
+ *   enum is a class whose `toString` is `Kind.constant`;
+ * - an instance of a project class is its `toString()` if the class or a superclass declares one; without one Dart prints `Instance of 'Foo'`, which
+ *   this generator has no default for, so it is refused;
+ * - anything else (`Duration`, `DateTime`, a `Uri`, a package class, a function): refused, because nothing here checks that its JavaScript text is Dart's.
+ */
+function writtenText(argument: Node, scope: EmitScope): string {
+  const type = argument['type'] as Node | undefined;
+  const name = String(type?.['name'] ?? '').replace(/\?$/, '');
+  const nullable = type?.['nullable'] === true || String(type?.['name'] ?? '').endsWith('?');
+  const base = sdkBaseTypeOf(type);
+  if (base === 'String' && !nullable) return emitExpression(argument, scope);
+  if (name === 'dynamic' || name === 'Object') {
+    const inner = emitExpression(argument, scope);
+    return inner === REFUSED ? REFUSED : `${scope.module.use(RUNTIME, 'dartToStringDynamic')}(${inner})`;
+  }
+  const interpolated = (): string => {
+    const interpolation: Node = { kind: 'logic.StringInterp', parts: [argument], type: { library: 'dart:core', name: 'String' } };
+    return emitExpression(interpolation, scope);
+  };
+  if (
+    base === 'String' || base === 'int' || base === 'bool' || base === 'double' || base === 'num' || base === 'Null' || base === 'StringBuffer' ||
+    (base !== undefined && SDK_COLLECTIONS.has(base))
+  ) {
+    return interpolated();
+  }
+  const target = targetOfType(type);
+  // A *plain* enum's type carries no `target`, so the value is recognised where it is named: a reference whose own `target` is an `EnumDecl` that is not a
+  // general class (an enhanced enum is one). It is a constant, so it cannot be null. An enum-typed variable is not recognised, and is refused below.
+  const referencedId = typeof argument['target'] === 'string' ? (argument['target'] as NodeId) : undefined;
+  const referenced = referencedId === undefined ? undefined : (scope.node(referencedId) as unknown as Node | undefined);
+  if (referencedId !== undefined && referenced !== undefined && kindOf(referenced) === 'logic.EnumDecl' && !scope.generalClasses.has(referencedId) && !nullable) {
+    const inner = emitExpression(argument, scope);
+    return inner === REFUSED ? REFUSED : `\`${name.replace(/[\\`$]/g, '\\$&')}.\${${inner}}\``;
+  }
+  const declaration = target === undefined ? undefined : (scope.node(target) as unknown as Node | undefined);
+  if (target !== undefined && declaration !== undefined && kindOf(declaration) === 'logic.EnumDecl' && scope.generalClasses.has(target)) return interpolated();
+  if (target !== undefined && scope.generalClasses.has(target) && findMember(target, 'toString', generalView(scope)) !== undefined) return interpolated();
+  const declaresNone = target !== undefined && scope.generalClasses.has(target);
+  const isPackageType = type?.['library'] !== undefined && String(type['library']).startsWith('package:') && target === undefined;
+  scope.report(
+    GeneratorDiagnosticCode.UnsupportedExpression,
+    'error',
+    `\`write\` of a \`${name}\` has no lowering: Dart writes its \`toString()\`, and ` +
+      (declaresNone
+        ? `this class declares none, so Dart prints \`Instance of '${name}'\`, which this generator has no default for. Declare a \`toString\`, or write its fields.`
+        : 'this generator cannot check that its JavaScript text is Dart\'s. Write the parts you mean (`x.toString()` on a `String`, `int`, `bool` or `double`)' +
+          (nullable ? '; for a nullable value, test for null first' : '') +
+          (isPackageType ? ' (a plain enum variable is not recognised: write `k.name`, or use `\'$k\'`).' : '.')),
+    idOf(argument),
+  );
+  return REFUSED;
+}
+
+/** The members of `StringBuffer` this generator lowers, with the argument counts each accepts. */
+const STRING_BUFFER_METHODS: Readonly<Record<string, readonly number[]>> = { write: [1], writeln: [0, 1], toString: [0] };
+
+/** The refusal text for a `StringBuffer` member with no lowering. */
+function unsupportedStringBufferMember(member: string): string {
+  return (
+    `\`StringBuffer.${member}\` has no lowering. This generator lowers the constructor (with or without initial content) and ` +
+    '`write`, `writeln` and `toString` — the members real evidence has needed so far. `length`, `isEmpty`, `writeAll`, ' +
+    '`writeCharCode` and `clear` each need their own evidence before they can be added; emitting the Dart member name on the ' +
+    'runtime\'s buffer would be a `TypeError`, silently.'
+  );
+}
+
+/** Lowers a call on a `StringBuffer` receiver — the runtime's `DartStringBuffer` — or reports why it cannot. */
+function lowerStringBufferCall(node: Node, method: string, receiver: string, args: readonly Node[], scope: EmitScope): string {
+  const accepted = Object.hasOwn(STRING_BUFFER_METHODS, method) ? STRING_BUFFER_METHODS[method] : undefined;
+  if (accepted === undefined || !accepted.includes(args.length)) {
+    scope.report(GeneratorDiagnosticCode.UnsupportedExpression, 'error', unsupportedStringBufferMember(method), idOf(node));
+    return REFUSED;
+  }
+  if (method === 'toString') return `${receiver}.toString()`;
+  const text = args[0] === undefined ? undefined : writtenText(args[0], scope);
+  if (text === REFUSED) return REFUSED;
+  return `${receiver}.${method}(${text ?? ''})`;
+}
+
 /** Whether `type` is a function type — `void Function()`, `ValueChanged<int>` displays as `void Function(int)`. */
 function isFunctionType(type: Node | undefined): boolean {
   const name = type?.['name'];
@@ -2129,6 +2221,12 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
         return REFUSED;
       }
 
+      // Any `StringBuffer` property (`length`, `isEmpty`, …): not modelled, refused by name rather than read off a runtime class that has none.
+      if (node['target'] === undefined && sdkTypeOf(receiverNode?.['type'] as Node | undefined) === 'StringBuffer') {
+        scope.report(GeneratorDiagnosticCode.UnsupportedExpression, 'error', unsupportedStringBufferMember(String(node['property'] ?? '')), idOf(node));
+        return REFUSED;
+      }
+
       // A `String` or numeric getter (ADR-0054): lowered by the receiver's resolved type, else refused by name. It used to
       // be emitted as the same-named JavaScript property, which does not exist: `s.isEmpty` was `undefined`.
       if (node['target'] === undefined) {
@@ -2423,6 +2521,7 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
         const receiverNodeForSdk = node['receiver'] as Node | undefined;
         const receiverTypeForSdk = receiverNodeForSdk?.['type'] as Node | undefined;
         const argNodes = asArray(node['args']) as Node[];
+        if (sdkTypeOf(receiverTypeForSdk) === 'StringBuffer') return lowerStringBufferCall(node, method, receiver, argNodes, scope);
         if (sdkTypeOf(receiverTypeForSdk) === 'String') {
           const argTexts = argNodes.map((a) => emitExpression(a, scope));
           if (argTexts.includes(REFUSED)) return REFUSED;
@@ -2480,11 +2579,51 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
 
         // `round`/`floor`/`ceil`/`truncate`/`toInt` (ADR-0070): Dart's rounding is half away from zero and every one throws
         // for NaN and the infinities, which `Math.round` and friends do not; checked against real Dart's answers.
+        // `roundToDouble`/`floorToDouble`/`truncateToDouble`: the same operations, but the result is a *double* — no range check, `NaN`/`±Infinity`
+        // pass through, and a zero result keeps its sign — so they are their own helpers, not `numRound` and friends (checked against real Dart).
+        // Whatever the receiver holds (an `int` included), the result is a double, so a `num` receiver is not ambiguous here as it is for `toString`.
+        const roundingToDouble: Record<string, string> = {
+          roundToDouble: 'numRoundToDouble', floorToDouble: 'numFloorToDouble', truncateToDouble: 'numTruncateToDouble',
+        };
+        if (Object.hasOwn(roundingToDouble, method) && rawArgs.length === 0) {
+          return `${scope.module.use(RUNTIME, roundingToDouble[method] as string)}(${receiver})`;
+        }
+
+        // `int.toRadixString(radix)`: the digits in `radix`, lower-case, `-` for a negative value; a radix outside 2–36 throws, as Dart's does.
+        if (method === 'toRadixString' && receiverType === 'int' && rawArgs.length === 1) {
+          const radix = emitExpression(rawArgs[0] as Node, scope);
+          if (radix === REFUSED) return REFUSED;
+          return `${scope.module.use(RUNTIME, 'intToRadixString')}(${receiver}, ${radix})`;
+        }
+
         const rounding: Record<string, string> = {
           round: 'numRound', floor: 'numFloor', ceil: 'numCeil', truncate: 'numTruncate', toInt: 'numTruncate',
         };
         const roundingHelper = Object.hasOwn(rounding, method) ? rounding[method] : undefined;
         if (roundingHelper !== undefined && rawArgs.length === 0) return `${scope.module.use(RUNTIME, roundingHelper)}(${receiver})`;
+
+        // `int.toString()` and `double.toString()`: Dart's text of the value. An `int` is a JavaScript-safe integer here (see `toDouble`
+        // above), and `String(n)` of one is Dart's own digits (`-5` → `-5`, `0` → `0`; JavaScript switches to exponent notation only from
+        // 1e21, far past 2^53, and `String(-0)` is `0`, which is Dart's `0`). A `double` prints as interpolating it does — `doubleToString`
+        // (`1.0`, not `1`). A `num` is an int or a double and a JavaScript number cannot say which, so it stays refused, exactly as
+        // interpolating one is. A *nullable* `int` prints `null` for null (`dartToStringDynamic`, whose integer text is the same);
+        // a nullable `double` has no such helper and is refused. `toRadixString`/`toStringAsExponential`/... are different methods.
+        if (method === 'toString' && rawArgs.length === 0 && (receiverType === 'int' || receiverType === 'double')) {
+          const typeOfReceiver = (node['receiver'] as Node | undefined)?.['type'] as Node | undefined;
+          const nullableReceiver = typeOfReceiver?.['nullable'] === true || String(typeOfReceiver?.['name'] ?? '').endsWith('?');
+          if (receiverType === 'int') {
+            return nullableReceiver ? `${scope.module.use(RUNTIME, 'dartToStringDynamic')}(${receiver})` : `String(${receiver})`;
+          }
+          if (!nullableReceiver) return `${scope.module.use(RUNTIME, 'doubleToString')}(${receiver})`;
+          scope.report(
+            GeneratorDiagnosticCode.UnsupportedExpression,
+            'error',
+            '`double?.toString()` prints `null` for a null receiver and `1.0`-style text otherwise, and no helper does both. ' +
+              'Test for null first, or use `x?.toString()`.',
+            idOf(node),
+          );
+          return REFUSED;
+        }
 
         // `abs()` is `Math.abs` on the same IEEE-754 value; `clamp(lower, upper)` orders by `compareTo` (see `numClamp`).
         if (method === 'abs' && rawArgs.length === 0) return `Math.abs(${receiver})`;
@@ -2500,7 +2639,9 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
           'error',
           `\`${receiverType}.${method}\` has no lowering. This generator supports \`toDouble\`, ` +
             `\`toStringAsFixed\`, \`remainder\`, \`round\`, \`floor\`, \`ceil\`, \`truncate\`, \`toInt\`, \`abs\` and ` +
-            `\`clamp\` on a \`dart:core\` numeric value — the methods real evidence has needed so far. A different one ` +
+            `\`clamp\`, \`roundToDouble\`, \`floorToDouble\` and \`truncateToDouble\` on a \`dart:core\` numeric value, \`toRadixString\` on an ` +
+            `\`int\`, and \`toString\` on an \`int\` or a \`double\` (not a \`num\`, which cannot say which it is) — the methods real evidence ` +
+            `has needed so far. A different one ` +
             `needs its own evidence before it can be added.`,
           idOf(node),
         );
@@ -2718,6 +2859,18 @@ export function emitExpression(expr: Expr | Node | undefined, scope: EmitScope):
 
       const constructorName = node['constructorName'];
       const kitProvided = isKitProvided(node['type'] as Node | undefined);
+
+      // `StringBuffer()` / `StringBuffer(content)`: the runtime's mutable buffer. The initial content is `"$content"`, like `write`'s argument.
+      if (typeName === 'StringBuffer' && constructedType?.['library'] === 'dart:core' && (constructorName === undefined || constructorName === '' || constructorName === null)) {
+        const bufferArgs = asArray(node['args']) as Node[];
+        if (bufferArgs.length <= 1 && Object.keys((node['namedArgs'] ?? {}) as Record<string, unknown>).length === 0) {
+          const initial = bufferArgs[0] === undefined ? '' : writtenText(bufferArgs[0], scope);
+          if (initial === REFUSED) return REFUSED;
+          return `new ${scope.module.use(RUNTIME, 'DartStringBuffer')}(${initial})`;
+        }
+        scope.report(GeneratorDiagnosticCode.UnsupportedExpression, 'error', unsupportedStringBufferMember('StringBuffer'), idOf(node));
+        return REFUSED;
+      }
 
       // `FormatException('x')`, `StateError('x')`, `Exception('x')`: the runtime's exception classes, which print as Dart's do.
       if (

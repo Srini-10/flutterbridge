@@ -557,15 +557,19 @@ export {
   intShr,
   intSub,
   intTruncDiv,
+  intToRadixString,
   intUshr,
   intXor,
   numCeil,
   numClamp,
   numFloor,
+  numFloorToDouble,
   numMod,
   numRound,
+  numRoundToDouble,
   numTruncDiv,
   numTruncate,
+  numTruncateToDouble,
 } from './internal/num/dart_int.js';
 
 // ── M11 (ADR-0051): Dart `List` / `Set` / `Map` operations ────────────────────────────────────────
@@ -727,6 +731,7 @@ export {
 
 export { dartIs, dartRuntimeType, touchAfter } from './internal/core/dart_is.js';
 export { DartDateTime, DartDeepCollectionEquality, DartTimer } from './internal/core/dart_time.js';
+export { DartStringBuffer } from './internal/core/dart_string_buffer.js';
 export {
   DartArgumentError,
   DartError,

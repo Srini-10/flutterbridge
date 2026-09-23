@@ -315,6 +315,36 @@ export function riverpodNullableProjectTypeRaw(): string {
   return readFileSync(path, 'utf8');
 }
 
+/** The real `fixtures/apps/string_buffer_semantics` document, raw analyzer output — not yet normalized. */
+export function stringBufferSemanticsRaw(): string {
+  const path = fileURLToPath(new URL('../../../../fixtures/uir/string_buffer_semantics.ndjson', import.meta.url));
+  return readFileSync(path, 'utf8');
+}
+
+/** The real `fixtures/apps/string_buffer_refusal` document, raw analyzer output — not yet normalized. */
+export function stringBufferRefusalRaw(): string {
+  const path = fileURLToPath(new URL('../../../../fixtures/uir/string_buffer_refusal.ndjson', import.meta.url));
+  return readFileSync(path, 'utf8');
+}
+
+/** The real `fixtures/apps/int_to_string_semantics` document, raw analyzer output — not yet normalized. */
+export function intToStringSemanticsRaw(): string {
+  const path = fileURLToPath(new URL('../../../../fixtures/uir/int_to_string_semantics.ndjson', import.meta.url));
+  return readFileSync(path, 'utf8');
+}
+
+/** The real `fixtures/apps/int_to_string_refusal` document, raw analyzer output — not yet normalized. */
+export function intToStringRefusalRaw(): string {
+  const path = fileURLToPath(new URL('../../../../fixtures/uir/int_to_string_refusal.ndjson', import.meta.url));
+  return readFileSync(path, 'utf8');
+}
+
+/** The real `fixtures/apps/numeric_methods_semantics` document, raw analyzer output — not yet normalized. */
+export function numericMethodsSemanticsRaw(): string {
+  const path = fileURLToPath(new URL('../../../../fixtures/uir/numeric_methods_semantics.ndjson', import.meta.url));
+  return readFileSync(path, 'utf8');
+}
+
 /** The real `fixtures/apps/builder_body_locals` document, raw analyzer output — not yet normalized. */
 export function builderBodyLocalsRaw(): string {
   const path = fileURLToPath(new URL('../../../../fixtures/uir/builder_body_locals.ndjson', import.meta.url));

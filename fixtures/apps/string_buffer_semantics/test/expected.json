@@ -1,0 +1,29 @@
+{
+  "Rupees": [
+    [
+      "> ₹0 ₹5 ₹999 ₹1,000",
+      "> ₹1,23,456 ₹12,34,567 ₹-12,34,567 ₹1,23,45,678",
+      "> ₹1,234.50 ₹-1,234.25 ₹0.75"
+    ]
+  ],
+  "Csv": [
+    [
+      "> id,name|1,plain|2,\"a,b\"|3,\"say \"\"hi\"\"\"|",
+      "> only|",
+      "> |x|",
+      "> h|\"line|break\"||"
+    ]
+  ],
+  "General": [
+    [
+      "> s42-71.02.5truenull3hi[1, 2]null",
+      "> |a|b1|2.0|",
+      "> x 7 true 1.5 [] []",
+      "> a=xyz b=xyz",
+      "> go!0, 1, 2, 3 | [go!0, 1, 2, 3]",
+      "> log=[pick]<a><b><c> target=abc|",
+      "> m! m!? / none null",
+      "> Kind.a Kind.b Level.high Tagged#7"
+    ]
+  ]
+}

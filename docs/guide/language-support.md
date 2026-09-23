@@ -45,7 +45,10 @@ computes a field, a named constructor, a `factory`, a redirecting constructor.
 `String`: `length`, `isEmpty`, `isNotEmpty`, `contains`, `startsWith`, `endsWith`, `indexOf`, `lastIndexOf`, `split`, `substring`,
 `codeUnitAt`, `padLeft`, `padRight`, `replaceAll`, `replaceFirst`, `toUpperCase`, `toLowerCase`, `trim`, `trimLeft`, `trimRight`, `*`
 (with `String` patterns; a `RegExp` is refused). Numbers: `isEven`, `isOdd`, `isNegative`, `isNaN`, `isFinite`, `isInfinite`,
-`toDouble`, `toStringAsFixed`, `remainder`. `switch` statements over constants (literals, `String`s, enum values), with `default`
+`toDouble`, `toStringAsFixed`, `remainder`; and, from M14, `int.toString()`, `double.toString()`, `roundToDouble`, `floorToDouble`, `truncateToDouble` and
+`int.toRadixString(radix)` (each checked against real Dart; a `num`'s `toString()` and `ceilToDouble` are refused —
+[M14 note](../m14/sdk-text-and-numeric-lowering.md)). `StringBuffer` (M14): the constructor (with or without initial content), `write`, `writeln`, `toString`,
+a cascade on it, and a buffer passed, returned and shared by reference; `length`, `isEmpty`, `writeAll`, `writeCharCode` and `clear` are refused. `switch` statements over constants (literals, `String`s, enum values), with `default`
 and grouped cases; a pattern or a `when` guard is refused. Increments and assignments used as values. `f.call(x)`. `Future.catchError`
 and `whenComplete`. `?.` on a variable, a prop or a field-read chain. A plain enum is its value names: `k.name` and `'$k'` (`Kind.a`)
 work; a plain enum's `k.index` is refused. An *enhanced* enum (fields, methods, constants with arguments) is emitted as a class with one

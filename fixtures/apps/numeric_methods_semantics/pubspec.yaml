@@ -1,0 +1,22 @@
+name: numeric_methods_semantics
+description: >-
+  M14: `roundToDouble`, `floorToDouble`, `truncateToDouble` and `int.toRadixString` — the shapes App B's money, formatting and
+  hashing code uses, verbatim (`formatPct`, `_compact`, `adminCount`, `gst_estimate`'s `_fmt`, `CartItem.roundedLineTotal`, the
+  cart idempotency hash, the hex byte join), and the values at the edges (halves of both signs, a zero result that must keep its
+  sign, NaN, infinity, radix 2 and 36, negative ints). Run by Flutter and as the generated component, compared.
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

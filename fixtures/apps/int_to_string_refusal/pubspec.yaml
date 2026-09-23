@@ -1,0 +1,18 @@
+name: int_to_string_refusal
+description: >-
+  M14 fixture (negative, paired with `int_to_string_semantics`): the `toString` forms this generator still refuses, each by its own
+  precise diagnostic. `num.toString()` — an int or a double at run time, and a JavaScript number cannot say which; a nullable
+  `double`'s `toString()` — `null` prints `null` and `1.0`-style text otherwise, and no helper does both; and `ceilToDouble`, the
+  one member of the `roundToDouble` family no real code calls, so it has no evidence and no lowering.
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

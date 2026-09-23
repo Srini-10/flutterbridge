@@ -1,0 +1,22 @@
+name: int_to_string_semantics
+description: >-
+  M14: `int.toString()` and `double.toString()` — the shapes real code uses (`n.truncate().toString()`, `v.round().toString()`,
+  `v.toInt().toString()`, `time.hour.toString().padLeft(2, '0')`, an int result of arithmetic, a nullable int) and the values at
+  the edges (zero, negative, the largest safe integer, a whole double, `1e21`, `1e-7`, `-0.0`, NaN, infinity). Run by Flutter and
+  as the generated component, compared.
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

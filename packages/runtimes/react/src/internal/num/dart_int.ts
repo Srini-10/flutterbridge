@@ -145,6 +145,37 @@ export function numTruncate(value: number): number {
   return checked(Math.trunc(finite(value, 'truncate')), 'truncate');
 }
 
+/**
+ * Dart's `double.roundToDouble()`: the nearest whole value **as a double**, halves away from zero (JavaScript's `Math.round` rounds them up), with the sign
+ * of a zero result kept (`(-0.4).roundToDouble()` is `-0.0`) and `NaN`/`±Infinity` returned as they are — unlike `round()`, which throws for those and
+ * returns an `int`. Because the result is a double it is **not** range-checked: `1e21.roundToDouble()` is `1e21`.
+ */
+export function numRoundToDouble(value: number): number {
+  return value < 0 ? -Math.round(-value) : Math.round(value);
+}
+
+/** Dart's `double.floorToDouble()`: the greatest whole double not above the value; `-0.0`, `NaN` and `±Infinity` unchanged. */
+export function numFloorToDouble(value: number): number {
+  return Math.floor(value);
+}
+
+/** Dart's `double.truncateToDouble()`: toward zero, as a double; a result that is zero keeps the value's sign (`(-0.5).truncateToDouble()` is `-0.0`). */
+export function numTruncateToDouble(value: number): number {
+  return Math.trunc(value);
+}
+
+/**
+ * Dart's `int.toRadixString(radix)`: the digits of the value in `radix` (2–36), lower-case, with a leading `-` for a negative one. Any other radix throws,
+ * as Dart's `RangeError` does. Exact for every int in this runtime's domain (a JavaScript safe integer).
+ */
+export function intToRadixString(value: number, radix: number): string {
+  const n = integer(value, 'toRadixString');
+  if (!Number.isInteger(radix) || radix < 2 || radix > 36) {
+    throw new RangeError(`Invalid value: Not in inclusive range 2..36: ${String(radix)}`);
+  }
+  return n.toString(radix);
+}
+
 /** Dart's `num.compareTo` for doubles: a total order in which `-0.0 < 0.0` and NaN is greater than everything. */
 function compareTotal(a: number, b: number): number {
   if (Number.isNaN(a)) return Number.isNaN(b) ? 0 : 1;
