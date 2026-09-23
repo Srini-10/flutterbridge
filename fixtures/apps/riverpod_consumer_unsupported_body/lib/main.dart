@@ -20,7 +20,10 @@ class HomeScreen extends StatelessWidget {
   }
 }
 
-/// App B's own dominant shape: a `final` local (reading `ref.watch(...)`) before the `return`.
+/// App B's `onboarding_page.dart`/`discover_page.dart` shape: a `final` local, then an `if` deciding what is
+/// returned (`if (resolved == null) return const SizedBox.shrink();`). A block of only leading locals and one
+/// `return` is supported (`riverpod_builder_body_locals`); control flow deciding the return is not — a `ui.*`
+/// node has no representation for an early `return`, and guessing which branch runs would be inventing.
 class BlockBody extends StatelessWidget {
   const BlockBody({super.key});
   @override
@@ -28,6 +31,9 @@ class BlockBody extends StatelessWidget {
     return Consumer(
       builder: (context, ref, _) {
         final count = ref.watch(countProvider);
+        if (count == 0) {
+          return const SizedBox.shrink();
+        }
         return Text('$count');
       },
     );

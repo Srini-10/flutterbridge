@@ -43,14 +43,15 @@ import {
 //
 // `fixtures/apps/riverpod_async_value_widget_position` was the milestone's own original *negative* fixture
 // for this exact gap; it is a *positive* one now (its own `pubspec.yaml` has the full account). Real App B's
-// own *dominant* shape is not this simple, though: most branches read through a `final` local or perform a
-// side effect first. `_asyncValueWhen` extracts each branch through the identical `_widgetOfBody`
-// `FutureBuilder`'s own `data` branch already goes through — which only inlines a block of *exactly one*
-// statement — so a real, representative shape like `error: (e, _) { debugPrint(...); return Widget(...); }`
-// still refuses, precisely and narrowly (`fixtures/apps/riverpod_async_value_widget_when_unsupported`, the
-// paired negative fixture here): the identical, pre-existing, general "builder body with statements"
-// limitation named throughout this milestone, not something this phase introduces or closes — and, unlike
-// before this fix, the refusal now names the *one* affected branch, not the whole `.when(...)` call.
+// own shapes are not all this simple, though: many branches read through a `final` local or perform a side
+// effect first. `_asyncValueWhen` extracts each branch through the identical `_widgetOfBody`
+// `FutureBuilder`'s own `data` branch already goes through. When this phase landed that only inlined a block
+// of *exactly one* statement; a later phase made it accept leading `final` locals before the `return`
+// (`builder_body_locals_build.test.ts`), so a branch that reads through a local now works too. A branch that
+// performs a *side effect* first — `error: (e, _) { debugPrint(...); return Widget(...); }` — still refuses,
+// precisely and narrowly (`fixtures/apps/riverpod_async_value_widget_when_unsupported`, the paired negative
+// fixture here): a statement with no representation in a `ui.*` node, and dropping it would drop the side
+// effect. Unlike before this fix, the refusal names the *one* affected branch, not the whole `.when(...)` call.
 
 afterAll(cleanupBuildProofTemporaries);
 
@@ -90,7 +91,7 @@ describe('M14 build-proof: `AsyncValue.when(...)` placed directly as widget-tree
   }, 120_000);
 });
 
-describe('negative fixture: a block-bodied branch — App B\'s own dominant real shape — still refuses precisely, narrowly, not silently', () => {
+describe('negative fixture: a block-bodied branch with a side-effect statement still refuses precisely, narrowly, not silently', () => {
   it('reports BRG3004 ("builder body with statements") on the one affected branch, not "widget returned by a call" on the whole `.when(...)` call', () => {
     const unsupported = compiledFrom(riverpodAsyncValueWidgetWhenUnsupportedRaw());
     const { context, reported } = harness(unsupported);

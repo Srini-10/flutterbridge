@@ -35,6 +35,8 @@
 // `dio-client.spec.ts` gets its own pair (3327/3328): `dio_client` (M14) is a ninth.
 //
 // `dynamic-push.spec.ts` gets its own pair (3329/3330): `inline_push_dynamic` (M14) is a tenth.
+//
+// `builder-locals.spec.ts` gets its own pair (3331/3332): `builder_locals_e2e` (M14) is an eleventh.
 
 import { defineConfig, devices } from '@playwright/test';
 
@@ -159,6 +161,16 @@ export default defineConfig({
       name: 'dynamic-push-development',
       use: { ...devices['Desktop Chrome'], baseURL: 'http://127.0.0.1:3330' },
       testMatch: /dynamic-push\.dev-only\.spec/,
+    },
+    {
+      name: 'builder-locals-production',
+      use: { ...devices['Desktop Chrome'], baseURL: 'http://127.0.0.1:3331' },
+      testMatch: /builder-locals\.spec/,
+    },
+    {
+      name: 'builder-locals-development',
+      use: { ...devices['Desktop Chrome'], baseURL: 'http://127.0.0.1:3332' },
+      testMatch: /builder-locals\.dev-only\.spec/,
     },
   ],
 
@@ -340,6 +352,24 @@ export default defineConfig({
       command: 'npx next dev --port 3330',
       cwd: './.fixtures/dynamic-push-dev',
       port: 3330,
+      reuseExistingServer: false,
+      timeout: 120_000,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    },
+    {
+      command: 'npx next start --port 3331',
+      cwd: './.fixtures/builder-locals/build/bridge',
+      port: 3331,
+      reuseExistingServer: false,
+      timeout: 120_000,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    },
+    {
+      command: 'npx next dev --port 3332',
+      cwd: './.fixtures/builder-locals-dev',
+      port: 3332,
       reuseExistingServer: false,
       timeout: 120_000,
       stdout: 'pipe',

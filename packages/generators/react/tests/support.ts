@@ -315,6 +315,24 @@ export function riverpodNullableProjectTypeRaw(): string {
   return readFileSync(path, 'utf8');
 }
 
+/** The real `fixtures/apps/builder_body_locals` document, raw analyzer output — not yet normalized. */
+export function builderBodyLocalsRaw(): string {
+  const path = fileURLToPath(new URL('../../../../fixtures/uir/builder_body_locals.ndjson', import.meta.url));
+  return readFileSync(path, 'utf8');
+}
+
+/** The real `fixtures/apps/builder_body_locals_unsupported` document, raw analyzer output — not yet normalized. */
+export function builderBodyLocalsUnsupportedRaw(): string {
+  const path = fileURLToPath(new URL('../../../../fixtures/uir/builder_body_locals_unsupported.ndjson', import.meta.url));
+  return readFileSync(path, 'utf8');
+}
+
+/** The real `fixtures/apps/riverpod_builder_body_locals` document, raw analyzer output — not yet normalized. */
+export function riverpodBuilderBodyLocalsRaw(): string {
+  const path = fileURLToPath(new URL('../../../../fixtures/uir/riverpod_builder_body_locals.ndjson', import.meta.url));
+  return readFileSync(path, 'utf8');
+}
+
 /** The real `fixtures/apps/riverpod_async_value_widget_when_unsupported` document, raw analyzer output — not yet normalized. */
 export function riverpodAsyncValueWidgetWhenUnsupportedRaw(): string {
   const path = fileURLToPath(new URL('../../../../fixtures/uir/riverpod_async_value_widget_when_unsupported.ndjson', import.meta.url));

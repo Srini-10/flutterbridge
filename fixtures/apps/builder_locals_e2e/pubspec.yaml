@@ -1,0 +1,21 @@
+name: builder_locals_e2e
+description: >-
+  Browser-proof fixture for statement-bodied builders (`Builder`/`Consumer`/`ListView.builder` whose block body is
+  leading local declarations followed by one `return`). A plain `Builder` with a chained local read twice; a
+  `Consumer` whose `final count = ref.watch(countProvider);` local is read twice and feeds a second local; a
+  button that writes the provider; and a `ListView.builder` reading its item through a local. The provider write is
+  the point: the `ref.watch` lives *only* in a local's initializer, so the counts on screen change only if the
+  hoisted `useWatch` subscription survived the inlining.
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_riverpod: 2.6.1
+
+flutter:
+  uses-material-design: true

@@ -1,0 +1,30 @@
+name: riverpod_builder_body_locals
+description: >-
+  M14 fixture: the previous milestone's own named-not-fixed gap (`docs/m14/riverpod-usage-matrix.md` §4f) —
+  `Consumer(builder: (context, ref, _) { final x = ref.watch(p); return Widget(x); })`, App B's own dominant
+  real `Consumer` shape (3 of its 5 real sites are exactly one leading local then a `return`; the other two
+  add an `if`, which stays refused). Closed by making `_widgetOfBody` — the function every builder-shaped
+  construct extracts through — accept "N leading locals, then one `return`" (`_bindLeadingLocalsAndReturn`,
+  `builder_body_locals`'s own header has the full account).
+
+  What is new *here*, beyond the general fixture, is what a local's initializer can be: a `ref.watch(...)`.
+  The local is re-extracted at each of its own read sites, so the `ref.watch` lands in the render tree and the
+  existing hook-hoisting (ADR-0048) finds it exactly as it would a `ConsumerWidget`'s own. A local read
+  *twice* yields two `ref.watch` nodes, one per read; a local nothing reads is refused rather than silently
+  losing its provider subscription (`builder_body_locals_unsupported`, case 1). Also covered: App B's own
+  `.valueOrNull ?? const []` initializer, and an `AsyncValue.when(...)` branch (`data: (items) { final n =
+  ...; return Text('$n'); }`) — the previous phase's own `ui.Async` branches go through the same
+  `_widgetOfBody`.
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_riverpod: 2.6.1
+
+flutter:
+  uses-material-design: true

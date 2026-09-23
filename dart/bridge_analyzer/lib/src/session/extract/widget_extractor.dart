@@ -382,32 +382,18 @@ final class WidgetExtractor {
     }
 
     Scope inner = scope.child(bindings);
-    Expression? returned;
+    Expression returned;
     switch (body) {
       case ExpressionFunctionBody():
         returned = body.expression;
       case BlockFunctionBody():
-        final List<Statement> statements = body.block.statements;
-        for (int i = 0; i < statements.length; i++) {
-          final Statement statement = statements[i];
-          if (i == statements.length - 1 && statement is ReturnStatement) {
-            returned = statement.expression;
-          } else if (statement is VariableDeclarationStatement &&
-              statement.variables.variables.length == 1 &&
-              statement.variables.variables.single.initializer != null) {
-            final VariableDeclaration variable = statement.variables.variables.single;
-            inner = inner.withBinding(
-              Binding(name: variable.name.lexeme, binds: Binds.local, inlineValue: variable.initializer, inlineScope: inner),
-            );
-          } else {
-            return null;
-          }
+        final (Scope, Expression)? bound = _bindLeadingLocalsAndReturn(body.block.statements, inner);
+        if (bound == null) {
+          return null;
         }
+        (inner, returned) = bound;
       default:
         return null;
-    }
-    if (returned == null) {
-      return null;
     }
     out.inlining.add(element.baseElement);
     try {
@@ -422,6 +408,74 @@ final class WidgetExtractor {
     final Set<String> names = <String>{};
     node.accept(_IdentifierCollector(names));
     return names;
+  }
+
+  /// `{ final x = e1; final y = e2; ...; return finalExpr; }` — every leading statement a single-variable
+  /// declaration with an initializer (`final`, `const`, or a plain `var`; see the check's own doc for why
+  /// that distinction does not matter here), each bound as [Binding.inlineValue] (re-extracted at its own
+  /// read site, never eagerly substituted — the identical, already-shipped M8-B render-tree-local pattern
+  /// `_reference`'s own `binding?.inlineValue` handling and this file's own build-method-local
+  /// `SimpleIdentifier` case both already rely on), followed by exactly one trailing `return`.
+  ///
+  /// Shared by [_inlineHelper] (a helper's own body) and [_widgetOfBody] (a builder callback's own body) —
+  /// the identical shape, the identical reason it is sound: Flutter requires a `build`-time value to be
+  /// free of observable effects, so re-extracting a local's own initializer at each of its own read sites,
+  /// rather than declaring it once, computes the identical value every time.
+  ///
+  /// `null` for anything else — a statement that is not this shape (an `if`, a local function declaration,
+  /// a multi-variable declaration, a declaration with no initializer, or a body with no trailing `return`
+  /// at all) — the caller keeps its own construct opaque, honestly, rather than guessing at control flow
+  /// this does not attempt to model.
+  static (Scope, Expression)? _bindLeadingLocalsAndReturn(List<Statement> statements, Scope scope) {
+    Scope inner = scope;
+    Expression? returned;
+    for (int i = 0; i < statements.length; i++) {
+      final Statement statement = statements[i];
+      if (i == statements.length - 1 && statement is ReturnStatement) {
+        returned = statement.expression;
+      } else if (statement is VariableDeclarationStatement &&
+          statement.variables.variables.length == 1 &&
+          statement.variables.variables.single.initializer != null) {
+        // Not restricted to `final`/`const`: the shape itself (every statement here is either one more
+        // declaration or the one trailing `return`) has no slot for a later assignment to reach, so a
+        // plain `var x = …;` is exactly as safe to inline as a `final` one would be — the identical
+        // reasoning `_inlineHelper`'s own, already-shipped version of this check already relied on.
+        final VariableDeclaration variable = statement.variables.variables.single;
+        inner = inner.withBinding(
+          Binding(name: variable.name.lexeme, binds: Binds.local, inlineValue: variable.initializer, inlineScope: inner),
+        );
+      } else {
+        return null;
+      }
+    }
+    if (returned == null) {
+      return null;
+    }
+    // Every local must be *read* — by resolved element, not by name — somewhere after its own declaration
+    // (a later local's initializer, or the returned expression). A local nothing reads is never extracted
+    // (this is re-extraction at a read site, not a declaration), so its initializer would be silently
+    // dropped: `final unused = ref.watch(p); return Text('x');` would lose a provider subscription with no
+    // diagnostic at all — confirmed directly, not assumed. Refused instead, exactly as any other shape this
+    // does not model is.
+    for (int i = 0; i < statements.length - 1; i++) {
+      final VariableDeclaration variable = (statements[i] as VariableDeclarationStatement).variables.variables.single;
+      final Element? declared = variable.declaredFragment?.element;
+      if (declared == null) {
+        return null;
+      }
+      final Set<Element> read = <Element>{};
+      for (int j = i + 1; j < statements.length; j++) {
+        final Statement later = statements[j];
+        final AstNode? scanned = later is VariableDeclarationStatement
+            ? later.variables.variables.single.initializer
+            : (later as ReturnStatement).expression;
+        scanned?.accept(_ElementCollector(read));
+      }
+      if (!read.contains(declared)) {
+        return null;
+      }
+    }
+    return (inner, returned);
   }
 
   // ── elements ──────────────────────────────────────────────────────────────────────────────────
@@ -1213,9 +1267,7 @@ final class WidgetExtractor {
       case ExpressionFunctionBody():
         return extract(body.expression, scope, index: index, slot: slot);
       case BlockFunctionBody():
-        // A builder with statements in it — `final x = ...; return Column(...)`. The returned widget
-        // is the subtree; the statements around it are not expressible as a `ui.*` node, so the whole
-        // body stays opaque rather than silently losing them.
+        // `{ return Widget(...); }` — no locals, the original, narrower shape this always supported.
         final Statement last = body.block.statements.isEmpty
             ? body.block
             : body.block.statements.last;
@@ -1223,6 +1275,13 @@ final class WidgetExtractor {
             last is ReturnStatement &&
             last.expression != null) {
           return extract(last.expression!, scope, index: index, slot: slot);
+        }
+        // `{ final x = ...; return Widget(x); }` — `_bindLeadingLocalsAndReturn`'s own doc has the full
+        // account of what this covers and why it is sound. Anything outside that shape (an `if` deciding
+        // the return, a local function declaration, a side effect before the return) stays opaque, exactly
+        // as before — this does not guess at control flow it has no rule for.
+        if (_bindLeadingLocalsAndReturn(body.block.statements, scope) case (final Scope inner, final Expression returned)) {
+          return extract(returned, inner, index: index, slot: slot);
         }
         return out.opaqueUi(body, 'builder body with statements');
       case FunctionBody():
@@ -1294,6 +1353,23 @@ final class _IdentifierCollector extends RecursiveAstVisitor<void> {
   @override
   void visitSimpleIdentifier(SimpleIdentifier node) {
     names.add(node.name);
+    super.visitSimpleIdentifier(node);
+  }
+}
+
+/// Every resolved [Element] a subtree reads — by identity, never by spelling, so a same-named lambda
+/// parameter or an unrelated local can never be mistaken for a read of the declaration being checked.
+final class _ElementCollector extends RecursiveAstVisitor<void> {
+  _ElementCollector(this.elements);
+
+  final Set<Element> elements;
+
+  @override
+  void visitSimpleIdentifier(SimpleIdentifier node) {
+    final Element? element = node.element;
+    if (element != null) {
+      elements.add(element);
+    }
     super.visitSimpleIdentifier(node);
   }
 }

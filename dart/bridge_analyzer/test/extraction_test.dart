@@ -4637,6 +4637,197 @@ class Home extends StatelessWidget {
     });
   });
 
+  group('a builder body of leading locals then one return (`_bindLeadingLocalsAndReturn`)', () {
+    const String widgetWrapper = '''
+import 'package:flutter/material.dart';
+class Home extends StatelessWidget {
+  const Home({super.key});
+  @override
+  Widget build(BuildContext context) {
+    return Column(children: [
+      {{BODY}}
+    ]);
+  }
+}
+
+/// The stub `flutter` package has no `Builder`; the catalog matches a rebuild-scoping wrapper by name.
+class Builder extends Widget {
+  const Builder({required this.builder, super.key});
+  final Widget Function(BuildContext) builder;
+}
+''';
+
+    // `_widgetOfBody` (the one function `Builder`/`ListenableBuilder`/`ValueListenableBuilder`/`Consumer`,
+    // `ListView.builder`/`GridView.builder`, `FutureBuilder` and `AsyncValue.when` all extract a callback body
+    // through) originally inlined a block only when it was exactly one `return`. It now also accepts leading
+    // single-variable local declarations before the `return`, binding each as `Binds.local` with
+    // `inlineValue` (the mechanism `_inlineHelper` has always used for a method's block body), so the local's
+    // initializer is re-extracted at each read site — Flutter's `build` must be pure, which is what makes
+    // reading an initializer twice sound.
+    //
+    // What must *not* happen is silent loss: a local nothing reads has no read site, so its initializer (and
+    // any subscription in it) would vanish without a diagnostic. `_bindLeadingLocalsAndReturn` refuses that
+    // shape, by resolved `Element` rather than by name.
+    List<Map<String, dynamic>> builderBodyOpaques(Extracted app) => app
+        .ofKind('ui.Opaque')
+        .where((Map<String, dynamic> o) => o['reason'] == 'builder body with statements')
+        .toList();
+
+    test('one leading local, read once: the return is extracted with the local bound — no opaque', () async {
+      final Extracted app = await extract(
+        widgetWrapper.replaceFirst('{{BODY}}', '''
+      Builder(builder: (context) {
+        final greeting = 'hello';
+        return Text(greeting);
+      }),
+'''),
+      );
+      expect(app.errors, isEmpty);
+      expect(builderBodyOpaques(app), isEmpty);
+      final Map<String, dynamic> text = app.only('ui.Text');
+      final Map<String, dynamic> value = text['value'] as Map<String, dynamic>;
+      expect((value['expr'] as Map<String, dynamic>)['value'], 'hello', reason: 'the read site carries the initializer');
+    });
+
+    test('a local read twice yields both reads', () async {
+      final Extracted app = await extract(
+        widgetWrapper.replaceFirst('{{BODY}}', '''
+      Builder(builder: (context) {
+        final label = 'twice';
+        return Row(children: [Text(label), Text(label)]);
+      }),
+'''),
+      );
+      expect(builderBodyOpaques(app), isEmpty);
+      expect(app.ofKind('ui.Text'), hasLength(2));
+    });
+
+    test('a chain — a later initializer reading an earlier local — is accepted', () async {
+      final Extracted app = await extract(
+        widgetWrapper.replaceFirst('{{BODY}}', '''
+      Builder(builder: (context) {
+        final base = 'chain';
+        final upper = base.toUpperCase();
+        return Text(upper);
+      }),
+'''),
+      );
+      expect(app.errors, isEmpty);
+      expect(builderBodyOpaques(app), isEmpty);
+    });
+
+    test('an itemBuilder reading its item through a local still proves the `C[i]` template', () async {
+      final Extracted app = await extract(
+        widgetWrapper.replaceFirst('{{BODY}}', '''
+      SizedBox(
+        height: 100,
+        child: ListView.builder(
+          itemCount: items.length,
+          itemBuilder: (context, i) {
+            final item = items[i];
+            return ListTile(title: Text(item));
+          },
+        ),
+      ),
+''').replaceFirst('class Home', "const items = <String>['a', 'b'];\nclass Home"),
+      );
+      expect(app.errors, isEmpty);
+      expect(builderBodyOpaques(app), isEmpty);
+      expect(app.ofKind('ui.List'), hasLength(1));
+    });
+
+    test('an unread local is refused, not dropped — its initializer could carry a subscription', () async {
+      final Extracted app = await extract(
+        widgetWrapper.replaceFirst('{{BODY}}', '''
+      Builder(builder: (context) {
+        final unused = 'dropped';
+        return const Text('never reads it');
+      }),
+'''),
+      );
+      expect(builderBodyOpaques(app), hasLength(1));
+      expect(app.ofKind('ui.Text'), isEmpty, reason: 'nothing is extracted from a refused body');
+    });
+
+    test('an `if` deciding the return is refused', () async {
+      final Extracted app = await extract(
+        widgetWrapper.replaceFirst('{{BODY}}', '''
+      Builder(builder: (context) {
+        final flag = DateTime.now().second.isEven;
+        if (flag) {
+          return const Text('even');
+        }
+        return const Text('odd');
+      }),
+'''),
+      );
+      expect(builderBodyOpaques(app), hasLength(1));
+    });
+
+    test('a side-effect statement before the return is refused', () async {
+      final Extracted app = await extract(
+        widgetWrapper.replaceFirst('{{BODY}}', '''
+      Builder(builder: (context) {
+        print('building');
+        return const Text('logged');
+      }),
+'''),
+      );
+      expect(builderBodyOpaques(app), hasLength(1));
+    });
+
+    test('a local function declaration is refused', () async {
+      final Extracted app = await extract(
+        widgetWrapper.replaceFirst('{{BODY}}', '''
+      Builder(builder: (context) {
+        String shout(String s) => s.toUpperCase();
+        return Text(shout('x'));
+      }),
+'''),
+      );
+      expect(builderBodyOpaques(app), hasLength(1));
+    });
+
+    test('a multi-variable declaration and an uninitialised local are refused', () async {
+      final Extracted app = await extract(
+        widgetWrapper.replaceFirst('{{BODY}}', '''
+      Builder(builder: (context) {
+        final a = 'x', b = 'y';
+        return Text(a + b);
+      }),
+      Builder(builder: (context) {
+        late final String c;
+        return Text('z');
+      }),
+'''),
+      );
+      expect(builderBodyOpaques(app), hasLength(2));
+    });
+
+    test('a shadowing parameter of the same name is not a read of the local', () async {
+      final Extracted app = await extract(
+        widgetWrapper.replaceFirst('{{BODY}}', '''
+      Builder(builder: (context) {
+        final x = 'outer';
+        return ListView(children: ['a'].map((x) => Text(x)).toList());
+      }),
+'''),
+      );
+      expect(builderBodyOpaques(app), hasLength(1), reason: 'the inner `x` is the closure parameter, so the local is never read');
+    });
+
+    test('the same source extracts to the same bytes on a second, independent run (determinism)', () async {
+      final String source = widgetWrapper.replaceFirst('{{BODY}}', '''
+      Builder(builder: (context) {
+        final base = 'chain';
+        final upper = base.toUpperCase();
+        return Text(upper);
+      }),
+''');
+      expect((await extract(source)).bytes, (await extract(source)).bytes);
+    });
+  });
+
   group('render-tree-embedded callback local declaration identity (ADR-28, M11-D)', () {
     // An ordinary local declared inside an INLINE render-tree callback (`onPressed: () { ... }`) —
     // architecturally the same kind of binding a statement-level local already gets declaration-tier

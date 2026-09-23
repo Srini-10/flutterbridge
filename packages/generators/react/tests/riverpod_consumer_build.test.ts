@@ -38,15 +38,14 @@ import {
 // `fixtures/apps/riverpod_consumer_unsupported_body` is the paired **negative** fixture, proving the two
 // ways a real `Consumer` site still fails today, each with its own precise diagnostic:
 //
-// 1. `_widgetOfBody`'s own `BlockFunctionBody` case only inlines a block of *exactly one* statement (a
-//    bare `return`) — App B's own dominant real shape (every one of its 5 sites reads a `final` local,
-//    usually `.valueOrNull` off an `AsyncValue`, before returning) has a second statement, so the whole
-//    body stays `ui.Opaque('builder body with statements')` (`BRG3004`). A pre-existing, general
-//    limitation shared identically by `Builder`/`ListenableBuilder`/`ValueListenableBuilder`'s own inlined
-//    bodies and by `ListView.builder`/`GridView.builder`'s own `itemBuilder`
-//    (`fixtures/apps/builder_expansion`'s own `BlockIndexed` is the single-statement case that *does*
-//    work) — not introduced by this milestone's own `Consumer` work, and not something it is scoped to
-//    close.
+// 1. Control flow deciding the return — App B's `if (resolved == null) return const SizedBox.shrink();`
+//    (2 of its 5 real sites). `_widgetOfBody` originally inlined only a block of *exactly one* statement,
+//    which refused App B's dominant shape (the other 3 real sites are one leading `final` local then one
+//    `return`); a later phase of this milestone made it accept "N leading locals, then one `return`"
+//    (`riverpod_builder_body_locals_build.test.ts`), so this fixture's `BlockBody` now uses the shape that
+//    genuinely still refuses: an `if` a `ui.*` node has no representation for (`BRG3004`, "builder body
+//    with statements"). Shared identically by `Builder`/`ListenableBuilder`/`ValueListenableBuilder`/
+//    `ListView.builder`/`GridView.builder`/`FutureBuilder`/`AsyncValue.when`'s own bodies.
 // 2. `search_page.dart`'s own `_Results` shape: `Consumer` reached only from inside a `GridView.builder`'s
 //    own `itemBuilder` — a position a hook cannot run from unconditionally, refused by
 //    `declareRiverpodWatches` (ADR-0048) exactly as a bare `ref.watch` in the same position already is
@@ -100,7 +99,7 @@ describe('M14 build-proof: `Consumer(builder: ...)`, real analyzer to real tsc',
 });
 
 describe('negative fixture: the two ways a real `Consumer` site still fails, each precisely, neither silently', () => {
-  it('a block body with a `final` local before its `return` (App B\'s own dominant real shape) stays opaque — BRG3004, "builder body with statements"', () => {
+  it('an `if` deciding the return (App B\'s `if (resolved == null) return …;` shape) stays opaque — BRG3004, "builder body with statements"', () => {
     const unsupported = compiledFrom(riverpodConsumerUnsupportedBodyRaw());
     const { context, reported } = harness(unsupported);
     const { files } = reactGenerator.generate(context);

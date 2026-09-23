@@ -1,0 +1,32 @@
+name: builder_body_locals
+description: >-
+  M14 fixture: a builder callback's body that declares locals before its one `return` —
+  `builder: (context) { final x = ...; return Widget(x); }`. Real-corpus inventory first (App B, fresh
+  analyze + generate): `BRG3004`'s "builder body with statements" and "build body with statements" reasons are
+  two of eleven sub-categories that one coarse code covers; the leading-locals shape is the dominant real
+  form of the first (e.g. `final c = context.palette; return AppListRow(...)` six times over, `final p =
+  products[i]; return StorefrontProductTile(...)`, `final agentOptions = ref.watch(...).valueOrNull ??
+  const []; return AppDropdownField(...)`).
+
+  `widget_extractor.dart`'s `_widgetOfBody` — the one function every builder-shaped construct extracts its
+  body through (`Builder`/`ListenableBuilder`/`ValueListenableBuilder`/`Consumer` via `_inlineRebuildBuilder`,
+  `ListView.builder`/`GridView.builder`'s `itemBuilder` via `_lazyList`, `FutureBuilder`'s `data`, and
+  `AsyncValue.when`'s three branches) — only ever inlined a block of *exactly one* statement. `_inlineHelper`
+  (a widget-returning helper called from `build`) already handled "N leading locals, then one `return`" via
+  `Binding.inlineValue` (each local re-extracted at its own read site, the M8-B render-tree-local pattern);
+  that logic is now one shared function, `_bindLeadingLocalsAndReturn`, used by both. Covered here: `Builder`
+  with a local; a `ListView.builder` `itemBuilder` reading `items[i]` through a local (`_lazyList`'s own
+  index-use proof still holds, and the template keeps saying `items[i]`); a local read *twice* (both reads
+  emitted, neither dropped); a local whose own initializer reads an *earlier* local (a chain).
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

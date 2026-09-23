@@ -16,6 +16,8 @@ the 13th was a route builder's `final` local read as a "forwarded constructor pa
 
 ## Where the two applications stand (this tree)
 
+*The figures in the two bullets below are the M14 burn-down snapshot (`taxonomy-A.md`, `taxonomy-B.md`). Later Riverpod phases each committed their own snapshot beside them (`taxonomy-*-riverpod-watch`, `-notifier`, `-asyncvalue`, `-builder-locals`); the latest, `taxonomy-A-builder-locals.md` / `taxonomy-B-builder-locals.md`, has App A at **348** generator errors and App B at **4 653**, neither generating successfully. Per-construct accounting is in `riverpod-usage-matrix.md` §4a–§4k — the aggregate moves both ways as code that used to fail as one opaque blob is reached and reported.*
+
 See `taxonomy-A.md` and `taxonomy-B.md` (regenerate: `node tools/taxonomy/taxonomy.mjs <copy-of-app> --label … --out docs/m14/taxonomy-<x>`). **No diagnostic is class A (a compiler bug against a documented contract), and none is unexplained** (B has 5 unclassified `AssetImage` non-constant keys, needing a rule).
 
 - **A (240 files):** analyzer 0, normalizer 0, `bridge build` stops in the generator with 536 errors — Riverpod 108 (+ 20 provider initializers, 13 cascading functions), a name with no declaration 106 (mostly the same cascades), named arguments to package callees 64 (Supabase, `showModalBottomSheet`),

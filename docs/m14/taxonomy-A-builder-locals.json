@@ -1,0 +1,262 @@
+{
+  "application": "A-builder-locals",
+  "buildStages": [
+    {
+      "name": "analyze",
+      "ok": true
+    },
+    {
+      "name": "normalize",
+      "ok": true
+    },
+    {
+      "name": "generate",
+      "ok": false
+    }
+  ],
+  "normalizerErrors": 0,
+  "generatorErrors": 348,
+  "uniqueRootCauses": 18,
+  "occurrencesByCategory": {
+    "C": 177,
+    "B": 170,
+    "D": 1
+  },
+  "rootCauses": [
+    {
+      "stage": "generate",
+      "root": "unresolved-reference",
+      "category": "C",
+      "layer": "generator",
+      "cause": "a name with no declaration in the program (usually a package or a private symbol from a construct above)",
+      "adr": "0073",
+      "count": 70,
+      "codes": [
+        "BRG3006"
+      ],
+      "sample": "`pending` is not declared in this program, so there is nothing to emit for it. It needs an override, or a pass that models what it means."
+    },
+    {
+      "stage": "generate",
+      "root": "package-named-args",
+      "category": "C",
+      "layer": "generator (no callee signature for a package/SDK function)",
+      "cause": "named arguments to a package/SDK callee the kit does not mirror (Supabase, showModalBottomSheet, Color ops, \u2026)",
+      "adr": "0073",
+      "count": 50,
+      "codes": [
+        "BRG3002"
+      ],
+      "sample": "this call passes Dart named arguments (end, start). Lowering them needs the callee's signature, which the program does not carry, and guessing would pass a value to the wrong parameter."
+    },
+    {
+      "stage": "generate",
+      "root": "theme-material-role",
+      "category": "B",
+      "layer": "analyzer (token extraction)",
+      "cause": "a theme built by a helper/ColorScheme from computed values: no token for the Material role a widget paints",
+      "adr": "0073",
+      "count": 50,
+      "codes": [
+        "BRG3010"
+      ],
+      "sample": "`LinearProgressIndicator` paints the Material role `primary`, and this program's theme defines no token for it. INV-20 (ADR-13) requires every colour a mapped widget paints to resolve to an app.Token, so there is no defa"
+    },
+    {
+      "stage": "generate",
+      "root": "theme-extension-context",
+      "category": "B",
+      "layer": "analyzer/generator (no theme-extension model)",
+      "cause": "Theme.of(context)/extension<T>() and design-system extensions on BuildContext",
+      "adr": "0073",
+      "count": 38,
+      "codes": [
+        "BRG3006"
+      ],
+      "sample": "`context` is not declared in this program, so there is nothing to emit for it. It is a `BuildContext`, which a generated component does not have: a use of `Theme.of(context)`, `MediaQuery.of(context)`, an `InheritedWidge"
+    },
+    {
+      "stage": "generate",
+      "root": "package-class-emission",
+      "category": "C",
+      "layer": "generator",
+      "cause": "construction of a class that depends on an unsupported package",
+      "adr": "0055",
+      "count": 31,
+      "codes": [
+        "BRG3002",
+        "BRG3013"
+      ],
+      "sample": "`File` is one of this application's own classes, and this generator does not emit class declarations \u2014 so `new File(\u2026)` would name a type the project does not contain. Missing capability: lowering a `logic.ClassDecl` to "
+    },
+    {
+      "stage": "generate",
+      "root": "unsupported-expression",
+      "category": "B",
+      "layer": "generator",
+      "cause": "an expression form with no lowering",
+      "adr": "0058",
+      "count": 25,
+      "codes": [
+        "BRG3002"
+      ],
+      "sample": "`is EqualUnmodifiableListView<dynamic>` has no lowering: only a test against a project class, or `int`, `double`, `num`, `String`, `bool`, `List`, `Map`, `Set` or `Object`, can be told at runtime here (ADR-0055)."
+    },
+    {
+      "stage": "generate",
+      "root": "interpolation",
+      "category": "B",
+      "layer": "generator",
+      "cause": "interpolating a value whose Dart text cannot be reproduced from its static type (num, enum, class, dynamic elements)",
+      "adr": "0073",
+      "count": 22,
+      "codes": [
+        "BRG3002"
+      ],
+      "sample": "Interpolating a `List` has no lowering: Dart prints `[1, 2]` or `{a: 1}` where JavaScript prints `1,2` or `[object Map]`. Build the text from the elements instead."
+    },
+    {
+      "stage": "generate",
+      "root": "opaque-expression",
+      "category": "B",
+      "layer": "analyzer",
+      "cause": "an expression the analyzer preserved verbatim (opaque)",
+      "adr": "0058",
+      "count": 14,
+      "codes": [
+        "BRG3004"
+      ],
+      "sample": "`null` has no UIR representation and reached the generator as opaque source (INV-4). It needs an override. The frontend's reason: unrecognised widget expression."
+    },
+    {
+      "stage": "generate",
+      "root": "top-level-function-cascade",
+      "category": "C",
+      "layer": "generator (cascade)",
+      "cause": "a top-level function whose body contains any construct above",
+      "adr": "0066",
+      "count": 13,
+      "codes": [
+        "BRG3013"
+      ],
+      "sample": "`roundFromDto` is a project-defined top-level function, and this generator does not yet lower a `logic.FunctionDecl` to a module-level TypeScript function. That work belongs to this generator. Its body reports: `Performa"
+    },
+    {
+      "stage": "generate",
+      "root": "package-member",
+      "category": "C",
+      "layer": "generator",
+      "cause": "member of a package class with no runtime model (dio beyond the subset, audio, Supabase, \u2026)",
+      "adr": "0073",
+      "count": 11,
+      "codes": [
+        "BRG3013"
+      ],
+      "sample": "`playing` reads a member of `PlayerState`, a class this generator has no member model for. FlutterBridge does not yet lower a project-defined or external-package class's own fields, getters or methods \u2014 this refuses read"
+    },
+    {
+      "stage": "generate",
+      "root": "unsupported-capability",
+      "category": "B",
+      "layer": "generator",
+      "cause": "a construct the generator names as unsupported",
+      "adr": "0073",
+      "count": 11,
+      "codes": [
+        "BRG3013"
+      ],
+      "sample": "`CustomScrollView` needs the sliver protocol \u2014 a scroll view whose children are viewport-aware, which is not built yet. That work belongs to an architectural decision that has not been made yet (it needs an ADR). For now"
+    },
+    {
+      "stage": "generate",
+      "root": "unmapped-widget",
+      "category": "B",
+      "layer": "generator (widget map)",
+      "cause": "a widget with no runtime mapping",
+      "adr": "0062",
+      "count": 3,
+      "codes": [
+        "BRG3001"
+      ],
+      "sample": "`RefreshIndicator` is not a Flutter widget this generator has a mapping for, and not one it knows to be unsupported. If it is your application's own widget, it should have extracted as a ui.Component \u2014 that it did not is"
+    },
+    {
+      "stage": "generate",
+      "root": "project-class-extends-package",
+      "category": "C",
+      "layer": "generator",
+      "cause": "a project class extending a package class (StateNotifier, Notifier, \u2026)",
+      "adr": "0073",
+      "count": 2,
+      "codes": [
+        "BRG3013"
+      ],
+      "sample": "`AppColors` extends a class this generator does not emit (ThemeExtension<AppColors>): a project class may extend another project class, or one the runtime kit itself provides (`StateNotifier`), but not an arbitrary frame"
+    },
+    {
+      "stage": "generate",
+      "root": "catch-type",
+      "category": "B",
+      "layer": "generator",
+      "cause": "a typed catch on a type that cannot be tested at runtime",
+      "adr": "0061",
+      "count": 2,
+      "codes": [
+        "BRG3003"
+      ],
+      "sample": "this catch clause names a type that cannot be told at runtime here (only a project class, an SDK exception such as `FormatException`/`StateError`/`Exception`/`Error`, `int`, `double`, `num`, `String`, `bool`, `List`, `Ma"
+    },
+    {
+      "stage": "generate",
+      "root": "colour-unresolved",
+      "category": "B",
+      "layer": "analyzer (colour hoisting)",
+      "cause": "a colour computed at runtime",
+      "adr": "0076",
+      "count": 2,
+      "codes": [
+        "BRG3014"
+      ],
+      "sample": "`Material.color` is a colour the analyzer could not resolve to an app.Token. Every constant colour is hoisted into the palette and every `colorScheme.<role>` read names one already, so this is a colour computed at run ti"
+    },
+    {
+      "stage": "generate",
+      "root": "unsupported-parameter",
+      "category": "B",
+      "layer": "generator (widget map)",
+      "cause": "a widget parameter the runtime cannot honour (refused by name)",
+      "adr": "0070",
+      "count": 2,
+      "codes": [
+        "BRG3017"
+      ],
+      "sample": "`TabBar` renders, but not with `controller` set: a `TabController` is shared between a `TabBar` and a `TabBarView`, and nothing in UIR says two elements share a selection \u2014 they are related only by sitting under one `Def"
+    },
+    {
+      "stage": "generate",
+      "root": "app-root-parameter",
+      "category": "B",
+      "layer": "generator (app root)",
+      "cause": "a MaterialApp parameter with no equivalent (builder, onUnknownRoute, localization, \u2026)",
+      "adr": "0029",
+      "count": 1,
+      "codes": [
+        "BRG3016"
+      ],
+      "sample": "`MaterialApp.themeMode` has no equivalent in the emitted project. Missing capability: selecting light or dark at runtime from a Dart expression. Owner: the generator (the runtime kit already exposes a writable `theme.bri"
+    },
+    {
+      "stage": "generate",
+      "root": "globalkey",
+      "category": "D",
+      "layer": "generator",
+      "cause": "a GlobalKey: a handle on a live widget State, no UIR construct",
+      "adr": "0058",
+      "count": 1,
+      "codes": [
+        "BRG3015"
+      ],
+      "sample": "a `GlobalKey` is a handle on a live widget's State, and UIR has no construct that denotes one \u2014 it is not a value, a signal, a route or a component. That gap belongs to the schema. A `Form` in this kit validates every re"
+    }
+  ]
+}

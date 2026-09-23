@@ -75,6 +75,9 @@ export const APPS = [
   { name: 'dio-client', source: 'fixtures/apps/dio_client' },
   // M14 (ADR-0077): an inline push whose arguments are the caller's own parameter, a local, a live object, a widget and a closure.
   { name: 'dynamic-push', source: 'fixtures/apps/inline_push_dynamic' },
+  // M14: statement-bodied builders (`Builder`/`Consumer`/`ListView.builder` bodies of leading locals then one `return`),
+  // with a `ref.watch` that lives only in a local's initializer — the subscription must survive the inlining.
+  { name: 'builder-locals', source: 'fixtures/apps/builder_locals_e2e' },
 ];
 
 const run = (program, args, cwd, env = {}) =>

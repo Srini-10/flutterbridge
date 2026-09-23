@@ -1,0 +1,25 @@
+name: builder_body_locals_unsupported
+description: >-
+  M14 fixture (negative, paired with `builder_body_locals`): every shape a builder callback's body can take
+  that `_bindLeadingLocalsAndReturn` deliberately does *not* model, each refused precisely
+  (`BRG3004`, "builder body with statements") rather than approximated. (1) A local nothing reads — its
+  initializer would be silently dropped (re-extraction happens at a *read* site, not a declaration); confirmed
+  directly against `final unused = ref.watch(p); return Text('x');`, which lost a provider subscription with
+  no diagnostic before the read-guard existed. (2) An `if` deciding what is returned — control flow this does
+  not model (App B: `if (resolved == null) return const SizedBox.shrink();`). (3) A side-effecting statement
+  before the return (`debugPrint(...)`) — an effect a `ui.*` node has nowhere to record. (4) A local
+  *function* declaration — inside a builder's body it is reported under this same reason (the body is one
+  opaque unit); its own separate `BRG3004` reason, "local function declaration", is what a *build method's*
+  own top-level local function gets (66 real App B sites), a different construct this fixture does not cover.
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

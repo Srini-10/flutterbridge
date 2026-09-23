@@ -7,7 +7,9 @@ consumption outside widget position; §4e: `Notifier`/`AutoDisposeNotifier`/`Not
 non-family/non-async only; §4f: `Consumer(builder: ...)` erasure; §4g: `ref.watch(provider.select(...))`,
 verified already working; §4h: `ProviderScope(overrides: [...])` at the application root, self-contained
 overrides only; §4i: raw `dart:async` Stream construction investigated, not implemented — every real site is
-gated on an unimplemented Supabase realtime adapter, not on `dart:async` itself).** This is the input to an
+gated on an unimplemented Supabase realtime adapter, not on `dart:async` itself; §4j: `AsyncValue.when(...)`
+placed directly as widget content; §4k: statement-bodied builders — leading locals then one `return` — for
+every builder-shaped callback, `Consumer` and `AsyncValue.when` branches included).** This is the input to an
 ADR, not the ADR.
 Numbers come from `tools/riverpod-inventory/inventory.mjs` (a textual count of `.dart` files, tests excluded), run on
 disposable copies of the two real applications used as a corpus (raw output: `riverpod-usage-A.json`,
@@ -527,25 +529,24 @@ output before writing a line of the fix: a `Consumer`'s inlined `ref.watch(...)`
 `logic.MethodCall{method:'watch', receiver: logic.Ref{name:'ref', type: WidgetRef}}` shape a `ConsumerWidget`'s
 own would. No new generator or runtime code beyond the one catalog row.
 
-- **SUPPORTED, proven end to end**: a `Consumer` whose own `builder` is expression-bodied (or a block of
-  exactly one `return` statement), in an unconditional render position — the wrapper is fully erased (no trace
+- **SUPPORTED, proven end to end**: a `Consumer` whose own `builder` is expression-bodied, a block of
+  exactly one `return` statement, **or (§4k) leading single-variable local declarations followed by one
+  `return`**, in an unconditional render position — the wrapper is fully erased (no trace
   of `Consumer` anywhere in the emitted file), its `ref.watch` hoists to `useWatch` at the top of *whichever*
   component it is reached from, even a plain `StatelessWidget` with no `ref` of its own
   (`fixtures/apps/riverpod_consumer`'s own `Footer`, proven independently of `HomeScreen` — each component
   gets its own hoisted watch, not only the first one reached).
 - **NOT REACHED, precisely, not silently — two separate, both pre-existing, both general**:
-  1. **A block body with a `final` local before its `return`** — `_widgetOfBody`'s own `BlockFunctionBody`
-     case only inlines a block of *exactly one* statement. **This is App B's own dominant real shape**: every
-     one of its 5 real `Consumer` sites reads through a `final` local (usually `.valueOrNull` off an
-     `AsyncValue`) before returning — none is the single-statement shape. The whole body stays
-     `ui.Opaque('builder body with statements')` (`BRG3004`). Identical to the limitation already carried
-     forward from §4a/§4d ("build body with statements") and shared by `Builder`/`ListenableBuilder`/
-     `ValueListenableBuilder`'s own inlined bodies and by `ListView.builder`/`GridView.builder`'s own
-     `itemBuilder` alike (`fixtures/apps/builder_expansion`'s own `BlockIndexed` is the single-statement case
-     that *does* work) — not introduced by this milestone's own `Consumer` work, and, after inspection (it
-     would need `_widgetOfBody`'s own schema-level shape — a paired "locals, then a widget" — extended to
-     every one of its four call sites, which is a materially larger change than a builder-erasure catalog
-     row), not something this phase attempts to close.
+  1. **A block body whose control flow or side effects decide the return** — App B's `if (resolved == null)
+     return const SizedBox.shrink(); return AppPrice(...);` shape (2 of its 5 real `Consumer` sites). *(This
+     entry originally described "a block with a `final` local before its `return`" — App B's dominant real
+     shape, 3 of the 5 sites — as unsupported, because `_widgetOfBody` inlined a block of exactly one
+     statement. §4k closed that: the leading-locals shape is now inlined, through `Binding.inlineValue`, in the
+     one shared `_bindLeadingLocalsAndReturn`. What remains is genuinely different: an `if`/`switch`/loop
+     deciding what is returned has no `ui.*` representation, and guessing which branch runs would be
+     inventing.)* The body stays `ui.Opaque('builder body with statements')` (`BRG3004`). Shared identically by
+     `Builder`/`ListenableBuilder`/`ValueListenableBuilder`, `ListView.builder`/`GridView.builder`'s
+     `itemBuilder` and `FutureBuilder`/`AsyncValue.when` bodies alike.
   2. **`Consumer` reached only from inside a list item template** — `search_page.dart`'s own `_Results` shape.
      Refused by the identical, already-existing mechanism a bare `ref.watch` in the same position already
      gets (`declareRiverpodWatches`'s own `collectRiverpodRefCalls`, which never walks into a `logic.Lambda`
@@ -557,8 +558,9 @@ own would. No new generator or runtime code beyond the one catalog row.
 Verified: `fixtures/apps/riverpod_consumer` (both `HomeScreen` and the independent `Footer`; real analyzer
 output, real `bridge normalize`, real generator, real `tsc --strict` against the real kit, 8/8, including "no
 trace of `Consumer`" and "the whole project typechecks") + `fixtures/apps/riverpod_consumer_unsupported_body`
-(the paired **negative** fixture: both limitations above, each with its own precise diagnostic, `BRG3004` and
-`BRG3013` firing together with no third, unrelated construct silently failing alongside them). Mutation-tested
+(the paired **negative** fixture — its `BlockBody` was a leading local + one `return` until §4k made that shape
+supported; it is now the `if`-decides-the-return shape: both limitations above, each with its own precise
+diagnostic, `BRG3004` and `BRG3013` firing together with no third, unrelated construct silently failing alongside them). Mutation-tested
 directly against the **real corpus**: with the catalog row reverted and a genuinely fresh `bridge analyze` +
 `bridge generate` (not a cached `normalized.ndjson` — this fix is analyzer-side, so, unlike §4d/§4e's own
 generator-only fixes, only a fresh re-analyze can exercise it), App B reports exactly 2 `` `Consumer` is not a
@@ -811,13 +813,15 @@ identical role `dataParam` already had.
 
 - **SUPPORTED**: `async.when(loading: () => W1, error: (e, st) => W2, data: (v) => W3)` placed directly as
   widget-tree content, each branch a closure written at the call site whose own body is a single expression
-  (or a block of exactly one `return` statement) — the same restriction `_widgetOfBody` already applies to
-  `FutureBuilder`'s own `data` branch, unweakened.
+  (or a block of exactly one `return` statement) — the same restriction `_widgetOfBody` already applied to
+  `FutureBuilder`'s own `data` branch, unweakened. *(§4k has since widened `_widgetOfBody` itself, for every
+  caller, to leading locals followed by one `return`.)*
 - **NOT REACHED, precisely, not silently, narrower than before**: a branch whose own body is a block of more
-  than one statement — App B's own *dominant* real shape (most branches read through a `final` local or
-  perform a side effect, like `debugPrint`, first) — still refuses (`BRG3004`, "builder body with
-  statements"), the identical, pre-existing, general limitation named throughout this milestone (§4d, §4f),
-  not something this phase introduces or closes. The refusal is now precise **per branch**: before this fix
+  than one statement — App B's own real shape (many branches read through a `final` local or perform a
+  side effect, like `debugPrint`, first) — still refused (`BRG3004`, "builder body with statements") when
+  this phase landed, the identical, pre-existing, general limitation named throughout this milestone (§4d,
+  §4f). *§4k has since closed the leading-locals half of it; a branch that performs a side effect first still
+  refuses, precisely, as before.* The refusal is now precise **per branch**: before this fix
   the *whole* `.when(...)` call was one opaque blob; now a component whose `loading` and `data` branches are
   simple, and only `error` reads through a local, is refused for exactly that one branch, not the other two.
 - Not attempted: `.maybeWhen`/`.whenData` in widget position (one real `.maybeWhen(...)` site in App B,
@@ -850,6 +854,148 @@ exactly as it names). App A is unaffected (348, unchanged — it has no `AsyncVa
 position). Determinism: three in-process `reactGenerator.generate()` runs over the fixture's own normalized
 document produce byte-identical output; three fresh, independent `bridge analyze` runs over
 `riverpod_async_value_widget_position` produce a byte-identical `uir.ndjson`.
+
+## 4k. Implemented (this milestone) — statement-bodied builders: leading locals, then one `return`
+
+App B's `BRG3004` "builder body with statements" (18 occurrences at the start of this milestone, 54 once §4j
+reached the `AsyncValue.when` branches that used to hide inside one opaque blob) all came from one function.
+`widget_extractor.dart`'s `_widgetOfBody` is the single place a callback body becomes a widget, and it is shared
+by `_inlineRebuildBuilder` (`Builder`/`ListenableBuilder`/`ValueListenableBuilder`/`Consumer`, via the catalog's
+`rebuildBuilders`), `_lazyList` (`ListView.builder`/`GridView.builder` `itemBuilder`), `_async` (`FutureBuilder`'s
+`data`) and `_asyncValueWhen` (§4j). It inlined an expression body, or a block of *exactly one* `return`, and
+called anything else `ui.Opaque('builder body with statements')`. The dominant real block shape is
+`final p = products[i]; return ProductCard(product: p);` — a local, then a `return`.
+
+**No new representation.** `Binding.inlineValue` (M8-B) already binds a name to its initializer and re-extracts
+it lazily at every read site — it is what `_inlineHelper` has always done for a *method's* block body — and it
+is sound for the reason it was always sound: Flutter's `build` must be pure, so an initializer read twice may
+be evaluated twice. No UIR node, no schema field and no generator change: the read site simply carries the
+initializer's own extracted expression (`bind.Expr` wrapping the initializer's `logic.*`, the read site's own
+span outside and the initializer's inside). One shared function, `_bindLeadingLocalsAndReturn`, now serves both
+`_inlineHelper` and `_widgetOfBody`, so the shape is accepted in exactly one place. The alternative that was
+considered and rejected: a "prelude" node kind (locals, then a widget) threaded through all four call sites —
+a schema change carrying a new evaluation-order obligation for a shape the existing mechanism already covers.
+
+- **SUPPORTED**: a callback body that is `{ <local>; <local>; …; return <widget>; }` — every statement before the
+  final `return` a single-variable declaration **with an initializer** (`final`, `var` or typed; the shape has no
+  assignment slot, so `var` is no less sound than `final`), and every such local **read** by a later
+  initializer or by the returned expression. A later initializer may read an earlier local (a chain). Contexts:
+  `Builder`, `Consumer`, `ListenableBuilder`, `ValueListenableBuilder`, `ListView.builder`/`GridView.builder`
+  `itemBuilder` (the proven `C[i]` template is unchanged), `FutureBuilder`'s `data` builder, and each branch of
+  `AsyncValue.when`. `Consumer`'s `ref.watch(...)` inside such a local still hoists to a `useWatch` at the top of
+  the component (§4c), still `watch`, never demoted to `read`.
+- **REFUSED, precisely** — `BRG3004`, "builder body with statements", on the one affected body, whole-program
+  generation gated (`BRG3005`) exactly as before: an `if`/`switch`/loop deciding the return (App B's
+  `if (resolved == null) return const SizedBox.shrink();`); any statement that is not a declaration (a call for
+  its side effect, an assignment, `debugPrint(...)`); a local function declaration; a multi-variable declaration
+  (`final a = 1, b = 2;`); a local with no initializer (`late final x;`); and a **local nothing reads**.
+- **Why an unread local is refused.** A local nothing reads has no read site to re-extract its initializer at, so
+  inlining would drop the initializer — and with it any side effect it carried. `final unused = ref.watch(p);`
+  is a *provider subscription*: dropping it is silent loss of a dependency, with no diagnostic anywhere. So
+  `_bindLeadingLocalsAndReturn` refuses it. "Read" is decided by the resolved `Element`
+  (`_ElementCollector`), not by spelling: a closure parameter that merely shadows the local's name
+  (`final x = …; return ListView(children: ['a'].map((x) => Text(x)).toList());`) is a different element and
+  does not count as a read, so it is refused too. Mutation-tested (below): without the check, the unsupported
+  fixture's `final unused = 'dropped'` is silently accepted.
+- Known, deliberate, and not a defect: because each read site re-extracts the initializer, a local read *n*
+  times that contains a `ref.watch` yields *n* hoisted `useWatch` calls on the same provider
+  (`riverpod_builder_body_locals`: `w$0`…`w$2`, every read uses the last). They resolve to one provider and one
+  value, so it is redundant, not wrong; the hoister emitting one call per extracted node is pre-existing
+  behaviour for nodes of identical content (the id is a content hash).
+- Not attempted, still named: control flow deciding the return, side-effect statements, local function
+  declarations (66 in App B), multi-variable locals, `.maybeWhen`/`.whenData` in widget position, and a
+  `Consumer` reached only from a list item template (`BRG3013`, §4f).
+
+Verified. Real analyzer output → real `bridge normalize` → real generator → real `tsc --strict` against the real
+kit:
+`fixtures/apps/builder_body_locals` (plain Dart: one local read once; one local read twice; a two-local chain; an
+`itemBuilder` reading its item through a local) — `builder_body_locals_build.test.ts`, 11/11;
+`fixtures/apps/builder_body_locals_unsupported` (the paired **negative** fixture — an unread local, an `if`
+deciding the return, a side-effect statement, a local function declaration: four distinct shapes, exactly four
+`BRG3004` and one `BRG3005`, zero files); `fixtures/apps/riverpod_builder_body_locals` (three `Consumer` sites with
+a `ref.watch` local, and an `AsyncValue.when` `data:` branch with a local) —
+`riverpod_builder_body_locals_build.test.ts`, 7/7 (each `ref.watch` is still a hoisted `useWatch` of its own
+provider, each read is the watched value, no local name survives as a dangling identifier). Dart:
+`extraction_test.dart` "a builder body of leading locals then one return", 11 tests, including the shadowing and
+determinism cases. `fixtures/apps/riverpod_consumer_unsupported_body` was App B's original block-with-local
+negative; it now uses the `if`-decides-the-return shape (its `pubspec.yaml` and the header of
+`riverpod_consumer_build.test.ts` carry the account), still `BRG3004` + `BRG3013`.
+
+Mutation-tested both halves directly. (1) `widget_extractor.dart` reverted to HEAD: the four accepted-shape Dart
+tests fail (the refused-shape ones still pass), and a genuinely fresh `bridge analyze` + `bridge generate` of both
+positive fixtures reports four `BRG3004` "builder body with statements" and one `BRG3005` each; restored
+byte-identical, all pass. (2) Only the read check removed: the "unread local" and "shadowing parameter" tests
+fail, and `builder_body_locals_unsupported` reports **3** errors instead of 4 — `final unused = 'dropped'` was
+silently accepted — which is the failure the check exists to prevent; restored, all pass.
+
+Determinism: three fresh, independent `bridge analyze` runs over each of `builder_body_locals`,
+`builder_body_locals_unsupported`, `riverpod_builder_body_locals` and `riverpod_consumer_unsupported_body` produce a
+byte-identical `uir.ndjson`, equal to the committed `fixtures/uir/*.ndjson`; three fresh `bridge generate` runs over
+each positive fixture produce identical emitted trees (file list and per-file bytes).
+
+Browser: `fixtures/apps/builder_locals_e2e`, an eleventh e2e application (ports 3331/3332, production and
+development). A plain `Builder` with a two-local chain; a `Consumer` whose only `ref.watch(countProvider)` is a
+local's initializer, read twice and feeding a second local; a button that writes the provider; a `ListView.builder`
+reading its item through a local. `tsc` passing is necessary and not sufficient here — a dropped or one-shot
+`useWatch` would still typecheck and render `count: 0` forever — so the test clicks and requires both reads and
+the derived local to follow the provider (`count: 3` / `doubled: 6` after three clicks, `count: 0` gone). 7/7 in
+Chromium (4 production, 3 development: hydration, hook order across four re-renders, key warnings, a silent
+console). Full gates after §4k: Dart analyzer 698/698 (687 + the 11 above), generator 898/898, runtime 683/683, `just lint`,
+`just typecheck`, `just codegen-check` and `just lint-negative` clean. Full `just e2e` is now 109 tests (the
+previous 102 plus these 7; 11 applications, production and development). The first full run passed 108 of 109:
+`async-push-guard`'s "the button disables while submitting" missed its window — that fixture awaits a real 30 ms
+`Future.delayed`, and the assertion first ran after the button had already navigated away. It is not caused by
+this change (that fixture's analyzer output is byte-identical between the pre-§4k and §4k analyzers, so its
+generated project cannot differ; it passed 7 of 8 in isolation with `--repeat-each=8`) and the full run repeated:
+**109/109**. `just determinism`: all 11 applications × 3 complete pipeline runs (`flutter pub get` → analyze →
+normalize → generate) byte-identical, `builder-locals` included. A differential over the fixture corpus —
+every `fixtures/apps/*` project analyzed with the pre-§4k analyzer (extracted from `HEAD`) and with this one —
+found identical `uir.ndjson` bytes for 105 of the 108 that analyze standalone; the three that differ are exactly the
+three new fixtures whose builders have leading locals. (`cross_package_app` and `module_emission` need a local
+path dependency and cannot be analyzed alone.) `just ci` stops, as it did before this change, at
+`analyzer-lint`: `dart/bridge_analyzer/test/route_argument_positions_test.dart:419` `avoid_escaping_inner_quotes`
+(introduced by `6ad4738`, unrelated, deliberately left); every recipe before it passes and the ones after it
+(`analyzer-test`, `dart-analyze`) were run directly and pass.
+
+Measured against the **real corpora**, genuinely fresh (copies with no `.bridge/`; `bridge analyze` →
+normalizer → `bridge generate`, `normalized.ndjson` deleted before generating; the `uir.ndjson` hashes were
+reproduced by two independent runs). `BRG3005`'s summary line excluded throughout:
+
+| App B (`tools/taxonomy` rules, first match) | session start | after §4j | after §4k |
+| --- | ---: | ---: | ---: |
+| **total generator errors** | 4507 | 4588 | **4653** |
+| `BRG3004` (all) | 251 | 240 | **218** |
+| — "builder body with statements" | 18 | 54 | **30** |
+| — "widget returned by a call" | 106 | 59 | 61 |
+| — "local function declaration" / "build body with statements" / "unrecognised widget expression" | 66 / 26 / 23 | same | same |
+| opaque-expression | 249 | 238 | 216 |
+| Riverpod (`riverpod-ref` + `riverpod-provider-initializer`) | 876 | 960 | 983 |
+| unresolved-reference | 652 | 655 | 658 |
+| package-named-args | 463 | 464 | 482 |
+| theme-material-role | 484 | 484 | 487 |
+| theme-extension-context (`context`) | 289 | 289 | 310 |
+| package-class-emission | 354 | 356 | 366 |
+| top-level-function-cascade | 98 | 98 | 104 |
+| FutureProvider-specific / interpolation / sliver | 0 / 1 / 9 | same | same |
+
+**What §4k eliminated: exactly 24 occurrences, all of them "builder body with statements"** (54 → 30; the multiset of
+error lines before and after differs by exactly those 24 removed and 89 added, nothing else). By construct: 9
+`final c = context.palette;` theme-palette locals, 8 other leading computed locals (`where`/`fold`/`isEmpty`
+filters and the like), 5 `final x = list[i];` item locals, 2 leading `ref.watch(...)` locals. **The aggregate
+rose by 65 (−24 + 89), and that is the fix working, not a regression** (`CLAUDE.md`, ADR-0074): those 24 bodies
+used to fail as one opaque blob, and their contents are now *reached*, so what they contain is reported for the
+first time — 89 errors: 34 `BRG3013` (22 Riverpod: top-level provider initializers and `ref.watch` hoists of the
+providers those bodies use, plus 1 more provider initializer; 6 helper-function cascades — `int.toString`, a
+snack-bar host; 3 package callees with named arguments; 1 helper whose body constructs a `StringBuffer`; 1
+`CheckboxListTile`), 24 `BRG3002` (15 named-argument calls to package callees, 9 project-class constructions),
+24 `BRG3006` (21 `context.<palette>` extensions, 3 undeclared names), 3 `BRG3010` (a Material role), 2 `BRG3001`
+(`RefreshIndicator`), and 2 `BRG3004` "widget returned by a call" — `_body(...)`, a private helper returning a
+widget, was a local's initializer inside two of the formerly opaque bodies and is now the precise reason instead
+of being hidden by the blob (59 → 61). None of the 89 is a construct §4k newly refuses: each was already
+unsupported and had simply never been reached. App A is
+unaffected: the multiset of its 348 error lines is byte-for-byte the session-start one. **Neither application
+reaches a successful generation, so neither reaches `next build` or Chromium**; the only browser evidence for §4k
+is the `builder_locals_e2e` fixture above.
 
 ## 5. How it will be verified
 
