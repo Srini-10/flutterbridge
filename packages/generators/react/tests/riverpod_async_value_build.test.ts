@@ -1,15 +1,7 @@
 import { afterAll, describe, expect, it } from 'vitest';
 
 import { reactGenerator } from '../src/index.js';
-import {
-  cleanupBuildProofTemporaries,
-  compiledFrom,
-  fileAt,
-  harness,
-  riverpodAsyncValueRaw,
-  riverpodAsyncValueWidgetPositionRaw,
-  typecheckEmitted,
-} from './support.js';
+import { cleanupBuildProofTemporaries, compiledFrom, fileAt, harness, riverpodAsyncValueRaw, typecheckEmitted } from './support.js';
 
 // The M14 `AsyncValue<T>` consumption build-proof — the highest-value remaining Riverpod gap App B's own
 // generator taxonomy exposed (docs/m14/riverpod-usage-matrix.md §4d) — real analyzer output in, real
@@ -34,11 +26,12 @@ import {
 // needed beyond the one table row — `riverpod_async_value.ndjson`'s own fixture proves the *existing*
 // mechanisms already generalize correctly to a type they had never been pointed at.
 //
-// `fixtures/apps/riverpod_async_value_widget_position` is the paired **negative** fixture: `.when(...)`
-// embedded directly as widget-tree content (each branch itself returning a `Widget`) stays precisely
-// refused (`BRG3004`, "a widget returned by a call") — a pre-existing, general, non-Riverpod limitation in
-// the render-tree extractor (ADR-0075's own table cannot and does not reach it), not a new gap and not
-// silently dropped.
+// `fixtures/apps/riverpod_async_value_widget_position` was originally the paired **negative** fixture:
+// `.when(...)` embedded directly as widget-tree content (each branch itself returning a `Widget`) stayed
+// precisely refused (`BRG3004`, "a widget returned by a call") — a pre-existing, general, non-Riverpod
+// limitation in the render-tree extractor. A later milestone closed it (`docs/m14/riverpod-usage-matrix.md`
+// §4j, `riverpod_async_value_widget_when_build.test.ts`'s own build-proof) — that fixture is now a
+// **positive** one, and its own test lives there rather than here.
 
 afterAll(cleanupBuildProofTemporaries);
 
@@ -103,20 +96,4 @@ describe('M14 build-proof: `AsyncValue<T>` consumption, real analyzer to real ts
     const { files } = reactGenerator.generate(context);
     typecheckEmitted(files);
   }, 120_000);
-});
-
-describe('negative fixture: `.when(...)` embedded directly as widget-tree content stays precisely refused', () => {
-  it('reports BRG3004 ("a widget returned by a call"), never a silent drop — a pre-existing, general, non-Riverpod limitation', () => {
-    const widgetPosition = compiledFrom(riverpodAsyncValueWidgetPositionRaw());
-    const { context, reported } = harness(widgetPosition);
-    const { files } = reactGenerator.generate(context);
-    const errors = reported.filter((d) => d.severity === 'error');
-    const opaque = errors.filter((d) => d.code === 'BRG3004');
-    expect(opaque).toHaveLength(1);
-    expect(opaque[0]?.message).toContain('widget returned by a call');
-    // The whole-program gate (BRG3005) is the only other error — no *other*, unrelated construct silently
-    // failed alongside it.
-    expect(errors.map((d) => d.code).sort()).toEqual(['BRG3004', 'BRG3005']);
-    expect(files).toHaveLength(0);
-  });
 });

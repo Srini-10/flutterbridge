@@ -31,7 +31,7 @@ const String uirVersion = '1.15.0';
 /// A hash of the schema sources this library was generated from.
 ///
 /// Stamped into every emitted manifest: a UIR document always says which schema produced it.
-const String uirSchemaHash = '3dacb10f0b3c2306';
+const String uirSchemaHash = 'b6f8564fa41f0cb5';
 
 /// Node kind -> the fields of that node which hold `NodeId` references.
 ///
@@ -11072,7 +11072,7 @@ final class TypeCheck extends Expr {
   ]);
 }
 
-/// An asynchronous subtree — the normalized form of `FutureBuilder` (pass N4).
+/// An asynchronous subtree — the normalized form of `FutureBuilder` (pass N4), and (M14) `AsyncValue.when(loading:, error:, data:)` placed directly as widget-tree content, extracted directly rather than normalized: Dart's own syntax already separates the three branches as three distinct, named closures, so nothing needs recovering from one shared body the way a `FutureBuilder`'s does.
 ///
 /// The waiting/error/data branch shape is mechanically recognizable in real Flutter code, which is what lets N4 pattern-match rather than interpret.
 @immutable
@@ -11086,8 +11086,10 @@ final class UiAsync extends UiNode {
     this.anchor,
     this.dataParam,
     this.error,
+    this.errorParam,
     this.ext,
     this.loading,
+    this.stackTraceParam,
   });
 
   /// Parses a [UiAsync] from JSON, validating as it goes.
@@ -11102,11 +11104,13 @@ final class UiAsync extends UiNode {
       data: UiNode.fromJson(_req(json, 'data', path), '$path.data'),
       dataParam: json['dataParam'] == null ? null : _asString(json['dataParam'], '$path.dataParam'),
       error: json['error'] == null ? null : UiNode.fromJson(json['error'], '$path.error'),
+      errorParam: json['errorParam'] == null ? null : _asString(json['errorParam'], '$path.errorParam'),
       ext: json['ext'] == null ? null : _asMap<Object?>(json['ext'], '$path.ext', (Object? v, String p) => v),
       id: _asString(_req(json, 'id', path), '$path.id'),
       loading: json['loading'] == null ? null : UiNode.fromJson(json['loading'], '$path.loading'),
       source: Binding.fromJson(_req(json, 'source', path), '$path.source'),
       span: SourceSpan.fromJson(_req(json, 'span', path), '$path.span'),
+      stackTraceParam: json['stackTraceParam'] == null ? null : _asString(json['stackTraceParam'], '$path.stackTraceParam'),
     );
   }
 
@@ -11121,6 +11125,9 @@ final class UiAsync extends UiNode {
 
   /// Rendered on failure.
   final UiNode? error;
+
+  /// (M14) `AsyncValue.when`'s own `error` callback's first parameter name — the name bound to the error object inside `error`. Absent for a `FutureBuilder`/`StreamBuilder`-sourced node (N4 never recovers a name for this; `error`'s own body, when N4 does recover one, reads the builder's own `snapshot` instead).
+  final String? errorParam;
 
   /// Plugin extension data, namespaced `x-<plugin>`. Core passes round-trip it untouched (Spec §2.6).
   final Map<String, Object?>? ext;
@@ -11137,6 +11144,9 @@ final class UiAsync extends UiNode {
   /// Where the node came from.
   final SourceSpan span;
 
+  /// (M14) `AsyncValue.when`'s own `error` callback's second parameter name — the name bound to the stack trace inside `error`. Present exactly when `errorParam` is.
+  final String? stackTraceParam;
+
   /// The node's discriminant.
   @override
   String get kind => 'ui.Async';
@@ -11148,12 +11158,14 @@ final class UiAsync extends UiNode {
     'data': data.toJson(),
     'dataParam': dataParam,
     'error': error?.toJson(),
+    'errorParam': errorParam,
     'ext': ext,
     'id': id,
     'kind': 'ui.Async',
     'loading': loading?.toJson(),
     'source': source.toJson(),
     'span': span.toJson(),
+    'stackTraceParam': stackTraceParam,
   })! as Map<String, Object?>;
 
   /// Returns a copy with the given fields replaced. The original is never mutated.
@@ -11165,22 +11177,26 @@ final class UiAsync extends UiNode {
     UiNode? data,
     String? dataParam,
     UiNode? error,
+    String? errorParam,
     Map<String, Object?>? ext,
     NodeId? id,
     UiNode? loading,
     Binding? source,
     SourceSpan? span,
+    String? stackTraceParam,
   }) {
     return UiAsync(
       anchor: anchor ?? this.anchor,
       data: data ?? this.data,
       dataParam: dataParam ?? this.dataParam,
       error: error ?? this.error,
+      errorParam: errorParam ?? this.errorParam,
       ext: ext ?? this.ext,
       id: id ?? this.id,
       loading: loading ?? this.loading,
       source: source ?? this.source,
       span: span ?? this.span,
+      stackTraceParam: stackTraceParam ?? this.stackTraceParam,
     );
   }
 
@@ -11195,11 +11211,13 @@ final class UiAsync extends UiNode {
         _equality.equals(other.data, data) &&
         _equality.equals(other.dataParam, dataParam) &&
         _equality.equals(other.error, error) &&
+        _equality.equals(other.errorParam, errorParam) &&
         _equality.equals(other.ext, ext) &&
         _equality.equals(other.id, id) &&
         _equality.equals(other.loading, loading) &&
         _equality.equals(other.source, source) &&
-        _equality.equals(other.span, span);
+        _equality.equals(other.span, span) &&
+        _equality.equals(other.stackTraceParam, stackTraceParam);
   }
 
   @override
@@ -11209,11 +11227,13 @@ final class UiAsync extends UiNode {
     _equality.hash(data),
     _equality.hash(dataParam),
     _equality.hash(error),
+    _equality.hash(errorParam),
     _equality.hash(ext),
     _equality.hash(id),
     _equality.hash(loading),
     _equality.hash(source),
     _equality.hash(span),
+    _equality.hash(stackTraceParam),
   ]);
 }
 

@@ -14,7 +14,7 @@ import { createHash } from 'node:crypto';
 export const UIR_VERSION = '1.15.0' as const;
 
 /** A hash of the schema sources this module was generated from. */
-export const UIR_SCHEMA_HASH = '3dacb10f0b3c2306' as const;
+export const UIR_SCHEMA_HASH = 'b6f8564fa41f0cb5' as const;
 
 /** Node kind -> the fields of that node which hold `NodeId` references. */
 export const UIR_REFERENCE_FIELDS: Readonly<Record<string, readonly string[]>> = {
@@ -2459,7 +2459,7 @@ export interface TypeCheck {
   readonly type: TypeRef;
 }
 
-/// An asynchronous subtree — the normalized form of `FutureBuilder` (pass N4).
+/// An asynchronous subtree — the normalized form of `FutureBuilder` (pass N4), and (M14) `AsyncValue.when(loading:, error:, data:)` placed directly as widget-tree content, extracted directly rather than normalized: Dart's own syntax already separates the three branches as three distinct, named closures, so nothing needs recovering from one shared body the way a `FutureBuilder`'s does.
 ///
 /// The waiting/error/data branch shape is mechanically recognizable in real Flutter code, which is what lets N4 pattern-match rather than interpret.
 export interface UiAsync {
@@ -2471,6 +2471,8 @@ export interface UiAsync {
   readonly dataParam?: string;
   /// Rendered on failure.
   readonly error?: UiNode;
+  /// (M14) `AsyncValue.when`'s own `error` callback's first parameter name — the name bound to the error object inside `error`. Absent for a `FutureBuilder`/`StreamBuilder`-sourced node (N4 never recovers a name for this; `error`'s own body, when N4 does recover one, reads the builder's own `snapshot` instead).
+  readonly errorParam?: string;
   /// Plugin extension data, namespaced `x-<plugin>`. Core passes round-trip it untouched (Spec §2.6).
   readonly ext?: Readonly<Record<string, unknown>>;
   /// The node's stable, content-addressed identity.
@@ -2483,6 +2485,8 @@ export interface UiAsync {
   readonly source: Binding;
   /// Where the node came from.
   readonly span: SourceSpan;
+  /// (M14) `AsyncValue.when`'s own `error` callback's second parameter name — the name bound to the stack trace inside `error`. Present exactly when `errorParam` is.
+  readonly stackTraceParam?: string;
 }
 
 /// A conditional subtree — the normalized form of a collection-`if` or a ternary (pass N2).
@@ -5514,12 +5518,14 @@ export function parseUiAsync(value: unknown, path = 'UiAsync'): UiAsync {
     data: parseUiNode(req(o, 'data', path), `${path}.data`),
     ...(own(o, 'dataParam') === undefined || own(o, 'dataParam') === null ? {} : { dataParam: asString(own(o, 'dataParam'), `${path}.dataParam`) }),
     ...(own(o, 'error') === undefined || own(o, 'error') === null ? {} : { error: parseUiNode(own(o, 'error'), `${path}.error`) }),
+    ...(own(o, 'errorParam') === undefined || own(o, 'errorParam') === null ? {} : { errorParam: asString(own(o, 'errorParam'), `${path}.errorParam`) }),
     ...(own(o, 'ext') === undefined || own(o, 'ext') === null ? {} : { ext: asMap(own(o, 'ext'), `${path}.ext`, (v) => v) }),
     id: parseNodeId(req(o, 'id', path), `${path}.id`),
     kind: 'ui.Async',
     ...(own(o, 'loading') === undefined || own(o, 'loading') === null ? {} : { loading: parseUiNode(own(o, 'loading'), `${path}.loading`) }),
     source: parseBinding(req(o, 'source', path), `${path}.source`),
     span: parseSourceSpan(req(o, 'span', path), `${path}.span`),
+    ...(own(o, 'stackTraceParam') === undefined || own(o, 'stackTraceParam') === null ? {} : { stackTraceParam: asString(own(o, 'stackTraceParam'), `${path}.stackTraceParam`) }),
   };
 }
 

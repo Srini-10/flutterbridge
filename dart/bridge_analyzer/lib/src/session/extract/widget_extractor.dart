@@ -142,6 +142,13 @@ final class WidgetExtractor {
         return _list(node, _mapToList(node)!, scope, index: index, slot: slot);
 
       case MethodInvocation():
+        // `asyncValue.when(loading: ..., error: ..., data: ...)` placed directly as widget-tree content —
+        // `body: async.when(...)`, `child: async.when(...)` — real App B's own dominant `ui.Opaque('widget
+        // returned by a call')` shape (M14). See `_asyncValueWhen`'s own doc for the recognition and why it
+        // reuses `ui.Async` rather than inventing a new node kind.
+        if (_asyncValueWhen(node, scope, index: index, slot: slot) case final RawNode async) {
+          return async;
+        }
         // A call that returns a widget — a `_buildHeader()` helper, or a widget-returning method. A helper declared in this file whose
         // body is an expression (or locals and a return) is inlined at the call (M12, ADR-0062); anything else has no `ui.*` node and
         // is opaque *at the UI level* while remaining fully modelled as an expression inside.
@@ -936,6 +943,102 @@ final class WidgetExtractor {
         'source': RawChild(bindings.extract(source, inner)),
         'dataParam': RawLiteral(dataParam),
         'data': RawChild(_widgetOfBody(builder.body, inner)),
+      },
+    );
+  }
+
+  /// `asyncValue.when(loading: () => W1, error: (e, st) => W2, data: (v) => W3)` placed directly as
+  /// widget-tree content (M14, real App B's own dominant `ui.Opaque('widget returned by a call')` shape,
+  /// docs/m14/riverpod-usage-matrix.md §4j).
+  ///
+  /// Reuses `ui.Async` — "the normalized form of `FutureBuilder`" — rather than a new node kind. Both are
+  /// the *identical* fact: a subtree whose content is one of three branches, chosen by the state of an
+  /// asynchronous value. `_async` (above) only ever populates `source`/`data`, because a `FutureBuilder`
+  /// writes all three branches as one `if (snapshot.hasData)` chain inside *one* closure, and recovering
+  /// three branches from one body is normalization's job (N4), not extraction's. `.when(...)` needs no such
+  /// recovery: Dart's own syntax already separates the three as three distinct, named closures, so
+  /// extraction populates `loading`/`error`/`data` directly, the same way it already populates `data` alone
+  /// for `FutureBuilder`.
+  ///
+  /// Recognized structurally, never by the receiver's own name: the receiver's own resolved type must be
+  /// `AsyncValue<T>` (`package:riverpod/src/common.dart` — the identical library `package_kit.ts`'s own
+  /// `AsyncValue` registration already uses for the non-widget-position case, confirmed directly against
+  /// real analyzer output, never assumed). `.maybeWhen`/`.whenData` are not recognized here: real App B has
+  /// exactly one `.maybeWhen(...)` in widget position and no `.whenData(...)`, and `.maybeWhen`'s own
+  /// `orElse` fallback is a materially different shape (an optional branch standing in for whichever of
+  /// `loading`/`error`/`data` was omitted) this extraction does not attempt to model from one real site.
+  ///
+  /// Refused (`null` — the caller keeps it opaque, the honest outcome) when any of `loading`/`error`/`data`
+  /// is missing (a genuine Dart compile error for `.when`'s own required parameters, so never reached from
+  /// real code) or is not a closure written at the call site (a variable holding a function, say) — the
+  /// identical discipline `_inlineHelper`'s own doc states for the same reason.
+  RawNode? _asyncValueWhen(MethodInvocation node, Scope scope, {int? index, String? slot}) {
+    if (node.methodName.name != 'when') {
+      return null;
+    }
+    final Expression? receiver = node.realTarget;
+    final DartType? receiverType = receiver?.staticType;
+    final Element? receiverElement = receiverType?.element;
+    if (receiver == null ||
+        receiverElement?.name != 'AsyncValue' ||
+        receiverElement?.library?.identifier != 'package:riverpod/src/common.dart') {
+      return null;
+    }
+
+    Expression? loading;
+    Expression? error;
+    Expression? data;
+    for (final Argument argument in node.argumentList.arguments) {
+      if (argument is! NamedArgument) {
+        continue;
+      }
+      switch (argument.name.lexeme) {
+        case 'loading':
+          loading = argument.argumentExpression;
+        case 'error':
+          error = argument.argumentExpression;
+        case 'data':
+          data = argument.argumentExpression;
+      }
+    }
+    if (loading is! FunctionExpression || error is! FunctionExpression || data is! FunctionExpression) {
+      return null;
+    }
+
+    // `error: R Function(Object error, StackTrace stackTrace)` is a *required*, exactly-two-positional-
+    // parameter function type — real Dart code assigning a closure to it always names both (`_` for
+    // "unused" is still a name), so `errorParam`/`stackTraceParam` are populated together or not at all.
+    final List<FormalParameter> errorParams = error.parameters?.parameters ?? const <FormalParameter>[];
+    final String? errorParam = errorParams.isNotEmpty ? errorParams[0].name?.lexeme : null;
+    final String? stackTraceParam = errorParams.length > 1 ? errorParams[1].name?.lexeme : null;
+    final Scope errorScope = scope.child(<Binding>[
+      for (final FormalParameter parameter in errorParams)
+        if (parameter.name != null) Binding(name: parameter.name!.lexeme, binds: Binds.parameter),
+    ]);
+
+    final List<FormalParameter> dataParams = data.parameters?.parameters ?? const <FormalParameter>[];
+    final String dataParam = dataParams.isNotEmpty ? (dataParams.first.name?.lexeme ?? 'value') : 'value';
+    final Scope dataScope = scope.child(<Binding>[
+      for (final FormalParameter parameter in dataParams)
+        if (parameter.name != null) Binding(name: parameter.name!.lexeme, binds: Binds.parameter),
+    ]);
+
+    return RawNode(
+      kind: 'ui.Async',
+      span: out.span(node),
+      anchorSegment: _segment('when', index, slot),
+      fields: <String, RawValue>{
+        'source': RawChild(bindings.extract(receiver, scope)),
+        'dataParam': RawLiteral(dataParam),
+        if (errorParam != null) 'errorParam': RawLiteral(errorParam),
+        if (stackTraceParam != null) 'stackTraceParam': RawLiteral(stackTraceParam),
+        // Each branch needs its own anchor slot — without one, two branches whose own bodies happen to
+        // produce structurally identical widgets (both a bare `Text(...)`, say) collide on the same
+        // anchor and the whole document is rejected (BRG1205), the identical failure mode
+        // `_inlineRebuildBuilder`'s own doc already names for the same underlying reason.
+        'loading': RawChild(_widgetOfBody(loading.body, scope, slot: 'loading')),
+        'error': RawChild(_widgetOfBody(error.body, errorScope, slot: 'error')),
+        'data': RawChild(_widgetOfBody(data.body, dataScope, slot: 'data')),
       },
     );
   }

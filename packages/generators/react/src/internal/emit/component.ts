@@ -1649,6 +1649,36 @@ export function emitUiNode(node: Node, module: ModuleBuilder, scope: EmitScope, 
     }
 
     case 'ui.Async': {
+      // (M14) `AsyncValue.when(loading:, error:, data:)` placed directly as widget-tree content
+      // (`widget_extractor.dart`'s own `_asyncValueWhen`) populates all three branches directly — Dart's
+      // own syntax already separates them as three distinct, named closures, so there is nothing here for
+      // this generator to invent. A `FutureBuilder`/`StreamBuilder`-sourced node (`_async`, the same file)
+      // still only ever carries `source`/`data`: recovering `loading`/`error` from the *one* body Flutter's
+      // own builder signature writes is N4's own job (a normalization, not an extraction), and until N4
+      // actually does that recovery, such a node reaches here exactly as incomplete as it always did — the
+      // refusal below is unchanged for that case, not weakened by this one becoming rendered.
+      if (node['loading'] !== undefined && node['error'] !== undefined) {
+        const sourceText = emitBinding(node['source'] as Node, scope);
+        const dataName = identifierOf(String(node['dataParam'] ?? 'value'));
+        const dataScope: EmitScope = { ...scope, paramInScope: (n) => (n === String(node['dataParam'] ?? '') ? dataName : scope.paramInScope(n)) };
+        const dataJsx = emitUiNode(node['data'] as Node, module, dataScope, depth + 1);
+
+        const errorName = identifierOf(String(node['errorParam'] ?? 'error'));
+        const stackTraceName = identifierOf(String(node['stackTraceParam'] ?? 'stackTrace'));
+        const errorScope: EmitScope = {
+          ...scope,
+          paramInScope: (n) =>
+            n === String(node['errorParam'] ?? '') ? errorName : n === String(node['stackTraceParam'] ?? '') ? stackTraceName : scope.paramInScope(n),
+        };
+        const errorJsx = emitUiNode(node['error'] as Node, module, errorScope, depth + 1);
+
+        const loadingJsx = emitUiNode(node['loading'] as Node, module, scope, depth + 1);
+
+        // Each branch is an arrow function's own return value — an expression position, the identical
+        // one `ui.Cond`'s own ternary branches are (never wrapped with `jsxChild`, which is only for
+        // literal JSX *child* content, between an open and a close tag).
+        return `${sourceText}.when({ data: (${dataName}) => ${dataJsx}, error: (${errorName}, ${stackTraceName}) => ${errorJsx}, loading: () => ${loadingJsx} })`;
+      }
       scope.report(
         GeneratorDiagnosticCode.IncompleteAsync,
         'error',

@@ -407,7 +407,7 @@
       ]
     },
     "UiAsync": {
-      "description": "An asynchronous subtree — the normalized form of `FutureBuilder` (pass N4).\n\nThe waiting/error/data branch shape is mechanically recognizable in real Flutter code, which is what lets N4 pattern-match rather than interpret.",
+      "description": "An asynchronous subtree — the normalized form of `FutureBuilder` (pass N4), and (M14) `AsyncValue.when(loading:, error:, data:)` placed directly as widget-tree content, extracted directly rather than normalized: Dart's own syntax already separates the three branches as three distinct, named closures, so nothing needs recovering from one shared body the way a `FutureBuilder`'s does.\n\nThe waiting/error/data branch shape is mechanically recognizable in real Flutter code, which is what lets N4 pattern-match rather than interpret.",
       "x-uir-kind": "ui.Async",
       "allOf": [
         {
@@ -446,6 +446,14 @@
             "dataParam": {
               "type": "string",
               "description": "The name bound to the resolved value inside `data`."
+            },
+            "errorParam": {
+              "type": "string",
+              "description": "(M14) `AsyncValue.when`'s own `error` callback's first parameter name — the name bound to the error object inside `error`. Absent for a `FutureBuilder`/`StreamBuilder`-sourced node (N4 never recovers a name for this; `error`'s own body, when N4 does recover one, reads the builder's own `snapshot` instead)."
+            },
+            "stackTraceParam": {
+              "type": "string",
+              "description": "(M14) `AsyncValue.when`'s own `error` callback's second parameter name — the name bound to the stack trace inside `error`. Present exactly when `errorParam` is."
             }
           }
         }

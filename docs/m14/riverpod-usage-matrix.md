@@ -778,6 +778,79 @@ would generate one line further for the cost of building it. Revisit only alongs
 adapter (a separate, substantially larger undertaking, and a different package entirely), which is the actual
 blocker at all four sites, not `dart:async` itself.
 
+## 4j. Implemented (this milestone) — `AsyncValue.when(...)` placed directly as widget-tree content
+
+App B's own **dominant** real `BRG3004` shape ("widget returned by a call") is `body: async.when(loading:
+..., error: ..., data: ...)` — a fresh, real-corpus inventory (done before any implementation, per this
+phase's own instruction) found 106 of App B's 252 total `BRG3004` occurrences named this exact reason, the
+single largest of eleven distinct sub-categories `BRG3004` covers (a coarse diagnostic **code**, not one
+semantic shape — "local function declaration" 66, "build body with statements" 26, "unrecognised widget
+expression" 23, "builder body with statements" 18, "yield" 5, "assert" 3, "widget without a build method" 2,
+"collection-if"/"collection-for" 2 each, "PropertyAccess"/"PrefixedIdentifier" 1 each).
+
+§4d's own account, written before this phase, said closing this "needs a new render-tree construct
+(conceptually `ui.Cond` keyed on three states instead of a boolean) — a real UIR addition, and so an ADR,
+not a generator fix." Half right: a real UIR addition was needed, but not a *new* one — `ui.Async`
+(`l2.json`), "the normalized form of `FutureBuilder`," already has exactly this shape (`source`, `loading`,
+`error`, `data`). It was built for `FutureBuilder`/`StreamBuilder`, whose own three branches live inside
+*one* shared closure body (`if (snapshot.hasData) …`) that a normalization pass (N4) has to recover — "partial
+by design" per its own doc — which is why `component.ts`'s own `ui.Async` case unconditionally refused:
+nothing had ever populated `loading`/`error` at extraction time, only `source`/`data`.
+
+`AsyncValue.when(...)` needs no such recovery: Dart's own syntax already separates the three branches as
+three distinct, named closures. `widget_extractor.dart`'s own new `_asyncValueWhen` — recognized
+structurally, by the receiver's own resolved type being `AsyncValue<T>` from
+`package:riverpod/src/common.dart` (the identical library `package_kit.ts`'s own non-widget-position
+registration already uses, never by name) — populates `loading`/`error`/`data` directly, the same way
+`_async` already populates `data` alone for `FutureBuilder`. `component.ts`'s own `ui.Async` case now
+renders when all three are present — calling the runtime's own, already oracle-verified `.when(...)` method,
+each branch now producing JSX instead of an arbitrary value — and keeps refusing, unchanged, when they are
+not (a `FutureBuilder`/`StreamBuilder` node N4 never finished recovering). Two schema fields carry this, not
+a new node kind: `errorParam`/`stackTraceParam`, the error callback's own two parameter names — the
+identical role `dataParam` already had.
+
+- **SUPPORTED**: `async.when(loading: () => W1, error: (e, st) => W2, data: (v) => W3)` placed directly as
+  widget-tree content, each branch a closure written at the call site whose own body is a single expression
+  (or a block of exactly one `return` statement) — the same restriction `_widgetOfBody` already applies to
+  `FutureBuilder`'s own `data` branch, unweakened.
+- **NOT REACHED, precisely, not silently, narrower than before**: a branch whose own body is a block of more
+  than one statement — App B's own *dominant* real shape (most branches read through a `final` local or
+  perform a side effect, like `debugPrint`, first) — still refuses (`BRG3004`, "builder body with
+  statements"), the identical, pre-existing, general limitation named throughout this milestone (§4d, §4f),
+  not something this phase introduces or closes. The refusal is now precise **per branch**: before this fix
+  the *whole* `.when(...)` call was one opaque blob; now a component whose `loading` and `data` branches are
+  simple, and only `error` reads through a local, is refused for exactly that one branch, not the other two.
+- Not attempted: `.maybeWhen`/`.whenData` in widget position (one real `.maybeWhen(...)` site in App B,
+  none for `.whenData`; `.maybeWhen`'s own `orElse` fallback is a materially different shape this milestone
+  does not model from one real site) — named, not silently folded into `.when`'s own recognition.
+
+Verified: `fixtures/apps/riverpod_async_value_widget_position` (originally this milestone's own **negative**
+fixture for this exact gap — its own `pubspec.yaml` has the full before/after account — now **positive**:
+real analyzer output, real `bridge normalize`, real generator, real `tsc --strict` against the real kit) +
+`fixtures/apps/riverpod_async_value_widget_when_unsupported` (the paired **negative** fixture, reproducing
+App B's own dominant block-bodied-branch shape exactly: `BRG3004` on the *one* affected branch, not the
+whole call) — `riverpod_async_value_widget_when_build.test.ts`, 5/5. Mutation-tested both halves
+independently: reverting `component.ts`'s own rendering alone restores the unconditional refusal (all 5
+tests fail, the negative one for a *different* reason — `BRG2104`, not `BRG3004`, since the whole node is
+refused again rather than one branch inside it); reverting `widget_extractor.dart`'s own recognition alone
+(plus the schema, since nothing populates the new fields without it) reproduces the original, wide "widget
+returned by a call" opaque error exactly, on the whole `.when(...)` call. Both restored, both pass.
+
+Verified against the **real App B corpus** with a genuinely fresh `bridge analyze` + `bridge generate`:
+`BRG3004`'s own "widget returned by a call" sub-count moves 106 → 59 (−47, real sites now recognized and,
+where every branch is simple, fully rendered); its "builder body with statements" sub-count moves 18 → 54
+(+36, the block-bodied branches those same real sites' own opaque blob used to hide, now surfaced as their
+own, narrower, more precise diagnostic — the *other* ten `BRG3004` sub-categories are unchanged, confirming
+nothing else shifted). `BRG3004` itself moves 252 → 241 (−11, a real net reduction). The **aggregate**
+generator-error count moves 4508 → 4589 (+81) — a real, attributable increase, not a regression: components
+that previously failed at the very first `.when(...)` call now reach further into their own bodies and
+surface constructs nothing had ever measured before (`CLAUDE.md`'s own "a generator count that goes up after
+a fix can be the fix working... code that was silently dropped is reached now," ADR-0074, applied here
+exactly as it names). App A is unaffected (348, unchanged — it has no `AsyncValue.when(...)` in widget
+position). Determinism: three in-process `reactGenerator.generate()` runs over the fixture's own normalized
+document produce byte-identical output; three fresh, independent `bridge analyze` runs over
+`riverpod_async_value_widget_position` produce a byte-identical `uir.ndjson`.
+
 ## 5. How it will be verified
 
 1. **Oracle against the real package.** A Dart test using `flutter_riverpod` records, for each scenario, the sequence of

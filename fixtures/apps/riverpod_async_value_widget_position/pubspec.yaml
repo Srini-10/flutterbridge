@@ -1,15 +1,22 @@
 name: riverpod_async_value_widget_position
 description: >-
-  M14 negative fixture, paired with `fixtures/apps/riverpod_async_value`: `AsyncValue.when(...)` embedded
-  *directly* as widget-tree content (`child: async.when(loading: ..., data: ..., error: ...)`, each branch
-  itself returning a `Widget`) must stay precisely refused (`BRG3004`, "a widget returned by a call") —
-  not silently dropped, and not accidentally "fixed" by the sibling fixture's own kit-type registration.
-  This is a pre-existing, general, non-Riverpod limitation: the render-tree extractor models a widget
-  position as a construction, a condition, a list, or a bound value — never an arbitrary method call whose
-  *static type* happens to be `Widget` — so *any* widget-typed call in that position hits it the same way,
-  with or without Riverpod. Closing it needs a new render-tree construct (conceptually `ui.Cond` keyed on
-  three states instead of a boolean) — a real UIR addition, and so an ADR, not a generator fix; out of this
-  phase's own scope (CLAUDE.md's frozen-architecture rule).
+  M14 fixture, paired with `fixtures/apps/riverpod_async_value`: `AsyncValue.when(...)` embedded *directly*
+  as widget-tree content (`body: async.when(loading: ..., data: ..., error: ...)`, each branch itself
+  returning a `Widget`) — App B's own dominant real `BRG3004` shape ("widget returned by a call", 106 of
+  252 real occurrences, the single largest sub-category; `docs/m14/riverpod-usage-matrix.md` §4j).
+
+  Originally a **negative** fixture (this shape needed a new render-tree construct, conceptually `ui.Cond`
+  keyed on three states instead of a boolean — a real UIR addition, out of that earlier phase's own scope).
+  It turned out the construct already existed: `ui.Async`, "the normalized form of `FutureBuilder`"
+  (`l2.json`), already has exactly this shape (`source`, `loading`, `error`, `data`) — built for a Flutter
+  `FutureBuilder`/`StreamBuilder`, whose *own* three branches live inside one shared closure body N4 has to
+  recover them from (a normalization, not an extraction, and "partial by design"). `AsyncValue.when(...)`
+  needs no such recovery: Dart's own syntax already separates the three branches as three distinct, named
+  closures, so extraction (`widget_extractor.dart`'s own `_asyncValueWhen`) populates all three directly,
+  and the generator (`component.ts`'s own `ui.Async` case) renders them — calling the runtime's own,
+  already oracle-verified `.when(...)` method, each branch now producing JSX — whenever all three are
+  present. A `FutureBuilder`/`StreamBuilder`-sourced node, which still only ever carries `source`/`data`
+  until N4 successfully recovers the other two, is unaffected: this fixture is now a **positive** one.
 publish_to: 'none'
 version: 1.0.0
 
