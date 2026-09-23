@@ -1,0 +1,28 @@
+name: riverpod_provider_scope_overrides
+description: >-
+  M14 fixture: `ProviderScope(overrides: [...])` at the application root — real-corpus inventory first:
+  exactly 1 real `ProviderScope(overrides: ...)` construction in App A + App B combined (App A's own single
+  `ProviderScope(child: ...)` carries no overrides; App B's "admin" app is the same), App B's own "customer"
+  app, at the root of `main()` (`runApp(ProviderScope(overrides: [...], child: CommerceApp()))`), never
+  nested, with 4 overrides: two `.overrideWithValue(computedValue)`, two `.overrideWith(createFn)` (via
+  helper functions). This fixture reproduces the two **sound** shapes directly — a value computed from a
+  project class's own static constant and method (`BrandConfig.neutral.copyWith(appName: 'Commerce')`,
+  App B's own exact shape) and an inline `.overrideWith((ref) => ...)` create closure reading another
+  (already-overridden) provider — both self-contained: neither references anything only `main()`'s own body
+  declares. `riverpod_provider_scope_overrides_unsupported` is the paired negative fixture, reproducing App
+  B's other real shape exactly: an override whose own value depends on `main()`'s own local
+  (`appPreferencesProvider.overrideWithValue(AppPreferences(prefs))`, `prefs` from `await
+  SharedPreferences.getInstance()`).
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_riverpod: 2.6.1
+
+flutter:
+  uses-material-design: true

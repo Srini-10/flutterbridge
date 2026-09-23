@@ -138,6 +138,12 @@ export interface ScaffoldInput {
    * same way a store or a route table is provided unconditionally on the generator's own initiative.
    */
   readonly needsRiverpod: boolean;
+  /**
+   * `main()`'s own root `ProviderScope(overrides: [...])`, already lowered (`provider_scope_overrides.ts`,
+   * `docs/m14/riverpod-usage-matrix.md` §4h) — `undefined` when the program declares no `ProviderScope`
+   * overrides, or `needsRiverpod` is `false`.
+   */
+  readonly riverpodOverrides?: { readonly texts: readonly string[]; readonly imports: readonly string[] };
   /** Everything `app/page.tsx` needs. Built by the pipeline, because lowering a value needs the emit scope. */
   readonly page: PageInput;
 }
@@ -335,7 +341,14 @@ function providers(input: ScaffoldInput): string {
     { specifier: input.themeModule, name: input.themeName },
   ].sort((a, b) => (a.specifier < b.specifier ? -1 : a.specifier > b.specifier ? 1 : 0));
   for (const entry of local) lines.push(`import { ${entry.name} } from '${entry.specifier}';`);
-  lines.push('');
+  // `main()`'s own root `ProviderScope(overrides: [...])` (§4h) — a second, dynamically-discovered import
+  // block, the same reason `app/page.tsx`'s own route-argument imports are ModuleBuilder-rendered rather
+  // than hand-listed: what an override references cannot be known until it is lowered. `importLines()`
+  // itself already ends in a blank line (its own doc), so one is added here only when there was no such
+  // block to supply it.
+  const overrideImports = input.riverpodOverrides?.imports ?? [];
+  lines.push(...overrideImports);
+  if (overrideImports.length === 0) lines.push('');
   lines.push(
     '/** Scopes every store, the theme, the assets and the router to this client root (ADR-15). */',
   );
@@ -345,7 +358,11 @@ function providers(input: ScaffoldInput): string {
   // shallow, and a fold would make the indentation a function of the store count.
   // Outermost: nothing else here reads from or is read by a provider container, so its placement relative to the
   // others is arbitrary except that it must enclose anything that might use `useWatch`/`useRead` — everything below does.
-  const open: string[] = input.needsRiverpod ? ['<ProviderScope>', `<ThemeProvider descriptor={${input.themeName}}>`] : [`<ThemeProvider descriptor={${input.themeName}}>`];
+  const providerScopeOpen =
+    input.riverpodOverrides === undefined || input.riverpodOverrides.texts.length === 0
+      ? '<ProviderScope>'
+      : `<ProviderScope overrides={[${input.riverpodOverrides.texts.join(', ')}]}>`;
+  const open: string[] = input.needsRiverpod ? [providerScopeOpen, `<ThemeProvider descriptor={${input.themeName}}>`] : [`<ThemeProvider descriptor={${input.themeName}}>`];
   const close: string[] = input.needsRiverpod ? ['</ThemeProvider>', '</ProviderScope>'] : ['</ThemeProvider>'];
   // `SnackbarHostProvider` (ADR-0030) renders the current presentation's own surface, which reads the
   // theme (`useThemeSurface`) — it must nest *inside* `ThemeProvider`, but nothing else here depends on

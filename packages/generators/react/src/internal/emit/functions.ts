@@ -17,6 +17,7 @@ import {
 import { isAppRoot } from './app_root.js';
 import { emitExpression, isEligibleStructuralField, localBindingsIn, type EmitScope } from './expression.js';
 import { fileNameOf, identifierOf, ModuleBuilder } from './module.js';
+import { rootProviderScopeOverrideElements } from './provider_scope_overrides.js';
 import { kitPackageClass, kitSuperclassMembers } from './package_kit.js';
 import { useRuntime, useRuntimeType } from './runtime.js';
 import { emitStatements } from './statement.js';
@@ -155,6 +156,15 @@ export function reachableFunctions(
       directFunctionRefs(node['initial'], lookup, found, classes);
       directFunctionRefs(node['type'], lookup, found, classes);
     }
+  }
+  // `main()`'s own root `ProviderScope(overrides: [...])` (§4h, `provider_scope_overrides.ts`) — the one
+  // piece of `main()`'s own body this generator reads. A provider (or a helper function returning an
+  // `Override`) reached only from an override, never from a component or an action, is a root exactly like
+  // one of those is; without this it would never be found reachable, never be emitted, and
+  // `provider_scope_overrides.ts`'s own lowering would then report it as an ordinary unresolved reference —
+  // accurate as far as it goes, but for the wrong reason.
+  for (const element of rootProviderScopeOverrideElements(nodes) ?? []) {
+    directFunctionRefs(element, lookup, found, classes);
   }
 
   // Fixed point over functions, constants AND general classes: a class's members reach functions, a function's body reaches

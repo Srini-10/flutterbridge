@@ -51,6 +51,7 @@ import {
 } from './emit/routes.js';
 import { emitStore } from './emit/store.js';
 import { behaviourOf, methodOf } from './emit/lifecycle.js';
+import { rootProviderScopeOverridesOf } from './emit/provider_scope_overrides.js';
 
 /** The lifecycle methods the component emitter lowers (ADR-0052); any other, with behaviour, is refused. */
 const LOWERED_LIFECYCLE: ReadonlySet<string> = new Set(['initState', 'dispose', 'didUpdateWidget']);
@@ -374,6 +375,7 @@ export function generateProject(context: GeneratorContext): GeneratorOutput {
   const allRoutes = context.program.ofKind('app.Route') as unknown as Node[];
   const rootRouteName = firstRouteName(table.components, allRoutes);
   const rootComponentId = rootRouteName === undefined ? undefined : table.components.get(rootRouteName);
+  const riverpodOverrides = needsRiverpod ? rootProviderScopeOverridesOf(context.program.nodes, scope, 'app/providers.tsx') : undefined;
   files.push(
     ...scaffold({
       name: 'bridge-app',
@@ -387,6 +389,7 @@ export function generateProject(context: GeneratorContext): GeneratorOutput {
       stores,
       needsSnackbarHost: scaffoldMessenger.needsHost,
       needsRiverpod,
+      ...(riverpodOverrides === undefined ? {} : { riverpodOverrides }),
       page: pageOf(
         table,
         allRoutes,

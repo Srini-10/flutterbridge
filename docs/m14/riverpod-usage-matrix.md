@@ -5,7 +5,8 @@ Status: **inventory measured; design proposed; real, verified slices implemented
 `FutureProvider`/`StreamProvider`; §4c: `ref.watch`/`ref.listen` hook-hoisting; §4d: `AsyncValue<T>`
 consumption outside widget position; §4e: `Notifier`/`AutoDisposeNotifier`/`NotifierProvider`,
 non-family/non-async only; §4f: `Consumer(builder: ...)` erasure; §4g: `ref.watch(provider.select(...))`,
-verified already working).** This is the input to an ADR, not the ADR.
+verified already working; §4h: `ProviderScope(overrides: [...])` at the application root, self-contained
+overrides only).** This is the input to an ADR, not the ADR.
 Numbers come from `tools/riverpod-inventory/inventory.mjs` (a textual count of `.dart` files, tests excluded), run on
 disposable copies of the two real applications used as a corpus (raw output: `riverpod-usage-A.json`,
 `riverpod-usage-B.json`). A textual count sizes the feature and names files; the compiler's own recognition must be
@@ -642,6 +643,103 @@ existing doc/oracle-verification from the milestone that built it, and the fixtu
 read directly against the runtime's real `SelectView`/`useWatch` implementation to confirm the composition,
 not merely that `tsc` was silent. Determinism: three in-process `reactGenerator.generate()` runs over the
 fixture's normalized document produce byte-identical output.
+
+## 4h. Implemented (this milestone) — `ProviderScope(overrides: [...])` at the application root
+
+Real-corpus inventory, done before any implementation: **exactly 1 real `ProviderScope(overrides: ...)`
+construction in App A + App B combined.** App A's own single `ProviderScope(child: ...)` carries no overrides;
+App B's "admin" app (a sibling in the same monorepo) is the same. App B's own "customer" app has the one real
+site, at the root of `main()` — `runApp(ProviderScope(overrides: [...], child: CommerceApp()))` — never
+nested, with 4 overrides: `compiledBrandDefaultsProvider.overrideWithValue(BrandConfig.neutral.copyWith(appName:
+'Commerce'))`, `appPreferencesProvider.overrideWithValue(AppPreferences(prefs))` (`prefs` from `final prefs =
+await SharedPreferences.getInstance();`, `main()`'s own local), and two `.overrideWith(createFn)` via
+zero-argument top-level helper functions (`loginAsHintSeed()`/`loginRoleCheckSeed()`, each returning
+`loginAsHintProvider.overrideWith((ref) => ref.watch(appPreferencesProvider).loginAsHint)` or its sibling).
+`overrideWithProvider` (Riverpod 1's own API) and a family override: not found in either real corpus.
+
+**Before this milestone, `overrides:` was silently dropped, with no diagnostic at all.** `project.ts`'s own
+`needsRiverpod` doc already explained why, before this phase even started: root discovery deliberately starts
+from `MaterialApp`, never from `runApp`'s own argument — a program's own `ProviderScope(...)` construction was
+never read for *any* purpose. Confirmed directly, before writing a line of the fix: a probe with a real
+override generated a clean, silently-wrong `<ProviderScope>` — no `overrides` prop, no warning, nothing.
+
+**What the runtime already had, unused**: `ProviderScope`'s own React binding (`react.ts`) already accepts an
+`overrides?: readonly Override[]` prop and threads it straight into `new ProviderContainer({ overrides,
+parent })` — nested-scope parenting included. `ProviderInstance.overrideWithValue(value)`/`.overrideWith(create)`
+(`container.ts`) already exist, returning a plain `Override` value. None of this was reachable from a Dart
+source's own `overrides:` list before this phase, for the architectural reason above, not a runtime gap.
+
+**The fix**: `provider_scope_overrides.ts` reads exactly one shape — `main()` calling `runApp` with a *direct*
+`ProviderScope(overrides: [...])` construction (the only shape either real corpus uses) — and lowers each
+override element with the *ordinary*, general `emitExpression`, no special-casing of `.overrideWithValue`/
+`.overrideWith`: both are plain method calls on a kit-registered `ProviderInstance`, already generically
+supported the identical way `.select` was found to be in §4g. The result splices into `app/providers.tsx`'s
+own `<ProviderScope overrides={[...]}>`, its dynamic imports rendered by a scratch `ModuleBuilder` the same
+way `app/page.tsx`'s own route-argument imports already are (`module.ts`'s `importLines()`, whose own doc
+already named exactly this shape of problem, unused for it until now). `functions.ts`'s own `reachableFunctions`
+gained one more root — the overrides list itself — so a provider or a helper function reached *only* from an
+override, never from a component or an action, is still found reachable and emitted, not silently missing
+(caught directly: an early version of this fixture's own `themeSeedProvider.overrideWith((ref) =>
+ref.watch(accentColorProvider))` generated `` `accentColorProvider` ... could not be lowered `` — a real,
+if secondary, gap this phase's own fixture surfaced and closed, not merely worked around).
+
+**Soundness, without a second way to say it**: an override's value is lowered against a scope that has never
+heard of `main()`'s own locals — no `fieldScope`-style rebinding, unlike a top-level constant's own
+initializer. A reference to something only `main()` declares (`prefs`) is therefore an *ordinary* unresolved
+reference, and `expression.ts`'s own existing fallback (`` `${name}` is not declared in this program ``)
+reports it and refuses, exactly as it would anywhere else — nothing new had to be built to tell a sound
+override from an unsound one. A refusal here is an error like any other, so the whole-program gate stops
+generation the same way it would for any other unsupported construct — this phase does not make overrides
+"best-effort"; a real app whose only unsupported construct is one override still fails to generate, honestly,
+rather than shipping with that override silently missing.
+
+- **SUPPORTED**: `.overrideWithValue(value)`/`.overrideWith(createFn)` at the application root, for a value or
+  create-closure that is self-contained — reads only already-declared providers, classes and constants, never
+  something only `main()`'s own body declares. This turned out to cover **3 of App B's own real 4 overrides**,
+  not the 1 this phase expected going in: `compiledBrandDefaultsProvider`'s value, and *both* helper-function
+  overrides (`loginAsHintSeed()`/`loginRoleCheckSeed()`) — the reachability fix above was what made the latter
+  two work, not special handling for a function call as such.
+- **NOT REACHED, precisely, not silently**: an override whose own value depends on something only `main()`'s
+  own body declares — App B's own real `appPreferencesProvider.overrideWithValue(AppPreferences(prefs))`, the
+  one real override of the four this phase does not close. `main()`'s own `async`/`await` initialization (here,
+  `await SharedPreferences.getInstance()`) has no analogue anywhere in the generated app — nothing models
+  `main()`'s own body generally, and this phase does not attempt to (a genuinely separate, deeper question:
+  what does a one-time, awaited startup side effect become in a Next.js app that has no single "start" moment
+  the way a Flutter `main()` does). Named here, not closed.
+- Not found in either real corpus, so not implemented or exercised: a **nested** `ProviderScope` (a subtree
+  scope, distinct from the root one), `overrideWithProvider`, and a family override.
+
+Verified: `fixtures/apps/riverpod_provider_scope_overrides` (both sound shapes — a computed
+`.overrideWithValue`, and an inline `.overrideWith` closure reading an otherwise-unreferenced provider — real
+analyzer output, real `bridge normalize`, real generator, real `tsc --strict` against the real kit, 6/6) +
+`fixtures/apps/riverpod_provider_scope_overrides_unsupported` (the paired **negative** fixture, reproducing App
+B's own blocked shape exactly: `BRG3006` on the `main()`-local by name, one error, nothing else silently
+failing alongside it). Mutation-tested directly: reverting `pipeline.ts`/`project.ts`/`functions.ts` and
+regenerating reproduces the pre-existing bug exactly — a bare `<ProviderScope>`, **zero diagnostics**, for
+*both* fixtures (the sound one and the unsound one alike: before this phase, an unsound override was not
+merely unsupported, it was invisible) — restoring the changes fixes both. Verified against the **real App B
+corpus** with a genuinely fresh `bridge analyze` + `bridge generate` (an analyzer-adjacent finding — the
+correct `main()`, of two candidates, matters — see below): before this phase, zero diagnostics anywhere named
+`prefs`/`loginAsHintSeed`/`compiledBrandDefaultsProvider`; after, exactly one new, precise error —
+`` `prefs` is not declared in this program `` — and the other three overrides produce no error of their own
+(consistent with them lowering correctly, though App B's own generation still fails overall, for this and many
+other unrelated reasons already catalogued). Generator error count moves 4507 → 4508 on the same fresh
+disposable copy — a real, attributable, named +1, not a regression: one silent drop became one precise
+refusal. App A is unaffected (348, unchanged — it declares no overrides). Determinism: three in-process
+`reactGenerator.generate()` runs over the fixture's own normalized document produce byte-identical output.
+
+**A real bug this phase's own real-corpus verification caught, not a design defect**: the first version of
+`findMain` picked the *first* top-level `logic.FunctionDecl` named `main` in the whole analyzed document —
+correct for every committed fixture (one app, one `main`), silently wrong against real App B, whose analyzed
+document carries *two*: `apps/customer/lib/main.dart`'s own, and `package:admin/main.dart`'s — a sibling app
+in the same pub *workspace*, reached transitively (never called, never imported by customer's own code) but
+still extracted, this analyzer's own "every declaration in the graph" discipline. Silently picking `admin`'s
+own `main()` would have read *its* `ProviderScope(child: ...)` (no overrides) and correctly found nothing —
+which is why this was invisible in every fixture and in the first real-corpus pass alike, and was only caught
+by deliberately re-deriving the real numbers from a fresh analyze rather than trusting a plausible-looking
+"no change" result (`docs/m14/riverpod-usage-matrix.md`'s own repeated caution, applied to itself). Fixed by
+requiring `main()`'s own `span.file` to carry no `package:` prefix — the same "declared in the analyzed
+project itself, not merely reachable through it" distinction other parts of this generator already rely on.
 
 ## 5. How it will be verified
 

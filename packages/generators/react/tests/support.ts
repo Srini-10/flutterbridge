@@ -297,6 +297,18 @@ export function riverpodSelectRaw(): string {
   return readFileSync(path, 'utf8');
 }
 
+/** The real `fixtures/apps/riverpod_provider_scope_overrides` document, raw analyzer output — not yet normalized. */
+export function riverpodProviderScopeOverridesRaw(): string {
+  const path = fileURLToPath(new URL('../../../../fixtures/uir/riverpod_provider_scope_overrides.ndjson', import.meta.url));
+  return readFileSync(path, 'utf8');
+}
+
+/** The real `fixtures/apps/riverpod_provider_scope_overrides_unsupported` document, raw analyzer output — not yet normalized. */
+export function riverpodProviderScopeOverridesUnsupportedRaw(): string {
+  const path = fileURLToPath(new URL('../../../../fixtures/uir/riverpod_provider_scope_overrides_unsupported.ndjson', import.meta.url));
+  return readFileSync(path, 'utf8');
+}
+
 /** The real `fixtures/apps/async_push_guard` document, raw analyzer output (M7-H) — not yet normalized. */
 export function asyncPushGuardRaw(): string {
   const path = fileURLToPath(new URL('../../../../fixtures/uir/async_push_guard.ndjson', import.meta.url));

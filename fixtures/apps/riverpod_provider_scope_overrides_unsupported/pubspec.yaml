@@ -1,0 +1,23 @@
+name: riverpod_provider_scope_overrides_unsupported
+description: >-
+  M14 fixture (negative, paired with `riverpod_provider_scope_overrides`): App B's other real
+  `ProviderScope(overrides: ...)` shape — `appPreferencesProvider.overrideWithValue(AppPreferences(prefs))`,
+  where `prefs` is `main()`'s own local (`final prefs = await SharedPreferences.getInstance();`). Nothing in
+  this generator's architecture models `main()`'s own body generally (`project.ts`'s own `needsRiverpod` doc:
+  "root discovery starts from `MaterialApp`, not from `runApp`'s argument") — `main()`'s own async
+  initialization has no analogue in the generated app, so an override whose value depends on it is refused
+  precisely (`BRG3006`, the ordinary "not declared in this program" an unresolvable reference already gets),
+  never silently dropped the way it was before this milestone (`docs/m14/riverpod-usage-matrix.md` §4h).
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_riverpod: 2.6.1
+
+flutter:
+  uses-material-design: true
