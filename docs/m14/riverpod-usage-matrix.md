@@ -6,7 +6,9 @@ Status: **inventory measured; design proposed; real, verified slices implemented
 consumption outside widget position; §4e: `Notifier`/`AutoDisposeNotifier`/`NotifierProvider`,
 non-family/non-async only; §4f: `Consumer(builder: ...)` erasure; §4g: `ref.watch(provider.select(...))`,
 verified already working; §4h: `ProviderScope(overrides: [...])` at the application root, self-contained
-overrides only).** This is the input to an ADR, not the ADR.
+overrides only; §4i: raw `dart:async` Stream construction investigated, not implemented — every real site is
+gated on an unimplemented Supabase realtime adapter, not on `dart:async` itself).** This is the input to an
+ADR, not the ADR.
 Numbers come from `tools/riverpod-inventory/inventory.mjs` (a textual count of `.dart` files, tests excluded), run on
 disposable copies of the two real applications used as a corpus (raw output: `riverpod-usage-A.json`,
 `riverpod-usage-B.json`). A textual count sizes the feature and names files; the compiler's own recognition must be
@@ -740,6 +742,41 @@ by deliberately re-deriving the real numbers from a fresh analyze rather than tr
 "no change" result (`docs/m14/riverpod-usage-matrix.md`'s own repeated caution, applied to itself). Fixed by
 requiring `main()`'s own `span.file` to carry no `package:` prefix — the same "declared in the analyzed
 project itself, not merely reachable through it" distinction other parts of this generator already rely on.
+
+## 4i. Investigated, not implemented — raw `dart:async` Stream construction
+
+Real-corpus inventory, done before any implementation, across App A + App B and App B's own local feature
+packages: four genuine sites. `Stream.value(const <AppNotification>[])`
+(`notifications_repository.dart`) — a real, in-scope, `dart:async`-only construction. The other three are
+`async*` generator bodies: `auth_repository.dart`'s `watchAppUser()` (`yield await _resolve(); await for (...)
+{ yield await _resolve(); }`) and `supabase_services/live_query.dart`'s own helper (`yield event; ... yield*
+Stream<T>.error(error, stackTrace);`). (A fourth match, `orders_repository.dart`'s `_chunked`, is `sync*` over
+an `Iterable` — a different Dart feature entirely, not a `Stream`, out of this phase's own scope by
+definition.)
+
+**Every one of the three `async*` sites reads from the Supabase SDK's own realtime/auth-change stream**
+(`_client.auth.onAuthStateChange`, `_client.from(...).stream(...)`) **inside the generator body itself** — not
+merely nearby. Supabase's realtime client has no adapter in this generator at all (a separate package
+integration, unrelated to `dart:async`, and nowhere named as this milestone's own scope); an `async*`
+generator whose own `await for` iterates it would still refuse on that member access even with full
+`async*`/`yield`/`yield*` support built. Building that support would let the generator get *further* into
+each of these three methods' own bodies, but not *past* them — so it would not make a single one of the three
+sites lower successfully.
+
+**The one remaining site, `Stream.value(...)`, lives in the same method as an already-blocked Supabase call**:
+`NotificationsRepository.watch(uid)` is `if (uid == null) return Stream.value(...); return liveQuery(...);` —
+its *other* branch calls `liveQuery(...)`, which is `live_query.dart`'s own Supabase-realtime-backed `async*`
+generator, one of the three above. Implementing `Stream.value` in isolation would not make `watch(uid)` itself
+lowerable (the method still has an unsupported branch), and no other real site uses it — so, confirmed
+directly rather than assumed, there is no real-corpus site building `Stream.value` support alone would unblock.
+
+**Not implemented.** This phase's own instruction is explicit: "only if actual application usage or
+compatibility contract justifies it... do not create a broad fake Stream API merely to reduce taxonomy
+counts." Real usage exists, but every site is either co-located with, or itself performs, an access this
+generator has no adapter for and is not scoped to gain one for here — so no real application in either corpus
+would generate one line further for the cost of building it. Revisit only alongside a Supabase realtime
+adapter (a separate, substantially larger undertaking, and a different package entirely), which is the actual
+blocker at all four sites, not `dart:async` itself.
 
 ## 5. How it will be verified
 
