@@ -77,7 +77,18 @@ final class DeclarationExtractor {
               symbol: symbol,
               fields: <String, RawValue>{
                 'name': RawLiteral(variable.name.lexeme),
-                'type': out.typeRef(variable.declaredFragment?.element.type, at: variable),
+                // `includeExternalTypeArguments: true` — a top-level constant is the second caller with the
+                // identical need `typeRef`'s own doc already names: `final p = FutureProvider<Session?>(...)`
+                // is an *external* generic (`FutureProvider`, no `target` of its own) wrapping a *project*
+                // type (`Session`) — without this, `Session`'s own `target` is unrecorded, and the generator's
+                // text-only fallback (`typeArgumentsOf`, re-parsing the outer type's display name) cannot
+                // resolve it, emitting `unknown` for the class the field's own declared type names precisely
+                // and correctly (confirmed directly: `FutureProvider<unknown | null>` instead of
+                // `FutureProvider<Session | null>`, a real `tsc` failure whenever the field type is nullable —
+                // a non-nullable one happens to self-heal, since the generator's own emission omits an
+                // annotation that is exactly the bare string `unknown`, and lets `tsc` infer the real one from
+                // the initializer instead — `docs/m14/riverpod-usage-matrix.md` §4g first named this gap).
+                'type': out.typeRef(variable.declaredFragment?.element.type, at: variable, includeExternalTypeArguments: true),
                 if (variable.initializer != null)
                   // `Scope.forBody`, not the bare enclosing `scope`: a top-level constant's own initializer had no
                   // declaration-tier `owner`/ordinal context of its own (`scope.owner` stayed whatever the *file*
@@ -609,7 +620,10 @@ final class DeclarationExtractor {
               symbol: out.symbols.variable(variable.name.lexeme, owner: owner),
               fields: <String, RawValue>{
                 'name': RawLiteral(variable.name.lexeme),
-                'type': out.typeRef(variable.declaredFragment?.element.type, at: variable),
+                // `includeExternalTypeArguments: true` — the identical reason the top-level case (above) needs
+                // it: a `static final` field can equally be `FutureProvider<Session?>`, an external generic
+                // wrapping a project type.
+                'type': out.typeRef(variable.declaredFragment?.element.type, at: variable, includeExternalTypeArguments: true),
                 if (variable.initializer != null)
                   'initializer': RawChild(expressions.extract(variable.initializer!, scope)),
                 if (member.fields.isFinal || member.fields.isConst)

@@ -136,13 +136,16 @@ final class RawNodeEmitter {
   /// generics) never reads, for no gain and a broad, unrelated golden-fixture diff.
   ///
   /// But an *external* generic container wrapping a *project* type — `StateNotifier<LoadState>`, a class's
-  /// own superclass — needs exactly this the other way around: the outer type (`StateNotifier`) is external,
-  /// so `_classTypeTarget` finds it no `target`, and this function's argument recursion — gated on that
-  /// target's presence — never runs, leaving `LoadState`'s own `target` unrecorded even though `LoadState`
-  /// *is* one this compiler extracts a declaration for. `dart_classes.ts`'s own generic-argument reuse of a
-  /// kit-provided superclass's type text (`docs/m14/riverpod-usage-matrix.md`) needs that `target` to resolve
-  /// `LoadState` to its own emitted name — the display-name text `typeArgumentsOf` alone re-parses carries no
-  /// such link. One caller — `_class`'s own `superclass` field — opts in for exactly this reason.
+  /// own superclass; `FutureProvider<Session>`, a top-level or `static` field's own declared type — needs
+  /// exactly this the other way around: the outer type (`StateNotifier`/`FutureProvider`) is external, so
+  /// `_classTypeTarget` finds it no `target`, and this function's argument recursion — gated on that target's
+  /// presence — never runs, leaving `LoadState`'s/`Session`'s own `target` unrecorded even though each *is*
+  /// one this compiler extracts a declaration for. `dart_classes.ts`'s own generic-argument reuse of a
+  /// kit-provided superclass's type text, and `functions.ts`'s own field-declaration type-annotation emission
+  /// (`docs/m14/riverpod-usage-matrix.md`) both need that `target` to resolve `LoadState`/`Session` to its
+  /// own emitted name — the display-name text `typeArgumentsOf` alone re-parses carries no such link. Three
+  /// callers opt in for exactly this reason: `_class`'s own `superclass` field, and both of
+  /// `declaration_extractor.dart`'s own field-declaration sites (top-level and class-member/`static`).
   RawValue typeRef(DartType? type, {required AstNode at, bool includeExternalTypeArguments = false}) {
     if (type == null || type is InvalidType) {
       report(
@@ -165,8 +168,17 @@ final class RawNodeEmitter {
       // `$DtoCopyWith<Dto>`: a project generic type keeps its arguments, so the emitted TypeScript says `$DtoCopyWith<Dto>`.
       // `includeExternalTypeArguments`: the one caller that needs the identical thing when [type] itself has no `target`
       // of its own — see this parameter's own doc, just above.
+      // The flag propagates to each argument's own recursive call, not only the outermost one:
+      // `FutureProvider<List<Session>?>` needs `Session`'s own `target` captured two levels down — `List` is
+      // itself external (no `target` of its own), so without propagation the *inner* call defaults back to
+      // `false` and `Session`'s own `target` is lost exactly the way the outer one was before this parameter
+      // existed. Confirmed directly: `FutureProvider<unknown[] | null>` instead of
+      // `FutureProvider<Session[] | null>` until this line also threaded the flag through.
       if ((target != null || includeExternalTypeArguments) && type is InterfaceType && type.typeArguments.isNotEmpty)
-        'typeArguments': RawList(<RawValue>[for (final DartType argument in type.typeArguments) typeRef(argument, at: at)]),
+        'typeArguments': RawList(<RawValue>[
+          for (final DartType argument in type.typeArguments)
+            typeRef(argument, at: at, includeExternalTypeArguments: includeExternalTypeArguments),
+        ]),
     });
   }
 

@@ -253,10 +253,18 @@ function collectionTypeText(
   if (library !== undefined && library !== 'dart:core') return undefined;
   const base = name.split('<')[0];
   if (base !== 'List' && base !== 'Set' && base !== 'Map' && base !== 'Iterable') return undefined;
-  const args = typeArgumentsOf(name).map((argument) => {
-    const inner = typeTextOf({ name: argument, nullable: argument.endsWith('?') }, use, classOf);
-    return inner;
-  });
+  // The structured array, when the analyzer populated one (`raw_node_emitter.dart`'s own
+  // `includeExternalTypeArguments`, threaded recursively) — preferred over the text fallback below for the
+  // identical reason the kit-generic branch above prefers it: `List<Session>?` inside a field's own declared
+  // type (`FutureProvider<List<Session>?>`) needs `Session`'s own `target` to resolve it to the project
+  // class this generator already emits, which the display-name text alone (`typeArgumentsOf`) cannot carry.
+  // Confirmed directly: without this, `FutureProvider<List<Session>?>` emitted `FutureProvider<unknown[] |
+  // null>` even after the analyzer itself started recording the nested `target` — this function never read it.
+  const structuredArgs = Array.isArray(type?.['typeArguments']) ? (type?.['typeArguments'] as Node[]) : undefined;
+  const args =
+    structuredArgs !== undefined
+      ? structuredArgs.map((argument) => typeTextOf(argument, use, classOf))
+      : typeArgumentsOf(name).map((argument) => typeTextOf({ name: argument, nullable: argument.endsWith('?') }, use, classOf));
   const need = base === 'Map' ? 2 : 1;
   const filled = args.length === need ? args : Array.from({ length: need }, () => 'unknown');
   const element = filled[0] as string;

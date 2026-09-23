@@ -1,0 +1,39 @@
+name: riverpod_nullable_project_type
+description: >-
+  M14 fixture: a top-level Riverpod provider field whose own declared generic argument is a **nullable
+  project-defined class** — `final p = FutureProvider<Session?>((ref) async => ...);`. Found while building
+  the previous milestone's own `riverpod_select` fixture: `FutureProvider`/`Provider`/`StreamProvider` etc.
+  are *external* generics (`package:riverpod/...`, no `target` of their own); their own type ARGUMENT,
+  `Session`, *is* a project class this compiler extracts a declaration for — but `raw_node_emitter.dart`'s
+  own `typeRef` only records a type argument's own `target` when the *outer* type is a project generic
+  itself (`$DtoCopyWith<Dto>`) or the one caller that had already opted out of that restriction
+  (`_class`'s own `superclass` field, `StateNotifier<LoadState>`). A field's own declared type was never such
+  a caller, so `Session`'s own `target` was silently unrecorded, and the generator's text-only fallback
+  (re-parsing the outer type's *display name* alone, which carries no `target`) emitted
+  `FutureProvider<unknown | null>` — a real `tsc` failure — instead of `FutureProvider<Session | null>`. A
+  *non-nullable* `FutureProvider<Session>` happened to self-heal (the generator's own emission omits an
+  annotation that is exactly the bare string `unknown`, letting `tsc` infer the real type from the
+  initializer instead), which is why this was invisible until a nullable shape was tried.
+
+  Every shape this fixture proves, real-corpus-relevant or a genuine edge the same code path reaches:
+  `FutureProvider<Session>` (non-nullable, unaffected, the control); `FutureProvider<Session?>` (the bug);
+  `FutureProvider<List<Session>?>` (the identical bug one level deeper — `List` is itself external, so
+  `Session`'s own `target` needs the fix to propagate through *two* external generics, not stop at the
+  outermost); `Provider<int?>` (a nullable primitive, unaffected either way — the control that proves nothing
+  regressed for the common case); `Provider<Duration?>` (a nullable *kit-mirrored SDK value type* — a
+  different resolution path than a project class, also unaffected); and `FutureProvider<MaybeSession>`, a
+  `typedef MaybeSession = Session?` alias — the analyzer's own resolved-element type is already the aliased
+  type by the time extraction sees it, so this needs no separate handling, confirmed rather than assumed.
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_riverpod: 2.6.1
+
+flutter:
+  uses-material-design: true
